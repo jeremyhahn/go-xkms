@@ -28,6 +28,7 @@ package acmeserver_test
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"io"
 	"net/http"
 	"os"
@@ -45,16 +46,18 @@ const (
 type serverConfig struct {
 	ACMEBaseURL  string
 	AdminBaseURL string
-	TLSInsecure  bool
+	TLSCAFile    string
 	Timeout      time.Duration
 }
 
 // newServerConfig creates a server configuration from environment variables.
+// ACME_SERVER_CA_FILE must point to the server's CA certificate so TLS
+// verification succeeds. InsecureSkipVerify is not supported.
 func newServerConfig() *serverConfig {
 	return &serverConfig{
 		ACMEBaseURL:  serverEnvOr("ACME_SERVER_BASE_URL", defaultACMEServerURL),
 		AdminBaseURL: serverEnvOr("ACME_ADMIN_BASE_URL", defaultAdminBaseURL),
-		TLSInsecure:  os.Getenv("ACME_SERVER_TLS_INSECURE") != "false",
+		TLSCAFile:    os.Getenv("ACME_SERVER_CA_FILE"),
 		Timeout:      defaultServerTimeout,
 	}
 }
@@ -68,15 +71,25 @@ func serverEnvOr(key, fallback string) string {
 }
 
 // newHTTPClient creates an HTTP client configured for integration tests.
+// When ACME_SERVER_CA_FILE is set, the server's CA cert is loaded for
+// proper TLS verification. If no CA file is configured, the system pool
+// is used; the test will fail if the server uses a private CA.
 func newHTTPClient(cfg *serverConfig) *http.Client {
-	transport := &http.Transport{}
-	if cfg.TLSInsecure {
-		transport.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // integration test
+	tr := &http.Transport{}
+	if cfg.TLSCAFile != "" {
+		caPEM, err := os.ReadFile(cfg.TLSCAFile)
+		if err == nil {
+			pool := x509.NewCertPool()
+			if pool.AppendCertsFromPEM(caPEM) {
+				tr.TLSClientConfig = &tls.Config{
+					RootCAs:    pool,
+					MinVersion: tls.VersionTLS13,
+				}
+			}
 		}
 	}
 	return &http.Client{
-		Transport: transport,
+		Transport: tr,
 		Timeout:   cfg.Timeout,
 	}
 }

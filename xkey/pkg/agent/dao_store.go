@@ -161,11 +161,8 @@ func (s *DAOStore) findByDeviceID(ctx context.Context, deviceID string) (*AgentE
 		return entity, nil
 	}
 
-	// If the error is not "not found", it may be an index miss from a
-	// KVStore that doesn't support indexes. Fall back to scan.
-	if !qrdbsdk.IsDAONotFound(err) {
-		// Unexpected error from index query; still try scan fallback.
-	}
+	// On any error (index miss from a KVStore that does not support indexes,
+	// or an unexpected query error), fall back to a full scan.
 
 	// Scan fallback: iterate all entities and match by DeviceID.
 	result, scanErr := s.dao.Page(ctx, qrdbsdk.PageQuery{

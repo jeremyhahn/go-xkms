@@ -43,10 +43,13 @@ func (s *Service) BarrierInitializeShamir(ctx context.Context, req *pb.BarrierIn
 		return nil, mapBarrierError(err, "barrier initialize shamir")
 	}
 
+	// Share material is never returned: shares are sealed to enrolled
+	// Security Officers via the CeremonyDistributor (qrdb share-free
+	// contract). Only the threshold/total metadata is reported.
 	return &pb.BarrierShamirInitResponse{
-		Shares:      result.Shares,
 		Threshold:   int32(result.Threshold),   // #nosec G115 - Threshold fits in int32
 		TotalShares: int32(result.TotalShares), // #nosec G115 - TotalShares fits in int32
+		ShareCount:  int32(result.ShareCount),  // #nosec G115 - ShareCount fits in int32
 	}, nil
 }
 
@@ -117,18 +120,21 @@ func (s *Service) BarrierRekey(ctx context.Context, req *pb.BarrierRekeyRequest)
 		return nil, mapBarrierError(err, "barrier rekey")
 	}
 
+	// New shares are sealed to enrolled Security Officers and never
+	// returned; only the threshold/total metadata is reported.
 	return &pb.BarrierShamirInitResponse{
-		Shares:      result.Shares,
 		Threshold:   int32(result.Threshold),   // #nosec G115 - Threshold fits in int32
 		TotalShares: int32(result.TotalShares), // #nosec G115 - TotalShares fits in int32
+		ShareCount:  int32(result.ShareCount),  // #nosec G115 - ShareCount fits in int32
 	}, nil
 }
 
 // ==================== Recovery Key Operations ====================
 
 // BarrierGenerateRecoveryKeys generates an independent set of Shamir shares
-// that can reconstruct the current DEK. The barrier must be unsealed. The
-// shares are returned for offline storage and are not persisted.
+// that can reconstruct the current DEK. The barrier must be unsealed.
+// Recovery shares are sealed to enrolled recovery officers and never
+// returned (qrdb share-free contract).
 func (s *Service) BarrierGenerateRecoveryKeys(ctx context.Context, req *pb.BarrierGenerateRecoveryKeysRequest) (*pb.BarrierRecoveryKeysResponse, error) {
 	if barrier == nil {
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
@@ -143,10 +149,12 @@ func (s *Service) BarrierGenerateRecoveryKeys(ctx context.Context, req *pb.Barri
 		return nil, mapBarrierError(err, "barrier generate recovery keys")
 	}
 
+	// Recovery shares are sealed to enrolled recovery officers and never
+	// returned; only the threshold/total metadata is reported.
 	return &pb.BarrierRecoveryKeysResponse{
-		Shares:      result.Shares,
 		Threshold:   int32(result.Threshold),   // #nosec G115 - Threshold fits in int32
 		TotalShares: int32(result.TotalShares), // #nosec G115 - TotalShares fits in int32
+		ShareCount:  int32(result.ShareCount),  // #nosec G115 - ShareCount fits in int32
 	}, nil
 }
 

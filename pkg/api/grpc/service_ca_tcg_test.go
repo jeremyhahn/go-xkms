@@ -67,7 +67,7 @@ func (m *mockCAEnrollDevice) EnrollDevice(_ context.Context, _ *transport.Enroll
 }
 
 func TestIssueEKCertificate(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
 		old := GetCA()
@@ -165,7 +165,7 @@ func TestIssueEKCertificate(t *testing.T) {
 }
 
 func TestIssueAKCertificate(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
 		old := GetCA()
@@ -262,7 +262,7 @@ func TestIssueAKCertificate(t *testing.T) {
 }
 
 func TestSignTCGCSR(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
 		old := GetCA()
@@ -353,7 +353,7 @@ func TestSignTCGCSR(t *testing.T) {
 }
 
 func TestEnrollDevice(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
 		old := GetCA()

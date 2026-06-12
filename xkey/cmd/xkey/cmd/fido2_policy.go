@@ -218,13 +218,13 @@ func runRPPolicyList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(policies) == 0 {
-		fmt.Fprintln(os.Stdout, "No RP policies configured.")
+		_, _ = fmt.Fprintln(os.Stdout, "No RP policies configured.")
 		return nil
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "RPID\tUV\tUP\tAttestation\tEnterprise\tBlocked")
-	fmt.Fprintln(w, "----\t--\t--\t-----------\t----------\t-------")
+	_, _ = fmt.Fprintln(w, "RPID\tUV\tUP\tAttestation\tEnterprise\tBlocked")
+	_, _ = fmt.Fprintln(w, "----\t--\t--\t-----------\t----------\t-------")
 
 	for _, p := range policies {
 		upStr := ""
@@ -242,7 +242,7 @@ func runRPPolicyList(cmd *cobra.Command, args []string) error {
 			attStr = "(default)"
 		}
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%t\t%t\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%t\t%t\n",
 			p.RPID, uvStr, upStr, attStr, p.Enterprise, p.Blocked)
 	}
 
@@ -324,7 +324,7 @@ func runRPPolicySet(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrRPPolicySetFailed, err)
 	}
 
-	fmt.Fprintf(os.Stdout, "Policy set for RP: %s\n", rpid)
+	_, _ = fmt.Fprintf(os.Stdout, "Policy set for RP: %s\n", rpid)
 	return nil
 }
 
@@ -354,7 +354,7 @@ func runRPPolicyGet(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrRPPolicyMarshalFailed, err)
 	}
 
-	fmt.Fprintln(os.Stdout, string(data))
+	_, _ = fmt.Fprintln(os.Stdout, string(data))
 	return nil
 }
 
@@ -378,7 +378,7 @@ func runRPPolicyDelete(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrRPPolicyDeleteFailed, err)
 	}
 
-	fmt.Fprintf(os.Stdout, "Policy deleted for RP: %s\n", rpid)
+	_, _ = fmt.Fprintf(os.Stdout, "Policy deleted for RP: %s\n", rpid)
 	return nil
 }
 
@@ -411,18 +411,18 @@ func runFIDO2ProfileSet(cmd *cobra.Command, args []string) error {
 
 	// Print the profile settings that would be applied.
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "Setting\tValue")
-	fmt.Fprintln(w, "-------\t-----")
+	_, _ = fmt.Fprintln(w, "Setting\tValue")
+	_, _ = fmt.Fprintln(w, "-------\t-----")
 
 	if len(transports) > 0 {
-		fmt.Fprintf(w, "Transports\t%s\n", strings.Join(transports, ", "))
+		_, _ = fmt.Fprintf(w, "Transports\t%s\n", strings.Join(transports, ", "))
 	}
-	fmt.Fprintf(w, "Enterprise Attestation\t%t\n", enterpriseAttestation)
+	_, _ = fmt.Fprintf(w, "Enterprise Attestation\t%t\n", enterpriseAttestation)
 
 	if err := w.Flush(); err != nil {
 		return err
 	}
 
-	fmt.Fprintln(os.Stdout, "\nProfile settings displayed. Config file persistence is not yet implemented.")
+	_, _ = fmt.Fprintln(os.Stdout, "\nProfile settings displayed. Config file persistence is not yet implemented.")
 	return nil
 }

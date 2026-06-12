@@ -60,7 +60,11 @@ func setupExtendedTest(t *testing.T) *Service {
 		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
-	return NewService(nil, nil)
+	svc, err := xkms.Get()
+	if err != nil {
+		t.Fatalf("Failed to get xkms service: %v", err)
+	}
+	return NewService(nil, nil, svc)
 }
 
 // TestSymmetricEncryptDecrypt tests symmetric encryption and decryption flow

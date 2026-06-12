@@ -14,6 +14,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
@@ -28,13 +29,13 @@ import (
 // Signer returns a crypto.Signer for the specified key.
 // The returned signer can be used for signing operations without
 // exposing the private key material.
-func (c *compositeBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (c *compositeBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}
 
 	// Get signer from key provider
-	signer, err := c.backend.Signer(attrs)
+	signer, err := c.backend.Signer(ctx, attrs)
 	if err != nil {
 		return nil, &ErrCryptoOperation{Operation: "signer", Err: err}
 	}
@@ -45,13 +46,13 @@ func (c *compositeBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, er
 // Decrypter returns a crypto.Decrypter for the specified key.
 // The returned decrypter can be used for decryption operations without
 // exposing the private key material.
-func (c *compositeBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (c *compositeBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}
 
 	// Get decrypter from key provider
-	decrypter, err := c.backend.Decrypter(attrs)
+	decrypter, err := c.backend.Decrypter(ctx, attrs)
 	if err != nil {
 		return nil, &ErrCryptoOperation{Operation: "decrypter", Err: err}
 	}
@@ -68,7 +69,7 @@ func (c *compositeBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypt
 // from storage into a single tls.Certificate structure.
 //
 // The keyID is used to locate both the key (via attrs) and certificate.
-func (c *compositeBackend) GetTLSCertificate(keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
+func (c *compositeBackend) GetTLSCertificate(ctx context.Context, keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
 	if keyID == "" {
 		return tls.Certificate{}, ErrInvalidKeyID
 	}
@@ -77,20 +78,20 @@ func (c *compositeBackend) GetTLSCertificate(keyID string, attrs *types.KeyAttri
 	}
 
 	// Get the private key
-	privateKey, err := c.GetKey(attrs)
+	privateKey, err := c.GetKey(ctx, attrs)
 	if err != nil {
 		return tls.Certificate{}, &ErrKeyOperation{Operation: "get private key", Err: err}
 	}
 
 	// Get the certificate
-	cert, err := c.GetCert(keyID)
+	cert, err := c.GetCert(ctx, keyID)
 	if err != nil {
 		return tls.Certificate{}, &ErrCertOperation{Operation: "get certificate", Err: err}
 	}
 
 	// Try to get the certificate chain (optional)
 	var chain []*x509.Certificate
-	chain, err = c.GetCertChain(keyID)
+	chain, err = c.GetCertChain(ctx, keyID)
 	if err != nil {
 		// Chain is optional, just use the leaf certificate
 		chain = []*x509.Certificate{cert}

@@ -2,7 +2,7 @@
   import { createEventDispatcher } from 'svelte';
   import { toggleTheme, theme } from '../stores/theme';
 
-  export interface NavItem {
+  interface NavItem {
     label: string;
     icon: string;
     view: string;

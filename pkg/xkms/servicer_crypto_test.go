@@ -20,7 +20,7 @@ func TestSign_ECDSA_Success(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateECDSA(&types.KeyAttributes{
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{
 		CN:            "sign-ecdsa",
 		KeyAlgorithm:  x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
@@ -42,7 +42,7 @@ func TestSign_RSA_Success(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateRSA(&types.KeyAttributes{
+	_, err = software.GenerateRSA(context.Background(), &types.KeyAttributes{
 		CN:           "sign-rsa",
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
@@ -67,7 +67,7 @@ func TestSign_Ed25519_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	_, err = software.GenerateEd25519(&types.KeyAttributes{
+	_, err = software.GenerateEd25519(context.Background(), &types.KeyAttributes{
 		CN:           "sign-ed25519",
 		KeyAlgorithm: x509.Ed25519,
 	})
@@ -101,7 +101,7 @@ func TestVerify_Ed25519_InvalidSignature(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateEd25519(&types.KeyAttributes{
+	_, err = software.GenerateEd25519(context.Background(), &types.KeyAttributes{
 		CN:           "verify-ed25519-bad",
 		KeyAlgorithm: x509.Ed25519,
 	})
@@ -122,7 +122,7 @@ func TestVerify_RSA_InvalidSignature(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateRSA(&types.KeyAttributes{
+	_, err = software.GenerateRSA(context.Background(), &types.KeyAttributes{
 		CN:            "verify-rsa-bad",
 		KeyAlgorithm:  x509.RSA,
 		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
@@ -186,7 +186,7 @@ func TestVerify_ECDSA_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	_, err = software.GenerateECDSA(&types.KeyAttributes{
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{
 		CN:            "verify-ecdsa",
 		KeyAlgorithm:  x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
@@ -219,7 +219,7 @@ func TestVerify_ECDSA_InvalidSignature(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateECDSA(&types.KeyAttributes{
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{
 		CN:            "verify-bad",
 		KeyAlgorithm:  x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
@@ -243,7 +243,7 @@ func TestVerify_RSA_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	_, err = software.GenerateRSA(&types.KeyAttributes{
+	_, err = software.GenerateRSA(context.Background(), &types.KeyAttributes{
 		CN:            "verify-rsa",
 		KeyAlgorithm:  x509.RSA,
 		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
@@ -333,7 +333,7 @@ func TestEncryptAsym_RSA_Success(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateRSA(&types.KeyAttributes{
+	_, err = software.GenerateRSA(context.Background(), &types.KeyAttributes{
 		CN:            "encrypt-rsa",
 		KeyAlgorithm:  x509.RSA,
 		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
@@ -354,7 +354,7 @@ func TestEncryptAsym_NonRSAKey(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateECDSA(&types.KeyAttributes{
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{
 		CN:            "encrypt-ec",
 		KeyAlgorithm:  x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
@@ -523,7 +523,7 @@ func TestEncrypt_BackendNotSymmetric(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateECDSA(&types.KeyAttributes{
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{
 		CN:            "sym-test",
 		KeyAlgorithm:  x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
@@ -606,6 +606,54 @@ func TestEncryptAsym_KeyNotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestEncryptAsym_SHA1OAEPRejected verifies that RSA-OAEP with SHA-1 is
+// rejected with ErrWeakOAEPHash (F-14 security policy).
+func TestEncryptAsym_SHA1OAEPRejected(t *testing.T) {
+	software, _ := setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	_, err = software.GenerateRSA(context.Background(), &types.KeyAttributes{
+		CN:            "oaep-sha1-reject-key",
+		KeyAlgorithm:  x509.RSA,
+		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+	})
+	require.NoError(t, err)
+
+	_, err = svc.EncryptAsym(context.Background(), &transport.EncryptAsymRequest{
+		Backend:   "software",
+		KeyID:     "oaep-sha1-reject-key",
+		Plaintext: []byte("secret"),
+		Hash:      "sha1",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrWeakOAEPHash), "expected ErrWeakOAEPHash, got: %v", err)
+}
+
+// TestEncryptAsym_SHA256OAEPAccepted verifies that RSA-OAEP with SHA-256
+// continues to succeed after the F-14 policy change.
+func TestEncryptAsym_SHA256OAEPAccepted(t *testing.T) {
+	software, _ := setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	_, err = software.GenerateRSA(context.Background(), &types.KeyAttributes{
+		CN:            "oaep-sha256-accept-key",
+		KeyAlgorithm:  x509.RSA,
+		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+	})
+	require.NoError(t, err)
+
+	resp, err := svc.EncryptAsym(context.Background(), &transport.EncryptAsymRequest{
+		Backend:   "software",
+		KeyID:     "oaep-sha256-accept-key",
+		Plaintext: []byte("secret"),
+		Hash:      "sha256",
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp.Ciphertext)
+}
+
 func TestServicerDecrypt_NonDecrypterKey(t *testing.T) {
 	software, _ := setupService(t)
 	svc, err := Get()
@@ -613,7 +661,7 @@ func TestServicerDecrypt_NonDecrypterKey(t *testing.T) {
 
 	// ECDSA keys don't implement crypto.Decrypter, so asymmetric decrypt
 	// fallback should fail
-	_, err = software.GenerateECDSA(&types.KeyAttributes{
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{
 		CN:            "decrypt-ec",
 		KeyAlgorithm:  x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
@@ -634,7 +682,7 @@ func TestSign_DefaultHash(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateECDSA(&types.KeyAttributes{
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{
 		CN:            "sign-default-hash",
 		KeyAlgorithm:  x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
@@ -676,7 +724,7 @@ func TestDecryptAsym_RSA_OAEPMismatch(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	_, err = software.GenerateRSA(&types.KeyAttributes{
+	_, err = software.GenerateRSA(context.Background(), &types.KeyAttributes{
 		CN:            "decrypt-oaep-mismatch",
 		KeyAlgorithm:  x509.RSA,
 		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
@@ -692,7 +740,7 @@ func TestDecryptAsym_RSA_OAEPMismatch(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, encResp.Ciphertext)
 
-	// Decrypt through Decrypt() passes nil opts (PKCS1v15 by default)
+	// Decrypt through Decrypt(context.Background()) passes nil opts (PKCS1v15 by default)
 	// which is incompatible with OAEP-encrypted data, exercising the
 	// asymmetric decrypt error path
 	_, err = svc.Decrypt(ctx, &transport.DecryptRequest{

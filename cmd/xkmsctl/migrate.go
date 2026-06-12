@@ -96,7 +96,7 @@ var migratePlanCmd = &cobra.Command{
 		filter := buildMigrationFilter(cmd)
 
 		// Get migration plan
-		plan, err := migrator.MigrationPlan(filter)
+		plan, err := migrator.MigrationPlan(cmd.Context(), filter)
 		if err != nil {
 			cfg.Backend = originalBackend
 			handleError(fmt.Errorf("failed to create migration plan: %w", err))
@@ -186,7 +186,7 @@ var migrateExecuteCmd = &cobra.Command{
 		}
 
 		// Get migration plan first
-		plan, err := migrator.MigrationPlan(filter)
+		plan, err := migrator.MigrationPlan(cmd.Context(), filter)
 		if err != nil {
 			cfg.Backend = originalBackend
 			handleError(fmt.Errorf("failed to create migration plan: %w", err))
@@ -229,7 +229,7 @@ var migrateExecuteCmd = &cobra.Command{
 		}
 
 		// Execute migration
-		result, err := migrator.MigrateAll(filter, opts)
+		result, err := migrator.MigrateAll(cmd.Context(), filter, opts)
 		if err != nil {
 			cfg.Backend = originalBackend
 			handleError(fmt.Errorf("migration failed: %w", err))
@@ -306,7 +306,7 @@ var migrateValidateCmd = &cobra.Command{
 		}
 
 		// Validate
-		result, err := migrator.ValidateMigration(attrs)
+		result, err := migrator.ValidateMigration(cmd.Context(), attrs)
 		if err != nil {
 			cfg.Backend = originalBackend
 			handleError(fmt.Errorf("validation failed: %w", err))

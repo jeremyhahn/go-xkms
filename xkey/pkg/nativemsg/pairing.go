@@ -164,15 +164,15 @@ func (v *PairingVerifier) VerifyIdentity(identityKey, signature, ephemeralPubKey
 	if !ok {
 		// Origin not in map — might be a new extension or mismatch.
 		v.recordVerifyFailure()
-		return ErrIdentityOriginMismatch
 		v.logPairingEvent(audit.OpPairingIdentityFail, false, ErrIdentityOriginMismatch, map[string]any{"origin": origin})
+		return ErrIdentityOriginMismatch
 	}
 
 	// Check identity key matches stored key.
 	if !ed25519.PublicKey(state.IdentityKey).Equal(ed25519.PublicKey(identityKey)) {
 		v.recordVerifyFailure()
-		return ErrIdentityMismatch
 		v.logPairingEvent(audit.OpPairingIdentityFail, false, ErrIdentityMismatch, map[string]any{"origin": origin})
+		return ErrIdentityMismatch
 	}
 
 	// Verify signature: Ed25519_Sign(privkey, SHA256(ephemeralPubKey || origin || context)).
@@ -180,8 +180,8 @@ func (v *PairingVerifier) VerifyIdentity(identityKey, signature, ephemeralPubKey
 
 	if !ed25519.Verify(ed25519.PublicKey(identityKey), signData, signature) {
 		v.recordVerifyFailure()
-		return ErrIdentitySignature
 		v.logPairingEvent(audit.OpPairingIdentityFail, false, ErrIdentitySignature, map[string]any{"origin": origin})
+		return ErrIdentitySignature
 	}
 
 	// Success - reset failure counter.
@@ -251,20 +251,20 @@ func (v *PairingVerifier) CompletePairing(identityKey []byte, origin, code strin
 	// Verify code.
 	if v.pending.code != code {
 		v.recordPairingFailure()
-		return ErrPairingInvalidCode
 		v.logPairingEvent(audit.OpPairingFailed, false, ErrPairingInvalidCode, map[string]any{"origin": origin})
+		return ErrPairingInvalidCode
 	}
 
 	// Verify identity key and origin match the pending request.
 	if !ed25519.PublicKey(v.pending.identityKey).Equal(ed25519.PublicKey(identityKey)) {
 		v.recordPairingFailure()
-		return ErrPairingRejected
 		v.logPairingEvent(audit.OpPairingFailed, false, ErrPairingRejected, map[string]any{"origin": origin})
+		return ErrPairingRejected
 	}
 	if v.pending.origin != origin {
 		v.recordPairingFailure()
-		return ErrPairingRejected
 		v.logPairingEvent(audit.OpPairingFailed, false, ErrPairingRejected, map[string]any{"origin": origin})
+		return ErrPairingRejected
 	}
 
 	// Upsert the pairing into the map.
@@ -440,7 +440,7 @@ func (v *PairingVerifier) saveLocked() error {
 		return fmt.Errorf("nativemsg: failed to write pairing temp file: %w", err)
 	}
 	if err := os.Rename(tmpPath, v.statePath); err != nil {
-		os.Remove(tmpPath) // Clean up temp file on rename failure.
+		_ = os.Remove(tmpPath) // Clean up temp file on rename failure.
 		return fmt.Errorf("nativemsg: failed to rename pairing temp file: %w", err)
 	}
 	return nil

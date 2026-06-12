@@ -34,7 +34,6 @@ type mockTrustStore struct {
 	certs    map[truststore.CertPurpose][]*x509.Certificate
 	allCerts []*x509.Certificate
 	err      error
-	closed   bool
 }
 
 func newMockTrustStore() *mockTrustStore {

@@ -93,11 +93,14 @@ type BarrierInitializeShamirRequest struct {
 	TotalShares int    `json:"total_shares"`
 }
 
-// BarrierInitializeShamirResponse represents the response from Shamir initialization.
+// BarrierInitializeShamirResponse represents the response from Shamir
+// initialization. Share material is never returned (qrdb share-free
+// contract): shares are sealed to enrolled Security Officers; only the
+// threshold/total metadata is reported.
 type BarrierInitializeShamirResponse struct {
-	Shares      []string `json:"shares"`
-	Threshold   int      `json:"threshold"`
-	TotalShares int      `json:"total_shares"`
+	Threshold   int `json:"threshold"`
+	TotalShares int `json:"total_shares"`
+	ShareCount  int `json:"share_count"`
 }
 
 // BarrierUnsealShareRequest represents a request to submit a single Shamir share.
@@ -119,10 +122,12 @@ type BarrierRekeyRequest struct {
 }
 
 // BarrierRekeyResponse represents the response from a rekey operation.
+// New shares are sealed to enrolled Security Officers and never returned
+// (qrdb share-free contract); only the threshold/total metadata is reported.
 type BarrierRekeyResponse struct {
-	Shares      []string `json:"shares"`
-	Threshold   int      `json:"threshold"`
-	TotalShares int      `json:"total_shares"`
+	Threshold   int `json:"threshold"`
+	TotalShares int `json:"total_shares"`
+	ShareCount  int `json:"share_count"`
 }
 
 // BarrierGenerateRecoveryKeysRequest represents a request to generate recovery keys.
@@ -131,11 +136,14 @@ type BarrierGenerateRecoveryKeysRequest struct {
 	Total     int `json:"total"`
 }
 
-// BarrierRecoveryKeysResponse represents the response from generating recovery keys.
+// BarrierRecoveryKeysResponse represents the response from generating
+// recovery keys. Recovery shares are sealed to enrolled recovery officers
+// and never returned (qrdb share-free contract); only the threshold/total
+// metadata is reported.
 type BarrierRecoveryKeysResponse struct {
-	Keys      []string `json:"keys"`
-	Threshold int      `json:"threshold"`
-	Total     int      `json:"total"`
+	Threshold  int `json:"threshold"`
+	Total      int `json:"total"`
+	ShareCount int `json:"share_count"`
 }
 
 // BarrierRecoverWithKeysRequest represents a request to recover the barrier using recovery keys.
@@ -303,9 +311,9 @@ func (s *barrierService) InitializeShamir(ctx context.Context, req *BarrierIniti
 		slog.Int("threshold", resp.Threshold),
 		slog.Int("total_shares", resp.TotalShares))
 	return &BarrierInitializeShamirResponse{
-		Shares:      resp.Shares,
 		Threshold:   resp.Threshold,
 		TotalShares: resp.TotalShares,
+		ShareCount:  resp.ShareCount,
 	}, nil
 }
 
@@ -347,9 +355,9 @@ func (s *barrierService) Rekey(ctx context.Context, req *BarrierRekeyRequest) (*
 		slog.Int("threshold", resp.Threshold),
 		slog.Int("total_shares", resp.TotalShares))
 	return &BarrierRekeyResponse{
-		Shares:      resp.Shares,
 		Threshold:   resp.Threshold,
 		TotalShares: resp.TotalShares,
+		ShareCount:  resp.ShareCount,
 	}, nil
 }
 
@@ -369,9 +377,9 @@ func (s *barrierService) GenerateRecoveryKeys(ctx context.Context, req *BarrierG
 		slog.Int("threshold", resp.Threshold),
 		slog.Int("total", resp.Total))
 	return &BarrierRecoveryKeysResponse{
-		Keys:      resp.Keys,
-		Threshold: resp.Threshold,
-		Total:     resp.Total,
+		Threshold:  resp.Threshold,
+		Total:      resp.Total,
+		ShareCount: resp.ShareCount,
 	}, nil
 }
 

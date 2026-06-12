@@ -14,6 +14,7 @@
 package tpm2
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"errors"
@@ -36,7 +37,7 @@ func TestListKeys_ReadDirError(t *testing.T) {
 	// Try to list keys from a file (not directory) - this will cause ReadDir to fail
 	// with an error that is NOT os.IsNotExist
 	b := &Backend{closed: false, config: &Config{KeyDir: notADir}}
-	_, err := b.ListKeys()
+	_, err := b.ListKeys(context.Background())
 	if err == nil {
 		t.Error("Expected error when listing keys from a file path")
 	}
@@ -51,7 +52,7 @@ func TestDecrypter_KeyDoesNotImplementDecrypter(t *testing.T) {
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: mockKb, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	_, err := b.Decrypter(attrs)
+	_, err := b.Decrypter(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error because tpm2Signer does not implement crypto.Decrypter")
 	}
@@ -67,7 +68,7 @@ func TestDecrypter_GetKeyError(t *testing.T) {
 	b := &Backend{closed: false, tpm: &mockTPM{}, keyBackend: mockKb, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "nonexistent"}
-	_, err := b.Decrypter(attrs)
+	_, err := b.Decrypter(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when GetKey fails")
 	}
@@ -83,7 +84,7 @@ func TestSigner_GetKeyError(t *testing.T) {
 	b := &Backend{closed: false, tpm: &mockTPM{}, keyBackend: mockKb, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "nonexistent"}
-	_, err := b.Signer(attrs)
+	_, err := b.Signer(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when GetKey fails")
 	}
@@ -134,7 +135,7 @@ func TestBackend_DeleteKey_PreservesExistingParent(t *testing.T) {
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "test-key", Parent: existingParent}
-	err := b.DeleteKey(attrs)
+	err := b.DeleteKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("DeleteKey() error = %v", err)
 	}
@@ -163,7 +164,7 @@ func TestListKeys_SkipsNonBlobFiles(t *testing.T) {
 	}
 
 	b := &Backend{closed: false, config: &Config{KeyDir: tmpDir}}
-	keys, err := b.ListKeys()
+	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys() error = %v", err)
 	}
@@ -275,12 +276,12 @@ func TestBackend_ClosedState_AllMethods(t *testing.T) {
 		name string
 		fn   func() error
 	}{
-		{"GenerateKey", func() error { _, err := b.GenerateKey(attrs); return err }},
-		{"GetKey", func() error { _, err := b.GetKey(attrs); return err }},
-		{"DeleteKey", func() error { return b.DeleteKey(attrs) }},
-		{"ListKeys", func() error { _, err := b.ListKeys(); return err }},
-		{"Signer", func() error { _, err := b.Signer(attrs); return err }},
-		{"Decrypter", func() error { _, err := b.Decrypter(attrs); return err }},
+		{"GenerateKey", func() error { _, err := b.GenerateKey(context.Background(), attrs); return err }},
+		{"GetKey", func() error { _, err := b.GetKey(context.Background(), attrs); return err }},
+		{"DeleteKey", func() error { return b.DeleteKey(context.Background(), attrs) }},
+		{"ListKeys", func() error { _, err := b.ListKeys(context.Background()); return err }},
+		{"Signer", func() error { _, err := b.Signer(context.Background(), attrs); return err }},
+		{"Decrypter", func() error { _, err := b.Decrypter(context.Background(), attrs); return err }},
 	}
 
 	for _, tt := range tests {
@@ -301,9 +302,9 @@ func TestBackend_NilAttributesAllMethods(t *testing.T) {
 		name string
 		fn   func() error
 	}{
-		{"GenerateKey", func() error { _, err := b.GenerateKey(nil); return err }},
-		{"GetKey", func() error { _, err := b.GetKey(nil); return err }},
-		{"DeleteKey", func() error { return b.DeleteKey(nil) }},
+		{"GenerateKey", func() error { _, err := b.GenerateKey(context.Background(), nil); return err }},
+		{"GetKey", func() error { _, err := b.GetKey(context.Background(), nil); return err }},
+		{"DeleteKey", func() error { return b.DeleteKey(context.Background(), nil) }},
 	}
 
 	for _, tt := range tests {

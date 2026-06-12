@@ -41,7 +41,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -110,9 +109,6 @@ type JSONRPCError struct {
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data,omitempty"`
 }
-
-// methodMapper defines how service/method pairs map to MCP method names.
-type methodMapper func(service, method string) string
 
 // MethodHandler is a function type for handling method dispatch.
 type MethodHandler func(service, method string) string
@@ -445,16 +441,18 @@ func NewTransport(cfg *transport.Config, opts ...Option) (transport.Transport, e
 
 	baseURL := buildBaseURL(parsed, cfg.Insecure)
 
-	// Configure HTTP transport with TLS if needed.
+	// Insecure mode without an explicit TLSConfig is forbidden; callers must
+	// supply a root CA pool or an SPKI-pinned config. Return an error so the
+	// misconfiguration is caught at construction time rather than silently
+	// connecting without certificate verification.
+	if cfg.Insecure && cfg.TLSConfig == nil {
+		return nil, errors.NewInvalidInput("mcp.NewTransport",
+			"Insecure=true requires an explicit TLSConfig with RootCAs or VerifyConnection; InsecureSkipVerify is forbidden")
+	}
+
+	// Configure HTTP transport with TLS.
 	tlsConfig := cfg.TLSConfig
-	if tlsConfig == nil && cfg.Insecure {
-		slog.Warn("acme/mcp: TLS certificate verification disabled via Insecure=true; do not use in production",
-			"address", cfg.Address)
-		tlsConfig = &tls.Config{
-			MinVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: true, //nolint:gosec // Intentional for dev/testing
-		}
-	} else if tlsConfig == nil {
+	if tlsConfig == nil {
 		tlsConfig = &tls.Config{
 			MinVersion: tls.VersionTLS13,
 		}

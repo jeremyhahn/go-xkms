@@ -59,7 +59,7 @@ func setupClusterTestHandlers(t *testing.T, reader xkms.ClusterReader, shardID, 
 	svc.SetClusterClient(reader, shardID, nodeID)
 	t.Cleanup(func() { xkms.Reset() })
 
-	handlers := NewClusterHandlers()
+	handlers := NewClusterHandlers(svc)
 	r := chi.NewRouter()
 	r.Route("/cluster", func(r chi.Router) {
 		r.Get("/status", handlers.StatusHandler)
@@ -147,7 +147,7 @@ func TestClusterStatusHandler_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	t.Cleanup(func() { xkms.Reset() })
 
-	handlers := NewClusterHandlers()
+	handlers := NewClusterHandlers(nil)
 	req := httptest.NewRequest(http.MethodGet, "/cluster/status", nil)
 	rr := httptest.NewRecorder()
 	handlers.StatusHandler(rr, req)

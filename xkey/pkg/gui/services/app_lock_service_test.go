@@ -122,7 +122,7 @@ func TestAppLockService_SetContext(t *testing.T) {
 
 func TestAppLockService_SetContext_Nil(t *testing.T) {
 	svc := newTestAppLockService(t, nil)
-	svc.SetContext(nil)
+	svc.SetContext(nil) //nolint:staticcheck // SA1012: intentionally testing nil-context handling
 	assert.Nil(t, svc.ctx)
 }
 

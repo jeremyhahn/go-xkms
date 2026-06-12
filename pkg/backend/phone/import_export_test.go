@@ -43,7 +43,7 @@ func TestBackend_ExportPublicKey_Success(t *testing.T) {
 	b := newTestBackend(t, sender)
 	attrs := ecdsaP256Attrs("test-key")
 
-	pubKey, err := b.ExportPublicKey(attrs, "der")
+	pubKey, err := b.ExportPublicKey(context.Background(), attrs, "der")
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -67,7 +67,7 @@ func TestBackend_ExportPublicKey_PEMFormat(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	pubKey, err := b.ExportPublicKey(ecdsaP256Attrs("test-key"), "pem")
+	pubKey, err := b.ExportPublicKey(context.Background(), ecdsaP256Attrs("test-key"), "pem")
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -81,7 +81,7 @@ func TestBackend_ExportPublicKey_Closed(t *testing.T) {
 	b := newTestBackend(t, sender)
 	_ = b.Close()
 
-	_, err := b.ExportPublicKey(ecdsaP256Attrs("test-key"), "der")
+	_, err := b.ExportPublicKey(context.Background(), ecdsaP256Attrs("test-key"), "der")
 	if err != ErrBackendClosed {
 		t.Errorf("expected ErrBackendClosed, got %v", err)
 	}
@@ -96,7 +96,7 @@ func TestBackend_ExportPublicKey_RPCError(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.ExportPublicKey(ecdsaP256Attrs("missing"), "der")
+	_, err := b.ExportPublicKey(context.Background(), ecdsaP256Attrs("missing"), "der")
 	if err != ErrKeyNotFound {
 		t.Errorf("expected ErrKeyNotFound, got %v", err)
 	}
@@ -108,7 +108,7 @@ func TestBackend_GetImportParameters_NotSupported(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.GetImportParameters(ecdsaP256Attrs("test-key"), backend.WrappingAlgorithm("RSA-OAEP"))
+	_, err := b.GetImportParameters(context.Background(), ecdsaP256Attrs("test-key"), backend.WrappingAlgorithm("RSA-OAEP"))
 	if err != ErrImportNotSupported {
 		t.Errorf("expected ErrImportNotSupported, got %v", err)
 	}
@@ -118,7 +118,7 @@ func TestBackend_GetImportParameters_NilAttrs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.GetImportParameters(nil, backend.WrappingAlgorithm("RSA-OAEP"))
+	_, err := b.GetImportParameters(context.Background(), nil, backend.WrappingAlgorithm("RSA-OAEP"))
 	if err != ErrImportNotSupported {
 		t.Errorf("expected ErrImportNotSupported regardless of attrs, got %v", err)
 	}
@@ -130,7 +130,7 @@ func TestBackend_WrapKey_NotSupported(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.WrapKey([]byte("key-material"), &backend.ImportParameters{})
+	_, err := b.WrapKey(context.Background(), []byte("key-material"), &backend.ImportParameters{})
 	if err != ErrExportNotSupported {
 		t.Errorf("expected ErrExportNotSupported, got %v", err)
 	}
@@ -140,7 +140,7 @@ func TestBackend_WrapKey_NilParams(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.WrapKey([]byte("key-material"), nil)
+	_, err := b.WrapKey(context.Background(), []byte("key-material"), nil)
 	if err != ErrExportNotSupported {
 		t.Errorf("expected ErrExportNotSupported regardless of params, got %v", err)
 	}
@@ -152,7 +152,7 @@ func TestBackend_UnwrapKey_NotSupported(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.UnwrapKey(&backend.WrappedKeyMaterial{}, &backend.ImportParameters{})
+	_, err := b.UnwrapKey(context.Background(), &backend.WrappedKeyMaterial{}, &backend.ImportParameters{})
 	if err != ErrImportNotSupported {
 		t.Errorf("expected ErrImportNotSupported, got %v", err)
 	}
@@ -162,7 +162,7 @@ func TestBackend_UnwrapKey_NilInputs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.UnwrapKey(nil, nil)
+	_, err := b.UnwrapKey(context.Background(), nil, nil)
 	if err != ErrImportNotSupported {
 		t.Errorf("expected ErrImportNotSupported regardless of nil inputs, got %v", err)
 	}
@@ -174,7 +174,7 @@ func TestBackend_ImportKey_NotSupported(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	err := b.ImportKey(ecdsaP256Attrs("test-key"), &backend.WrappedKeyMaterial{})
+	err := b.ImportKey(context.Background(), ecdsaP256Attrs("test-key"), &backend.WrappedKeyMaterial{})
 	if err != ErrImportNotSupported {
 		t.Errorf("expected ErrImportNotSupported, got %v", err)
 	}
@@ -184,7 +184,7 @@ func TestBackend_ImportKey_NilInputs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	err := b.ImportKey(nil, nil)
+	err := b.ImportKey(context.Background(), nil, nil)
 	if err != ErrImportNotSupported {
 		t.Errorf("expected ErrImportNotSupported regardless of nil inputs, got %v", err)
 	}
@@ -196,7 +196,7 @@ func TestBackend_ExportKey_NotSupported(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.ExportKey(ecdsaP256Attrs("test-key"), backend.WrappingAlgorithm("RSA-OAEP"))
+	_, err := b.ExportKey(context.Background(), ecdsaP256Attrs("test-key"), backend.WrappingAlgorithm("RSA-OAEP"))
 	if err != ErrExportNotSupported {
 		t.Errorf("expected ErrExportNotSupported, got %v", err)
 	}
@@ -206,7 +206,7 @@ func TestBackend_ExportKey_NilAttrs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.ExportKey(nil, backend.WrappingAlgorithm(""))
+	_, err := b.ExportKey(context.Background(), nil, backend.WrappingAlgorithm(""))
 	if err != ErrExportNotSupported {
 		t.Errorf("expected ErrExportNotSupported regardless of nil attrs, got %v", err)
 	}
@@ -218,7 +218,7 @@ func TestBackend_ExportKeyMaterial_NotSupported(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.ExportKeyMaterial(ecdsaP256Attrs("test-key"))
+	_, err := b.ExportKeyMaterial(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrExportNotSupported {
 		t.Errorf("expected ErrExportNotSupported, got %v", err)
 	}
@@ -228,7 +228,7 @@ func TestBackend_ExportKeyMaterial_NilAttrs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.ExportKeyMaterial(nil)
+	_, err := b.ExportKeyMaterial(context.Background(), nil)
 	if err != ErrExportNotSupported {
 		t.Errorf("expected ErrExportNotSupported regardless of nil attrs, got %v", err)
 	}

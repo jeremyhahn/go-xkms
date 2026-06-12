@@ -229,12 +229,7 @@ type TLSConfig struct {
 	CertFile string
 	// KeyFile is the path to the client key.
 	KeyFile string
-	// CAFile is the path to the CA certificate.
+	// CAFile is the path to the CA certificate. Supply this to verify the
+	// server certificate against a private CA instead of the system pool.
 	CAFile string
-	// InsecureSkipVerify disables server certificate verification.
-	//
-	// Deprecated: Use a properly issued certificate or pin the server's SPKI via
-	// pkg/crypto/spki. This field is retained for integration testing with
-	// self-signed certificates; production code paths must leave it false.
-	InsecureSkipVerify bool
 }

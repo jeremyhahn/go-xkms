@@ -16,6 +16,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -43,7 +44,7 @@ func TestHandleDeleteKey_SymmetricFallback(t *testing.T) {
 		Params:  paramsJSON,
 	}
 
-	_, err = server.handleDeleteKey(req)
+	_, err = server.handleDeleteKey(context.Background(), req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to find key")
 }
@@ -65,7 +66,7 @@ func TestHandleDeleteKey_SpecificBackendNotFound(t *testing.T) {
 		Params:  paramsJSON,
 	}
 
-	_, err = server.handleDeleteKey(req)
+	_, err = server.handleDeleteKey(context.Background(), req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to find key")
 }
@@ -87,7 +88,7 @@ func TestHandleListKeys_InvalidBackend(t *testing.T) {
 		Params:  paramsJSON,
 	}
 
-	_, err = server.handleListKeys(req)
+	_, err = server.handleListKeys(context.Background(), req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "backend not found")
 }
@@ -104,7 +105,7 @@ func TestHandleImportKeyMaterial_InvalidParams(t *testing.T) {
 		Params:  json.RawMessage(`{invalid`),
 	}
 
-	_, err := server.handleImportKeyMaterial(req)
+	_, err := server.handleImportKeyMaterial(context.Background(), req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid params")
 }
@@ -121,7 +122,7 @@ func TestHandleExportKeyMaterial_InvalidParams(t *testing.T) {
 		Params:  json.RawMessage(`{invalid`),
 	}
 
-	_, err := server.handleExportKeyMaterial(req)
+	_, err := server.handleExportKeyMaterial(context.Background(), req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid params")
 }

@@ -220,7 +220,8 @@ func createMockTokenServer(t *testing.T, privateKey *rsa.PrivateKey) *httptest.S
 		}
 
 		grantType := r.FormValue("grant_type")
-		if grantType == "authorization_code" {
+		switch grantType {
+		case "authorization_code":
 			code := r.FormValue("code")
 			if code == "" {
 				w.WriteHeader(http.StatusBadRequest)
@@ -239,7 +240,7 @@ func createMockTokenServer(t *testing.T, privateKey *rsa.PrivateKey) *httptest.S
 				})
 				return
 			}
-		} else if grantType == "refresh_token" {
+		case "refresh_token":
 			refreshToken := r.FormValue("refresh_token")
 			if refreshToken == "" {
 				w.WriteHeader(http.StatusBadRequest)

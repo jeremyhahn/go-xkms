@@ -62,12 +62,20 @@ func (m *mockHealthChecker) Startup(ctx context.Context) health.CheckResult {
 	return m.StartupResult
 }
 
-// Helper to create a new HandlerContext for testing
+// newTestHandlerContext creates a HandlerContext for testing.
+// If the global xkms service has been initialized (e.g. by setupTestService),
+// it is automatically injected so handler methods can reach backends.
 func newTestHandlerContext() *HandlerContext {
-	return NewHandlerContext("1.0.0")
+	h := NewHandlerContext("1.0.0")
+	if svc, err := xkms.Get(); err == nil {
+		h.SetXKMSService(svc)
+	}
+	return h
 }
 
-// setupTestService initializes the xkms service with a mock backend for testing
+// setupTestService initializes the xkms service with a mock backend for testing.
+// It returns both the mock key store and the initialized service so callers can
+// inject the service into a HandlerContext via SetXKMSService when needed.
 func setupTestService(t *testing.T, backendName string) *xkmsmocks.MockKeyStore {
 	t.Helper()
 	ks := xkmsmocks.NewMockKeyStore()

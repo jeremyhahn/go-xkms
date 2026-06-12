@@ -73,6 +73,9 @@ func TestOIDConstants_NonNil(t *testing.T) {
 
 		// Tenant ID
 		{name: "OIDTPTenantID", oid: OIDTPTenantID, expectedLen: 9},
+
+		// Network Zone
+		{name: "OIDTPNetworkZone", oid: OIDTPNetworkZone, expectedLen: 9},
 	}
 
 	for _, tt := range tests {
@@ -1247,6 +1250,7 @@ func TestAllCreateExtensions_AreNonCritical(t *testing.T) {
 		{name: "TPIssuerKeyStore", builder: func() (pkix.Extension, error) { return CreateTPIssuerKeyStoreExtension("PKCS11") }},
 		{name: "TPFIPS140", builder: func() (pkix.Extension, error) { return CreateTPFIPS140Extension(true) }},
 		{name: "TenantID", builder: func() (pkix.Extension, error) { return CreateTenantIDExtension("tenant-1") }},
+		{name: "NetworkZone", builder: func() (pkix.Extension, error) { return CreateNetworkZoneExtension("trusted") }},
 	}
 
 	for _, b := range builders {
@@ -1321,6 +1325,8 @@ func TestAllCreateExtensions_HaveDistinctOIDs(t *testing.T) {
 	addExt("TPFIPS140", ext, err)
 	ext, err = CreateTenantIDExtension("tenant-1")
 	addExt("TenantID", ext, err)
+	ext, err = CreateNetworkZoneExtension("trusted")
+	addExt("NetworkZone", ext, err)
 
 	// Verify all OIDs are distinct
 	seen := make(map[string]string)
@@ -1385,6 +1391,7 @@ func TestOIDTrustedPlatform_EnterpriseNumberPrefix(t *testing.T) {
 		{"OIDQuantumAlgorithm", OIDQuantumAlgorithm},
 		{"OIDQuantumSignature", OIDQuantumSignature},
 		{"OIDTPTenantID", OIDTPTenantID},
+		{"OIDTPNetworkZone", OIDTPNetworkZone},
 	}
 
 	for _, tt := range tpOIDs {
@@ -1403,5 +1410,149 @@ func TestOIDTrustedPlatform_EnterpriseNumberPrefix(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// =============================================================================
+// NetworkZone Extension Tests
+// =============================================================================
+
+func TestCreateNetworkZoneExtension_Success(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		zone string
+	}{
+		{name: "Trusted", zone: "trusted"},
+		{name: "Provisioning", zone: "provisioning"},
+		{name: "Quarantine", zone: "quarantine"},
+		{name: "Management", zone: "management"},
+		{name: "CustomZone", zone: "tenant-a/edge"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ext, err := CreateNetworkZoneExtension(tt.zone)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			requireValidExtension(t, ext, OIDTPNetworkZone)
+
+			var decoded TCGNetworkZone
+			if _, unmarshalErr := asn1.Unmarshal(ext.Value, &decoded); unmarshalErr != nil {
+				t.Fatalf("failed to unmarshal network zone: %v", unmarshalErr)
+			}
+			if decoded.Zone != tt.zone {
+				t.Errorf("Zone mismatch: expected %q, got %q", tt.zone, decoded.Zone)
+			}
+		})
+	}
+}
+
+func TestCreateNetworkZoneExtension_EmptyZone_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	_, err := CreateNetworkZoneExtension("")
+	if err == nil {
+		t.Fatal("expected error for empty zone, got nil")
+	}
+	if !errors.Is(err, ErrTCGNetworkZoneEmpty) {
+		t.Errorf("expected ErrTCGNetworkZoneEmpty, got %v", err)
+	}
+}
+
+func TestParseNetworkZoneExtension_Roundtrip(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		zone string
+	}{
+		{name: "Trusted", zone: "trusted"},
+		{name: "Provisioning", zone: "provisioning"},
+		{name: "Quarantine", zone: "quarantine"},
+		{name: "UnicodeZone", zone: "zone-édge"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ext, err := CreateNetworkZoneExtension(tt.zone)
+			if err != nil {
+				t.Fatalf("create failed: %v", err)
+			}
+
+			got, parseErr := ParseNetworkZoneExtension(ext)
+			if parseErr != nil {
+				t.Fatalf("parse failed: %v", parseErr)
+			}
+			if got != tt.zone {
+				t.Errorf("zone mismatch: expected %q, got %q", tt.zone, got)
+			}
+		})
+	}
+}
+
+func TestParseNetworkZoneExtension_WrongOID_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	// Build a valid extension but with the wrong OID (use TenantID OID instead).
+	wrongExt, err := CreateTenantIDExtension("some-tenant")
+	if err != nil {
+		t.Fatalf("create tenant ext failed: %v", err)
+	}
+
+	_, parseErr := ParseNetworkZoneExtension(wrongExt)
+	if parseErr == nil {
+		t.Fatal("expected error for wrong OID, got nil")
+	}
+	if !errors.Is(parseErr, ErrTCGExtensionParsing) {
+		t.Errorf("expected ErrTCGExtensionParsing, got %v", parseErr)
+	}
+}
+
+func TestParseNetworkZoneExtension_InvalidASN1_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	badExt := pkix.Extension{
+		Id:    OIDTPNetworkZone,
+		Value: []byte{0xFF, 0xFF, 0xFF},
+	}
+
+	_, err := ParseNetworkZoneExtension(badExt)
+	if err == nil {
+		t.Fatal("expected error for invalid ASN.1 data, got nil")
+	}
+	if !errors.Is(err, ErrTCGExtensionParsing) {
+		t.Errorf("expected ErrTCGExtensionParsing, got %v", err)
+	}
+}
+
+func TestNetworkZoneExtension_EncodingStability(t *testing.T) {
+	t.Parallel()
+
+	// Verify that the DER encoding for "trusted" is stable across calls.
+	ext1, err := CreateNetworkZoneExtension("trusted")
+	if err != nil {
+		t.Fatalf("first create failed: %v", err)
+	}
+	ext2, err := CreateNetworkZoneExtension("trusted")
+	if err != nil {
+		t.Fatalf("second create failed: %v", err)
+	}
+
+	if !bytes.Equal(ext1.Value, ext2.Value) {
+		t.Errorf("encoding is not stable: first=%x second=%x", ext1.Value, ext2.Value)
+	}
+
+	// The encoding must be a valid ASN.1 SEQUENCE containing a UTF8String.
+	// Verify the outer tag is SEQUENCE (0x30).
+	if len(ext1.Value) == 0 || ext1.Value[0] != 0x30 {
+		t.Errorf("expected SEQUENCE tag 0x30, got 0x%02x", ext1.Value[0])
 	}
 }

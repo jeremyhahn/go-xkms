@@ -26,7 +26,7 @@ func TestBackendStorage_StoreAndExists(t *testing.T) {
 	store := NewBackendStorage(storage.NewMemory())
 	serial := big.NewInt(123456789)
 
-	exists, err := store.SerialExists(serial)
+	exists, err := store.SerialExists(context.Background(), serial)
 	if err != nil {
 		t.Fatalf("SerialExists: %v", err)
 	}
@@ -34,10 +34,10 @@ func TestBackendStorage_StoreAndExists(t *testing.T) {
 		t.Fatalf("SerialExists before store = true, want false")
 	}
 
-	if err := store.StoreSerial(serial); err != nil {
+	if err := store.StoreSerial(context.Background(), serial); err != nil {
 		t.Fatalf("StoreSerial: %v", err)
 	}
-	exists, err = store.SerialExists(serial)
+	exists, err = store.SerialExists(context.Background(), serial)
 	if err != nil {
 		t.Fatalf("SerialExists: %v", err)
 	}
@@ -53,10 +53,10 @@ func TestBackendStorage_SurvivesNewInstance(t *testing.T) {
 	backend := storage.NewMemory()
 	serial := big.NewInt(987654321)
 
-	if err := NewBackendStorage(backend).StoreSerial(serial); err != nil {
+	if err := NewBackendStorage(backend).StoreSerial(context.Background(), serial); err != nil {
 		t.Fatalf("StoreSerial: %v", err)
 	}
-	exists, err := NewBackendStorage(backend).SerialExists(serial)
+	exists, err := NewBackendStorage(backend).SerialExists(context.Background(), serial)
 	if err != nil {
 		t.Fatalf("SerialExists: %v", err)
 	}
@@ -69,10 +69,10 @@ func TestBackendStorage_NilSerial(t *testing.T) {
 	store := NewBackendStorage(storage.NewMemory())
 
 	var verr *SerialValidationError
-	if _, err := store.SerialExists(nil); !errors.As(err, &verr) {
+	if _, err := store.SerialExists(context.Background(), nil); !errors.As(err, &verr) {
 		t.Fatalf("SerialExists(nil) = %v, want *SerialValidationError", err)
 	}
-	if err := store.StoreSerial(nil); !errors.As(err, &verr) {
+	if err := store.StoreSerial(context.Background(), nil); !errors.As(err, &verr) {
 		t.Fatalf("StoreSerial(nil) = %v, want *SerialValidationError", err)
 	}
 }
@@ -84,10 +84,10 @@ func TestBackendStorage_BackendErrorWrapped(t *testing.T) {
 	serial := big.NewInt(42)
 
 	var serr *SerialStorageError
-	if _, err := store.SerialExists(serial); !errors.As(err, &serr) {
+	if _, err := store.SerialExists(context.Background(), serial); !errors.As(err, &serr) {
 		t.Fatalf("SerialExists on closed backend = %v, want *SerialStorageError", err)
 	}
-	if err := store.StoreSerial(serial); !errors.As(err, &serr) {
+	if err := store.StoreSerial(context.Background(), serial); !errors.As(err, &serr) {
 		t.Fatalf("StoreSerial on closed backend = %v, want *SerialStorageError", err)
 	}
 }
@@ -96,7 +96,7 @@ func TestBackendStorage_BackendErrorWrapped(t *testing.T) {
 // documented prefix so they share a clean namespace in the datastore.
 func TestBackendStorage_KeyNamespace(t *testing.T) {
 	backend := storage.NewMemory()
-	if err := NewBackendStorage(backend).StoreSerial(big.NewInt(7)); err != nil {
+	if err := NewBackendStorage(backend).StoreSerial(context.Background(), big.NewInt(7)); err != nil {
 		t.Fatalf("StoreSerial: %v", err)
 	}
 	keys, err := backend.List(context.Background(), SerialKeyPrefix)

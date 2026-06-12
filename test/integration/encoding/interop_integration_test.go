@@ -23,7 +23,6 @@ import (
 
 	jwtgo "github.com/golang-jwt/jwt/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwe"
-	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,15 +35,14 @@ func TestEncodingInterop_JWK_JWT(t *testing.T) {
 		defer setup.Close()
 
 		// 1. Generate key in xkms
-		keyID := "pkcs8:interop-rsa-jwt-key"
+		keyID := "software:signing:rsa:interop-rsa-jwt-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
-		// 2. Create JWK from xkms key
-		jwkKey, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
+		// 2. Create public JWK from the xkms-resident key
+		jwkKey, err := setup.PublicJWK(keyID)
 		require.NoError(t, err)
 		assert.Equal(t, keyID, jwkKey.Kid)
-		assert.True(t, jwkKey.IsXKMSBacked())
 
 		// 3. Use xkms to sign JWT (using JWK's kid)
 		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
@@ -82,12 +80,12 @@ func TestEncodingInterop_JWK_JWT(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		keyID := "pkcs8:interop-ecdsa-jwt-key"
+		keyID := "software:signing:ecdsa-p256:interop-ecdsa-jwt-key"
 		err := setup.GenerateECDSAKey(keyID, elliptic.P256())
 		require.NoError(t, err)
 
 		// Create JWK
-		jwkKey, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
+		jwkKey, err := setup.PublicJWK(keyID)
 		require.NoError(t, err)
 
 		// Sign JWT
@@ -114,14 +112,14 @@ func TestEncodingInterop_JWK_JWE(t *testing.T) {
 		defer setup.Close()
 
 		// 1. Generate key in xkms
-		keyID := "pkcs8:interop-rsa-jwe-key"
+		keyID := "software:encryption:rsa:interop-rsa-jwe-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
-		// 2. Create JWK from xkms key
-		jwkKey, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
+		// 2. Create public JWK from the xkms-resident key
+		jwkKey, err := setup.PublicJWK(keyID)
 		require.NoError(t, err)
-		assert.True(t, jwkKey.IsXKMSBacked())
+		assert.Equal(t, keyID, jwkKey.Kid)
 
 		// 3. Extract public key from JWK for encryption
 		publicKey, err := jwkKey.ToPublicKey()
@@ -152,12 +150,12 @@ func TestEncodingInterop_JWK_JWE(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		keyID := "pkcs8:interop-ecdh-jwe-key"
+		keyID := "software:encryption:ecdsa-p384:interop-ecdh-jwe-key"
 		err := setup.GenerateECDSAKey(keyID, elliptic.P384())
 		require.NoError(t, err)
 
 		// Create JWK
-		jwkKey, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
+		jwkKey, err := setup.PublicJWK(keyID)
 		require.NoError(t, err)
 
 		// Use JWK for ECDH-based encryption
@@ -190,12 +188,12 @@ func TestEncodingInterop_JWT_JWE(t *testing.T) {
 		defer setup.Close()
 
 		// Generate signing key
-		signingKeyID := "pkcs8:interop-signing-key"
+		signingKeyID := "software:signing:rsa:interop-signing-key"
 		err := setup.GenerateRSAKey(signingKeyID, 2048)
 		require.NoError(t, err)
 
 		// Generate encryption key
-		encryptionKeyID := "pkcs8:interop-encryption-key"
+		encryptionKeyID := "software:encryption:rsa:interop-encryption-key"
 		err = setup.GenerateRSAKey(encryptionKeyID, 2048)
 		require.NoError(t, err)
 
@@ -252,11 +250,11 @@ func TestEncodingInterop_JWT_JWE(t *testing.T) {
 		defer setup.Close()
 
 		// Use ECDSA for signing, RSA for encryption
-		signingKeyID := "pkcs8:ecdsa-signing-key"
+		signingKeyID := "software:signing:ecdsa-p256:ecdsa-signing-key"
 		err := setup.GenerateECDSAKey(signingKeyID, elliptic.P256())
 		require.NoError(t, err)
 
-		encryptionKeyID := "pkcs8:rsa-encryption-key"
+		encryptionKeyID := "software:encryption:rsa:rsa-encryption-key"
 		err = setup.GenerateRSAKey(encryptionKeyID, 2048)
 		require.NoError(t, err)
 
@@ -301,17 +299,14 @@ func TestEncodingInterop_FullWorkflow(t *testing.T) {
 		defer setup.Close()
 
 		// === Phase 1: Key Generation ===
-		keyID := "pkcs8:auth-server-key"
+		keyID := "software:signing:rsa:auth-server-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
 		// === Phase 2: Export as JWK ===
-		serverJWK, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
+		serverJWK, err := setup.PublicJWK(keyID)
 		require.NoError(t, err)
 		assert.Equal(t, keyID, serverJWK.Kid)
-
-		// Verify JWK is xkms-backed
-		assert.True(t, serverJWK.IsXKMSBacked())
 
 		// === Phase 3: Sign JWT with authentication claims ===
 		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
@@ -337,7 +332,7 @@ func TestEncodingInterop_FullWorkflow(t *testing.T) {
 		assert.Equal(t, serverJWK.Kid, tokenKid)
 
 		// === Phase 5: Encrypt JWT for secure transport ===
-		transportKeyID := "pkcs8:transport-encryption-key"
+		transportKeyID := "software:encryption:rsa:transport-encryption-key"
 		err = setup.GenerateRSAKey(transportKeyID, 2048)
 		require.NoError(t, err)
 
@@ -396,8 +391,8 @@ func TestEncodingInterop_FullWorkflow(t *testing.T) {
 		defer setup.Close()
 
 		// Simulate key rotation scenario
-		oldKeyID := "pkcs8:old-signing-key"
-		newKeyID := "pkcs8:new-signing-key"
+		oldKeyID := "software:signing:rsa:old-signing-key"
+		newKeyID := "software:signing:rsa:new-signing-key"
 
 		err := setup.GenerateRSAKey(oldKeyID, 2048)
 		require.NoError(t, err)
@@ -405,10 +400,10 @@ func TestEncodingInterop_FullWorkflow(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create JWKs for both keys
-		oldJWK, err := jwk.FromXKMS(oldKeyID, setup.GetKeyByID)
+		oldJWK, err := setup.PublicJWK(oldKeyID)
 		require.NoError(t, err)
 
-		newJWK, err := jwk.FromXKMS(newKeyID, setup.GetKeyByID)
+		newJWK, err := setup.PublicJWK(newKeyID)
 		require.NoError(t, err)
 
 		// Sign token with old key

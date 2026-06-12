@@ -41,6 +41,7 @@
 package ca
 
 import (
+	"context"
 	"crypto/rand"
 	"math/big"
 	"sync"
@@ -77,7 +78,7 @@ type Storage interface {
 	// The serial number is stored as its base-10 string representation.
 	//
 	// Thread-safe: Yes
-	SerialExists(serial *big.Int) (bool, error)
+	SerialExists(ctx context.Context, serial *big.Int) (bool, error)
 
 	// StoreSerial persistently records a serial number as used.
 	//
@@ -86,7 +87,7 @@ type Storage interface {
 	// should ensure durability before returning.
 	//
 	// Thread-safe: Yes
-	StoreSerial(serial *big.Int) error
+	StoreSerial(ctx context.Context, serial *big.Int) error
 }
 
 // SerialGenerator defines the interface for certificate serial number generation.
@@ -111,7 +112,7 @@ type SerialGenerator interface {
 	// after MaxSerialRetries attempts (astronomically unlikely).
 	//
 	// Thread-safe: Yes
-	Generate() (*big.Int, error)
+	Generate(ctx context.Context) (*big.Int, error)
 
 	// IsUsed checks if a serial number has already been used.
 	//
@@ -122,7 +123,7 @@ type SerialGenerator interface {
 	// Returns an error if the storage lookup fails.
 	//
 	// Thread-safe: Yes
-	IsUsed(serial *big.Int) (bool, error)
+	IsUsed(ctx context.Context, serial *big.Int) (bool, error)
 
 	// MarkUsed records a serial number as used without generating it.
 	//
@@ -133,7 +134,7 @@ type SerialGenerator interface {
 	// Returns storage errors if the operation fails.
 	//
 	// Thread-safe: Yes
-	MarkUsed(serial *big.Int) error
+	MarkUsed(ctx context.Context, serial *big.Int) error
 }
 
 // defaultSerialGenerator implements SerialGenerator with cryptographically
@@ -152,7 +153,7 @@ type defaultSerialGenerator struct {
 //
 //	storage := ca.NewMemoryStorage() // or persistent storage implementation
 //	generator := ca.NewSerialGenerator(storage)
-//	serial, err := generator.Generate()
+//	serial, err := generator.Generate(ctx)
 func NewSerialGenerator(storage Storage) SerialGenerator {
 	return &defaultSerialGenerator{
 		storage: storage,
@@ -170,7 +171,7 @@ func NewSerialGenerator(storage Storage) SerialGenerator {
 //  6. Stores the serial number before returning
 //
 // Thread-safe: Uses mutex to serialize generation and storage operations.
-func (g *defaultSerialGenerator) Generate() (*big.Int, error) {
+func (g *defaultSerialGenerator) Generate(ctx context.Context) (*big.Int, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -180,7 +181,7 @@ func (g *defaultSerialGenerator) Generate() (*big.Int, error) {
 			return nil, err
 		}
 
-		exists, err := g.storage.SerialExists(serial)
+		exists, err := g.storage.SerialExists(ctx, serial)
 		if err != nil {
 			return nil, &SerialStorageError{Op: "check", Err: err}
 		}
@@ -189,7 +190,7 @@ func (g *defaultSerialGenerator) Generate() (*big.Int, error) {
 			continue
 		}
 
-		if err := g.storage.StoreSerial(serial); err != nil {
+		if err := g.storage.StoreSerial(ctx, serial); err != nil {
 			return nil, &SerialStorageError{Op: "store", Err: err}
 		}
 
@@ -200,12 +201,12 @@ func (g *defaultSerialGenerator) Generate() (*big.Int, error) {
 }
 
 // IsUsed checks if a serial number has already been used.
-func (g *defaultSerialGenerator) IsUsed(serial *big.Int) (bool, error) {
+func (g *defaultSerialGenerator) IsUsed(ctx context.Context, serial *big.Int) (bool, error) {
 	if serial == nil {
 		return false, &SerialValidationError{Reason: "serial number is nil"}
 	}
 
-	exists, err := g.storage.SerialExists(serial)
+	exists, err := g.storage.SerialExists(ctx, serial)
 	if err != nil {
 		return false, &SerialStorageError{Op: "check", Err: err}
 	}
@@ -214,7 +215,7 @@ func (g *defaultSerialGenerator) IsUsed(serial *big.Int) (bool, error) {
 }
 
 // MarkUsed records a serial number as used without generating it.
-func (g *defaultSerialGenerator) MarkUsed(serial *big.Int) error {
+func (g *defaultSerialGenerator) MarkUsed(ctx context.Context, serial *big.Int) error {
 	if serial == nil {
 		return &SerialValidationError{Reason: "serial number is nil"}
 	}
@@ -226,7 +227,7 @@ func (g *defaultSerialGenerator) MarkUsed(serial *big.Int) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	exists, err := g.storage.SerialExists(serial)
+	exists, err := g.storage.SerialExists(ctx, serial)
 	if err != nil {
 		return &SerialStorageError{Op: "check", Err: err}
 	}
@@ -235,7 +236,7 @@ func (g *defaultSerialGenerator) MarkUsed(serial *big.Int) error {
 		return ErrSerialCollision
 	}
 
-	if err := g.storage.StoreSerial(serial); err != nil {
+	if err := g.storage.StoreSerial(ctx, serial); err != nil {
 		return &SerialStorageError{Op: "store", Err: err}
 	}
 
@@ -312,7 +313,7 @@ func NewMemoryStorage() Storage {
 }
 
 // SerialExists checks if a serial number exists in memory.
-func (m *memoryStorage) SerialExists(serial *big.Int) (bool, error) {
+func (m *memoryStorage) SerialExists(ctx context.Context, serial *big.Int) (bool, error) {
 	if serial == nil {
 		return false, &SerialValidationError{Reason: "serial number is nil"}
 	}
@@ -325,7 +326,7 @@ func (m *memoryStorage) SerialExists(serial *big.Int) (bool, error) {
 }
 
 // StoreSerial stores a serial number in memory.
-func (m *memoryStorage) StoreSerial(serial *big.Int) error {
+func (m *memoryStorage) StoreSerial(ctx context.Context, serial *big.Int) error {
 	if serial == nil {
 		return &SerialValidationError{Reason: "serial number is nil"}
 	}

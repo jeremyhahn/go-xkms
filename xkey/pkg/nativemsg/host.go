@@ -512,7 +512,7 @@ func (h *Host) forwardToIPC(msg *ipc.Message) (*ipc.Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrIPCConnection, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if err := conn.SetDeadline(time.Now().Add(ipcReadWriteTimeout)); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrIPCConnection, err)

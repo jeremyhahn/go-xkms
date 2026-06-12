@@ -14,6 +14,7 @@
 package symmetric
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"testing"
@@ -58,7 +59,7 @@ func BenchmarkAES_GenerateKey(b *testing.B) {
 					SymmetricAlgorithm: ks.algorithm,
 				}
 
-				_, err := symBackend.GenerateSymmetricKey(attrs)
+				_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 				if err != nil {
 					b.Fatalf("GenerateSymmetricKey() failed: %v", err)
 				}
@@ -95,12 +96,12 @@ func BenchmarkAES_Encrypt(b *testing.B) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 			}
 
-			_, err = symBackend.GenerateSymmetricKey(attrs)
+			_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				b.Fatalf("GenerateSymmetricKey() failed: %v", err)
 			}
 
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				b.Fatalf("SymmetricEncrypter() failed: %v", err)
 			}
@@ -153,12 +154,12 @@ func BenchmarkAES_Decrypt(b *testing.B) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 			}
 
-			_, err = symBackend.GenerateSymmetricKey(attrs)
+			_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				b.Fatalf("GenerateSymmetricKey() failed: %v", err)
 			}
 
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				b.Fatalf("SymmetricEncrypter() failed: %v", err)
 			}
@@ -207,12 +208,12 @@ func BenchmarkAES_EncryptWithAAD(b *testing.B) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		b.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		b.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -258,12 +259,12 @@ func BenchmarkAES_ConcurrentEncrypt(b *testing.B) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		b.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		b.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -307,12 +308,12 @@ func BenchmarkAES_ConcurrentDecrypt(b *testing.B) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		b.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		b.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -369,12 +370,12 @@ func BenchmarkAES_EncryptDecryptRoundTrip(b *testing.B) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 			}
 
-			_, err = symBackend.GenerateSymmetricKey(attrs)
+			_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				b.Fatalf("GenerateSymmetricKey() failed: %v", err)
 			}
 
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				b.Fatalf("SymmetricEncrypter() failed: %v", err)
 			}
@@ -430,12 +431,12 @@ func BenchmarkAES_PasswordProtectedKey(b *testing.B) {
 			Password:           password,
 		}
 
-		_, err := symBackend.GenerateSymmetricKey(attrs)
+		_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 		if err != nil {
 			b.Fatalf("GenerateSymmetricKey() failed: %v", err)
 		}
 
-		_, err = symBackend.GetSymmetricKey(attrs)
+		_, err = symBackend.GetSymmetricKey(context.Background(), attrs)
 		if err != nil {
 			b.Fatalf("GetSymmetricKey() failed: %v", err)
 		}

@@ -18,7 +18,6 @@ import (
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -41,8 +40,8 @@ func (s *Service) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*p
 	if err := s.authorize(ctx, "users", "create", req.Username); err != nil {
 		return nil, err
 	}
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	resp, cErr := svc.CreateUser(ctx, &transport.CreateUserRequest{
@@ -62,8 +61,8 @@ func (s *Service) ListUsers(ctx context.Context, _ *pb.ListUsersRequest) (*pb.Li
 	if err := s.authorize(ctx, "users", "list", ""); err != nil {
 		return nil, err
 	}
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	resp, lErr := svc.ListUsers(ctx)
@@ -85,8 +84,8 @@ func (s *Service) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.User
 	if err := s.authorize(ctx, "users", "read", req.Username); err != nil {
 		return nil, err
 	}
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	resp, gErr := svc.GetUser(ctx, req.Username)
@@ -104,8 +103,8 @@ func (s *Service) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*p
 	if err := s.authorize(ctx, "users", "delete", req.Username); err != nil {
 		return nil, err
 	}
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	if dErr := svc.DeleteUser(ctx, req.Username); dErr != nil {
@@ -132,10 +131,11 @@ func (s *Service) setUserEnabled(ctx context.Context, username string, enabled b
 	if err := s.authorize(ctx, "users", "update", username); err != nil {
 		return nil, err
 	}
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
+	var err error
 	if enabled {
 		err = svc.EnableUser(ctx, username)
 	} else {
@@ -162,8 +162,8 @@ func (s *Service) BindUserCert(ctx context.Context, req *pb.BindUserCertRequest)
 	if err := s.authorize(ctx, "users", "update", req.GetUsername()); err != nil {
 		return nil, err
 	}
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	if bErr := svc.BindUserCert(ctx, req.GetUsername(), req.GetThumbprint(), req.GetNotAfterUnix()); bErr != nil {
@@ -184,8 +184,8 @@ func (s *Service) ListUserCredentials(ctx context.Context, req *pb.ListUserCrede
 	if err := s.authorize(ctx, "users", "read", req.Username); err != nil {
 		return nil, err
 	}
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	resp, lErr := svc.ListUserCredentials(ctx, req.Username)

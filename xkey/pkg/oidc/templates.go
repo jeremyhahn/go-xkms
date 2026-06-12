@@ -274,11 +274,11 @@ func NewExtendedProviderConfig(templateName string) (*ExtendedProviderConfig, er
 
 // ApplyTemplate applies template defaults to the config, without overwriting existing values.
 func (c *ExtendedProviderConfig) ApplyTemplate(template *ProviderTemplate) {
-	if c.ProviderConfig.ClientID == "" {
-		c.ProviderConfig.ClientID = template.ClientID
+	if c.ClientID == "" {
+		c.ClientID = template.ClientID
 	}
-	if len(c.ProviderConfig.Scopes) == 0 {
-		c.ProviderConfig.Scopes = template.Scopes
+	if len(c.Scopes) == 0 {
+		c.Scopes = template.Scopes
 	}
 	if c.Output == "" {
 		c.Output = template.DefaultOutput
@@ -302,7 +302,7 @@ func (c *ExtendedProviderConfig) ResolveEndpoints(template *ProviderTemplate, re
 
 	// Update client ID for remote flow
 	if c.RemoteFlow {
-		c.ProviderConfig.ClientID = template.GetClientID(true)
+		c.ClientID = template.GetClientID(true)
 	}
 
 	return authorizeEndpoint, tokenEndpoint
@@ -323,7 +323,7 @@ func (c *ExtendedProviderConfig) Validate() error {
 	}
 
 	// Standard validation
-	if c.ProviderConfig.ClientID == "" {
+	if c.ClientID == "" {
 		return ErrInvalidClientID
 	}
 

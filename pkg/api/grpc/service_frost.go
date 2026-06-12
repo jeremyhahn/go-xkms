@@ -23,7 +23,6 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -127,7 +126,7 @@ func (s *Service) FrostGenerateKey(ctx context.Context, req *pb.FrostGenerateKey
 		},
 	}
 
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(ctx, attrs)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to generate FROST key: %v", err)
 	}
@@ -193,7 +192,7 @@ func (s *Service) FrostImportKey(ctx context.Context, req *pb.FrostImportKeyRequ
 
 	// Store key package via keystore
 	ks := be.KeyStore()
-	if err := ks.StoreKeyPackage(pkg.KeyId, keyPackage, metadata); err != nil {
+	if err := ks.StoreKeyPackage(ctx, pkg.KeyId, keyPackage, metadata); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to store key package: %v", err)
 	}
 
@@ -213,7 +212,7 @@ func (s *Service) FrostListKeys(ctx context.Context, req *pb.FrostListKeysReques
 		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
 	}
 
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
 	}
@@ -240,7 +239,7 @@ func (s *Service) FrostListKeys(ctx context.Context, req *pb.FrostListKeysReques
 	for i, k := range paginatedKeys {
 		if k.FrostAttributes != nil {
 			// Get key handle to retrieve group public key
-			handle, err := be.GetKey(k)
+			handle, err := be.GetKey(ctx, k)
 			var groupPubKey []byte
 			if err == nil {
 				if h, ok := handle.(*frost.FrostKeyHandle); ok {
@@ -284,7 +283,7 @@ func (s *Service) FrostGetKey(ctx context.Context, req *pb.FrostGetKeyRequest) (
 		StoreType: types.StoreFrost,
 	}
 
-	key, err := be.GetKey(attrs)
+	key, err := be.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
@@ -292,7 +291,7 @@ func (s *Service) FrostGetKey(ctx context.Context, req *pb.FrostGetKeyRequest) (
 	handle := key.(*frost.FrostKeyHandle)
 
 	// Get full key list to find metadata
-	keys, _ := be.ListKeys()
+	keys, _ := be.ListKeys(ctx)
 	var keyInfo *pb.FrostKeyInfo
 	for _, k := range keys {
 		if k.CN == req.KeyId && k.FrostAttributes != nil {
@@ -342,7 +341,7 @@ func (s *Service) FrostDeleteKey(ctx context.Context, req *pb.FrostDeleteKeyRequ
 		StoreType: types.StoreFrost,
 	}
 
-	if err := be.DeleteKey(attrs); err != nil {
+	if err := be.DeleteKey(ctx, attrs); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to delete key: %v", err)
 	}
 
@@ -404,7 +403,7 @@ func (s *Service) FrostSignRound(ctx context.Context, req *pb.FrostSignRoundRequ
 		KeyType:   types.KeyTypeSigning,
 		StoreType: types.StoreFrost,
 	}
-	key, err := be.GetKey(attrs)
+	key, err := be.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
@@ -545,9 +544,9 @@ func (s *Service) FrostVerify(ctx context.Context, req *pb.FrostVerifyRequest) (
 // getFrostBackend retrieves the FROST backend from the xkms service
 func (s *Service) getFrostBackend() (*frost.FrostBackend, error) {
 	// Try to get a FROST backend from registered backends
-	backends := xkms.Backends()
+	backends := s.backendNames()
 	for _, name := range backends {
-		ks, err := xkms.GetBackend(name)
+		ks, err := s.lookupBackend(name)
 		if err != nil {
 			continue
 		}

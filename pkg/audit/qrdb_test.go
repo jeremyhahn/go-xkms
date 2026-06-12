@@ -21,7 +21,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 
-	qrdbconfig "github.com/jeremyhahn/go-qrdb/pkg/config"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -31,11 +30,14 @@ import (
 )
 
 // memoryNodeConfig returns an in-memory qrdb node config with all network
-// protocols disabled, suitable for an in-process round-trip test.
-func memoryNodeConfig() *qrdbconfig.Config {
-	cfg := qrdbconfig.DefaultConfig()
-	cfg.Raft.DataDir = ""
-	cfg.Databases = []qrdbconfig.DatabaseConfig{{Name: "default", Backend: "memory"}}
+// protocols disabled, suitable for an in-process round-trip test. A temporary
+// directory is provided as DataDir because the qrdb lifecycle now rejects an
+// empty DataDir (EmptyVectorDataDirError) when the vector subsystem is enabled.
+func memoryNodeConfig(t *testing.T) *qrdbsdk.DaemonConfig {
+	t.Helper()
+	cfg := qrdbsdk.DefaultDaemonConfig()
+	cfg.Raft.DataDir = t.TempDir()
+	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -52,10 +54,10 @@ func memoryNodeConfig() *qrdbconfig.Config {
 // sdk.WithAuditLogger(sdk.NewAuditRingBuffer(...)) — exactly what
 // initEmbeddedQRDBNode does — and QRDBLogger emits through Client().Audit().
 func TestQRDBLogger_EmitQueryRoundTrip(t *testing.T) {
-	// The in-memory node still materializes relative on-disk subsystems (e.g.
-	// the vector store) from its default config; chdir into a temp dir so those
-	// artifacts are contained and auto-cleaned rather than polluting the source
-	// tree.
+	// memoryNodeConfig pins DataDir to a temp dir, so the vector store and other
+	// on-disk subsystems are already contained there. chdir into a temp dir as
+	// belt-and-suspenders for any subsystem that still materializes a relative
+	// path, keeping artifacts out of the source tree.
 	t.Chdir(t.TempDir())
 
 	ctx := context.Background()
@@ -63,7 +65,7 @@ func TestQRDBLogger_EmitQueryRoundTrip(t *testing.T) {
 	sink := qrdbsdk.NewAuditRingBuffer(64)
 	serverOpts := []qrdbsdk.ServerOption{qrdbsdk.WithAuditLogger(sink)}
 
-	node, err := qrdbnode.NewStandaloneNode(ctx, memoryNodeConfig(), serverOpts)
+	node, err := qrdbnode.NewStandaloneNode(ctx, memoryNodeConfig(t), serverOpts)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = node.Close() })
 

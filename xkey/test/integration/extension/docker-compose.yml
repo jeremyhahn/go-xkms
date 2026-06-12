@@ -20,6 +20,10 @@ services:
       additional_contexts:
         go-qrdb: ../../../../../go-qrdb
         go-quicraft: ../../../../../go-quicraft
+        go-truststrap: ../../../../../go-truststrap
+        go-codec: ../../../../../go-codec
+        go-frost: ../../../../../go-frost
+        go-objstore: ../../../../../go-objstore
     depends_on:
       test-site:
         condition: service_healthy

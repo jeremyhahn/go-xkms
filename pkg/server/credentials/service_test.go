@@ -24,6 +24,54 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
+// errGeneric is a sentinel error used in mock stores to simulate failures
+// that are neither ErrNotFound nor ErrSecretNotFound.
+var errGeneric = errors.New("mock: backend unavailable")
+
+// newSealedBarrier creates a Barrier that is initialized but then re-sealed
+// so that any Get/Put/Delete call returns ErrSealed, which is distinct from
+// storage.ErrNotFound.
+func newSealedBarrier(t *testing.T) *seal.Barrier {
+	t.Helper()
+	barrier := newTestBarrier(t)
+	if err := barrier.Seal(); err != nil {
+		t.Fatalf("barrier.Seal: %v", err)
+	}
+	return barrier
+}
+
+// mockErrorPlatformStore is a PlatformStore implementation whose Put, Get, and
+// Delete methods always return errGeneric (not ErrSecretNotFound) to trigger
+// the non-ErrNotFound error branches in the credential service.
+type mockErrorPlatformStore struct{}
+
+func (m *mockErrorPlatformStore) Put(_ context.Context, _ string, _ []byte) error {
+	return errGeneric
+}
+
+func (m *mockErrorPlatformStore) Get(_ context.Context, _ string) ([]byte, error) {
+	return nil, errGeneric
+}
+
+func (m *mockErrorPlatformStore) Delete(_ context.Context, _ string) error {
+	return errGeneric
+}
+
+func (m *mockErrorPlatformStore) Exists(_ context.Context, _ string) (bool, error) {
+	return false, errGeneric
+}
+
+func (m *mockErrorPlatformStore) List(_ context.Context) ([]string, error) {
+	return nil, errGeneric
+}
+
+func (m *mockErrorPlatformStore) Reseal(_ context.Context, _ string) error {
+	return errGeneric
+}
+
+// compile-time check
+var _ seal.PlatformStore = (*mockErrorPlatformStore)(nil)
+
 // testLogger returns a logger for test output.
 func testLogger() *slog.Logger {
 	return slog.Default()
@@ -58,7 +106,7 @@ func newTestBarrier(t *testing.T) *seal.Barrier {
 func newTestPlatformStore(t *testing.T, barrier *seal.Barrier) seal.PlatformStore {
 	t.Helper()
 
-	store, err := seal.NewPlatformStore(barrier, testLogger())
+	store, err := seal.NewPlatformStore(seal.NewBarrierBackend(barrier), testLogger())
 	if err != nil {
 		t.Fatalf("NewPlatformStore: %v", err)
 	}
@@ -817,5 +865,118 @@ func TestRetrieveCredential_Manual_ReturnIsolation(t *testing.T) {
 	}
 	if string(val2) != "original" {
 		t.Errorf("stored value was mutated via return: got %q, want %q", string(val2), "original")
+	}
+}
+
+// --- Barrier non-ErrNotFound error branch tests ---
+
+// TestStoreCredential_Barrier_BackendError exercises the storeBarrier error
+// branch when the barrier's Put returns an error that is not storage.ErrNotFound.
+// Using a sealed (not-yet-unsealed) barrier guarantees ErrSealed is returned.
+func TestStoreCredential_Barrier_BackendError(t *testing.T) {
+	barrier := newSealedBarrier(t)
+	svc, err := New(&Config{Strategy: "barrier"}, nil, barrier, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	err = svc.StoreCredential(context.Background(), "cred", []byte("val"))
+	if err == nil {
+		t.Fatal("StoreCredential: expected error, got nil")
+	}
+	// The error must NOT be ErrCredentialNotFound (that would mean it was a
+	// NotFound error, which the sealed barrier does not produce on Put).
+	if errors.Is(err, ErrCredentialNotFound) {
+		t.Errorf("StoreCredential: got ErrCredentialNotFound, want backend error")
+	}
+}
+
+// TestRetrieveCredential_Barrier_BackendError exercises the retrieveBarrier
+// error branch when barrier.Get returns a non-ErrNotFound error.
+func TestRetrieveCredential_Barrier_BackendError(t *testing.T) {
+	barrier := newSealedBarrier(t)
+	svc, err := New(&Config{Strategy: "barrier"}, nil, barrier, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = svc.RetrieveCredential(context.Background(), "cred")
+	if err == nil {
+		t.Fatal("RetrieveCredential: expected error, got nil")
+	}
+	if errors.Is(err, ErrCredentialNotFound) {
+		t.Errorf("RetrieveCredential: got ErrCredentialNotFound, want backend error")
+	}
+}
+
+// TestDeleteCredential_Barrier_BackendError exercises the deleteBarrier error
+// branch when barrier.Delete returns a non-ErrNotFound error.
+func TestDeleteCredential_Barrier_BackendError(t *testing.T) {
+	barrier := newSealedBarrier(t)
+	svc, err := New(&Config{Strategy: "barrier"}, nil, barrier, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	err = svc.DeleteCredential(context.Background(), "cred")
+	if err == nil {
+		t.Fatal("DeleteCredential: expected error, got nil")
+	}
+	if errors.Is(err, ErrCredentialNotFound) {
+		t.Errorf("DeleteCredential: got ErrCredentialNotFound, want backend error")
+	}
+}
+
+// --- PlatformStore non-ErrSecretNotFound error branch tests ---
+
+// TestStoreCredential_PlatformStore_BackendError exercises the storePlatform
+// error branch when platformStore.Put returns a non-ErrSecretNotFound error.
+func TestStoreCredential_PlatformStore_BackendError(t *testing.T) {
+	svc, err := New(&Config{Strategy: "software"}, &mockErrorPlatformStore{}, nil, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	err = svc.StoreCredential(context.Background(), "cred", []byte("val"))
+	if err == nil {
+		t.Fatal("StoreCredential: expected error, got nil")
+	}
+	if !errors.Is(err, errGeneric) {
+		t.Errorf("StoreCredential: got %v, want errGeneric", err)
+	}
+}
+
+// TestRetrieveCredential_PlatformStore_BackendError exercises the
+// retrievePlatform error branch when platformStore.Get returns a
+// non-ErrSecretNotFound error.
+func TestRetrieveCredential_PlatformStore_BackendError(t *testing.T) {
+	svc, err := New(&Config{Strategy: "software"}, &mockErrorPlatformStore{}, nil, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = svc.RetrieveCredential(context.Background(), "cred")
+	if err == nil {
+		t.Fatal("RetrieveCredential: expected error, got nil")
+	}
+	if !errors.Is(err, errGeneric) {
+		t.Errorf("RetrieveCredential: got %v, want errGeneric", err)
+	}
+}
+
+// TestDeleteCredential_PlatformStore_BackendError exercises the deletePlatform
+// error branch when platformStore.Delete returns a non-ErrSecretNotFound error.
+func TestDeleteCredential_PlatformStore_BackendError(t *testing.T) {
+	svc, err := New(&Config{Strategy: "software"}, &mockErrorPlatformStore{}, nil, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	err = svc.DeleteCredential(context.Background(), "cred")
+	if err == nil {
+		t.Fatal("DeleteCredential: expected error, got nil")
+	}
+	if !errors.Is(err, errGeneric) {
+		t.Errorf("DeleteCredential: got %v, want errGeneric", err)
 	}
 }

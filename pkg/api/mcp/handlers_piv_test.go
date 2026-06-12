@@ -14,6 +14,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -32,7 +33,7 @@ func TestHandleListPIVSlots_InvalidParams(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleListPIVSlots(req)
+	result, err := server.handleListPIVSlots(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "invalid params")
@@ -50,7 +51,7 @@ func TestHandleListPIVSlots_ValidParams_NoXKMS(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleListPIVSlots(req)
+	result, err := server.handleListPIVSlots(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to list PIV slots")
@@ -67,7 +68,7 @@ func TestHandleGetPIVCertificate_InvalidParams(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleGetPIVCertificate(req)
+	result, err := server.handleGetPIVCertificate(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "invalid params")
@@ -85,7 +86,7 @@ func TestHandleGetPIVCertificate_ValidParams_NoXKMS(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleGetPIVCertificate(req)
+	result, err := server.handleGetPIVCertificate(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to get PIV certificate")
@@ -102,7 +103,7 @@ func TestHandleStorePIVCertificate_InvalidParams(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleStorePIVCertificate(req)
+	result, err := server.handleStorePIVCertificate(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "invalid params")
@@ -120,7 +121,7 @@ func TestHandleStorePIVCertificate_ValidParams_NoXKMS(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleStorePIVCertificate(req)
+	result, err := server.handleStorePIVCertificate(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to store PIV certificate")
@@ -137,7 +138,7 @@ func TestHandleDeletePIVCertificate_InvalidParams(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleDeletePIVCertificate(req)
+	result, err := server.handleDeletePIVCertificate(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "invalid params")
@@ -155,7 +156,7 @@ func TestHandleDeletePIVCertificate_ValidParams_NoXKMS(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleDeletePIVCertificate(req)
+	result, err := server.handleDeletePIVCertificate(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to delete PIV certificate")
@@ -172,7 +173,7 @@ func TestHandleGeneratePIVKey_InvalidParams(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleGeneratePIVKey(req)
+	result, err := server.handleGeneratePIVKey(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "invalid params")
@@ -190,7 +191,7 @@ func TestHandleGeneratePIVKey_ValidParams_NoXKMS(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleGeneratePIVKey(req)
+	result, err := server.handleGeneratePIVKey(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to generate PIV key")
@@ -207,7 +208,7 @@ func TestHandleImportPIVCertificate_InvalidParams(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleImportPIVCertificate(req)
+	result, err := server.handleImportPIVCertificate(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "invalid params")
@@ -225,7 +226,7 @@ func TestHandleImportPIVCertificate_ValidParams_NoXKMS(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleImportPIVCertificate(req)
+	result, err := server.handleImportPIVCertificate(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to import PIV certificate")
@@ -242,7 +243,7 @@ func TestHandleExportPIVCertificate_InvalidParams(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleExportPIVCertificate(req)
+	result, err := server.handleExportPIVCertificate(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "invalid params")
@@ -260,7 +261,7 @@ func TestHandleExportPIVCertificate_ValidParams_NoXKMS(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleExportPIVCertificate(req)
+	result, err := server.handleExportPIVCertificate(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to export PIV certificate")
@@ -277,7 +278,7 @@ func TestHandleGeneratePIVCSR_InvalidParams(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleGeneratePIVCSR(req)
+	result, err := server.handleGeneratePIVCSR(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "invalid params")
@@ -295,7 +296,7 @@ func TestHandleGeneratePIVCSR_ValidParams_NoXKMS(t *testing.T) {
 		ID:      1,
 	}
 
-	result, err := server.handleGeneratePIVCSR(req)
+	result, err := server.handleGeneratePIVCSR(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to generate PIV CSR")
@@ -315,7 +316,7 @@ func TestHandleListPIVSlots_EmptyParams(t *testing.T) {
 	// Empty JSON object unmarshals successfully into ListPIVSlotsRequest
 	// with zero-value fields. The call proceeds to the xkms layer,
 	// which fails because no PIV backend is registered with an empty name.
-	result, err := server.handleListPIVSlots(req)
+	result, err := server.handleListPIVSlots(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to list PIV slots")
@@ -333,7 +334,7 @@ func TestHandleListPIVSlots_NullParams(t *testing.T) {
 	}
 
 	// nil RawMessage causes json.Unmarshal to fail
-	result, err := server.handleListPIVSlots(req)
+	result, err := server.handleListPIVSlots(context.Background(), req)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "invalid params")

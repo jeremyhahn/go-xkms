@@ -17,6 +17,7 @@
 package integration
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rand"
@@ -308,7 +309,7 @@ func TestIntegration_FindKeyPair(t *testing.T) {
 	}
 
 	// Find the key
-	foundSigner, err := b.Signer(attrs)
+	foundSigner, err := b.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer() failed: %v", err)
 	}
@@ -474,7 +475,7 @@ func TestIntegration_GenerateKey_Dispatcher(t *testing.T) {
 				StoreType:    backend.STORE_PKCS11,
 			}
 
-			_, err := b.GenerateKey(attrs)
+			_, err := b.GenerateKey(context.Background(), attrs)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GenerateKey() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -517,7 +518,7 @@ func TestIntegration_MultipleKeys(t *testing.T) {
 			StoreType:    backend.STORE_PKCS11,
 		}
 
-		_, err := b.GenerateKey(attrs)
+		_, err := b.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey() for %s failed: %v", k.cn, err)
 		}
@@ -530,7 +531,7 @@ func TestIntegration_MultipleKeys(t *testing.T) {
 			KeyAlgorithm: k.algo,
 		}
 
-		signer, err := b.Signer(attrs)
+		signer, err := b.Signer(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("Signer() for %s failed: %v", k.cn, err)
 		}
@@ -578,7 +579,7 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 
 	for i := 0; i < numGoroutines; i++ {
 		go func(id int) {
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			if err != nil {
 				done <- fmt.Errorf("goroutine %d: Signer() failed: %w", id, err)
 				return
@@ -632,7 +633,7 @@ func TestIntegration_Delete(t *testing.T) {
 	}
 
 	// Verify key exists
-	_, err = b.Signer(attrs)
+	_, err = b.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer() failed: %v", err)
 	}

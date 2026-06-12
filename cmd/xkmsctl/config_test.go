@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"crypto"
 	"errors"
 	"path/filepath"
@@ -608,25 +609,25 @@ func (m *configTestBackend) Type() types.BackendType {
 func (m *configTestBackend) Capabilities() types.Capabilities {
 	return types.Capabilities{}
 }
-func (m *configTestBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *configTestBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, nil
 }
-func (m *configTestBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *configTestBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, nil
 }
-func (m *configTestBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (m *configTestBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	return nil
 }
-func (m *configTestBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (m *configTestBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	return nil, nil
 }
-func (m *configTestBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *configTestBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	return nil, nil
 }
-func (m *configTestBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *configTestBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, nil
 }
-func (m *configTestBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (m *configTestBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	return nil
 }
 func (m *configTestBackend) Close() error {

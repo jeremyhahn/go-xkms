@@ -14,6 +14,7 @@
 package authenticator
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -171,16 +172,18 @@ func newMockKeyProvider() *mockKeyProvider {
 	}
 }
 
-func (m *mockKeyProvider) Type() xkms.BackendType                    { return xkms.BackendTypeSoftware }
-func (m *mockKeyProvider) Capabilities() xkms.Capabilities           { return m.capabilities }
-func (m *mockKeyProvider) Close() error                              { return nil }
-func (m *mockKeyProvider) ListKeys() ([]*xkms.KeyAttributes, error)  { return nil, nil }
-func (m *mockKeyProvider) RotateKey(attrs *xkms.KeyAttributes) error { return nil }
-func (m *mockKeyProvider) Decrypter(attrs *xkms.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockKeyProvider) Type() xkms.BackendType          { return xkms.BackendTypeSoftware }
+func (m *mockKeyProvider) Capabilities() xkms.Capabilities { return m.capabilities }
+func (m *mockKeyProvider) Close() error                    { return nil }
+func (m *mockKeyProvider) ListKeys(ctx context.Context) ([]*xkms.KeyAttributes, error) {
+	return nil, nil
+}
+func (m *mockKeyProvider) RotateKey(ctx context.Context, attrs *xkms.KeyAttributes) error { return nil }
+func (m *mockKeyProvider) Decrypter(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, nil
 }
 
-func (m *mockKeyProvider) GenerateKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyProvider) GenerateKey(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	var key crypto.PrivateKey
 	var err error
 	switch {
@@ -198,7 +201,7 @@ func (m *mockKeyProvider) GenerateKey(attrs *xkms.KeyAttributes) (crypto.Private
 	return key, nil
 }
 
-func (m *mockKeyProvider) GetKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyProvider) GetKey(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	key, ok := m.keys[attrs.CN]
 	if !ok {
 		return nil, fmt.Errorf("key not found: %s", attrs.CN)
@@ -206,12 +209,12 @@ func (m *mockKeyProvider) GetKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, 
 	return key, nil
 }
 
-func (m *mockKeyProvider) DeleteKey(attrs *xkms.KeyAttributes) error {
+func (m *mockKeyProvider) DeleteKey(ctx context.Context, attrs *xkms.KeyAttributes) error {
 	delete(m.keys, attrs.CN)
 	return nil
 }
 
-func (m *mockKeyProvider) Signer(attrs *xkms.KeyAttributes) (crypto.Signer, error) {
+func (m *mockKeyProvider) Signer(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.Signer, error) {
 	key, ok := m.keys[attrs.CN]
 	if !ok {
 		return nil, fmt.Errorf("key not found: %s", attrs.CN)

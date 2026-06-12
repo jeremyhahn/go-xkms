@@ -43,7 +43,7 @@ type mockXKMSBackend struct {
 	signerCalls   []string
 }
 
-func (m *mockXKMSBackend) GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockXKMSBackend) GenerateRSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.generateCalls = append(m.generateCalls, *attrs)
 	if m.generateRSAFunc != nil {
 		return m.generateRSAFunc(attrs)
@@ -51,7 +51,7 @@ func (m *mockXKMSBackend) GenerateRSA(attrs *types.KeyAttributes) (crypto.Privat
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockXKMSBackend) GenerateECDSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.generateCalls = append(m.generateCalls, *attrs)
 	if m.generateECDSAFunc != nil {
 		return m.generateECDSAFunc(attrs)
@@ -59,7 +59,7 @@ func (m *mockXKMSBackend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.Priv
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockXKMSBackend) GenerateEd25519(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.generateCalls = append(m.generateCalls, *attrs)
 	if m.generateEd25519Func != nil {
 		return m.generateEd25519Func(attrs)
@@ -67,7 +67,7 @@ func (m *mockXKMSBackend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.Pr
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockXKMSBackend) Signer(_ context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	m.signerCalls = append(m.signerCalls, attrs.CN)
 	if m.signerFunc != nil {
 		return m.signerFunc(attrs)
@@ -75,67 +75,67 @@ func (m *mockXKMSBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, err
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) GetKey(_ *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockXKMSBackend) GetKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) DeleteKey(_ *types.KeyAttributes) error {
+func (m *mockXKMSBackend) DeleteKey(_ context.Context, _ *types.KeyAttributes) error {
 	return errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (m *mockXKMSBackend) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) RotateKey(_ *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockXKMSBackend) RotateKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) Decrypter(_ *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockXKMSBackend) Decrypter(_ context.Context, _ *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) SaveCert(_ string, _ *x509.Certificate) error {
+func (m *mockXKMSBackend) SaveCert(_ context.Context, _ string, _ *x509.Certificate) error {
 	return errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) GetCert(_ string) (*x509.Certificate, error) {
+func (m *mockXKMSBackend) GetCert(_ context.Context, _ string) (*x509.Certificate, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) DeleteCert(_ string) error {
+func (m *mockXKMSBackend) DeleteCert(_ context.Context, _ string) error {
 	return errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) SaveCertChain(_ string, _ []*x509.Certificate) error {
+func (m *mockXKMSBackend) SaveCertChain(_ context.Context, _ string, _ []*x509.Certificate) error {
 	return errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) GetCertChain(_ string) ([]*x509.Certificate, error) {
+func (m *mockXKMSBackend) GetCertChain(_ context.Context, _ string) ([]*x509.Certificate, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) ListCerts() ([]string, error) {
+func (m *mockXKMSBackend) ListCerts(_ context.Context) ([]string, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) CertExists(_ string) (bool, error) {
+func (m *mockXKMSBackend) CertExists(_ context.Context, _ string) (bool, error) {
 	return false, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) GetTLSCertificate(_ string, _ *types.KeyAttributes) (tls.Certificate, error) {
+func (m *mockXKMSBackend) GetTLSCertificate(_ context.Context, _ string, _ *types.KeyAttributes) (tls.Certificate, error) {
 	return tls.Certificate{}, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) GetKeyByID(_ string) (crypto.PrivateKey, error) {
+func (m *mockXKMSBackend) GetKeyByID(_ context.Context, _ string) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) GetSignerByID(_ string) (crypto.Signer, error) {
+func (m *mockXKMSBackend) GetSignerByID(_ context.Context, _ string) (crypto.Signer, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockXKMSBackend) GetDecrypterByID(_ string) (crypto.Decrypter, error) {
+func (m *mockXKMSBackend) GetDecrypterByID(_ context.Context, _ string) (crypto.Decrypter, error) {
 	return nil, errors.New("not implemented")
 }
 

@@ -154,58 +154,6 @@ func runResponder(t *testing.T, transport *mockPipeTransport) *NoiseSession {
 }
 
 // ---------------------------------------------------------------------------
-// runResponderWithIdentity handles the full protocol including identity exchange.
-// This is used when testing device connection flows that trigger identity exchange.
-// Protocol:
-// 1. Read identity message: [0x01, public_key_32_bytes]
-// 2. Send identity ack: [0x00] for new device
-// 3. Proceed with Noise XX handshake
-// ---------------------------------------------------------------------------
-func runResponderWithIdentity(t *testing.T, transport *mockPipeTransport) *NoiseSession {
-	t.Helper()
-
-	// Step 1: Read identity message from initiator
-	identityMsg := <-transport.recvCh
-	require.Len(t, identityMsg, IdentityMsgSize, "identity message should be 33 bytes")
-	require.Equal(t, byte(IdentityMsgVersion), identityMsg[0], "identity message version should be 0x01")
-
-	// Step 2: Send identity ack for new device (0x00)
-	// For tests, we simulate a new device scenario
-	transport.sendCh <- []byte{IdentityAckUnknown}
-
-	// Step 3: Proceed with Noise XX handshake
-	responderSession, err := NewNoiseSession(&NoiseSessionConfig{IsInitiator: false})
-	require.NoError(t, err)
-
-	err = responderSession.InitHandshake()
-	require.NoError(t, err)
-
-	// Read msg1 from the pipe (initiator wrote it).
-	msg1 := <-transport.recvCh
-	require.NotEmpty(t, msg1)
-
-	// Process msg1 and generate msg2.
-	msg2, complete, err := responderSession.HandshakeMessage(msg1)
-	require.NoError(t, err)
-	require.False(t, complete)
-	require.NotEmpty(t, msg2)
-
-	// Write msg2 to the pipe (initiator will read it).
-	transport.sendCh <- msg2
-
-	// Read msg3 from the pipe (initiator wrote it).
-	msg3 := <-transport.recvCh
-	require.NotEmpty(t, msg3)
-
-	// Process msg3 - handshake should complete.
-	_, complete, err = responderSession.HandshakeMessage(msg3)
-	require.NoError(t, err)
-	require.True(t, complete)
-
-	return responderSession
-}
-
-// ---------------------------------------------------------------------------
 // 1. PerformHandshake tests
 // ---------------------------------------------------------------------------
 

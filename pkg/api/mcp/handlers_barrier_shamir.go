@@ -98,7 +98,10 @@ func (s *Server) handleBarrierInitialize(ctx context.Context, req *JSONRPCReques
 }
 
 // handleBarrierInitializeShamir handles the barrier.initializeShamir method.
-// It initializes the barrier with Shamir secret sharing and returns the generated shares.
+// It initializes the barrier with Shamir secret sharing. Share material is
+// never returned: shares are sealed to enrolled Security Officers via the
+// CeremonyDistributor (qrdb share-free contract) and only the threshold,
+// total, and officer share count are reported.
 func (s *Server) handleBarrierInitializeShamir(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.barrier == nil {
 		return nil, ErrBarrierNotConfigured
@@ -117,9 +120,9 @@ func (s *Server) handleBarrierInitializeShamir(ctx context.Context, req *JSONRPC
 
 	return map[string]interface{}{
 		"success":      true,
-		"shares":       result.Shares,
 		"threshold":    result.Threshold,
 		"total_shares": result.TotalShares,
+		"share_count":  result.ShareCount,
 	}, nil
 }
 
@@ -206,7 +209,7 @@ func (s *Server) handleBarrierUnsealShares(ctx context.Context, req *JSONRPCRequ
 
 // handleBarrierSeal handles the barrier.seal method.
 // It transitions the barrier to sealed state.
-func (s *Server) handleBarrierSeal(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleBarrierSeal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.barrier == nil {
 		return nil, ErrBarrierNotConfigured
 	}
@@ -223,7 +226,7 @@ func (s *Server) handleBarrierSeal(req *JSONRPCRequest) (interface{}, error) {
 
 // handleBarrierStatus handles the barrier.status method.
 // It returns the current barrier status.
-func (s *Server) handleBarrierStatus(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleBarrierStatus(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.barrier == nil {
 		return nil, ErrBarrierNotConfigured
 	}
@@ -263,9 +266,9 @@ func (s *Server) handleBarrierRekey(ctx context.Context, req *JSONRPCRequest) (i
 
 	return map[string]interface{}{
 		"success":      true,
-		"shares":       result.Shares,
 		"threshold":    result.Threshold,
 		"total_shares": result.TotalShares,
+		"share_count":  result.ShareCount,
 	}, nil
 }
 
@@ -296,9 +299,9 @@ func (s *Server) handleBarrierGenerateRecoveryKeys(ctx context.Context, req *JSO
 
 	return map[string]interface{}{
 		"success":      true,
-		"shares":       result.Shares,
 		"threshold":    result.Threshold,
 		"total_shares": result.TotalShares,
+		"share_count":  result.ShareCount,
 	}, nil
 }
 

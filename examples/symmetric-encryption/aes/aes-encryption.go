@@ -20,6 +20,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"log"
@@ -117,7 +118,7 @@ func basicEncryption(b types.SymmetricKeyProvider) error {
 
 	// Generate a new AES-256 symmetric key
 	fmt.Println("1. Generating AES-256 key...")
-	key, err := b.GenerateSymmetricKey(attrs)
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		return fmt.Errorf("failed to generate key: %w", err)
 	}
@@ -125,7 +126,7 @@ func basicEncryption(b types.SymmetricKeyProvider) error {
 
 	// Get an encrypter for the key
 	fmt.Println("\n2. Creating symmetric encrypter...")
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		return fmt.Errorf("failed to get encrypter: %w", err)
 	}
@@ -177,7 +178,7 @@ func passwordProtectedEncryption(b types.SymmetricKeyProvider) error {
 
 	// Generate a password-protected AES-256 key
 	fmt.Println("1. Generating password-protected AES-256 key...")
-	key, err := b.GenerateSymmetricKey(attrs)
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		return fmt.Errorf("failed to generate key: %w", err)
 	}
@@ -186,7 +187,7 @@ func passwordProtectedEncryption(b types.SymmetricKeyProvider) error {
 
 	// Get an encrypter (requires password to decrypt the stored key)
 	fmt.Println("\n2. Retrieving key with password...")
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		return fmt.Errorf("failed to get encrypter: %w", err)
 	}
@@ -226,7 +227,7 @@ func passwordProtectedEncryption(b types.SymmetricKeyProvider) error {
 		Password:           newPassword([]byte("wrong-password")),
 	}
 
-	_, err = b.SymmetricEncrypter(wrongAttrs)
+	_, err = b.SymmetricEncrypter(context.Background(), wrongAttrs)
 	if err == nil {
 		return fmt.Errorf("expected error with wrong password, got nil")
 	}
@@ -249,14 +250,14 @@ func encryptionWithAAD(b types.SymmetricKeyProvider) error {
 
 	// Generate the key
 	fmt.Println("1. Generating AES-256 key...")
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		return fmt.Errorf("failed to generate key: %w", err)
 	}
 	fmt.Println("   ✓ Key generated")
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		return fmt.Errorf("failed to get encrypter: %w", err)
 	}

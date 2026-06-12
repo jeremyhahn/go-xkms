@@ -76,26 +76,3 @@ func newMockTransportNilResponse() *mockTransport {
 		},
 	}
 }
-
-// newMockTransportWithServiceRouter creates a mock transport that routes
-// based on service/method and returns the configured responses.
-func newMockTransportWithServiceRouter(routes map[string]interface{}) *mockTransport {
-	return &mockTransport{
-		requestFunc: func(_ context.Context, service, method string, _ interface{}) (interface{}, error) {
-			key := service + "/" + method
-			resp, ok := routes[key]
-			if !ok {
-				return nil, fmt.Errorf("mock: no route for %s", key)
-			}
-			jsonBytes, err := json.Marshal(resp)
-			if err != nil {
-				return nil, err
-			}
-			var result map[string]interface{}
-			if err := json.Unmarshal(jsonBytes, &result); err != nil {
-				return nil, err
-			}
-			return result, nil
-		},
-	}
-}

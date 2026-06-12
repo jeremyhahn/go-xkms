@@ -43,7 +43,7 @@ func TestExportKey_NilAttrs(t *testing.T) {
 	be := createFullTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	_, err := be.ExportKey(nil, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err := be.ExportKey(context.Background(), nil, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.ErrorIs(t, err, backend.ErrInvalidAttributes)
 }
 
@@ -52,7 +52,7 @@ func TestSoftwareBackend_ListKeys_ClosedBackend(t *testing.T) {
 	be := createFullTestBackend(t)
 	require.NoError(t, be.Close())
 
-	_, err := be.ListKeys()
+	_, err := be.ListKeys(context.Background())
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
 
@@ -72,14 +72,14 @@ func TestImportKey_InvalidPKCS8(t *testing.T) {
 	}
 
 	// Generate import params and create a wrapped key with garbage inside.
-	params, err := be.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := be.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
 	// Use the wrapping key to wrap invalid PKCS8 data.
-	wrapped, err := be.WrapKey([]byte("not-a-valid-pkcs8-key"), params)
+	wrapped, err := be.WrapKey(context.Background(), []byte("not-a-valid-pkcs8-key"), params)
 	require.NoError(t, err)
 
-	err = be.ImportKey(attrs, wrapped)
+	err = be.ImportKey(context.Background(), attrs, wrapped)
 	assert.Error(t, err, "should fail to parse invalid PKCS8")
 }
 
@@ -121,11 +121,11 @@ func TestSoftwareBackend_ExportKey_ClosedBackend(t *testing.T) {
 
 	attrs := createRSAAttrs("export-closed", 2048)
 	attrs.Exportable = true
-	_, err = sb.GenerateKey(attrs)
+	_, err = sb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	require.NoError(t, sb.Close())
 
-	_, err = sb.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = sb.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }

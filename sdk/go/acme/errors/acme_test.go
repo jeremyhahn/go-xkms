@@ -133,8 +133,8 @@ func TestACMEError_New(t *testing.T) {
 	if err.CAError == nil {
 		t.Fatal("expected non-nil CAError")
 	}
-	if err.CAError.Code != CodeACMEBadNonce {
-		t.Errorf("expected code %v, got %v", CodeACMEBadNonce, err.CAError.Code)
+	if err.Code != CodeACMEBadNonce {
+		t.Errorf("expected code %v, got %v", CodeACMEBadNonce, err.Code)
 	}
 	if err.Type != "urn:ietf:params:acme:error:badNonce" {
 		t.Errorf("expected type urn, got %q", err.Type)
@@ -417,7 +417,7 @@ func TestACMEErrorChaining(t *testing.T) {
 	if len(err.Subproblems) != 2 {
 		t.Fatalf("expected 2 subproblems, got %d", len(err.Subproblems))
 	}
-	if err.CAError.Code != CodeACMECompound {
+	if err.Code != CodeACMECompound {
 		t.Error("expected compound error code")
 	}
 }
@@ -429,7 +429,7 @@ func TestACMEError_ErrorsAs(t *testing.T) {
 	if !errors.As(err, &acmeErr) {
 		t.Fatal("expected errors.As to succeed for ACMEError")
 	}
-	if acmeErr.CAError.Code != CodeACMEBadNonce {
+	if acmeErr.Code != CodeACMEBadNonce {
 		t.Error("expected code to be preserved")
 	}
 }

@@ -78,9 +78,9 @@
           };
 
     const barrierResp = await setupApi.configureBarrier(barrierReq);
-    if (barrierResp.shares && barrierResp.shares.length > 0) {
-      setupWizardStore.shamirShares = barrierResp.shares;
-    }
+    // Share-free contract: the server seals shares to enrolled Security
+    // Officers; only the generated share count is reported back.
+    setupWizardStore.shamirShareCount = barrierResp.share_count ?? 0;
     completePhase(0);
 
     // Phase 1: Initialize CA

@@ -92,38 +92,38 @@ func (m *mockSecretBackend) Capabilities() types.Capabilities {
 	return types.Capabilities{Keys: true, Signing: true}
 }
 
-func (m *mockSecretBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockSecretBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs.SealData != nil {
 		m.data[attrs.CN] = attrs.SealData.Bytes()
 	}
 	return nil, nil
 }
 
-func (m *mockSecretBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockSecretBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if v, ok := m.data[attrs.CN]; ok {
 		return v, nil
 	}
 	return nil, errors.New("not found")
 }
 
-func (m *mockSecretBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (m *mockSecretBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	delete(m.data, attrs.CN)
 	return nil
 }
 
-func (m *mockSecretBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (m *mockSecretBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	return nil, nil
 }
 
-func (m *mockSecretBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockSecretBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	return nil, ErrNotImplemented
 }
 
-func (m *mockSecretBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockSecretBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, ErrNotImplemented
 }
 
-func (m *mockSecretBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (m *mockSecretBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	return ErrNotImplemented
 }
 

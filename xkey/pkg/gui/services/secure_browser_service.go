@@ -32,9 +32,20 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nssdb"
 )
 
-// trustHashFile is the file name used to persist the trust store hash
-// for change detection.
-const trustHashFile = "trust_hash"
+// trustHashFilePrefix is the file-name prefix used to persist the trust
+// store hash for change detection. The full file name is suffixed with
+// the resolved target-store key (family + profile mode) so that each
+// distinct target NSS database tracks its own last-synced hash. See
+// trustHashPath.
+//
+// Change detection MUST be per-resolved-target-store, not global: the
+// store a sync writes to depends on both the browser family and the
+// configured profile mode (isolated -> a managed in-profile NSS DB;
+// shared chrome -> the user's ~/.pki/nssdb). A single global hash caused
+// a launch in one mode to mark a *different* mode's store as up to date,
+// so flipping the mode skipped the sync and left that store with stale
+// CAs (TLS interstitial in a "trusted" browser).
+const trustHashFilePrefix = "trust_hash"
 
 // nssdbCertLabelPrefix is the prefix applied to all certificate labels
 // written to NSS databases, enabling bulk removal by prefix.
@@ -50,6 +61,34 @@ type LaunchResult struct {
 	Mode      string `json:"mode"`
 	CertCount int    `json:"cert_count"`
 	PID       int    `json:"pid"`
+
+	// ExtensionsImported is the number of extensions copied from the
+	// source profile into the isolated profile for this launch. Zero when
+	// extension import was not requested.
+	ExtensionsImported int `json:"extensions_imported"`
+}
+
+// LaunchOptions controls optional behavior of a secure browser launch.
+// The zero value preserves the original launch behavior (no extension
+// import), so callers that do not need extensions can pass LaunchOptions{}.
+type LaunchOptions struct {
+	// IncludeExtensions, when true, imports user-installed extensions from
+	// the source Chrome profile into the isolated profile. Only valid for
+	// Chrome-family browsers in isolated mode. When this field is left
+	// false the persisted BrowserConfig.IncludeExtensions value is used
+	// instead; a true value here always forces import on (CLI override).
+	IncludeExtensions bool
+
+	// ExtensionIDs optionally restricts the import to the listed extension
+	// IDs. When empty, all user-installed extensions in the source profile
+	// are imported. Ignored unless extension import is active.
+	ExtensionIDs []string
+
+	// SourceProfile overrides the source Chrome profile directory to import
+	// extensions from. When empty, the platform default
+	// (~/.config/google-chrome/Default) is used. Ignored unless extension
+	// import is active.
+	SourceProfile string
 }
 
 // firefoxPolicies represents the Firefox enterprise policies JSON structure.
@@ -114,7 +153,23 @@ func (s *SecureBrowserService) SetContext(ctx context.Context) {
 // certificates are synchronized, and launches the browser with the
 // appropriate profile configuration. The browserPath must be an absolute
 // path to a browser binary. The url is the initial page to open.
+//
+// This preserves the original behavior (no extension import). Callers that
+// need extension import use LaunchBrowserWithOptions.
 func (s *SecureBrowserService) LaunchBrowser(browserPath, url string) (*LaunchResult, error) {
+	return s.LaunchBrowserWithOptions(browserPath, url, LaunchOptions{})
+}
+
+// LaunchBrowserWithOptions is the full-featured launch entry point. In
+// addition to the base behavior of LaunchBrowser it can import the
+// user-installed extensions from the system default Chrome profile into the
+// isolated profile (see LaunchOptions). Extension import is only valid for
+// Chrome-family browsers in isolated mode; any other combination returns
+// ErrSecureBrowserExtImportUnsupported.
+func (s *SecureBrowserService) LaunchBrowserWithOptions(
+	browserPath, url string,
+	opts LaunchOptions,
+) (*LaunchResult, error) {
 	if browserPath == "" {
 		return nil, ErrSecureBrowserEmptyPath
 	}
@@ -143,6 +198,11 @@ func (s *SecureBrowserService) LaunchBrowser(browserPath, url string) (*LaunchRe
 	// Determine profile mode.
 	mode := s.profileMode(family)
 
+	// Resolve whether extensions should be imported: an explicit CLI
+	// override (opts.IncludeExtensions) wins, otherwise fall back to the
+	// persisted config value.
+	includeExtensions := opts.IncludeExtensions || s.browserService.GetConfig().IncludeExtensions
+
 	// Build command arguments and environment.
 	ctx := s.ctx
 	if ctx == nil {
@@ -152,6 +212,21 @@ func (s *SecureBrowserService) LaunchBrowser(browserPath, url string) (*LaunchRe
 	args, env, err := s.buildLaunchArgs(family, mode, browserPath, url)
 	if err != nil {
 		return nil, err
+	}
+
+	// Import extensions before launch so the seeded profile is on disk
+	// when Chrome reads it. Import is gated to Chrome + isolated mode.
+	extImported := 0
+	if includeExtensions {
+		if family != nativemsg.BrowserChrome || mode != ProfileModeIsolated {
+			return nil, ErrSecureBrowserExtImportUnsupported
+		}
+		profileDir := filepath.Join(s.baseDir, "chrome", "profile")
+		n, importErr := s.importChromeExtensions(profileDir, opts.SourceProfile, opts.ExtensionIDs)
+		if importErr != nil {
+			return nil, importErr
+		}
+		extImported = n
 	}
 
 	cmd := s.execCommand(ctx, args[0], args[1:]...)
@@ -178,15 +253,17 @@ func (s *SecureBrowserService) LaunchBrowser(browserPath, url string) (*LaunchRe
 		"family", string(family),
 		"mode", mode,
 		"certs", len(certs),
+		"extensions", extImported,
 		"pid", pid,
 	)
 
 	return &LaunchResult{
-		Browser:   browserPath,
-		Family:    string(family),
-		Mode:      mode,
-		CertCount: len(certs),
-		PID:       pid,
+		Browser:            browserPath,
+		Family:             string(family),
+		Mode:               mode,
+		CertCount:          len(certs),
+		PID:                pid,
+		ExtensionsImported: extImported,
 	}, nil
 }
 
@@ -217,70 +294,76 @@ func (s *SecureBrowserService) Rebuild() error {
 		return fmt.Errorf("%w: %w", ErrSecureBrowserCertSync, err)
 	}
 
-	// Rebuild both families.
+	// Rebuild both families. The hash is recorded per resolved target
+	// store (family + current mode) only when that family's sync
+	// succeeds, so a failed sync does not falsely mark its store as up
+	// to date.
+	hash := computeTrustHash(certs)
+
 	if syncErr := s.syncChrome(certs); syncErr != nil {
 		s.log.Warn("chrome cert sync failed during rebuild", "error", syncErr)
-	}
-	if syncErr := s.syncFirefox(certs); syncErr != nil {
-		s.log.Warn("firefox cert sync failed during rebuild", "error", syncErr)
+	} else if writeErr := s.writeTrustHash(nativemsg.BrowserChrome, hash); writeErr != nil {
+		return writeErr
 	}
 
-	// Update the trust hash.
-	hash := computeTrustHash(certs)
-	if writeErr := s.writeTrustHash(hash); writeErr != nil {
+	if syncErr := s.syncFirefox(certs); syncErr != nil {
+		s.log.Warn("firefox cert sync failed during rebuild", "error", syncErr)
+	} else if writeErr := s.writeTrustHash(nativemsg.BrowserFirefox, hash); writeErr != nil {
 		return writeErr
 	}
 
 	return nil
 }
 
-// syncIfChanged checks the trust hash and rebuilds browser cert stores
-// for both families if the trust store contents have changed.
+// syncIfChanged ensures the resolved target store for the launched
+// family is synchronized with the current trust-store contents.
 //
-// In addition to the hash check we verify that the on-disk artifacts
-// (Chrome's NSS DB, Firefox's certs dir) actually exist. A previous
-// session may have populated them, recorded the hash, then had the
-// profile directory wiped externally — without this existence check
-// the next launch silently skips the sync and Chrome rejects all
+// Change detection is per resolved target store, keyed by family and
+// the currently configured profile mode (see trustHashPath). The target
+// store a sync writes to depends on the mode, so the hash recorded for
+// one mode must not suppress a sync after the mode is flipped: doing so
+// left the newly selected store (e.g. the isolated NSS DB) holding stale
+// CAs from a prior shared-mode launch and produced TLS interstitials in
+// a "trusted" browser.
+//
+// In addition to the hash check we verify that the on-disk artifact for
+// the resolved target store (its cert9.db) actually exists. A previous
+// session may have populated the store, recorded the hash, then had the
+// profile directory wiped externally — without this existence check the
+// next launch silently skips the sync and the browser rejects all
 // platform certificates as untrusted.
 func (s *SecureBrowserService) syncIfChanged(family nativemsg.Browser, certs []*x509.Certificate) error {
 	currentHash := computeTrustHash(certs)
-	storedHash, _ := s.readTrustHash()
+	storedHash, _ := s.readTrustHash(family)
 
-	if currentHash == storedHash && s.browserStoresPresent(family) {
+	if currentHash == storedHash && s.browserStorePresent(family) {
 		return nil
 	}
 
-	// Sync both families since the hash is shared. Log warnings for
-	// the non-launched family but return errors only for the target.
-	if syncErr := s.syncChrome(certs); syncErr != nil {
-		if family == nativemsg.BrowserChrome {
-			return syncErr
-		}
-		s.log.Warn("chrome cert sync failed", "error", syncErr)
+	var syncErr error
+	switch family {
+	case nativemsg.BrowserChrome:
+		syncErr = s.syncChrome(certs)
+	case nativemsg.BrowserFirefox:
+		syncErr = s.syncFirefox(certs)
+	default:
+		return ErrSecureBrowserUnknownFamily
 	}
-	if syncErr := s.syncFirefox(certs); syncErr != nil {
-		if family == nativemsg.BrowserFirefox {
-			return syncErr
-		}
-		s.log.Warn("firefox cert sync failed", "error", syncErr)
+	if syncErr != nil {
+		return syncErr
 	}
 
-	return s.writeTrustHash(currentHash)
+	return s.writeTrustHash(family, currentHash)
 }
 
 // syncChrome writes certificates to the NSS database for Chrome.
 // For isolated mode, the NSS DB lives inside the managed profile.
 // For shared mode, it targets the user's shared ~/.pki/nssdb/.
 func (s *SecureBrowserService) syncChrome(certs []*x509.Certificate) error {
-	nssdbDir := s.chromeNSSDBDir()
-	mode := s.profileMode(nativemsg.BrowserChrome)
-	if mode == ProfileModeShared {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, err)
-		}
-		nssdbDir = filepath.Join(home, ".pki", "nssdb")
+	nssdbDir, ok := s.targetNSSDBDir(nativemsg.BrowserChrome)
+	if !ok {
+		// Resolving the shared ~/.pki/nssdb path failed (no home dir).
+		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, ErrSecureBrowserHomeDir)
 	}
 	if err := nssdb.InitDir(nssdbDir); err != nil {
 		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, err)
@@ -290,7 +373,7 @@ func (s *SecureBrowserService) syncChrome(certs []*x509.Certificate) error {
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, err)
 	}
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 
 	// Remove all existing xkey-managed certs then re-add.
 	if removeErr := writer.RemoveByPrefix(nssdbCertLabelPrefix); removeErr != nil {
@@ -389,7 +472,7 @@ func (s *SecureBrowserService) injectFirefoxNSSDB(certs []*x509.Certificate) err
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, err)
 	}
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 
 	if removeErr := writer.RemoveByPrefix(nssdbCertLabelPrefix); removeErr != nil {
 		s.log.Warn("failed to remove existing xkey certs from firefox nssdb", "error", removeErr)
@@ -592,42 +675,91 @@ func (s *SecureBrowserService) firefoxNSSDBDir() string {
 	return filepath.Join(s.baseDir, "firefox", "profile")
 }
 
-// browserStoresPresent verifies the on-disk artifacts that syncChrome
-// and syncFirefox produce actually exist. Used as a guard so the
-// hash-only short-circuit in syncIfChanged doesn't skip work when the
-// browser profile or cert directory has been wiped between launches.
+// browserStorePresent verifies the on-disk NSS database that the
+// resolved target store for the given family and its currently
+// configured profile mode would write to actually exists. Used as a
+// guard so the hash-only short-circuit in syncIfChanged doesn't skip
+// work when the target store has been wiped between launches.
 //
-// The probe targets the load-bearing artifact for each browser:
-// cert9.db (the NSS database both Chrome and Firefox actually read at
-// startup). Verifying policies.json for Firefox would not catch a wiped
-// NSS DB, leaving Firefox launching without any xkey-managed CAs.
-func (s *SecureBrowserService) browserStoresPresent(family nativemsg.Browser) bool {
-	switch family {
-	case nativemsg.BrowserChrome:
-		_, err := os.Stat(filepath.Join(s.chromeNSSDBDir(), "cert9.db"))
-		return err == nil
-	case nativemsg.BrowserFirefox:
-		_, err := os.Stat(filepath.Join(s.firefoxNSSDBDir(), "cert9.db"))
-		return err == nil
+// The probe targets the load-bearing artifact: cert9.db (the NSS
+// database the browser actually reads at startup). It is resolved per
+// mode because the target store differs by mode — checking the isolated
+// store while running in shared mode (or vice versa) would let the
+// short-circuit skip a genuinely stale store.
+//
+// Shared chrome targets the user's real ~/.pki/nssdb; we only probe it
+// for existence and never write xkey bookkeeping there.
+func (s *SecureBrowserService) browserStorePresent(family nativemsg.Browser) bool {
+	dir, ok := s.targetNSSDBDir(family)
+	if !ok {
+		// No NSS DB target for this combination (shared firefox writes
+		// only PEM/policies, which the wiped-store guard does not track).
+		return true
 	}
-	return false
+	_, err := os.Stat(filepath.Join(dir, "cert9.db"))
+	return err == nil
 }
 
-// readTrustHash reads the stored trust hash from disk.
-func (s *SecureBrowserService) readTrustHash() (string, error) {
-	data, err := os.ReadFile(filepath.Join(s.baseDir, trustHashFile))
+// targetNSSDBDir returns the NSS database directory that a sync for the
+// given family writes to under the currently configured profile mode,
+// and whether such an NSS DB target exists for that combination.
+//
+// Combinations:
+//   - chrome isolated  -> the managed in-profile NSS DB
+//   - chrome shared    -> the user's ~/.pki/nssdb
+//   - firefox isolated -> the managed in-profile NSS DB
+//   - firefox shared   -> no NSS DB injection (false)
+func (s *SecureBrowserService) targetNSSDBDir(family nativemsg.Browser) (string, bool) {
+	mode := s.profileMode(family)
+	switch family {
+	case nativemsg.BrowserChrome:
+		if mode == ProfileModeShared {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", false
+			}
+			return filepath.Join(home, ".pki", "nssdb"), true
+		}
+		return s.chromeNSSDBDir(), true
+	case nativemsg.BrowserFirefox:
+		if mode == ProfileModeShared {
+			return "", false
+		}
+		return s.firefoxNSSDBDir(), true
+	}
+	return "", false
+}
+
+// trustHashPath returns the path of the per-resolved-target-store trust
+// hash file for the given family under its currently configured profile
+// mode. The file is keyed by family + mode so each distinct target NSS
+// database tracks its own last-synced hash.
+//
+// All bookkeeping lives under s.baseDir — never inside the user's real
+// ~/.pki/nssdb that shared-mode chrome writes to.
+func (s *SecureBrowserService) trustHashPath(family nativemsg.Browser) string {
+	mode := s.profileMode(family)
+	name := trustHashFilePrefix + "." + string(family) + "." + mode
+	return filepath.Join(s.baseDir, name)
+}
+
+// readTrustHash reads the stored trust hash for the resolved target
+// store of the given family from disk.
+func (s *SecureBrowserService) readTrustHash(family nativemsg.Browser) (string, error) {
+	data, err := os.ReadFile(s.trustHashPath(family))
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrSecureBrowserHashRead, err)
 	}
 	return strings.TrimSpace(string(data)), nil
 }
 
-// writeTrustHash persists the trust hash to disk.
-func (s *SecureBrowserService) writeTrustHash(hash string) error {
+// writeTrustHash persists the trust hash for the resolved target store
+// of the given family to disk.
+func (s *SecureBrowserService) writeTrustHash(family nativemsg.Browser, hash string) error {
 	if err := os.MkdirAll(s.baseDir, 0o700); err != nil {
 		return fmt.Errorf("%w: %w", ErrSecureBrowserHashWrite, err)
 	}
-	if err := os.WriteFile(filepath.Join(s.baseDir, trustHashFile), []byte(hash), 0o600); err != nil {
+	if err := os.WriteFile(s.trustHashPath(family), []byte(hash), 0o600); err != nil {
 		return fmt.Errorf("%w: %w", ErrSecureBrowserHashWrite, err)
 	}
 	return nil

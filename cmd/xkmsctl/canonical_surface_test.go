@@ -168,10 +168,13 @@ func TestCanonicalSurface_BarrierRekeyFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("barrier rekey not registered: %v", err)
 	}
-	for _, flag := range []string{"passphrase", "so-pin", "threshold", "total"} {
+	for _, flag := range []string{"so-pin", "threshold", "total"} {
 		if cmd.Flags().Lookup(flag) == nil {
 			t.Errorf("barrier rekey --%s flag missing (canonical)", flag)
 		}
+	}
+	if cmd.Flags().Lookup("passphrase") != nil {
+		t.Error("barrier rekey --passphrase must not exist (canonical: no secret on the wire)")
 	}
 }
 

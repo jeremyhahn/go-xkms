@@ -1085,10 +1085,11 @@ func TestCTAPHIDHandler_KeepalivesDuringMakeCredential(t *testing.T) {
 
 	// Categorize responses: keepalives vs CBOR response
 	keepaliveCount := 0
-	var cborResponseIdx int = -1
+	cborResponseIdx := -1
 	for i, resp := range responses {
 		cmd := resp[4]
-		if cmd == CTAPHIDKeepalive {
+		switch cmd {
+		case CTAPHIDKeepalive:
 			keepaliveCount++
 			// Verify CID matches
 			respCID := binary.BigEndian.Uint32(resp[0:4])
@@ -1105,7 +1106,7 @@ func TestCTAPHIDHandler_KeepalivesDuringMakeCredential(t *testing.T) {
 				t.Errorf("keepalive status = 0x%02x, want KeepaliveStatusUpNeeded (0x%02x)",
 					status, KeepaliveStatusUpNeeded)
 			}
-		} else if cmd == CTAPHIDCBOR {
+		case CTAPHIDCBOR:
 			cborResponseIdx = i
 		}
 	}

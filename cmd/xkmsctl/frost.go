@@ -332,7 +332,7 @@ Examples:
 				},
 			}
 
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(cmd.Context(), attrs)
 			if err != nil {
 				handleError(fmt.Errorf("failed to generate FROST key: %w", err))
 				return
@@ -468,7 +468,7 @@ Example:
 			SecretBackendType: client.BackendTypeSoftware,
 		}
 
-		if err := ks.StoreKeyPackage(pkg.KeyID, keyPackage, metadata); err != nil {
+		if err := ks.StoreKeyPackage(cmd.Context(), pkg.KeyID, keyPackage, metadata); err != nil {
 			handleError(fmt.Errorf("failed to store key package: %w", err))
 			return
 		}
@@ -509,7 +509,7 @@ var frostListCmd = &cobra.Command{
 		}
 		defer func() { _ = be.Close() }()
 
-		keys, err := be.ListKeys()
+		keys, err := be.ListKeys(cmd.Context())
 		if err != nil {
 			handleError(fmt.Errorf("failed to list keys: %w", err))
 			return
@@ -569,7 +569,7 @@ var frostInfoCmd = &cobra.Command{
 			StoreType: client.StoreFrost,
 		}
 
-		key, err := be.GetKey(attrs)
+		key, err := be.GetKey(cmd.Context(), attrs)
 		if err != nil {
 			handleError(fmt.Errorf("failed to get key: %w", err))
 			return
@@ -628,7 +628,7 @@ var frostDeleteCmd = &cobra.Command{
 			StoreType: client.StoreFrost,
 		}
 
-		if err := be.DeleteKey(attrs); err != nil {
+		if err := be.DeleteKey(cmd.Context(), attrs); err != nil {
 			handleError(fmt.Errorf("failed to delete key: %w", err))
 			return
 		}
@@ -1168,13 +1168,13 @@ func (b *fileSecretBackend) Capabilities() client.Capabilities {
 	}
 }
 
-func (b *fileSecretBackend) GenerateKey(attrs *client.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *fileSecretBackend) GenerateKey(ctx context.Context, attrs *client.KeyAttributes) (crypto.PrivateKey, error) {
 	// For FROST, we store the secret share data from SealData
 	if attrs.SealData != nil {
 		data := attrs.SealData.Bytes()
 		if len(data) > 0 {
 			path := "frost/secrets/" + attrs.CN + ".secret"
-			if err := b.storage.Put(context.Background(), path, data); err != nil {
+			if err := b.storage.Put(ctx, path, data); err != nil {
 				return nil, fmt.Errorf("failed to store secret: %w", err)
 			}
 		}
@@ -1183,10 +1183,10 @@ func (b *fileSecretBackend) GenerateKey(attrs *client.KeyAttributes) (crypto.Pri
 	return nil, nil
 }
 
-func (b *fileSecretBackend) GetKey(attrs *client.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *fileSecretBackend) GetKey(ctx context.Context, attrs *client.KeyAttributes) (crypto.PrivateKey, error) {
 	// For FROST, we retrieve the secret share data
 	path := "frost/secrets/" + attrs.CN + ".secret"
-	data, err := b.storage.Get(context.Background(), path)
+	data, err := b.storage.Get(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secret: %w", err)
 	}
@@ -1196,24 +1196,24 @@ func (b *fileSecretBackend) GetKey(attrs *client.KeyAttributes) (crypto.PrivateK
 	return data, nil
 }
 
-func (b *fileSecretBackend) DeleteKey(attrs *client.KeyAttributes) error {
+func (b *fileSecretBackend) DeleteKey(ctx context.Context, attrs *client.KeyAttributes) error {
 	path := "frost/secrets/" + attrs.CN + ".secret"
-	return b.storage.Delete(context.Background(), path)
+	return b.storage.Delete(ctx, path)
 }
 
-func (b *fileSecretBackend) ListKeys() ([]*client.KeyAttributes, error) {
+func (b *fileSecretBackend) ListKeys(ctx context.Context) ([]*client.KeyAttributes, error) {
 	return nil, nil
 }
 
-func (b *fileSecretBackend) Signer(attrs *client.KeyAttributes) (crypto.Signer, error) {
+func (b *fileSecretBackend) Signer(ctx context.Context, attrs *client.KeyAttributes) (crypto.Signer, error) {
 	return nil, fmt.Errorf("not implemented for file secret backend")
 }
 
-func (b *fileSecretBackend) Decrypter(attrs *client.KeyAttributes) (crypto.Decrypter, error) {
+func (b *fileSecretBackend) Decrypter(ctx context.Context, attrs *client.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, fmt.Errorf("not implemented for file secret backend")
 }
 
-func (b *fileSecretBackend) RotateKey(attrs *client.KeyAttributes) error {
+func (b *fileSecretBackend) RotateKey(ctx context.Context, attrs *client.KeyAttributes) error {
 	return nil
 }
 

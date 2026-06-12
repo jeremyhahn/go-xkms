@@ -168,6 +168,10 @@ type TCGPermanentIdentifier = pkgca.TCGPermanentIdentifier
 // TCGTenantID represents a tenant identifier for multi-tenant CA operations.
 type TCGTenantID = pkgca.TCGTenantID
 
+// TCGNetworkZone represents the platform network zone assigned to a
+// certificate subject, evaluated by the SDN policy engine at enforcement time.
+type TCGNetworkZone = pkgca.TCGNetworkZone
+
 // TCGAttribute represents a TCG certificate attribute (OID + UTF8 value).
 type TCGAttribute = pkgca.TCGAttribute
 
@@ -231,6 +235,16 @@ var ParsePermanentIdentifierExtension = pkgca.ParsePermanentIdentifierExtension
 
 // CreateTenantIDExtension creates a tenant identifier extension.
 var CreateTenantIDExtension = pkgca.CreateTenantIDExtension
+
+// OIDTPNetworkZone identifies the network zone extension
+// (1.3.6.1.4.1.29377.101.21).
+var OIDTPNetworkZone = pkgca.OIDTPNetworkZone
+
+// CreateNetworkZoneExtension creates a network zone extension.
+var CreateNetworkZoneExtension = pkgca.CreateNetworkZoneExtension
+
+// ParseNetworkZoneExtension parses a network zone extension.
+var ParseNetworkZoneExtension = pkgca.ParseNetworkZoneExtension
 
 // ---------------------------------------------------------------------------
 // CA error re-exports

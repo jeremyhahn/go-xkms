@@ -54,7 +54,7 @@ func TestMLKEMEncryptDecrypt(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("test-encryption-key", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -183,7 +183,7 @@ func TestMLKEMEncryptDecryptAllAlgorithms(t *testing.T) {
 			defer func() { _ = qb.Close() }()
 
 			attrs := mlkemAttrs("test-key-"+string(algo), algo)
-			privKey, err := qb.GenerateKey(attrs)
+			privKey, err := qb.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err)
 
 			mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -208,7 +208,7 @@ func TestMLKEM512Unsupported(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("test-unsupported-512", types.QuantumAlgorithmMLKEM512)
-	_, err := qb.GenerateKey(attrs)
+	_, err := qb.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported quantum algorithm")
 }
@@ -271,7 +271,7 @@ func TestGenerateKey_NilQuantumAttributes(t *testing.T) {
 		KeyType:   types.KeyTypeSigning,
 		StoreType: types.StoreQuantum,
 	}
-	_, err := qb.GenerateKey(attrs)
+	_, err := qb.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrInvalidAttributes)
 }
@@ -281,10 +281,10 @@ func TestGenerateKey_DuplicateKey(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mldsaAttrs("dup-key", types.QuantumAlgorithmMLDSA65)
-	_, err := qb.GenerateKey(attrs)
+	_, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	_, err = qb.GenerateKey(attrs)
+	_, err = qb.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyAlreadyExists)
 }
@@ -303,7 +303,7 @@ func TestGenerateKey_InvalidAttributes(t *testing.T) {
 			Algorithm: types.QuantumAlgorithm("UNSUPPORTED-42"),
 		},
 	}
-	_, err := qb.GenerateKey(attrs)
+	_, err := qb.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrInvalidAttributes)
 }
@@ -313,7 +313,7 @@ func TestGenerateKey_ClosedBackend(t *testing.T) {
 	require.NoError(t, qb.Close())
 
 	attrs := mldsaAttrs("closed-test", types.QuantumAlgorithmMLDSA65)
-	_, err := qb.GenerateKey(attrs)
+	_, err := qb.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
@@ -333,7 +333,7 @@ func TestMLDSA_GenerateAndSign_AllAlgorithms(t *testing.T) {
 			defer func() { _ = qb.Close() }()
 
 			attrs := mldsaAttrs("sign-"+string(algo), algo)
-			privKey, err := qb.GenerateKey(attrs)
+			privKey, err := qb.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err)
 
 			mldsaKey, ok := privKey.(*MLDSAPrivateKey)
@@ -399,7 +399,7 @@ func TestMLDSAPrivateKey_Clean(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mldsaAttrs("clean-key", types.QuantumAlgorithmMLDSA44)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mldsaKey := privKey.(*MLDSAPrivateKey)
@@ -419,7 +419,7 @@ func TestMLDSAPrivateKey_ExportSecretKey(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mldsaAttrs("export-key", types.QuantumAlgorithmMLDSA65)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mldsaKey := privKey.(*MLDSAPrivateKey)
@@ -446,7 +446,7 @@ func TestMLKEMPrivateKey_Public(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("pub-key", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -462,7 +462,7 @@ func TestMLKEMPrivateKey_Clean(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("clean-kem", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -480,7 +480,7 @@ func TestMLKEMPrivateKey_ExportSecretKey(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("export-kem", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -562,13 +562,13 @@ func TestGetKey_MLDSA_RoundTrip(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mldsaAttrs("get-dsa-key", types.QuantumAlgorithmMLDSA65)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	originalKey := privKey.(*MLDSAPrivateKey)
 
 	// Retrieve key
-	retrieved, err := qb.GetKey(attrs)
+	retrieved, err := qb.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	loadedKey := retrieved.(*MLDSAPrivateKey)
@@ -590,7 +590,7 @@ func TestGetKey_MLKEM_RoundTrip(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("get-kem-key", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	originalKey := privKey.(*MLKEMPrivateKey)
@@ -602,7 +602,7 @@ func TestGetKey_MLKEM_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	// Retrieve key and decrypt
-	retrieved, err := qb.GetKey(attrs)
+	retrieved, err := qb.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 	loadedKey := retrieved.(*MLKEMPrivateKey)
 
@@ -616,7 +616,7 @@ func TestGetKey_NotFound(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mldsaAttrs("nonexistent", types.QuantumAlgorithmMLDSA44)
-	_, err := qb.GetKey(attrs)
+	_, err := qb.GetKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -626,7 +626,7 @@ func TestGetKey_ClosedBackend(t *testing.T) {
 	require.NoError(t, qb.Close())
 
 	attrs := mldsaAttrs("closed-get", types.QuantumAlgorithmMLDSA44)
-	_, err := qb.GetKey(attrs)
+	_, err := qb.GetKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
@@ -638,19 +638,19 @@ func TestDeleteKey_MLDSA(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mldsaAttrs("delete-dsa", types.QuantumAlgorithmMLDSA44)
-	_, err := qb.GenerateKey(attrs)
+	_, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Key exists
-	_, err = qb.GetKey(attrs)
+	_, err = qb.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Delete
-	err = qb.DeleteKey(attrs)
+	err = qb.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Key no longer exists
-	_, err = qb.GetKey(attrs)
+	_, err = qb.GetKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -660,7 +660,7 @@ func TestDeleteKey_NotFound(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mldsaAttrs("no-such-key", types.QuantumAlgorithmMLDSA65)
-	err := qb.DeleteKey(attrs)
+	err := qb.DeleteKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -670,7 +670,7 @@ func TestDeleteKey_ClosedBackend(t *testing.T) {
 	require.NoError(t, qb.Close())
 
 	attrs := mldsaAttrs("closed-del", types.QuantumAlgorithmMLDSA44)
-	err := qb.DeleteKey(attrs)
+	err := qb.DeleteKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
@@ -681,7 +681,7 @@ func TestListKeys_Empty(t *testing.T) {
 	qb, _ := newTestBackend(t)
 	defer func() { _ = qb.Close() }()
 
-	keys, err := qb.ListKeys()
+	keys, err := qb.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, keys)
 }
@@ -691,14 +691,14 @@ func TestListKeys_WithMultipleKeys(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	// Generate ML-DSA-44 key
-	_, err := qb.GenerateKey(mldsaAttrs("list-dsa44", types.QuantumAlgorithmMLDSA44))
+	_, err := qb.GenerateKey(context.Background(), mldsaAttrs("list-dsa44", types.QuantumAlgorithmMLDSA44))
 	require.NoError(t, err)
 
 	// Generate ML-KEM-768 key
-	_, err = qb.GenerateKey(mlkemAttrs("list-kem768", types.QuantumAlgorithmMLKEM768))
+	_, err = qb.GenerateKey(context.Background(), mlkemAttrs("list-kem768", types.QuantumAlgorithmMLKEM768))
 	require.NoError(t, err)
 
-	keys, err := qb.ListKeys()
+	keys, err := qb.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(keys), 2)
 }
@@ -707,7 +707,7 @@ func TestListKeys_ClosedBackend(t *testing.T) {
 	qb, _ := newTestBackend(t)
 	require.NoError(t, qb.Close())
 
-	_, err := qb.ListKeys()
+	_, err := qb.ListKeys(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
@@ -717,7 +717,7 @@ func TestListKeys_FiltersNonQuantumKeys(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	// Store a quantum key normally
-	_, err := qb.GenerateKey(mldsaAttrs("real-key", types.QuantumAlgorithmMLDSA44))
+	_, err := qb.GenerateKey(context.Background(), mldsaAttrs("real-key", types.QuantumAlgorithmMLDSA44))
 	require.NoError(t, err)
 
 	// Manually store a key with a non-quantum algorithm in the ID
@@ -729,7 +729,7 @@ func TestListKeys_FiltersNonQuantumKeys(t *testing.T) {
 	err = storage.SaveKey(context.Background(), store, "short:id", []byte(`{"algorithm":"ML-DSA-44"}`))
 	require.NoError(t, err)
 
-	keys, err := qb.ListKeys()
+	keys, err := qb.ListKeys(context.Background())
 	require.NoError(t, err)
 
 	// Only the real quantum key should be returned
@@ -744,10 +744,10 @@ func TestSigner_MLDSA(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mldsaAttrs("signer-key", types.QuantumAlgorithmMLDSA65)
-	_, err := qb.GenerateKey(attrs)
+	_, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := qb.Signer(attrs)
+	signer, err := qb.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 
@@ -763,10 +763,10 @@ func TestSigner_MLKEM_ReturnsError(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("signer-kem", types.QuantumAlgorithmMLKEM768)
-	_, err := qb.GenerateKey(attrs)
+	_, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	_, err = qb.Signer(attrs)
+	_, err = qb.Signer(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyNotSigner)
 }
@@ -776,7 +776,7 @@ func TestSigner_NotFound(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mldsaAttrs("signer-missing", types.QuantumAlgorithmMLDSA44)
-	_, err := qb.Signer(attrs)
+	_, err := qb.Signer(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -788,7 +788,7 @@ func TestDecrypter_AlwaysReturnsError(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("dec-key", types.QuantumAlgorithmMLKEM768)
-	_, err := qb.Decrypter(attrs)
+	_, err := qb.Decrypter(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyNotDecrypter)
 }
@@ -800,16 +800,16 @@ func TestRotateKey_MLDSA(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mldsaAttrs("rotate-dsa", types.QuantumAlgorithmMLDSA65)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	originalKey := privKey.(*MLDSAPrivateKey)
 	originalPub := originalKey.PublicKey.Key
 
-	err = qb.RotateKey(attrs)
+	err = qb.RotateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// The rotated key should have different public key material
-	newKey, err := qb.GetKey(attrs)
+	newKey, err := qb.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 	rotatedKey := newKey.(*MLDSAPrivateKey)
 	assert.NotEqual(t, originalPub, rotatedKey.PublicKey.Key)
@@ -820,16 +820,16 @@ func TestRotateKey_MLKEM(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("rotate-kem", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	originalKey := privKey.(*MLKEMPrivateKey)
 	originalPub := originalKey.PublicKey.Key
 
-	err = qb.RotateKey(attrs)
+	err = qb.RotateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// The rotated key should have different public key material
-	newKey, err := qb.GetKey(attrs)
+	newKey, err := qb.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 	rotatedKey := newKey.(*MLKEMPrivateKey)
 	assert.NotEqual(t, originalPub, rotatedKey.PublicKey.Key)
@@ -850,7 +850,7 @@ func TestRotateKey_NotFound(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mldsaAttrs("rotate-missing", types.QuantumAlgorithmMLDSA44)
-	err := qb.RotateKey(attrs)
+	err := qb.RotateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -860,7 +860,7 @@ func TestRotateKey_ClosedBackend(t *testing.T) {
 	require.NoError(t, qb.Close())
 
 	attrs := mldsaAttrs("rotate-closed", types.QuantumAlgorithmMLDSA65)
-	err := qb.RotateKey(attrs)
+	err := qb.RotateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
@@ -872,7 +872,7 @@ func TestRotateKey_CorruptedMetadata(t *testing.T) {
 	attrs := mldsaAttrs("rotate-corrupt", types.QuantumAlgorithmMLDSA44)
 
 	// Generate the key first so KeyExists returns true
-	_, err := qb.GenerateKey(attrs)
+	_, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Overwrite with corrupted metadata
@@ -880,7 +880,7 @@ func TestRotateKey_CorruptedMetadata(t *testing.T) {
 	err = storage.SaveKey(context.Background(), store, keyID, []byte("not-valid-json"))
 	require.NoError(t, err)
 
-	err = qb.RotateKey(attrs)
+	err = qb.RotateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to deserialize key metadata")
 }
@@ -892,7 +892,7 @@ func TestRotateKey_StoredUnsupportedAlgorithm(t *testing.T) {
 	attrs := mldsaAttrs("rotate-unsupported", types.QuantumAlgorithmMLDSA65)
 
 	// Generate the key first so KeyExists returns true
-	_, err := qb.GenerateKey(attrs)
+	_, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Overwrite with metadata containing an unsupported algorithm
@@ -901,7 +901,7 @@ func TestRotateKey_StoredUnsupportedAlgorithm(t *testing.T) {
 	err = storage.SaveKey(context.Background(), store, keyID, []byte(meta))
 	require.NoError(t, err)
 
-	err = qb.RotateKey(attrs)
+	err = qb.RotateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnsupportedAlgorithm)
 }
@@ -994,7 +994,7 @@ func TestMLKEMPrivateKey_Encapsulate_InvalidPubKey(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("bad-pubkey", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -1066,7 +1066,7 @@ func TestGetKey_CorruptedMetadata(t *testing.T) {
 	err := storage.SaveKey(context.Background(), store, keyID, []byte("not-valid-json"))
 	require.NoError(t, err)
 
-	_, err = qb.GetKey(attrs)
+	_, err = qb.GetKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to deserialize key metadata")
 }
@@ -1092,7 +1092,7 @@ func TestGetKey_StoredUnsupportedAlgorithm(t *testing.T) {
 	err := storage.SaveKey(context.Background(), store, keyID, []byte(meta))
 	require.NoError(t, err)
 
-	_, err = qb.GetKey(attrs)
+	_, err = qb.GetKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUnsupportedAlgorithm))
 }
@@ -1104,7 +1104,7 @@ func TestMLKEMPrivateKey_Encrypt_EncapsulationError(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("enc-err", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -1120,7 +1120,7 @@ func TestMLKEMPrivateKey_EncryptWithAAD_EncapsulationError(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("enc-aad-err", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -1136,7 +1136,7 @@ func TestMLKEMPrivateKey_Decrypt_WrongSizeKemCiphertext(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("dec-wrong-size", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -1153,7 +1153,7 @@ func TestMLKEMPrivateKey_Decrypt_WrongSharedSecret(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("dec-bad-secret", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -1174,7 +1174,7 @@ func TestMLKEMPrivateKey_DecryptWithAAD_WrongSizeKemCiphertext(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("dec-aad-wrong-size", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -1191,7 +1191,7 @@ func TestMLKEMPrivateKey_DecryptWithAAD_WrongSharedSecret(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("dec-aad-bad-secret", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -1222,7 +1222,7 @@ func TestMLKEMPrivateKey_Decapsulate_768_InvalidSize(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("decap-bad-size", types.QuantumAlgorithmMLKEM768)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -1239,7 +1239,7 @@ func TestMLKEMPrivateKey_Decapsulate_1024_InvalidSize(t *testing.T) {
 	defer func() { _ = qb.Close() }()
 
 	attrs := mlkemAttrs("decap-bad-1024", types.QuantumAlgorithmMLKEM1024)
-	privKey, err := qb.GenerateKey(attrs)
+	privKey, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)

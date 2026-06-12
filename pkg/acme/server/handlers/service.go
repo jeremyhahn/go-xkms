@@ -204,6 +204,12 @@ type Params struct {
 	// managed by QRDB KMS instead of the global CA.
 	// If nil, all certificates are signed by the global CA.
 	KMSService kms.KMSService
+
+	// OrderPreSignHooks is the registry of hooks to execute immediately before the CA
+	// signs the certificate. Hooks return additional X.509 extensions (e.g. the SDN
+	// network-zone extension OIDTPNetworkZone) that are appended to ExtraExtensions in
+	// registration order. A hook error aborts finalization fail-closed.
+	OrderPreSignHooks *OrderPreSignHookRegistry
 }
 
 // CAAValidatorInterface defines the interface for CAA validation.
@@ -230,6 +236,7 @@ type RestService struct {
 	orderFinalizeHooks      *OrderFinalizeHookRegistry
 	params                  *Params
 	preIssuanceHooks        *PreIssuanceHookRegistry
+	preSignHooks            *OrderPreSignHookRegistry
 	storageFactory          storage.Factory
 	termsOfService          string
 	RestServicer
@@ -285,6 +292,7 @@ func NewRestService(params *Params) (RestServicer, error) {
 		orderFinalizeHooks:      params.OrderFinalizeHooks,
 		params:                  params,
 		preIssuanceHooks:        params.PreIssuanceHooks,
+		preSignHooks:            params.OrderPreSignHooks,
 		storageFactory:          params.StorageFactory,
 		termsOfService:          params.TermsOfService,
 	}, nil
@@ -330,6 +338,21 @@ func (s *RestService) SetPreIssuanceHooks(registry *PreIssuanceHookRegistry) {
 // GetPreIssuanceHooks returns the pre-issuance hook registry.
 func (s *RestService) GetPreIssuanceHooks() *PreIssuanceHookRegistry {
 	return s.preIssuanceHooks
+}
+
+// SetOrderPreSignHooks sets the pre-sign extension hook registry.
+// Hooks registered here fire immediately before the CA signs each certificate
+// and may inject additional X.509 extensions into the issued certificate.
+func (s *RestService) SetOrderPreSignHooks(registry *OrderPreSignHookRegistry) {
+	s.preSignHooks = registry
+	if s.params != nil {
+		s.params.OrderPreSignHooks = registry
+	}
+}
+
+// GetOrderPreSignHooks returns the pre-sign extension hook registry.
+func (s *RestService) GetOrderPreSignHooks() *OrderPreSignHookRegistry {
+	return s.preSignHooks
 }
 
 // SetGlobalComplianceConfig sets the global compliance configuration.

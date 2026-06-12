@@ -27,7 +27,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // FROST request/response types
@@ -210,7 +209,7 @@ func (h *HandlerContext) FrostGenerateKeyHandler(w http.ResponseWriter, r *http.
 		keyID = fmt.Sprintf("frost-key-%d", time.Now().UnixNano())
 	}
 
-	be, err := getFrostBackend()
+	be, err := h.getFrostBackend()
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
@@ -290,7 +289,7 @@ func (h *HandlerContext) FrostGenerateKeyHandler(w http.ResponseWriter, r *http.
 		},
 	}
 
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(r.Context(), attrs)
 	if err != nil {
 		writeError(w, fmt.Errorf("failed to generate FROST key: %w", err), http.StatusInternalServerError)
 		return
@@ -324,7 +323,7 @@ func (h *HandlerContext) FrostImportKeyHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	be, err := getFrostBackend()
+	be, err := h.getFrostBackend()
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
@@ -376,7 +375,7 @@ func (h *HandlerContext) FrostImportKeyHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	ks := be.KeyStore()
-	if err := ks.StoreKeyPackage(pkg.KeyID, keyPackage, metadata); err != nil {
+	if err := ks.StoreKeyPackage(r.Context(), pkg.KeyID, keyPackage, metadata); err != nil {
 		writeError(w, fmt.Errorf("failed to store key package: %w", err), http.StatusInternalServerError)
 		return
 	}
@@ -393,13 +392,13 @@ func (h *HandlerContext) FrostImportKeyHandler(w http.ResponseWriter, r *http.Re
 
 // FrostListKeysHandler handles GET /api/v1/frost/keys requests
 func (h *HandlerContext) FrostListKeysHandler(w http.ResponseWriter, r *http.Request) {
-	be, err := getFrostBackend()
+	be, err := h.getFrostBackend()
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
 
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(r.Context())
 	if err != nil {
 		writeError(w, fmt.Errorf("failed to list keys: %w", err), http.StatusInternalServerError)
 		return
@@ -409,7 +408,7 @@ func (h *HandlerContext) FrostListKeysHandler(w http.ResponseWriter, r *http.Req
 	for _, k := range keys {
 		if k.FrostAttributes != nil {
 			var groupPubKey string
-			handle, err := be.GetKey(k)
+			handle, err := be.GetKey(r.Context(), k)
 			if err == nil {
 				if h, ok := handle.(*frost.FrostKeyHandle); ok {
 					groupPubKey = hexEncode(h.GroupPublicKey)
@@ -448,7 +447,7 @@ func (h *HandlerContext) FrostGetKeyHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	be, err := getFrostBackend()
+	be, err := h.getFrostBackend()
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
@@ -460,7 +459,7 @@ func (h *HandlerContext) FrostGetKeyHandler(w http.ResponseWriter, r *http.Reque
 		StoreType: types.StoreFrost,
 	}
 
-	key, err := be.GetKey(attrs)
+	key, err := be.GetKey(r.Context(), attrs)
 	if err != nil {
 		writeError(w, fmt.Errorf("key not found: %w", err), http.StatusNotFound)
 		return
@@ -469,7 +468,7 @@ func (h *HandlerContext) FrostGetKeyHandler(w http.ResponseWriter, r *http.Reque
 	handle := key.(*frost.FrostKeyHandle)
 
 	// Get metadata from key list
-	keys, _ := be.ListKeys()
+	keys, _ := be.ListKeys(r.Context())
 	var keyInfo FrostKeyInfo
 	for _, k := range keys {
 		if k.CN == keyID && k.FrostAttributes != nil {
@@ -508,7 +507,7 @@ func (h *HandlerContext) FrostDeleteKeyHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	be, err := getFrostBackend()
+	be, err := h.getFrostBackend()
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
@@ -520,7 +519,7 @@ func (h *HandlerContext) FrostDeleteKeyHandler(w http.ResponseWriter, r *http.Re
 		StoreType: types.StoreFrost,
 	}
 
-	if err := be.DeleteKey(attrs); err != nil {
+	if err := be.DeleteKey(r.Context(), attrs); err != nil {
 		writeError(w, fmt.Errorf("failed to delete key: %w", err), http.StatusInternalServerError)
 		return
 	}
@@ -540,7 +539,7 @@ func (h *HandlerContext) FrostGenerateNoncesHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	be, err := getFrostBackend()
+	be, err := h.getFrostBackend()
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
@@ -577,7 +576,7 @@ func (h *HandlerContext) FrostSignRoundHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	be, err := getFrostBackend()
+	be, err := h.getFrostBackend()
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
@@ -620,7 +619,7 @@ func (h *HandlerContext) FrostSignRoundHandler(w http.ResponseWriter, r *http.Re
 		KeyType:   types.KeyTypeSigning,
 		StoreType: types.StoreFrost,
 	}
-	key, err := be.GetKey(attrs)
+	key, err := be.GetKey(r.Context(), attrs)
 	if err != nil {
 		writeError(w, fmt.Errorf("key not found: %w", err), http.StatusNotFound)
 		return
@@ -692,7 +691,7 @@ func (h *HandlerContext) FrostAggregateHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	be, err := getFrostBackend()
+	be, err := h.getFrostBackend()
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
@@ -777,7 +776,7 @@ func (h *HandlerContext) FrostVerifyHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	be, err := getFrostBackend()
+	be, err := h.getFrostBackend()
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
@@ -811,11 +810,11 @@ func (h *HandlerContext) FrostVerifyHandler(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// getFrostBackend retrieves the FROST backend from the xkms service
-func getFrostBackend() (*frost.FrostBackend, error) {
-	backends := xkms.Backends()
+// getFrostBackend retrieves the FROST backend from the injected xkms service.
+func (h *HandlerContext) getFrostBackend() (*frost.FrostBackend, error) {
+	backends := h.backendNames()
 	for _, name := range backends {
-		ks, err := xkms.GetBackend(name)
+		ks, err := h.lookupBackend(name)
 		if err != nil {
 			continue
 		}

@@ -11,17 +11,30 @@ This directory contains integration tests for the encoding packages (JWK, JWT, J
 
 ## Running Tests
 
+These tests run as part of the comprehensive coverage target (`make coverage`),
+which includes `./test/integration/encoding/...` in its integration step.
+
 ```bash
 # Run all encoding integration tests
-make integration-test-encoding
+go test -v -tags "integration codec_cbor codec_json codec_msgpack" ./test/integration/encoding/...
 
 # Run specific test
-go test -v -tags=integration ./test/integration/encoding/... -run TestJWK
+go test -v -tags "integration codec_cbor codec_json codec_msgpack" ./test/integration/encoding/... -run TestJWK
 
 # Run with coverage
-go test -v -tags=integration -coverprofile=coverage.out ./test/integration/encoding/...
+go test -v -tags "integration codec_cbor codec_json codec_msgpack" -coverprofile=coverage.out ./test/integration/encoding/...
 go tool cover -html=coverage.out
 ```
+
+## Key ID Convention
+
+All tests use the canonical xkms Key ID format `backend:type:algo:keyname`
+(e.g. `software:signing:rsa:jwt-rsa-key`). Key IDs are opaque to the encoding
+packages: the jwk/jwt/jwe APIs resolve keys exclusively through injected
+getter functions (`jwk.XKMSKeyGetter` / `jwk.XKMSSignerGetter`), never by
+parsing kid strings themselves. Key ID parsing and validation are owned by
+`pkg/xkms` (`ParseKeyID`/`ValidateKeyID`) and pinned by
+`test/integration/xkms/keyid_integration_test.go`.
 
 ## Test Coverage
 

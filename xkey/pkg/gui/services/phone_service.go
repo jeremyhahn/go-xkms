@@ -310,7 +310,7 @@ func (s *PhoneService) Scan(timeoutSeconds int) ([]DiscoveredDevice, error) {
 		s.log.Error("failed to create BLE transport", "error", err)
 		return nil, ErrPhoneScanFailed
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -388,7 +388,7 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 		s.log.Error("failed to create BLE transport for pairing", "error", err)
 		return nil, ErrPhonePairFailed
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	// Connect to the device.
 	connectCtx, connectCancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -410,7 +410,7 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 		EnvelopeHeaderSize:  0,
 	}
 	if err := phone.PerformHandshake(connectCtx, handshakeCfg); err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		s.log.Error("Noise handshake failed", "error", err)
 		return nil, ErrPhonePairFailed
 	}
@@ -424,41 +424,41 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 	})
 	pairingPlaintext, err := phone.EncodeRequest(pairingReq)
 	if err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return nil, ErrPhonePairFailed
 	}
 	pairingCiphertext, err := session.Encrypt(pairingPlaintext)
 	if err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return nil, ErrPhonePairFailed
 	}
 	respCiphertext, err := transport.SendAndReceive(connectCtx, pairingCiphertext)
 	if err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return nil, ErrPhonePairFailed
 	}
 	respPlaintext, err := session.Decrypt(respCiphertext)
 	if err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return nil, ErrPhonePairFailed
 	}
 	pairingResp, err := phone.DecodeResponse(respPlaintext)
 	if err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return nil, ErrPhonePairFailed
 	}
 	if pairingResp.Error != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		s.log.Error("phone rejected pairing", "error", pairingResp.Error.Message)
 		return nil, ErrPhonePairFailed
 	}
 	pairingResult, err := phone.DecodeResult[phone.PairingConfirmResult](pairingResp)
 	if err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return nil, ErrPhonePairFailed
 	}
 	if !pairingResult.Confirmed {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return nil, phone.ErrPairingRejected
 	}
 
@@ -466,7 +466,7 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 	remotePublicKey := session.RemoteStaticPublicKey()
 
 	// Disconnect after pairing (reconnects on demand).
-	transport.Disconnect()
+	_ = transport.Disconnect()
 
 	// Save to shared config file.
 	now := time.Now().UTC()
@@ -704,7 +704,7 @@ func (s *PhoneService) Connect(name string) error {
 
 	s.log.Info("connecting to device", "device", name, "address", device.Address)
 	if err := transport.Connect(connectCtx, device.Address); err != nil {
-		transport.Close()
+		_ = transport.Close()
 		s.log.Error("BLE connection failed", "device", name, "address", device.Address, "error", err)
 		return ErrPhoneConnectFailed
 	}
@@ -721,8 +721,8 @@ func (s *PhoneService) Connect(name string) error {
 		ExpectedDeviceFingerprint: expectedFingerprint,
 	}
 	if err := phone.PerformHandshake(connectCtx, handshakeCfg); err != nil {
-		transport.Disconnect()
-		transport.Close()
+		_ = transport.Disconnect()
+		_ = transport.Close()
 		s.log.Error("Noise handshake failed", "device", name, "error", err)
 		return ErrPhoneHandshakeFailed
 	}
@@ -1185,8 +1185,8 @@ func (s *PhoneService) GetAttestationPolicy(deviceName string) (*attestationPoli
 // Must be called with connMu held.
 func (s *PhoneService) closeActiveConnectionLocked() {
 	if s.activeTransport != nil {
-		s.activeTransport.Disconnect()
-		s.activeTransport.Close()
+		_ = s.activeTransport.Disconnect()
+		_ = s.activeTransport.Close()
 		s.activeTransport = nil
 	}
 	s.activeSession = nil

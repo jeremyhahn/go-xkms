@@ -333,7 +333,7 @@ func (b *Backend) waitForKeyEnabled(ctx context.Context, keyVersionName string, 
 // GenerateKey generates a new private key with the given attributes.
 // For GCP KMS, this creates a new KMS key and stores metadata.
 // Returns nil for private key since it's not extractable from KMS.
-func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -341,9 +341,9 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 	var err error
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		_, err = b.GenerateRSA(attrs)
+		_, err = b.GenerateRSA(ctx, attrs)
 	case x509.ECDSA:
-		_, err = b.GenerateECDSA(attrs)
+		_, err = b.GenerateECDSA(ctx, attrs)
 	default:
 		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
 	}
@@ -358,7 +358,7 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 }
 
 // GenerateRSA creates a new RSA signing key in GCP KMS.
-func (b *Backend) GenerateRSA(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *Backend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	b.mu.Lock()
 
 	if b.client == nil {
@@ -393,7 +393,6 @@ func (b *Backend) GenerateRSA(attrs *types.KeyAttributes) (crypto.Signer, error)
 		return nil, fmt.Errorf("%w: unsupported RSA key size %d", backend.ErrInvalidKeyType, keySize)
 	}
 
-	ctx := context.Background()
 	req := &kmspb.CreateCryptoKeyRequest{
 		Parent:      b.config.KeyRingName(),
 		CryptoKeyId: attrs.CN,
@@ -439,18 +438,18 @@ func (b *Backend) GenerateRSA(attrs *types.KeyAttributes) (crypto.Signer, error)
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
 			b.mu.Unlock()
 			return nil, fmt.Errorf("failed to save metadata: %w", err)
 		}
 	}
 
 	b.mu.Unlock() // Release lock before calling Signer
-	return b.Signer(attrs)
+	return b.Signer(ctx, attrs)
 }
 
 // GenerateECDSA creates a new ECDSA signing key in GCP KMS.
-func (b *Backend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *Backend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	b.mu.Lock()
 
 	if b.client == nil {
@@ -477,7 +476,6 @@ func (b *Backend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.Signer, erro
 		return nil, fmt.Errorf("%w: unsupported curve %s", backend.ErrInvalidKeyType, curve)
 	}
 
-	ctx := context.Background()
 	req := &kmspb.CreateCryptoKeyRequest{
 		Parent:      b.config.KeyRingName(),
 		CryptoKeyId: attrs.CN,
@@ -524,14 +522,14 @@ func (b *Backend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.Signer, erro
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
 			b.mu.Unlock()
 			return nil, fmt.Errorf("failed to save metadata: %w", err)
 		}
 	}
 
 	b.mu.Unlock() // Release lock before calling Signer
-	return b.Signer(attrs)
+	return b.Signer(ctx, attrs)
 }
 
 // GenerateSymmetricKey creates a new symmetric encryption key in GCP KMS.
@@ -544,7 +542,7 @@ func (b *Backend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.Signer, erro
 //   - attrs: Key attributes specifying the key identifier (CN), key type, and AES attributes
 //
 // Returns a SymmetricKey reference (key material remains in KMS) or an error.
-func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -569,7 +567,6 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 		return nil, fmt.Errorf("%w: GCP KMS only supports AES-256 symmetric keys, got %d-bit", backend.ErrInvalidKeyType, attrs.SymmetricAlgorithm.KeySize())
 	}
 
-	ctx := context.Background()
 	req := &kmspb.CreateCryptoKeyRequest{
 		Parent:      b.config.KeyRingName(),
 		CryptoKeyId: attrs.CN,
@@ -614,7 +611,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
 			return nil, fmt.Errorf("failed to save metadata: %w", err)
 		}
 	}
@@ -644,7 +641,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 //
 // This verifies the key exists and returns a SymmetricKey reference.
 // The actual key material remains in GCP KMS and cannot be extracted.
-func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -664,7 +661,6 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 		return nil, fmt.Errorf("%w: attributes specify asymmetric algorithm %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
 	}
 
-	ctx := context.Background()
 	keyName := b.cryptoKeyName(attrs.CN)
 
 	cryptoKey, err := b.client.GetCryptoKey(ctx, &kmspb.GetCryptoKeyRequest{
@@ -690,9 +686,9 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 //
 // The encrypter uses GCP KMS APIs for all encryption/decryption operations,
 // ensuring the key material never leaves GCP infrastructure.
-func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	// Verify key exists
-	key, err := b.GetSymmetricKey(attrs)
+	key, err := b.GetSymmetricKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -710,7 +706,7 @@ func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.Symmetri
 }
 
 // Signer returns a crypto.Signer for the specified key.
-func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -719,7 +715,6 @@ func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
 	}
 
 	// Get the public key to create the signer
-	ctx := context.Background()
 	keyName := b.cryptoKeyVersionName(attrs.CN)
 
 	req := &kmspb.GetPublicKeyRequest{
@@ -868,7 +863,7 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 
 // GetKey retrieves an existing private key by its attributes.
 // For GCP KMS, this verifies the key exists and returns nil for private key.
-func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -882,14 +877,13 @@ func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) 
 
 	// Check if metadata exists
 	if b.config.KeyStorage != nil {
-		_, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.ID())
+		_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.ID())
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
 		}
 	}
 
 	// Verify key exists in KMS
-	ctx := context.Background()
 	keyName := b.cryptoKeyName(attrs.CN)
 
 	_, err := b.client.GetCryptoKey(ctx, &kmspb.GetCryptoKeyRequest{
@@ -911,7 +905,7 @@ func (b *Backend) GetSignerByID(keyID string) (crypto.Signer, error) {
 		KeyType:   backend.KEY_TYPE_SIGNING,
 		StoreType: backend.STORE_GCPKMS,
 	}
-	key, err := b.GetKey(attrs)
+	key, err := b.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -929,7 +923,7 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 		KeyType:   backend.KEY_TYPE_ENCRYPTION,
 		StoreType: backend.STORE_GCPKMS,
 	}
-	key, err := b.GetKey(attrs)
+	key, err := b.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -941,14 +935,14 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 }
 
 // DeleteKey removes a key identified by its attributes.
-func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil {
 		return backend.ErrInvalidAttributes
 	}
 
 	// Remove metadata
 	if b.config.KeyStorage != nil {
-		if err := storage.DeleteKey(context.Background(), b.config.KeyStorage, attrs.ID()); err != nil {
+		if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.ID()); err != nil {
 			// Continue even if metadata deletion fails
 			// The key may not have metadata stored
 		}
@@ -959,15 +953,13 @@ func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
 }
 
 // ListKeys returns attributes for all keys managed by this backend.
-func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	if b.client == nil {
 		return nil, ErrNotInitialized
 	}
-
-	ctx := context.Background()
 
 	// List all crypto keys from GCP KMS
 	req := &kmspb.ListCryptoKeysRequest{
@@ -998,7 +990,7 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 
 		// Try to load metadata to get additional attributes
 		if b.config.KeyStorage != nil {
-			metadataBytes, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.ID())
+			metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.ID())
 			if err == nil {
 				var metadata map[string]interface{}
 				if err := json.Unmarshal(metadataBytes, &metadata); err == nil {
@@ -1051,7 +1043,7 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 }
 
 // Decrypter returns a crypto.Decrypter for the key identified by attrs.
-func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -1069,7 +1061,6 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 	}
 
 	// Get the public key to verify the key exists and get key details
-	ctx := context.Background()
 	keyName := b.cryptoKeyVersionName(attrs.CN)
 
 	req := &kmspb.GetPublicKeyRequest{
@@ -1110,7 +1101,7 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 
 // RotateKey rotates/updates a key identified by attrs.
 // For GCP KMS, this creates a new key version and sets it as primary.
-func (b *Backend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil {
 		return backend.ErrInvalidAttributes
 	}
@@ -1122,7 +1113,6 @@ func (b *Backend) RotateKey(attrs *types.KeyAttributes) error {
 		return ErrNotInitialized
 	}
 
-	ctx := context.Background()
 	keyName := b.cryptoKeyName(attrs.CN)
 
 	// Create a new crypto key version

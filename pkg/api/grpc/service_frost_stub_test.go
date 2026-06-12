@@ -26,7 +26,7 @@ import (
 
 // TestFrostStubs tests all FROST stub methods return unimplemented
 func TestFrostStubs(t *testing.T) {
-	service := NewService(nil, nil)
+	service := NewService(nil, nil, nil)
 
 	t.Run("FrostGenerateKey returns unimplemented", func(t *testing.T) {
 		resp, err := service.FrostGenerateKey(context.Background(), &pb.FrostGenerateKeyRequest{})

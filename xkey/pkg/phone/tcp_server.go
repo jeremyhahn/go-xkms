@@ -196,7 +196,7 @@ func (s *TCPPairingServer) Stop() error {
 	s.closed.Store(true)
 
 	if s.listener != nil {
-		s.listener.Close()
+		_ = s.listener.Close()
 	}
 
 	s.wg.Wait()
@@ -247,7 +247,7 @@ func (s *TCPPairingServer) acceptLoop() {
 			// Acquired a slot.
 		default:
 			s.log.Warn("max connections reached, rejecting", "remote", remoteAddr)
-			conn.Close()
+			_ = conn.Close()
 			continue
 		}
 
@@ -262,13 +262,13 @@ func (s *TCPPairingServer) acceptLoop() {
 // Noise XX handshake followed by encrypted JSON-RPC request/response processing.
 func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 	defer s.wg.Done()
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	defer func() { <-s.connSem }()
 
 	remoteAddr := conn.RemoteAddr().String()
 
 	// Set a deadline for the entire handshake phase.
-	conn.SetDeadline(time.Now().Add(s.cfg.HandshakeTimeout))
+	_ = conn.SetDeadline(time.Now().Add(s.cfg.HandshakeTimeout))
 
 	// Create a Noise session as responder for this connection.
 	session, err := NewNoiseSession(&NoiseSessionConfig{
@@ -329,7 +329,7 @@ func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 	}
 
 	// Clear the handshake deadline before entering the request loop.
-	conn.SetDeadline(time.Time{})
+	_ = conn.SetDeadline(time.Time{})
 
 	s.log.Info("noise handshake completed", "remote", remoteAddr)
 
@@ -347,7 +347,7 @@ func (s *TCPPairingServer) requestLoop(conn net.Conn, session *NoiseSession, rem
 		}
 
 		// Set idle timeout before each read.
-		conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
+		_ = conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
 
 		// Read encrypted request.
 		ciphertext, err := tcpReceive(conn)
@@ -392,7 +392,7 @@ func (s *TCPPairingServer) requestLoop(conn net.Conn, session *NoiseSession, rem
 		}
 
 		// Set write deadline for the response.
-		conn.SetWriteDeadline(time.Now().Add(s.cfg.RequestTimeout))
+		_ = conn.SetWriteDeadline(time.Now().Add(s.cfg.RequestTimeout))
 
 		// Encrypt and send the response.
 		encrypted, err := session.Encrypt(response)

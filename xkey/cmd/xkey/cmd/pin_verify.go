@@ -96,14 +96,14 @@ func handleVerifySO(cmd *cobra.Command, svc *qrdbsdk.PINService) error {
 	}
 
 	if err := svc.VerifySOPIN(pinValue); err != nil {
-		fmt.Fprintln(out, "SO PIN: INVALID")
+		_, _ = fmt.Fprintln(out, "SO PIN: INVALID")
 		return &PINCommandError{
 			Operation: "verify_so",
 			Err:       err,
 		}
 	}
 
-	fmt.Fprintln(out, "SO PIN: VALID")
+	_, _ = fmt.Fprintln(out, "SO PIN: VALID")
 	return nil
 }
 
@@ -116,13 +116,13 @@ func handleVerifyUser(cmd *cobra.Command, svc *qrdbsdk.PINService) error {
 	}
 
 	if err := svc.VerifyUserPIN(pinValue); err != nil {
-		fmt.Fprintln(out, "User PIN: INVALID")
+		_, _ = fmt.Fprintln(out, "User PIN: INVALID")
 		return &PINCommandError{
 			Operation: "verify_user",
 			Err:       err,
 		}
 	}
 
-	fmt.Fprintln(out, "User PIN: VALID")
+	_, _ = fmt.Fprintln(out, "User PIN: VALID")
 	return nil
 }

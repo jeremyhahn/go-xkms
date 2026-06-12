@@ -154,12 +154,11 @@ func (b *Backend) Capabilities() types.Capabilities {
 }
 
 // GenerateKey generates a new key in Vault's Transit engine.
-func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil || attrs.CN == "" {
 		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
 	}
 
-	ctx := context.Background()
 	keyName := b.sanitizeKeyName(attrs.CN)
 
 	// Determine Vault key type based on attributes
@@ -205,7 +204,7 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
 		return nil, fmt.Errorf("failed to store metadata: %w", err)
 	}
 
@@ -214,31 +213,30 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 }
 
 // GetKey retrieves an existing key from Vault.
-func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil || attrs.CN == "" {
 		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
 	}
 
 	// Load metadata to verify key exists
-	_, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.CN)
+	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
 	}
 
-	ctx := context.Background()
 	keyName := b.sanitizeKeyName(attrs.CN)
 
 	return b.getPublicKey(ctx, keyName, attrs)
 }
 
 // GetSignerByID retrieves a crypto.Signer for the specified key by name.
-func (b *Backend) GetSignerByID(keyID string) (crypto.Signer, error) {
+func (b *Backend) GetSignerByID(ctx context.Context, keyID string) (crypto.Signer, error) {
 	attrs := &types.KeyAttributes{
 		CN:        keyID,
 		KeyType:   backend.KEY_TYPE_SIGNING,
 		StoreType: backend.STORE_VAULT,
 	}
-	key, err := b.GetKey(attrs)
+	key, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -250,13 +248,13 @@ func (b *Backend) GetSignerByID(keyID string) (crypto.Signer, error) {
 }
 
 // GetDecrypterByID retrieves a crypto.Decrypter for the specified key by name.
-func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
+func (b *Backend) GetDecrypterByID(ctx context.Context, keyID string) (crypto.Decrypter, error) {
 	attrs := &types.KeyAttributes{
 		CN:        keyID,
 		KeyType:   backend.KEY_TYPE_ENCRYPTION,
 		StoreType: backend.STORE_VAULT,
 	}
-	key, err := b.GetKey(attrs)
+	key, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -268,12 +266,11 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 }
 
 // DeleteKey removes a key from Vault and cleans up metadata.
-func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil || attrs.CN == "" {
 		return fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
 	}
 
-	ctx := context.Background()
 	keyName := b.sanitizeKeyName(attrs.CN)
 	logical := b.client.Logical()
 
@@ -296,7 +293,7 @@ func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
 	}
 
 	// Delete metadata
-	if err := storage.DeleteKey(context.Background(), b.config.KeyStorage, attrs.CN); err != nil {
+	if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil {
 		return fmt.Errorf("failed to delete metadata: %w", err)
 	}
 
@@ -304,8 +301,7 @@ func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
 }
 
 // ListKeys returns all keys managed by this backend.
-func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
-	ctx := context.Background()
+func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	path := fmt.Sprintf("%s/keys", b.config.TransitPath)
 
 	logical := b.client.Logical()
@@ -339,7 +335,7 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 		cn := b.desanitizeKeyName(keyName)
 
 		// Load metadata
-		metadataBytes, err := storage.GetKey(context.Background(), b.config.KeyStorage, cn)
+		metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, cn)
 		if err != nil {
 			// If metadata doesn't exist, create basic attributes
 			attrs := &types.KeyAttributes{
@@ -375,18 +371,17 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 }
 
 // Signer returns a crypto.Signer for the specified key.
-func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	if attrs == nil || attrs.CN == "" {
 		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
 	}
 
 	// Verify key exists
-	_, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.CN)
+	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
 	}
 
-	ctx := context.Background()
 	keyName := b.sanitizeKeyName(attrs.CN)
 
 	publicKey, err := b.getPublicKey(ctx, keyName, attrs)
@@ -402,18 +397,17 @@ func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
 }
 
 // Decrypter returns a crypto.Decrypter for the specified key.
-func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	if attrs == nil || attrs.CN == "" {
 		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
 	}
 
 	// Verify key exists
-	_, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.CN)
+	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
 	}
 
-	ctx := context.Background()
 	keyName := b.sanitizeKeyName(attrs.CN)
 
 	publicKey, err := b.getPublicKey(ctx, keyName, attrs)
@@ -431,7 +425,7 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 // Encrypt encrypts plaintext using the specified RSA key via Vault's Transit engine.
 // This method is used to create Vault-format ciphertext that can be decrypted
 // using the Decrypter interface.
-func (b *Backend) Encrypt(attrs *types.KeyAttributes, plaintext []byte) ([]byte, error) {
+func (b *Backend) Encrypt(ctx context.Context, attrs *types.KeyAttributes, plaintext []byte) ([]byte, error) {
 	if attrs == nil || attrs.CN == "" {
 		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
 	}
@@ -441,12 +435,11 @@ func (b *Backend) Encrypt(attrs *types.KeyAttributes, plaintext []byte) ([]byte,
 	}
 
 	// Verify key exists
-	_, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.CN)
+	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
 	}
 
-	ctx := context.Background()
 	keyName := b.sanitizeKeyName(attrs.CN)
 
 	// Encode plaintext as base64
@@ -494,12 +487,11 @@ func (b *Backend) Encrypt(attrs *types.KeyAttributes, plaintext []byte) ([]byte,
 }
 
 // RotateKey creates a new version of the key in Vault.
-func (b *Backend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil || attrs.CN == "" {
 		return fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
 	}
 
-	ctx := context.Background()
 	keyName := b.sanitizeKeyName(attrs.CN)
 
 	// Rotate key in Vault

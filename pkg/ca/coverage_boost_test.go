@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -83,7 +84,7 @@ func setupTestCAWithRealIntermediate(t *testing.T) *CA {
 		profiles:    NewDefaultProfileRegistry(),
 	}
 
-	err = ca.Init()
+	err = ca.Init(context.Background())
 	require.NoError(t, err)
 	return ca
 }
@@ -117,7 +118,7 @@ func TestCA_IntermediateCA_IssueCertificate(t *testing.T) {
 		Valid:   365,
 	}
 
-	issued, err := ca.IssueCertificate(request)
+	issued, err := ca.IssueCertificate(context.Background(), request)
 	require.NoError(t, err)
 
 	err = issued.Certificate.CheckSignatureFrom(ca.intermediateCert)
@@ -128,7 +129,7 @@ func TestCA_IntermediateCA_SignCSR(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
 
 	csrPEM := generateTestCSRPEM(t, "signed-by-intermediate.example.com")
-	cert, err := ca.SignCSR(csrPEM, nil)
+	cert, err := ca.SignCSR(context.Background(), csrPEM, nil)
 	require.NoError(t, err)
 
 	err = cert.CheckSignatureFrom(ca.intermediateCert)
@@ -144,7 +145,7 @@ func TestCA_IntermediateCA_Verify(t *testing.T) {
 		Valid:   365,
 	}
 
-	issued, err := ca.IssueCertificate(request)
+	issued, err := ca.IssueCertificate(context.Background(), request)
 	require.NoError(t, err)
 
 	chains, err := ca.Verify(issued.Certificate)
@@ -206,7 +207,7 @@ func TestCA_IntermediateCA_WithSANSAndExtensions(t *testing.T) {
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),
 		profiles:    NewDefaultProfileRegistry(),
 	}
-	require.NoError(t, ca.Init())
+	require.NoError(t, ca.Init(context.Background()))
 
 	require.NotNil(t, ca.intermediateCert)
 	assert.Contains(t, ca.intermediateCert.DNSNames, "intermediate.example.com")
@@ -232,7 +233,7 @@ func TestCA_Load_WithIntermediate(t *testing.T) {
 		profiles:    NewDefaultProfileRegistry(),
 	}
 
-	err := ca2.Load()
+	err := ca2.Load(context.Background())
 	require.NoError(t, err)
 	assert.True(t, ca2.IsInitialized())
 	assert.NotNil(t, ca2.intermediateCert)
@@ -244,7 +245,7 @@ func TestCA_Load_NilRootIdentity(t *testing.T) {
 		config:      &MultiIdentityCAConfig{Identity: []Identity{}},
 		revocations: make(map[string]*RevocationInfo),
 	}
-	err := ca.Load()
+	err := ca.Load(context.Background())
 	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
@@ -272,7 +273,7 @@ func TestCA_Load_RootCertNotFound(t *testing.T) {
 		revocations: make(map[string]*RevocationInfo),
 	}
 
-	err = ca.Load()
+	err = ca.Load(context.Background())
 	assert.ErrorIs(t, err, ErrCertificateNotFound)
 }
 
@@ -301,7 +302,7 @@ func TestCA_VerifySignature_ValidCert(t *testing.T) {
 		Valid:   365,
 	}
 
-	issued, err := ca.IssueCertificate(request)
+	issued, err := ca.IssueCertificate(context.Background(), request)
 	require.NoError(t, err)
 
 	err = ca.VerifySignature(issued.Certificate)
@@ -340,7 +341,7 @@ func TestCA_VerifySignature_WithIntermediate(t *testing.T) {
 		Valid:   365,
 	}
 
-	issued, err := ca.IssueCertificate(request)
+	issued, err := ca.IssueCertificate(context.Background(), request)
 	require.NoError(t, err)
 
 	err = ca.VerifySignature(issued.Certificate)
@@ -372,10 +373,10 @@ func TestCA_Verify_RevokedCert(t *testing.T) {
 		Valid:   365,
 	}
 
-	issued, err := ca.IssueCertificate(request)
+	issued, err := ca.IssueCertificate(context.Background(), request)
 	require.NoError(t, err)
 
-	err = ca.Revoke(issued.Certificate.SerialNumber, 1)
+	err = ca.Revoke(context.Background(), issued.Certificate.SerialNumber, 1)
 	require.NoError(t, err)
 
 	_, err = ca.Verify(issued.Certificate)
@@ -391,7 +392,7 @@ func TestCA_Verify_ValidCert(t *testing.T) {
 		Valid:   365,
 	}
 
-	issued, err := ca.IssueCertificate(request)
+	issued, err := ca.IssueCertificate(context.Background(), request)
 	require.NoError(t, err)
 
 	chains, err := ca.Verify(issued.Certificate)
@@ -408,7 +409,7 @@ func TestCA_Verify_WithIntermediateCA(t *testing.T) {
 		Valid:   365,
 	}
 
-	issued, err := ca.IssueCertificate(request)
+	issued, err := ca.IssueCertificate(context.Background(), request)
 	require.NoError(t, err)
 
 	chains, err := ca.Verify(issued.Certificate)
@@ -633,7 +634,7 @@ func TestCA_GetOrGenerateCAKey_ExistingKey(t *testing.T) {
 	attrs, err := ca.getCAKeyAttributes(rootIdentity)
 	require.NoError(t, err)
 
-	key, err := ca.getOrGenerateCAKey(attrs)
+	key, err := ca.getOrGenerateCAKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	signer, ok := key.(crypto.Signer)
@@ -646,7 +647,7 @@ func TestCA_GetOrGenerateCAKey_UnsupportedAlgorithm(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN: "unsupported-algo", KeyAlgorithm: x509.DSA, KeyType: types.KeyTypeCA,
 	}
-	_, err := ca.getOrGenerateCAKey(attrs)
+	_, err := ca.getOrGenerateCAKey(context.Background(), attrs)
 	assert.ErrorIs(t, err, ErrInvalidKeyAlgorithm)
 }
 
@@ -676,7 +677,7 @@ func TestCA_GetCAKeyAttributes_SetsKeyTypeCA(t *testing.T) {
 
 func TestCA_GetSigner_NilIssuingIdentity(t *testing.T) {
 	ca := &CA{config: &MultiIdentityCAConfig{Identity: []Identity{}}}
-	_, err := ca.getSigner()
+	_, err := ca.getSigner(context.Background())
 	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
@@ -734,7 +735,7 @@ func TestCA_SignCSR_WithOptions(t *testing.T) {
 		NotBefore:    time.Now().Add(-time.Hour),
 	}
 
-	cert, err := ca.SignCSR(csrPEM, opts)
+	cert, err := ca.SignCSR(context.Background(), csrPEM, opts)
 	require.NoError(t, err)
 	assert.Contains(t, cert.DNSNames, "extra.example.com")
 	assert.Equal(t, []string{"Custom Org"}, cert.Subject.Organization)
@@ -745,7 +746,7 @@ func TestCA_SignCSR_WithProfile(t *testing.T) {
 	csrPEM := generateTestCSRPEM(t, "profile-signed.example.com")
 	opts := &SignOptions{Profile: "server"}
 
-	cert, err := ca.SignCSR(csrPEM, opts)
+	cert, err := ca.SignCSR(context.Background(), csrPEM, opts)
 	require.NoError(t, err)
 	assert.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
 }
@@ -755,7 +756,7 @@ func TestCA_SignCSR_WithProfileAndCustomValidity(t *testing.T) {
 	csrPEM := generateTestCSRPEM(t, "profile-custom-valid.example.com")
 	opts := &SignOptions{Profile: "client", ValidityDays: 30}
 
-	cert, err := ca.SignCSR(csrPEM, opts)
+	cert, err := ca.SignCSR(context.Background(), csrPEM, opts)
 	require.NoError(t, err)
 	assert.NotNil(t, cert)
 }
@@ -763,19 +764,19 @@ func TestCA_SignCSR_WithProfileAndCustomValidity(t *testing.T) {
 func TestCA_SignCSR_InvalidProfile(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM := generateTestCSRPEM(t, "bad-profile.example.com")
-	_, err := ca.SignCSR(csrPEM, &SignOptions{Profile: "nonexistent-profile"})
+	_, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{Profile: "nonexistent-profile"})
 	assert.Error(t, err)
 }
 
 func TestCA_SignCSR_InvalidCSR(t *testing.T) {
 	ca := setupTestCA(t)
-	_, err := ca.SignCSR([]byte("not a CSR"), nil)
+	_, err := ca.SignCSR(context.Background(), []byte("not a CSR"), nil)
 	assert.ErrorIs(t, err, ErrInvalidCSR)
 }
 
 func TestCA_SignCSR_NotInitialized(t *testing.T) {
 	ca := &CA{}
-	_, err := ca.SignCSR([]byte("unused"), nil)
+	_, err := ca.SignCSR(context.Background(), []byte("unused"), nil)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -856,7 +857,7 @@ func TestCA_Init_RootWithSANSAndExtensions(t *testing.T) {
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),
 		profiles:    NewDefaultProfileRegistry(),
 	}
-	require.NoError(t, ca.Init())
+	require.NoError(t, ca.Init(context.Background()))
 
 	assert.Contains(t, ca.rootCert.DNSNames, "root.example.com")
 	assert.Contains(t, ca.rootCert.EmailAddresses, "root@example.com")
@@ -870,7 +871,7 @@ func TestCA_Init_RootWithSANSAndExtensions(t *testing.T) {
 
 func TestCA_Init_AlreadyInitialized(t *testing.T) {
 	ca := setupTestCA(t)
-	err := ca.Init()
+	err := ca.Init(context.Background())
 	assert.ErrorIs(t, err, ErrAlreadyInitialized)
 }
 
@@ -881,13 +882,13 @@ func TestCA_Init_AlreadyInitialized(t *testing.T) {
 func TestCA_GenerateCRL_MultipleReasons(t *testing.T) {
 	ca := setupTestCA(t)
 
-	require.NoError(t, ca.Revoke(big.NewInt(100), 0))
-	require.NoError(t, ca.Revoke(big.NewInt(200), 1))
-	require.NoError(t, ca.Revoke(big.NewInt(300), 3))
-	require.NoError(t, ca.Revoke(big.NewInt(400), 4))
-	require.NoError(t, ca.Revoke(big.NewInt(500), 5))
+	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(100), 0))
+	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(200), 1))
+	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(300), 3))
+	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(400), 4))
+	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(500), 5))
 
-	crlDER, err := ca.GenerateCRL()
+	crlDER, err := ca.GenerateCRL(context.Background())
 	require.NoError(t, err)
 
 	crl, err := x509.ParseRevocationList(crlDER)
@@ -928,7 +929,7 @@ func TestNew_Success(t *testing.T) {
 
 	caIface, err := New(params)
 	require.NoError(t, err)
-	require.NoError(t, caIface.Init())
+	require.NoError(t, caIface.Init(context.Background()))
 	assert.True(t, caIface.IsInitialized())
 }
 
@@ -1015,7 +1016,7 @@ func TestCA_BuildCAPool_NilCerts(t *testing.T) {
 
 func TestCA_TLSCertificate_CertNotFound(t *testing.T) {
 	ca := setupTestCA(t)
-	_, err := ca.TLSCertificate(&types.KeyAttributes{CN: "nonexistent.example.com"})
+	_, err := ca.TLSCertificate(context.Background(), &types.KeyAttributes{CN: "nonexistent.example.com"})
 	assert.ErrorIs(t, err, ErrTLSConfigFailed)
 }
 

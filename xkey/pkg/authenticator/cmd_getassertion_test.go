@@ -114,6 +114,25 @@ func (h *trackingUPHandler) RequestUserVerification(ctx context.Context, req *Us
 	return nil, ErrTerminalUnavailable
 }
 
+// failOnCallUPHandler fails the test immediately if user presence or user
+// verification is ever requested. It is used to assert that getNextAssertion
+// never collects UP/UV (CTAP 2.1 §6.3), without blocking on the 30s timeout.
+type failOnCallUPHandler struct {
+	t *testing.T
+}
+
+func (h *failOnCallUPHandler) RequestUserPresence(ctx context.Context, req *UserPresenceRequest) (*UserPresenceResult, error) {
+	h.t.Helper()
+	h.t.Fatalf("RequestUserPresence must not be called during getNextAssertion (CTAP 2.1 §6.3 violation)")
+	return nil, ErrUserPresenceDenied
+}
+
+func (h *failOnCallUPHandler) RequestUserVerification(ctx context.Context, req *UserVerificationRequest) (*UserVerificationResult, error) {
+	h.t.Helper()
+	h.t.Fatalf("RequestUserVerification must not be called during getNextAssertion (CTAP 2.1 §6.3 violation)")
+	return nil, ErrUserVerificationDenied
+}
+
 func TestGetAssertion_Success(t *testing.T) {
 	auth := createTestAuthenticator(t)
 	rpID := "example.com"
@@ -667,6 +686,118 @@ func TestGetNextAssertion_Exhausted(t *testing.T) {
 	resp2Bytes, err := auth.ProcessCBOR(CmdGetNextAssertion, nil)
 	require.Error(t, err)
 	require.Equal(t, byte(StatusNoCredentials), resp2Bytes[0])
+}
+
+// TestGetNextAssertion_NoUserPresenceCollected is the regression test for the
+// CTAP 2.1 §6.3 violation where getNextAssertion incorrectly collected user
+// presence (the live bug: a 30s touch timeout failed discoverable logins with
+// two resident credentials). The first getAssertion is allowed to collect
+// presence once; getNextAssertion must then return the next assertion WITHOUT
+// any further presence/verification request.
+func TestGetNextAssertion_NoUserPresenceCollected(t *testing.T) {
+	auth := createTestAuthenticator(t)
+	rpID := "localhost"
+
+	// Two resident credentials, matching the reproduced scenario.
+	createAssertionTestCredential(t, auth, rpID, true)
+	createAssertionTestCredential(t, auth, rpID, true)
+
+	// First assertion uses a tracking handler that approves presence. This
+	// mirrors --require-touch=false / auto-uv where the first touch is granted.
+	tracker := &trackingUPHandler{approve: true}
+	auth.SetUserPresenceHandler(tracker)
+
+	clientDataHash := generateTestClientDataHash()
+	request := map[int]interface{}{
+		getAssertionParamRPID:           rpID,
+		getAssertionParamClientDataHash: clientDataHash,
+	}
+	reqBytes, err := cbor.Marshal(request)
+	require.NoError(t, err)
+
+	respBytes, err := auth.ProcessCBOR(CmdGetAssertion, reqBytes)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), respBytes[0])
+
+	var resp1 map[int]interface{}
+	require.NoError(t, cbor.Unmarshal(respBytes[1:], &resp1))
+	numCreds, ok := resp1[getAssertionRespNumberOfCredentials]
+	require.True(t, ok, "first getAssertion must report numberOfCredentials")
+	numCredsUint, err := toUint8Value(numCreds)
+	require.NoError(t, err)
+	require.Equal(t, uint8(2), numCredsUint)
+
+	// Swap in a handler that fails the test if presence/verification is ever
+	// requested. getNextAssertion must not touch this handler at all.
+	auth.SetUserPresenceHandler(&failOnCallUPHandler{t: t})
+
+	resp2Bytes, err := auth.ProcessCBOR(CmdGetNextAssertion, nil)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp2Bytes[0])
+
+	var resp2 map[int]interface{}
+	require.NoError(t, cbor.Unmarshal(resp2Bytes[1:], &resp2))
+
+	// getNextAssertion returns a different credential than the first response.
+	firstCredID := getCredentialIDFromResponse(resp1[getAssertionRespCredential])
+	secondCredID := getCredentialIDFromResponse(resp2[getAssertionRespCredential])
+	require.False(t, bytes.Equal(firstCredID, secondCredID),
+		"getNextAssertion should return a different credential")
+
+	// Per CTAP 2.1 §6.3, getNextAssertion responses must NOT include the
+	// numberOfCredentials field (it is reported only by the first getAssertion).
+	_, hasNum := resp2[getAssertionRespNumberOfCredentials]
+	require.False(t, hasNum, "getNextAssertion must omit numberOfCredentials")
+
+	// Discoverable batch (empty allowList) — user info should be present.
+	_, hasUser := resp2[getAssertionRespUser]
+	require.True(t, hasUser, "getNextAssertion should include user info for discoverable credential")
+}
+
+// TestGetNextAssertion_ReplaysUPFlag verifies that getNextAssertion replays the
+// UP flag established by the preceding getAssertion in its authenticator data,
+// without collecting presence again.
+func TestGetNextAssertion_ReplaysUPFlag(t *testing.T) {
+	auth := createTestAuthenticator(t)
+	rpID := "localhost"
+
+	createAssertionTestCredential(t, auth, rpID, true)
+	createAssertionTestCredential(t, auth, rpID, true)
+
+	clientDataHash := generateTestClientDataHash()
+	request := map[int]interface{}{
+		getAssertionParamRPID:           rpID,
+		getAssertionParamClientDataHash: clientDataHash,
+	}
+	reqBytes, err := cbor.Marshal(request)
+	require.NoError(t, err)
+
+	respBytes, err := auth.ProcessCBOR(CmdGetAssertion, reqBytes)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), respBytes[0])
+
+	var resp1 map[int]interface{}
+	require.NoError(t, cbor.Unmarshal(respBytes[1:], &resp1))
+	authData1, ok := resp1[getAssertionRespAuthData].([]byte)
+	require.True(t, ok, "first response should carry authData")
+	require.NotZero(t, AuthDataFlags(authData1[32])&FlagUP, "first assertion should set UP flag")
+
+	// No presence/verification allowed during getNextAssertion.
+	auth.SetUserPresenceHandler(&failOnCallUPHandler{t: t})
+
+	resp2Bytes, err := auth.ProcessCBOR(CmdGetNextAssertion, nil)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp2Bytes[0])
+
+	var resp2 map[int]interface{}
+	require.NoError(t, cbor.Unmarshal(resp2Bytes[1:], &resp2))
+	authData2, ok := resp2[getAssertionRespAuthData].([]byte)
+	require.True(t, ok, "next response should carry authData")
+	require.NotZero(t, AuthDataFlags(authData2[32])&FlagUP,
+		"getNextAssertion must replay the UP flag from the first assertion")
+
+	// The RP ID hash (first 32 bytes of authData) must match — same RP batch.
+	require.Equal(t, authData1[:32], authData2[:32], "rpIdHash must match across the batch")
 }
 
 func TestClearAssertionState(t *testing.T) {

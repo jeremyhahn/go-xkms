@@ -110,10 +110,10 @@ func (m *mockCA) Sign(randReader io.Reader, digest []byte, opts crypto.SignerOpt
 
 // --- Lifecycle ---
 
-func (m *mockCA) Init() error         { return nil }
-func (m *mockCA) Load() error         { return nil }
-func (m *mockCA) IsInitialized() bool { return true }
-func (m *mockCA) Identity() string    { return m.cert.Subject.CommonName }
+func (m *mockCA) Init(_ context.Context) error { return nil }
+func (m *mockCA) Load(_ context.Context) error { return nil }
+func (m *mockCA) IsInitialized() bool          { return true }
+func (m *mockCA) Identity() string             { return m.cert.Subject.CommonName }
 func (m *mockCA) Config() *ca.Identity {
 	return &ca.Identity{Subject: ca.Subject{CommonName: m.cert.Subject.CommonName}}
 }
@@ -128,9 +128,11 @@ func (m *mockCA) CABundle() ([]byte, error) { return m.certPEM, nil }
 
 // --- CSR operations ---
 
-func (m *mockCA) CreateCSR(_ *ca.CertificateRequest) ([]byte, error) { return nil, nil }
+func (m *mockCA) CreateCSR(_ context.Context, _ *ca.CertificateRequest) ([]byte, error) {
+	return nil, nil
+}
 
-func (m *mockCA) SignCSR(csrPEM []byte, _ *ca.SignOptions) (*x509.Certificate, error) {
+func (m *mockCA) SignCSR(_ context.Context, csrPEM []byte, _ *ca.SignOptions) (*x509.Certificate, error) {
 	block, _ := pem.Decode(csrPEM)
 	if block == nil {
 		return nil, errors.New("mockCA: invalid PEM")
@@ -155,7 +157,7 @@ func (m *mockCA) SignCSR(csrPEM []byte, _ *ca.SignOptions) (*x509.Certificate, e
 	return x509.ParseCertificate(certDER)
 }
 
-func (m *mockCA) IssueCertificate(req *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
+func (m *mockCA) IssueCertificate(_ context.Context, req *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
@@ -191,8 +193,8 @@ func (m *mockCA) IssueCertificate(req *ca.CertificateRequest) (*ca.IssuedCertifi
 	}, nil
 }
 
-func (m *mockCA) IssueCertificateWithProfile(req *ca.CertificateRequest, _ string) (*ca.IssuedCertificate, error) {
-	return m.IssueCertificate(req)
+func (m *mockCA) IssueCertificateWithProfile(ctx context.Context, req *ca.CertificateRequest, _ string) (*ca.IssuedCertificate, error) {
+	return m.IssueCertificate(ctx, req)
 }
 
 // --- Trust chain / revocation ---
@@ -200,23 +202,25 @@ func (m *mockCA) IssueCertificateWithProfile(req *ca.CertificateRequest, _ strin
 func (m *mockCA) Verify(_ *x509.Certificate, _ ...crypto.Signer) ([][]*x509.Certificate, error) {
 	return nil, nil
 }
-func (m *mockCA) Revoke(_ *big.Int, _ int) error     { return nil }
-func (m *mockCA) GenerateCRL() ([]byte, error)       { return nil, nil }
-func (m *mockCA) IsRevoked(_ *big.Int) (bool, error) { return false, nil }
+func (m *mockCA) Revoke(_ context.Context, _ *big.Int, _ int) error { return nil }
+func (m *mockCA) GenerateCRL(_ context.Context) ([]byte, error)     { return nil, nil }
+func (m *mockCA) IsRevoked(_ *big.Int) (bool, error)                { return false, nil }
 
 // --- TLS ---
 
-func (m *mockCA) TLSCertificate(_ *types.KeyAttributes) (tls.Certificate, error) {
+func (m *mockCA) TLSCertificate(_ context.Context, _ *types.KeyAttributes) (tls.Certificate, error) {
 	return tls.Certificate{}, nil
 }
-func (m *mockCA) TLSConfig(_ *types.KeyAttributes) (*tls.Config, error) { return nil, nil }
-func (m *mockCA) ServerTLSConfig(_ *types.KeyAttributes, _ bool) (*tls.Config, error) {
+func (m *mockCA) TLSConfig(_ context.Context, _ *types.KeyAttributes) (*tls.Config, error) {
 	return nil, nil
 }
-func (m *mockCA) ClientTLSConfig(_ *types.KeyAttributes, _ string) (*tls.Config, error) {
+func (m *mockCA) ServerTLSConfig(_ context.Context, _ *types.KeyAttributes, _ bool) (*tls.Config, error) {
 	return nil, nil
 }
-func (m *mockCA) QuantumSafeTLSConfig(_ *types.KeyAttributes) (*tls.Config, error) {
+func (m *mockCA) ClientTLSConfig(_ context.Context, _ *types.KeyAttributes, _ string) (*tls.Config, error) {
+	return nil, nil
+}
+func (m *mockCA) QuantumSafeTLSConfig(_ context.Context, _ *types.KeyAttributes) (*tls.Config, error) {
 	return nil, nil
 }
 
@@ -236,45 +240,69 @@ func (m *mockCA) CABundleFiltered(_ types.StoreType, _ x509.PublicKeyAlgorithm) 
 // --- Compile-shim methods (added for TrustedCA interface growth) ---
 func (m *mockCA) CAConfig() ca.CAConfig                                           { return ca.CAConfig{} }
 func (m *mockCA) CAKeyAttributes(_ types.StoreType) (*types.KeyAttributes, error) { return nil, nil }
-func (m *mockCA) CASigner(_ types.StoreType, _ x509.PublicKeyAlgorithm) (crypto.Signer, error) {
+func (m *mockCA) CASigner(_ context.Context, _ types.StoreType, _ x509.PublicKeyAlgorithm) (crypto.Signer, error) {
 	return nil, nil
 }
-func (m *mockCA) Certificate(_ *types.KeyAttributes) (*x509.Certificate, error)          { return nil, nil }
-func (m *mockCA) CertificatePEM(_ string) ([]byte, error)                                { return nil, nil }
-func (m *mockCA) CrossSignedPEM(_ *types.KeyAttributes) ([]byte, error)                  { return nil, nil }
-func (m *mockCA) DefaultKeyAlgorithm() x509.PublicKeyAlgorithm                           { return 0 }
-func (m *mockCA) DefaultSignatureAlgorithm() x509.SignatureAlgorithm                     { return 0 }
-func (m *mockCA) DefaultValidityPeriod() int                                             { return 0 }
-func (m *mockCA) Exists(_ string, _ x509.PublicKeyAlgorithm) (bool, error)               { return false, nil }
-func (m *mockCA) Hash() crypto.Hash                                                      { return 0 }
-func (m *mockCA) ImportAttestation(_ *types.KeyAttributes, _ string, _ []byte) error     { return nil }
-func (m *mockCA) ImportAttestationEventLog(_ *types.KeyAttributes, _ []byte) error       { return nil }
-func (m *mockCA) ImportAttestationKeyCertificate(_ *types.KeyAttributes, _ []byte) error { return nil }
-func (m *mockCA) ImportAttestationPCRs(_ *types.KeyAttributes, _ []byte) error           { return nil }
-func (m *mockCA) ImportAttestationQuote(_ *types.KeyAttributes, _ []byte) error          { return nil }
-func (m *mockCA) ImportBlob(_, _ []byte) error                                           { return nil }
-func (m *mockCA) ImportCertificate(_ *x509.Certificate) error                            { return nil }
-func (m *mockCA) ImportCertificatePEM(_ string, _ []byte) error                          { return nil }
-func (m *mockCA) ImportDistributionCRLs(_ *x509.Certificate) error                       { return nil }
-func (m *mockCA) ImportIssuingCAs(_ *x509.Certificate) error                             { return nil }
-func (m *mockCA) ImportLocalAttestation(_ *types.KeyAttributes, _ *tpm2.Quote) error     { return nil }
-func (m *mockCA) ImportXSignedCertificate(_ string, _ *x509.Certificate) error           { return nil }
-func (m *mockCA) IsAutoImportingIssuerCAs() bool                                         { return false }
-func (m *mockCA) Issued(_ string) (bool, error)                                          { return false, nil }
-func (m *mockCA) IssuingIdentity() ca.Identity                                           { return ca.Identity{} }
-func (m *mockCA) PEM(_ *types.KeyAttributes) ([]byte, error)                             { return nil, nil }
-func (m *mockCA) ParseBundle(_ []byte) ([]*x509.Certificate, error)                      { return nil, nil }
-func (m *mockCA) PrivateKey(_ *types.KeyAttributes) (crypto.PrivateKey, error)           { return nil, nil }
-func (m *mockCA) PubKey(_ *types.KeyAttributes) (crypto.PublicKey, error)                { return nil, nil }
-func (m *mockCA) RevokeCert(_ *x509.Certificate, _ ca.RevokeOptions) error               { return nil }
-func (m *mockCA) RootCertificate(_ *x509.Certificate) (*x509.Certificate, error)         { return nil, nil }
-func (m *mockCA) SignedBlob(_ []byte) ([]byte, error)                                    { return nil, nil }
-func (m *mockCA) Signer() (crypto.Signer, error)                                         { return nil, nil }
-func (m *mockCA) TLSBundle(_ *types.KeyAttributes) ([]byte, error)                       { return nil, nil }
-func (m *mockCA) TLSBundleWithCrossSigner(_ *types.KeyAttributes, _ crypto.Signer) ([]byte, error) {
+func (m *mockCA) Certificate(_ context.Context, _ *types.KeyAttributes) (*x509.Certificate, error) {
 	return nil, nil
 }
-func (m *mockCA) TLSConfigWithXSigner(_ *types.KeyAttributes, _ crypto.Signer) (*tls.Config, error) {
+func (m *mockCA) CertificatePEM(_ context.Context, _ string) ([]byte, error) { return nil, nil }
+func (m *mockCA) CrossSignedPEM(_ *types.KeyAttributes) ([]byte, error)      { return nil, nil }
+func (m *mockCA) DefaultKeyAlgorithm() x509.PublicKeyAlgorithm               { return 0 }
+func (m *mockCA) DefaultSignatureAlgorithm() x509.SignatureAlgorithm         { return 0 }
+func (m *mockCA) DefaultValidityPeriod() int                                 { return 0 }
+func (m *mockCA) Exists(_ context.Context, _ string, _ x509.PublicKeyAlgorithm) (bool, error) {
+	return false, nil
+}
+func (m *mockCA) Hash() crypto.Hash { return 0 }
+func (m *mockCA) ImportAttestation(_ context.Context, _ *types.KeyAttributes, _ string, _ []byte) error {
+	return nil
+}
+func (m *mockCA) ImportAttestationEventLog(_ context.Context, _ *types.KeyAttributes, _ []byte) error {
+	return nil
+}
+func (m *mockCA) ImportAttestationKeyCertificate(_ context.Context, _ *types.KeyAttributes, _ []byte) error {
+	return nil
+}
+func (m *mockCA) ImportAttestationPCRs(_ context.Context, _ *types.KeyAttributes, _ []byte) error {
+	return nil
+}
+func (m *mockCA) ImportAttestationQuote(_ context.Context, _ *types.KeyAttributes, _ []byte) error {
+	return nil
+}
+func (m *mockCA) ImportBlob(_, _ []byte) error                                     { return nil }
+func (m *mockCA) ImportCertificate(_ context.Context, _ *x509.Certificate) error   { return nil }
+func (m *mockCA) ImportCertificatePEM(_ context.Context, _ string, _ []byte) error { return nil }
+func (m *mockCA) ImportDistributionCRLs(_ *x509.Certificate) error                 { return nil }
+func (m *mockCA) ImportIssuingCAs(_ context.Context, _ *x509.Certificate) error    { return nil }
+func (m *mockCA) ImportLocalAttestation(_ context.Context, _ *types.KeyAttributes, _ *tpm2.Quote) error {
+	return nil
+}
+func (m *mockCA) ImportXSignedCertificate(_ string, _ *x509.Certificate) error  { return nil }
+func (m *mockCA) IsAutoImportingIssuerCAs() bool                                { return false }
+func (m *mockCA) Issued(_ context.Context, _ string) (bool, error)              { return false, nil }
+func (m *mockCA) IssuingIdentity() ca.Identity                                  { return ca.Identity{} }
+func (m *mockCA) PEM(_ context.Context, _ *types.KeyAttributes) ([]byte, error) { return nil, nil }
+func (m *mockCA) ParseBundle(_ []byte) ([]*x509.Certificate, error)             { return nil, nil }
+func (m *mockCA) PrivateKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return nil, nil
+}
+func (m *mockCA) PubKey(_ context.Context, _ *types.KeyAttributes) (crypto.PublicKey, error) {
+	return nil, nil
+}
+func (m *mockCA) RevokeCert(_ context.Context, _ *x509.Certificate, _ ca.RevokeOptions) error {
+	return nil
+}
+func (m *mockCA) RootCertificate(_ *x509.Certificate) (*x509.Certificate, error) { return nil, nil }
+func (m *mockCA) SignedBlob(_ context.Context, _ []byte) ([]byte, error)         { return nil, nil }
+func (m *mockCA) Signer(_ context.Context) (crypto.Signer, error)                { return nil, nil }
+func (m *mockCA) TLSBundle(_ context.Context, _ *types.KeyAttributes) ([]byte, error) {
+	return nil, nil
+}
+func (m *mockCA) TLSBundleWithCrossSigner(_ context.Context, _ *types.KeyAttributes, _ crypto.Signer) ([]byte, error) {
+	return nil, nil
+}
+func (m *mockCA) TLSConfigWithXSigner(_ context.Context, _ *types.KeyAttributes, _ crypto.Signer) (*tls.Config, error) {
 	return nil, nil
 }
 func (m *mockCA) TrustedIntermediate() (*x509.Certificate, error) { return nil, nil }
@@ -324,25 +352,25 @@ func (e *errorCA) CABundle() ([]byte, error) {
 	return e.mockCA.CABundle()
 }
 
-func (e *errorCA) SignCSR(csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
+func (e *errorCA) SignCSR(ctx context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
 	if e.signCSRErr != nil {
 		return nil, e.signCSRErr
 	}
-	return e.mockCA.SignCSR(csrPEM, opts)
+	return e.mockCA.SignCSR(ctx, csrPEM, opts)
 }
 
-func (e *errorCA) IssueCertificate(req *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
+func (e *errorCA) IssueCertificate(ctx context.Context, req *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
 	if e.issueCertErr != nil {
 		return nil, e.issueCertErr
 	}
-	return e.mockCA.IssueCertificate(req)
+	return e.mockCA.IssueCertificate(ctx, req)
 }
 
-func (e *errorCA) IssueCertificateWithProfile(req *ca.CertificateRequest, profile string) (*ca.IssuedCertificate, error) {
+func (e *errorCA) IssueCertificateWithProfile(ctx context.Context, req *ca.CertificateRequest, profile string) (*ca.IssuedCertificate, error) {
 	if e.issueCertErr != nil {
 		return nil, e.issueCertErr
 	}
-	return e.mockCA.IssueCertificateWithProfile(req, profile)
+	return e.mockCA.IssueCertificateWithProfile(ctx, req, profile)
 }
 
 // ---------------------------------------------------------------------------

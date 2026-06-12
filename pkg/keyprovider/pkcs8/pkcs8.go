@@ -26,7 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -83,7 +83,12 @@ func (b *PKCS8Backend) Capabilities() types.Capabilities {
 // X25519 keys are supported via CustomKeyAlgorithm when X25519Attributes are present.
 //
 // If attrs.Password is provided, the key will be encrypted using PKCS#8 encryption.
-func (b *PKCS8Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	// b.mu serializes the encode+store+metadata sequence within this process and
+	// guards b.closed. It is no longer the uniqueness mechanism: the
+	// authoritative key-ID uniqueness guard is the storage layer's atomic
+	// PutIfAbsent (storage.SaveKeyIfAbsent), which a replicated/clustered Backend
+	// makes linearizable across nodes — something an in-process lock cannot do.
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -95,18 +100,11 @@ func (b *PKCS8Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKe
 		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
 	}
 
-	// Check if key already exists
 	keyID := attrs.ID()
-	exists, err := storage.KeyExists(context.Background(), b.storage, keyID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check key existence: %w", err)
-	}
-	if exists {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyAlreadyExists, keyID)
-	}
 
 	// Generate key based on algorithm
 	var privateKey crypto.PrivateKey
+	var err error
 
 	// Check for X25519 key agreement key
 	if attrs.X25519Attributes != nil {
@@ -128,12 +126,21 @@ func (b *PKCS8Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKe
 		return nil, fmt.Errorf("key generation failed: %w", err)
 	}
 
-	// Encode and store the key
-	if err := b.storeKey(keyID, privateKey, attrs.Password); err != nil {
+	// Encode the key, then store it atomically only if its ID is unused. The
+	// PutIfAbsent result is the authoritative uniqueness decision.
+	keyData, err := b.encodeKey(privateKey, attrs.Password)
+	if err != nil {
 		return nil, err
 	}
+	stored, err := storage.SaveKeyIfAbsent(ctx, b.storage, keyID, keyData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to store key: %w", err)
+	}
+	if !stored {
+		return nil, fmt.Errorf("%w: %s", backend.ErrKeyAlreadyExists, keyID)
+	}
 
-	// Store metadata (including exportable flag)
+	// Store metadata (including exportable flag). Metadata is non-authoritative.
 	metadata := map[string]interface{}{
 		"cn":            attrs.CN,
 		"key_type":      attrs.KeyType.String(),
@@ -146,19 +153,21 @@ func (b *PKCS8Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKe
 		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 	metaKey := "meta/" + keyID
-	if err := b.storage.Put(context.Background(), metaKey, metadataBytes); err != nil {
+	if err := b.storage.Put(ctx, metaKey, metadataBytes); err != nil {
+		// Roll back the key blob so a failed generation does not leave an
+		// orphaned key that blocks regenerating under the same ID.
+		if delErr := storage.DeleteKey(ctx, b.storage, keyID); delErr != nil {
+			return nil, fmt.Errorf("failed to store metadata: %w (rollback of key %s also failed: %v)", err, keyID, delErr)
+		}
 		return nil, fmt.Errorf("failed to store metadata: %w", err)
 	}
-
-	// Log metadata storage for debugging
-	log.Printf("PKCS8.GenerateKey: stored metadata for key %s at %s with exportable=%v", keyID, metaKey, attrs.Exportable)
 
 	return privateKey, nil
 }
 
 // GetKey retrieves an existing private key by its attributes.
 // Returns an error if the key does not exist.
-func (b *PKCS8Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *PKCS8Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -171,7 +180,7 @@ func (b *PKCS8Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 	}
 
 	keyID := attrs.ID()
-	keyData, err := storage.GetKey(context.Background(), b.storage, keyID)
+	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
 		if err == storage.ErrNotFound {
 			return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
@@ -190,7 +199,7 @@ func (b *PKCS8Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 
 // DeleteKey removes a key identified by its attributes.
 // Returns an error if the key does not exist.
-func (b *PKCS8Backend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *PKCS8Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -203,7 +212,7 @@ func (b *PKCS8Backend) DeleteKey(attrs *types.KeyAttributes) error {
 	}
 
 	keyID := attrs.ID()
-	if err := storage.DeleteKey(context.Background(), b.storage, keyID); err != nil {
+	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
 		if err == storage.ErrNotFound {
 			return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
 		}
@@ -218,7 +227,7 @@ func (b *PKCS8Backend) DeleteKey(attrs *types.KeyAttributes) error {
 //
 // Note: This implementation returns key IDs as CommonNames.
 // Full attribute reconstruction may require additional metadata storage.
-func (b *PKCS8Backend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *PKCS8Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -226,7 +235,7 @@ func (b *PKCS8Backend) ListKeys() ([]*types.KeyAttributes, error) {
 		return nil, ErrStorageClosed
 	}
 
-	keyIDs, err := storage.ListKeys(context.Background(), b.storage)
+	keyIDs, err := storage.ListKeys(ctx, b.storage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
@@ -312,7 +321,7 @@ func (b *PKCS8Backend) ListKeys() ([]*types.KeyAttributes, error) {
 
 		// Load metadata to get exportable flag
 		metaKey := "meta/" + id
-		if metaData, err := b.storage.Get(context.Background(), metaKey); err == nil {
+		if metaData, err := b.storage.Get(ctx, metaKey); err == nil {
 			var metadata map[string]interface{}
 			if json.Unmarshal(metaData, &metadata) == nil {
 				if exportable, ok := metadata["exportable"].(bool); ok {
@@ -320,8 +329,10 @@ func (b *PKCS8Backend) ListKeys() ([]*types.KeyAttributes, error) {
 				}
 			}
 		} else {
-			// Log metadata loading failure for debugging
-			log.Printf("PKCS8.ListKeys: failed to load metadata for key %s from %s: %v", id, metaKey, err)
+			// Metadata is non-authoritative; a missing record only loses the
+			// exportable flag, so log at debug and keep listing.
+			slog.Debug("pkcs8: failed to load key metadata",
+				"keyID", id, "metaKey", metaKey, "error", err)
 		}
 
 		attrs = append(attrs, attr)
@@ -333,8 +344,8 @@ func (b *PKCS8Backend) ListKeys() ([]*types.KeyAttributes, error) {
 // Signer returns a crypto.Signer for the key identified by attrs.
 // This allows the key to be used for signing operations without
 // exposing the private key material.
-func (b *PKCS8Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
-	key, err := b.GetKey(attrs)
+func (b *PKCS8Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	key, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -350,8 +361,8 @@ func (b *PKCS8Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error)
 // Decrypter returns a crypto.Decrypter for the key identified by attrs.
 // This allows the key to be used for decryption operations without
 // exposing the private key material.
-func (b *PKCS8Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
-	key, err := b.GetKey(attrs)
+func (b *PKCS8Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+	key, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -427,11 +438,11 @@ func (b *PKCS8Backend) generateX25519Key() (crypto.PrivateKey, error) {
 	return wrappedKey, nil
 }
 
-// storeKey encodes a private key in PKCS#8 format and stores it.
-func (b *PKCS8Backend) storeKey(keyID string, privateKey crypto.PrivateKey, password types.Password) error {
-	var keyData []byte
-	var err error
-
+// encodeKey encodes a private key in PKCS#8 format. When password is non-empty
+// the encrypted-PKCS#8 form is produced; otherwise the unencrypted form is
+// used. X25519 wrapped keys are unwrapped to their raw ecdh.PrivateKey before
+// encoding. It performs no storage I/O.
+func (b *PKCS8Backend) encodeKey(privateKey crypto.PrivateKey, password types.Password) ([]byte, error) {
 	// Unwrap X25519 wrapped key if needed
 	actualPrivateKey := privateKey
 	if wrapped, ok := privateKey.(*x25519.PrivateKeyStorage); ok {
@@ -448,24 +459,19 @@ func (b *PKCS8Backend) storeKey(keyID string, privateKey crypto.PrivateKey, pass
 	// Encode the key
 	if len(passwordBytes) > 0 {
 		// Encrypted PKCS#8
-		keyData, err = pkcs8.MarshalPrivateKey(actualPrivateKey, passwordBytes, nil)
+		keyData, err := pkcs8.MarshalPrivateKey(actualPrivateKey, passwordBytes, nil)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrKeyEncodingFailed, err)
+			return nil, fmt.Errorf("%w: %v", ErrKeyEncodingFailed, err)
 		}
-	} else {
-		// Unencrypted PKCS#8
-		keyData, err = x509.MarshalPKCS8PrivateKey(actualPrivateKey)
-		if err != nil {
-			return fmt.Errorf("%w: %v", ErrKeyEncodingFailed, err)
-		}
+		return keyData, nil
 	}
 
-	// Store the encoded key
-	if err := storage.SaveKey(context.Background(), b.storage, keyID, keyData); err != nil {
-		return fmt.Errorf("failed to save key: %w", err)
+	// Unencrypted PKCS#8
+	keyData, err := x509.MarshalPKCS8PrivateKey(actualPrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrKeyEncodingFailed, err)
 	}
-
-	return nil
+	return keyData, nil
 }
 
 // decodeKey decodes a PKCS#8 encoded private key.
@@ -516,8 +522,8 @@ func (b *PKCS8Backend) decodeKey(keyData []byte, password types.Password) (crypt
 
 // Public returns the public key corresponding to the private key.
 // This is a helper method for signing operations.
-func (b *PKCS8Backend) Public(attrs *types.KeyAttributes) (crypto.PublicKey, error) {
-	key, err := b.GetKey(attrs)
+func (b *PKCS8Backend) Public(ctx context.Context, attrs *types.KeyAttributes) (crypto.PublicKey, error) {
+	key, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -538,8 +544,8 @@ func (b *PKCS8Backend) Public(attrs *types.KeyAttributes) (crypto.PublicKey, err
 
 // Sign signs digest with the private key identified by attrs.
 // This is a convenience method that wraps Signer().
-func (b *PKCS8Backend) Sign(attrs *types.KeyAttributes, rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	signer, err := b.Signer(attrs)
+func (b *PKCS8Backend) Sign(ctx context.Context, attrs *types.KeyAttributes, rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	signer, err := b.Signer(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -548,18 +554,18 @@ func (b *PKCS8Backend) Sign(attrs *types.KeyAttributes, rand io.Reader, digest [
 
 // RotateKey rotates/updates a key identified by attrs.
 // For PKCS#8 software keys, rotation means generating a new key and replacing the old one.
-func (b *PKCS8Backend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *PKCS8Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil {
 		return fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
 	}
 
 	// Delete the old key
-	if err := b.DeleteKey(attrs); err != nil && !errors.Is(err, backend.ErrKeyNotFound) {
+	if err := b.DeleteKey(ctx, attrs); err != nil && !errors.Is(err, backend.ErrKeyNotFound) {
 		return fmt.Errorf("failed to delete old key: %w", err)
 	}
 
 	// Generate a new key with the same attributes
-	_, err := b.GenerateKey(attrs)
+	_, err := b.GenerateKey(ctx, attrs)
 	if err != nil {
 		return fmt.Errorf("failed to generate new key: %w", err)
 	}
@@ -576,7 +582,7 @@ func (b *PKCS8Backend) RotateKey(attrs *types.KeyAttributes) error {
 //
 // Both keys must be compatible (same curve).
 // The shared secret is the raw output of ECDH - use a KDF to derive encryption keys.
-func (b *PKCS8Backend) DeriveSharedSecret(attrs *types.KeyAttributes, publicKey crypto.PublicKey) ([]byte, error) {
+func (b *PKCS8Backend) DeriveSharedSecret(ctx context.Context, attrs *types.KeyAttributes, publicKey crypto.PublicKey) ([]byte, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -593,7 +599,7 @@ func (b *PKCS8Backend) DeriveSharedSecret(attrs *types.KeyAttributes, publicKey 
 	}
 
 	// Get the private key
-	privateKey, err := b.GetKey(attrs)
+	privateKey, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}

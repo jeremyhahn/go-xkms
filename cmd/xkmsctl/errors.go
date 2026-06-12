@@ -54,7 +54,7 @@ var (
 	// BarrierSecretRequiredError, BarrierSecretNotAllowedError, PINPairError,
 	// BarrierShamirParamsError, BarrierShamirOnInitError, BarrierShareInputError,
 	// BarrierSharesFileError, BarrierSharesFileEmptyError,
-	// XKMSPassphraseRekeyUnsupportedError, BarrierRecoverySharesRequiredError,
+	// XKMSRekeyShamirParamsRequiredError, BarrierRecoverySharesRequiredError,
 	// BarrierSealConfirmationError. Sentinel-style flag-validation errors
 	// for barrier verbs have been retired in favour of those typed forms.
 

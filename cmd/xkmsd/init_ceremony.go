@@ -114,7 +114,7 @@ func executeCeremony(
 	cs *initialize.CeremonyService,
 	env *ceremonyEnv,
 ) (*initialize.InitResult, error) {
-	caInstance, err := newCeremonyCA(env)
+	caInstance, err := newCeremonyCA(ctx, env)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +154,7 @@ func executeCeremony(
 // administrator / operator / user / auditor for SignCSRInit) so the
 // upstream ceremony can call SignCSR with these profile names without
 // the default xkms registry returning ErrProfileNotFound.
-func newCeremonyCA(env *ceremonyEnv) (ca.TrustedCA, error) {
+func newCeremonyCA(ctx context.Context, env *ceremonyEnv) (ca.TrustedCA, error) {
 	keyStorage := storage.NewMemory()
 	swBackend, err := software.NewBackend(&software.Config{KeyStorage: keyStorage})
 	if err != nil {
@@ -193,7 +193,7 @@ func newCeremonyCA(env *ceremonyEnv) (ca.TrustedCA, error) {
 		MaxPathLength: 1,
 	}
 
-	root, _, err := ca.NewCA(&ca.Params{
+	root, _, err := ca.NewCA(ctx, &ca.Params{
 		Identity:  []ca.Identity{identity},
 		KeyStore:  keystore,
 		CertStore: certStore,

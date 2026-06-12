@@ -94,8 +94,8 @@ func encodeCOSEEC2Key(publicKey *ecdsa.PublicKey, algorithm int) ([]byte, error)
 	keySize := (publicKey.Curve.Params().BitSize + 7) / 8
 	x := make([]byte, keySize)
 	y := make([]byte, keySize)
-	xBytes := publicKey.X.Bytes()
-	yBytes := publicKey.Y.Bytes()
+	xBytes := publicKey.X.Bytes() //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
+	yBytes := publicKey.Y.Bytes() //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 	copy(x[keySize-len(xBytes):], xBytes)
 	copy(y[keySize-len(yBytes):], yBytes)
 

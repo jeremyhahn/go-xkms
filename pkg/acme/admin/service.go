@@ -213,7 +213,7 @@ func (s *AdminService) RevokeCertificate(ctx context.Context, serial string, rea
 	}
 
 	// Revoke the certificate using CA
-	if err := s.ca.RevokeCert(x509Cert, ca.RevokeOptions{}); err != nil {
+	if err := s.ca.RevokeCert(ctx, x509Cert, ca.RevokeOptions{}); err != nil {
 		return caerrors.InternalServerError("failed to revoke certificate: %s", err)
 	}
 

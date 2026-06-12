@@ -17,7 +17,6 @@ import (
 	"crypto/x509"
 	"testing"
 
-	embedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -31,38 +30,41 @@ func TestAuth_NilClient(t *testing.T) {
 }
 
 // TestWithXKMSFactorVerifiers_NoneConfigured confirms the helper
-// returns an empty options slice when neither verifier dependency is
-// supplied. Callers may legitimately not need any verifier (for
-// example, an mTLS-only deployment) and that path should be silent.
+// registers only the stateless PKCS11 verifier when neither the PIV
+// nor the WebAuthn dependency is supplied. PKCS11 possession
+// verification needs no configuration, so it is always available.
 func TestWithXKMSFactorVerifiers_NoneConfigured(t *testing.T) {
 	opts := WithXKMSFactorVerifiers(AuthFactorOptions{})
-	if len(opts) != 0 {
-		t.Fatalf("expected 0 opts, got %d", len(opts))
+	if len(opts) != 1 {
+		t.Fatalf("expected 1 opt (always-on pkcs11), got %d", len(opts))
 	}
 }
 
 // TestWithXKMSFactorVerifiers_PIVOnly verifies the PIV verifier is
-// registered when only PIV roots are configured.
+// registered (alongside the always-on PKCS11 verifier) when only PIV
+// roots are configured.
 func TestWithXKMSFactorVerifiers_PIVOnly(t *testing.T) {
 	roots := x509.NewCertPool()
 	opts := WithXKMSFactorVerifiers(AuthFactorOptions{PIVRoots: roots})
-	if len(opts) != 1 {
-		t.Fatalf("expected 1 opt for PIV-only, got %d", len(opts))
+	if len(opts) != 2 {
+		t.Fatalf("expected 2 opts for PIV-only (piv + pkcs11), got %d", len(opts))
 	}
 }
 
 // TestWithXKMSFactorVerifiers_WebAuthnOnly verifies the WebAuthn
-// verifier is registered when only the webauthn service is configured.
+// verifier is registered (alongside the always-on PKCS11 verifier)
+// when only the webauthn service is configured.
 func TestWithXKMSFactorVerifiers_WebAuthnOnly(t *testing.T) {
 	svc := newTestWebAuthnService(t)
 	opts := WithXKMSFactorVerifiers(AuthFactorOptions{WebAuthnService: svc})
-	if len(opts) != 1 {
-		t.Fatalf("expected 1 opt for WebAuthn-only, got %d", len(opts))
+	if len(opts) != 2 {
+		t.Fatalf("expected 2 opts for WebAuthn-only (webauthn + pkcs11), got %d", len(opts))
 	}
 }
 
-// TestWithXKMSFactorVerifiers_Both verifies both verifiers are
-// registered when both dependencies are supplied.
+// TestWithXKMSFactorVerifiers_Both verifies all verifiers are
+// registered when both dependencies are supplied: PIV, WebAuthn, and
+// the always-on PKCS11 verifier.
 func TestWithXKMSFactorVerifiers_Both(t *testing.T) {
 	svc := newTestWebAuthnService(t)
 	roots := x509.NewCertPool()
@@ -70,8 +72,8 @@ func TestWithXKMSFactorVerifiers_Both(t *testing.T) {
 		WebAuthnService: svc,
 		PIVRoots:        roots,
 	})
-	if len(opts) != 2 {
-		t.Fatalf("expected 2 opts, got %d", len(opts))
+	if len(opts) != 3 {
+		t.Fatalf("expected 3 opts (piv + webauthn + pkcs11), got %d", len(opts))
 	}
 	// All options should be applicable to embedded.Transport.
 	// Apply them through the public option type; we only assert
@@ -83,7 +85,7 @@ func TestWithXKMSFactorVerifiers_Both(t *testing.T) {
 	}
 
 	// Compile-time assertion that opts type-matches embedded.Option.
-	var _ []embedded.Option = opts
+	_ = opts
 }
 
 // newTestWebAuthnService constructs a minimal but configured xkms

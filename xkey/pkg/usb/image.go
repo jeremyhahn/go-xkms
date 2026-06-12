@@ -132,24 +132,24 @@ func createOnImageFile(cfg ImageConfig) error {
 		return &USBError{Operation: "create_file", Path: cfg.Path, Err: err}
 	}
 	if err := f.Truncate(cfg.SizeBytes); err != nil {
-		f.Close()
-		os.Remove(cfg.Path)
+		_ = f.Close()
+		_ = os.Remove(cfg.Path)
 		return &USBError{Operation: "truncate", Path: cfg.Path, Err: err}
 	}
-	f.Close()
+	_ = f.Close()
 
 	// Set up loop device.
 	loopDev, err := luksSetupLoopDevice(cfg.Path)
 	if err != nil {
-		os.Remove(cfg.Path)
+		_ = os.Remove(cfg.Path)
 		return &USBError{Operation: "setup_loop", Path: cfg.Path, Err: err}
 	}
 
 	slog.Info("loop device attached", "device", loopDev, "image", cfg.Path)
 
 	if err := partitionAndFormat(loopDev, cfg); err != nil {
-		luksDetachLoopDevice(loopDev)
-		os.Remove(cfg.Path)
+		_ = luksDetachLoopDevice(loopDev)
+		_ = os.Remove(cfg.Path)
 		return err
 	}
 
@@ -285,7 +285,7 @@ func formatLUKS(partition, passphrase string) error {
 	}
 
 	if err := luksMakeFilesystem(luksMapperName, "ext4", luksLabel); err != nil {
-		luksLock(luksMapperName)
+		_ = luksLock(luksMapperName)
 		return &USBError{
 			Operation: "create_ext4",
 			Path:      partition,
@@ -311,7 +311,7 @@ func populateFAT32(partition string, binaries []string) error {
 	if err != nil {
 		return &USBError{Operation: "create_mount_dir", Err: err}
 	}
-	defer os.RemoveAll(mountDir)
+	defer func() { _ = os.RemoveAll(mountDir) }()
 
 	// Mount the FAT32 partition.
 	if err := execCommand("mount", "-t", "vfat", partition, mountDir); err != nil {
@@ -378,14 +378,14 @@ func copyBinary(srcPath, dstDir string) error {
 	if err != nil {
 		return &USBError{Operation: "open_binary", Path: srcPath, Err: err}
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	dstPath := filepath.Join(dstDir, filepath.Base(srcPath))
 	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 	if err != nil {
 		return &USBError{Operation: "create_dest", Path: dstPath, Err: err}
 	}
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
 
 	if _, err := io.Copy(dst, src); err != nil {
 		return &USBError{
@@ -467,7 +467,7 @@ func UpdateBinaries(path string, binaries []string) error {
 		if err != nil {
 			return &USBError{Operation: "setup_loop", Path: path, Err: err}
 		}
-		defer luksDetachLoopDevice(loopDev)
+		defer func() { _ = luksDetachLoopDevice(loopDev) }()
 
 		// Re-read partition table on loop device.
 		_ = execCommand("partprobe", loopDev)
@@ -479,7 +479,7 @@ func UpdateBinaries(path string, binaries []string) error {
 	if err != nil {
 		return &USBError{Operation: "create_mount_dir", Err: err}
 	}
-	defer os.RemoveAll(mountDir)
+	defer func() { _ = os.RemoveAll(mountDir) }()
 
 	if err := execCommand("mount", "-t", "vfat", part1, mountDir); err != nil {
 		return &USBError{

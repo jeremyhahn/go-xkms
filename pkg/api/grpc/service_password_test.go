@@ -298,7 +298,7 @@ func TestParseTimestamp(t *testing.T) {
 }
 
 func TestPasswordAdd_Validation(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -348,7 +348,7 @@ func TestPasswordAdd_Validation(t *testing.T) {
 }
 
 func TestPasswordGet_Validation(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -392,7 +392,7 @@ func TestPasswordGet_Validation(t *testing.T) {
 }
 
 func TestPasswordUpdate_Validation(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -436,7 +436,7 @@ func TestPasswordUpdate_Validation(t *testing.T) {
 }
 
 func TestPasswordDelete_Validation(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -480,7 +480,7 @@ func TestPasswordDelete_Validation(t *testing.T) {
 }
 
 func TestPasswordList_NilRequest(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	ctx := context.Background()
 
 	// PasswordList should accept nil request (uses defaults)
@@ -498,7 +498,7 @@ func TestPasswordList_NilRequest(t *testing.T) {
 }
 
 func TestPasswordGenerate_NilRequest(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	ctx := context.Background()
 
 	// PasswordGenerate should accept nil request (uses defaults)
@@ -516,7 +516,7 @@ func TestPasswordGenerate_NilRequest(t *testing.T) {
 }
 
 func TestPasswordStoreUnlock_NilRequest(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	ctx := context.Background()
 
 	// PasswordStoreUnlock should accept nil request
@@ -534,7 +534,7 @@ func TestPasswordStoreUnlock_NilRequest(t *testing.T) {
 }
 
 func TestPasswordStoreLock_NilRequest(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	ctx := context.Background()
 
 	// PasswordStoreLock accepts nil request (no parameters)
@@ -552,7 +552,7 @@ func TestPasswordStoreLock_NilRequest(t *testing.T) {
 }
 
 func TestPasswordStoreStatus_NilRequest(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	ctx := context.Background()
 
 	// PasswordStoreStatus accepts nil request (no parameters)

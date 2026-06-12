@@ -113,9 +113,13 @@ func TestGetImportParameters_BackendDoesNotSupportImportExport(t *testing.T) {
 	// Use the server test setup which uses pkcs8 (no import/export support)
 	setupXKMSForTest(t)
 	defer xkms.Reset()
-	svc := NewService(nil, nil)
+	xkmsSvc, err := xkms.Get()
+	if err != nil {
+		t.Fatalf("Failed to get xkms service: %v", err)
+	}
+	svc := NewService(nil, nil, xkmsSvc)
 
-	_, err := svc.GetImportParameters(context.Background(), &pb.GetImportParametersRequest{
+	_, err = svc.GetImportParameters(context.Background(), &pb.GetImportParametersRequest{
 		KeyId:             "k",
 		Backend:           "test",
 		WrappingAlgorithm: "RSA_AES_KEY_WRAP_SHA_256",
@@ -131,9 +135,13 @@ func TestExportKeyMaterial_BackendDoesNotSupportImportExport(t *testing.T) {
 	// Use pkcs8 backend which doesn't support import/export
 	setupXKMSForTest(t)
 	defer xkms.Reset()
-	svc := NewService(nil, nil)
+	xkmsSvc, err := xkms.Get()
+	if err != nil {
+		t.Fatalf("Failed to get xkms service: %v", err)
+	}
+	svc := NewService(nil, nil, xkmsSvc)
 
-	_, err := svc.ExportKeyMaterial(context.Background(), &pb.ExportKeyMaterialRequest{
+	_, err = svc.ExportKeyMaterial(context.Background(), &pb.ExportKeyMaterialRequest{
 		KeyId:   "k",
 		Backend: "test",
 	})
@@ -147,9 +155,13 @@ func TestWrapKeyByID_BackendDoesNotSupportImportExport(t *testing.T) {
 	// Use pkcs8 backend
 	setupXKMSForTest(t)
 	defer xkms.Reset()
-	svc := NewService(nil, nil)
+	xkmsSvc, err := xkms.Get()
+	if err != nil {
+		t.Fatalf("Failed to get xkms service: %v", err)
+	}
+	svc := NewService(nil, nil, xkmsSvc)
 
-	_, err := svc.WrapKeyByID(context.Background(), &pb.WrapKeyByIDRequest{
+	_, err = svc.WrapKeyByID(context.Background(), &pb.WrapKeyByIDRequest{
 		WrappingKeyId:      "k",
 		WrappingKeyBackend: "test",
 		TargetKeyId:        "k2",
@@ -166,9 +178,13 @@ func TestUnwrapKeyByID_BackendDoesNotSupportImportExport(t *testing.T) {
 	// Use pkcs8 backend
 	setupXKMSForTest(t)
 	defer xkms.Reset()
-	svc := NewService(nil, nil)
+	xkmsSvc, err := xkms.Get()
+	if err != nil {
+		t.Fatalf("Failed to get xkms service: %v", err)
+	}
+	svc := NewService(nil, nil, xkmsSvc)
 
-	_, err := svc.UnwrapKeyByID(context.Background(), &pb.UnwrapKeyByIDRequest{
+	_, err = svc.UnwrapKeyByID(context.Background(), &pb.UnwrapKeyByIDRequest{
 		WrappedKey:           []byte("wrapped"),
 		UnwrappingKeyId:      "k",
 		UnwrappingKeyBackend: "test",
@@ -204,9 +220,13 @@ func TestImportKey_BackendDoesNotSupportImportExport(t *testing.T) {
 	// Use pkcs8 backend
 	setupXKMSForTest(t)
 	defer xkms.Reset()
-	svc := NewService(nil, nil)
+	xkmsSvc, err := xkms.Get()
+	if err != nil {
+		t.Fatalf("Failed to get xkms service: %v", err)
+	}
+	svc := NewService(nil, nil, xkmsSvc)
 
-	_, err := svc.ImportKey(context.Background(), &pb.ImportKeyRequest{
+	_, err = svc.ImportKey(context.Background(), &pb.ImportKeyRequest{
 		KeyId:      "k",
 		Backend:    "test",
 		WrappedKey: []byte("key-data"),

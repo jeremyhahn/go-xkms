@@ -16,6 +16,7 @@ package rest
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sort"
 
@@ -101,13 +102,15 @@ type tenantBarrierUnsealRequest struct {
 // BarrierRegistry and each receives an isolated TenantBarrier that
 // scopes all storage operations to the tenant's namespace.
 type TenantHandlers struct {
-	registry *seal.BarrierRegistry
+	registry    *seal.BarrierRegistry
+	xkmsService *xkms.XKMSService
 }
 
 // NewTenantHandlers creates a new TenantHandlers instance.
-// The registry must not be nil.
-func NewTenantHandlers(registry *seal.BarrierRegistry) *TenantHandlers {
-	return &TenantHandlers{registry: registry}
+// The registry must not be nil. svc is the injected XKMS service used by
+// barrier-init and barrier-unseal operations.
+func NewTenantHandlers(registry *seal.BarrierRegistry, svc *xkms.XKMSService) *TenantHandlers {
+	return &TenantHandlers{registry: registry, xkmsService: svc}
 }
 
 // CreateTenantHandler handles POST /tenants requests.
@@ -335,12 +338,11 @@ func (h *TenantHandlers) TenantBarrierInitHandler(w http.ResponseWriter, r *http
 	// Route through the service layer so the §3.6 invariant (the server never
 	// generates a tenant secret) is enforced in exactly one place. The
 	// passphrase is taken verbatim from the caller's request.
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if h.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
-	if err := svc.TenantBarrierInit(r.Context(), &transport.TenantBarrierInitRequest{
+	if err := h.xkmsService.TenantBarrierInit(r.Context(), &transport.TenantBarrierInitRequest{
 		TenantID:   tenantID,
 		Passphrase: req.Passphrase,
 		Strategy:   req.Strategy,
@@ -399,12 +401,11 @@ func (h *TenantHandlers) TenantBarrierUnsealHandler(w http.ResponseWriter, r *ht
 	// Route through the service layer; the unseal credentials are taken
 	// verbatim from the caller's request (Key for passphrase strategies, Share
 	// for shamir). The server holds no tenant secret of its own.
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if h.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
-	if err := svc.TenantBarrierUnseal(r.Context(), &transport.TenantBarrierUnsealRequest{
+	if err := h.xkmsService.TenantBarrierUnseal(r.Context(), &transport.TenantBarrierUnsealRequest{
 		TenantID: tenantID,
 		Key:      req.Key,
 		Share:    req.Share,
@@ -459,6 +460,7 @@ func handleTenantError(w http.ResponseWriter, err error) {
 	case errors.Is(err, seal.ErrNilSystemBarrier):
 		writeError(w, err, http.StatusServiceUnavailable)
 	default:
+		slog.Default().Error("tenant operation failed", "error", err)
 		writeError(w, ErrInternalError, http.StatusInternalServerError)
 	}
 }

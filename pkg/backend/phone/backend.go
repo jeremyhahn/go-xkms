@@ -207,7 +207,7 @@ func (b *Backend) Capabilities() types.Capabilities {
 // The private key remains in the phone's TEE/StrongBox and is never exported.
 // The returned crypto.PrivateKey is a phoneSigner that caches the public key
 // and proxies Sign calls to the phone via JSON-RPC.
-func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -230,7 +230,7 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 		params.KeySizeBits = attrs.RSAAttributes.KeySize
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), b.config.RequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
 	resp, err := b.sendLocalRequest(ctx, phoneproto.MethodLocalGenerateKey, params)
@@ -254,7 +254,7 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 // GetKey retrieves an existing key from the phone by querying its metadata
 // and public key. The returned crypto.PrivateKey is a phoneSigner that proxies
 // sign operations to the phone.
-func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -262,7 +262,7 @@ func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) 
 		return nil, ErrInvalidConfig
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), b.config.RequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
 	// Verify the key exists on the phone.
@@ -301,7 +301,7 @@ func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) 
 }
 
 // DeleteKey removes a key from the phone's hardware keystore.
-func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if b.closed.Load() {
 		return ErrBackendClosed
 	}
@@ -309,7 +309,7 @@ func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
 		return ErrInvalidConfig
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), b.config.RequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
 	resp, err := b.sendLocalRequest(ctx, phoneproto.MethodLocalDeleteKey, &phoneproto.LocalDeleteKeyParams{
@@ -332,12 +332,12 @@ func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
 }
 
 // ListKeys returns metadata for all keys stored on the phone.
-func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), b.config.RequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
 	resp, err := b.sendLocalRequest(ctx, phoneproto.MethodLocalListKeys, &phoneproto.LocalListKeysParams{})
@@ -361,7 +361,7 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 
 // Signer returns a crypto.Signer for the key identified by attrs.
 // The signer proxies sign operations to the phone via JSON-RPC.
-func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -370,7 +370,7 @@ func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
 	}
 
 	// Retrieve the key to get its public key and algorithm.
-	privKey, err := b.GetKey(attrs)
+	privKey, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -385,7 +385,7 @@ func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
 
 // Decrypter returns a crypto.Decrypter for the key identified by attrs.
 // The decrypter proxies decryption operations to the phone via JSON-RPC.
-func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -393,7 +393,7 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 		return nil, ErrInvalidConfig
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), b.config.RequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
 	// Retrieve key info to get the algorithm.
@@ -434,7 +434,7 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 // RotateKey is not supported by the phone backend. Keys stored in hardware
 // secure elements cannot be rotated in-place. Create a new key and migrate
 // references instead.
-func (b *Backend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	return ErrRotationNotSupported
 }
 

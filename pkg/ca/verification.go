@@ -78,6 +78,60 @@ var signatureAlgorithmToHash = map[x509.SignatureAlgorithm]crypto.Hash{
 	x509.PureEd25519:      0, // Ed25519 doesn't use a separate hash
 }
 
+// strongSignatureAlgorithms is the allowlist of signature algorithms that meet
+// the SHA-256-or-stronger requirement for non-anchor certificates.
+// Self-signed trust anchors are trusted by identity, not signature, so they
+// are exempt from this check (RFC 5280 §6.1 step (a)(2)).
+var strongSignatureAlgorithms = map[x509.SignatureAlgorithm]struct{}{
+	x509.SHA256WithRSA:    {},
+	x509.SHA384WithRSA:    {},
+	x509.SHA512WithRSA:    {},
+	x509.SHA256WithRSAPSS: {},
+	x509.SHA384WithRSAPSS: {},
+	x509.SHA512WithRSAPSS: {},
+	x509.ECDSAWithSHA256:  {},
+	x509.ECDSAWithSHA384:  {},
+	x509.ECDSAWithSHA512:  {},
+	x509.PureEd25519:      {}, // Ed25519 is always strong (no separate hash)
+}
+
+// VerifyChainAlgorithms checks every non-anchor certificate in the chain for
+// weak signature algorithms (MD5, SHA-1, or other sub-SHA-256 hashes).
+//
+// RFC 5280 §6.1 step (a)(2) specifies that a trust anchor's own signature is
+// not validated — anchors are trusted by identity, not signature.  This
+// function therefore skips self-signed certificates at the end of each chain.
+//
+// Parameters:
+//   - chains: The verified chains returned by VerifyChain or VerifyWithOptions.
+//
+// Returns an *ErrWeakSignatureAlgorithmDetail (which wraps ErrWeakSignatureAlgorithm)
+// for the first offending certificate found, or nil if all non-anchor
+// certificates use strong algorithms.
+//
+// Thread-safe: Yes (pure function)
+func VerifyChainAlgorithms(chains [][]*x509.Certificate) error {
+	for _, chain := range chains {
+		for i, cert := range chain {
+			// Skip self-signed trust anchors (last cert in chain that is
+			// self-signed).  RFC 5280 §6.1: the trust anchor's own signature
+			// is not chain-validated.
+			isAnchor := i == len(chain)-1 && IsSelfSigned(cert)
+			if isAnchor {
+				continue
+			}
+
+			if _, ok := strongSignatureAlgorithms[cert.SignatureAlgorithm]; !ok {
+				return &ErrWeakSignatureAlgorithmDetail{
+					Algorithm: cert.SignatureAlgorithm.String(),
+					Subject:   cert.Subject.String(),
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // VerificationError represents a certificate verification failure with context.
 // It contains the certificate that failed verification, the reason for failure,
 // and optionally wraps the underlying error.
@@ -206,6 +260,8 @@ func (ca *CA) VerifySignature(cert *x509.Certificate) error {
 //   - ErrInvalidCertificate if cert is nil
 //   - ErrRootNotFound if roots is nil or empty
 //   - ErrInvalidCertificateChain if chain verification fails
+//   - ErrWeakSignatureAlgorithmDetail if any non-root certificate in a
+//     verified chain is signed with a weak algorithm (see VerifyChainAlgorithms)
 //
 // Thread-safe: Yes (pure function)
 func VerifyChain(
@@ -244,6 +300,10 @@ func VerifyChain(
 		}
 	}
 
+	if err := VerifyChainAlgorithms(chains); err != nil {
+		return nil, err
+	}
+
 	return chains, nil
 }
 
@@ -267,6 +327,8 @@ func VerifyChain(
 //   - ErrCertificateNotYetValid if the certificate is not yet valid
 //   - ErrCertificateRevoked if revocation checking is enabled and cert is revoked
 //   - ErrInvalidCertificateChain if chain verification fails
+//   - ErrWeakSignatureAlgorithmDetail if any non-root certificate in a
+//     verified chain is signed with a weak algorithm (see VerifyChainAlgorithms)
 //
 // Thread-safe: Yes (pure function)
 func VerifyWithOptions(
@@ -348,6 +410,10 @@ func VerifyWithOptions(
 			Reason:  "chain verification failed",
 			Wrapped: err,
 		}
+	}
+
+	if err := VerifyChainAlgorithms(chains); err != nil {
+		return nil, err
 	}
 
 	return chains, nil

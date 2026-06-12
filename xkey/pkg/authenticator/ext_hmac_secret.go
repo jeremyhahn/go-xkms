@@ -386,7 +386,7 @@ func deriveHMACSecretSharedSecret(platformCOSEKey []byte, protocol int) ([]byte,
 	}
 
 	// Perform ECDH: compute shared point
-	x, _ := elliptic.P256().ScalarMult(platformPubKey.X, platformPubKey.Y, ephemeralPrivKey.D.Bytes())
+	x, _ := elliptic.P256().ScalarMult(platformPubKey.X, platformPubKey.Y, ephemeralPrivKey.D.Bytes()) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 
 	// Derive shared secret based on protocol version
 	xBytes := padCoordinate(x.Bytes(), ecdhP256CoordSize)
@@ -519,7 +519,7 @@ func decodeCOSEKeyAgreementKey(data []byte) (*ecdsa.PublicKey, error) {
 	}
 
 	// Verify point is on curve
-	if !elliptic.P256().IsOnCurve(x, y) {
+	if !elliptic.P256().IsOnCurve(x, y) { //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 		return nil, ErrHMACSecretInvalidKeyAgreement
 	}
 
@@ -694,8 +694,8 @@ func (h *HMACSecretPlatformHelper) GetCOSEPublicKey() ([]byte, error) {
 		coseKeyLabelKty: COSEKeyTypeEC2,
 		coseKeyLabelAlg: COSEAlgECDHESHKDF256,
 		coseKeyLabelCrv: COSECurveP256,
-		coseKeyLabelX:   padCoordinate(h.publicKey.X.Bytes(), ecdhP256CoordSize),
-		coseKeyLabelY:   padCoordinate(h.publicKey.Y.Bytes(), ecdhP256CoordSize),
+		coseKeyLabelX:   padCoordinate(h.publicKey.X.Bytes(), ecdhP256CoordSize), //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
+		coseKeyLabelY:   padCoordinate(h.publicKey.Y.Bytes(), ecdhP256CoordSize), //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 	}
 
 	return cbor.Marshal(coseKey)
@@ -709,7 +709,7 @@ func (h *HMACSecretPlatformHelper) EstablishSharedSecret(authenticatorCOSEKey []
 	}
 
 	// Perform ECDH
-	x, _ := elliptic.P256().ScalarMult(authPubKey.X, authPubKey.Y, h.privateKey.D.Bytes())
+	x, _ := elliptic.P256().ScalarMult(authPubKey.X, authPubKey.Y, h.privateKey.D.Bytes()) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 	xBytes := padCoordinate(x.Bytes(), ecdhP256CoordSize)
 
 	// Derive shared secret (PIN Protocol V1 style)

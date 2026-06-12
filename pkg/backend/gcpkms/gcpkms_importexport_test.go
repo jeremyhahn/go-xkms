@@ -103,7 +103,7 @@ func TestGetImportParameters(t *testing.T) {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
 
-			params, err := b.GetImportParameters(tt.attrs, tt.algorithm)
+			params, err := b.GetImportParameters(context.Background(), tt.attrs, tt.algorithm)
 
 			if tt.wantErr {
 				if err == nil {
@@ -148,7 +148,7 @@ func TestWrapKey(t *testing.T) {
 		Algorithm:         backend.WrappingAlgorithmRSA_OAEP_3072_SHA256_AES_256,
 	}
 
-	wrapped, err := b.WrapKey([]byte("test-key-material"), params)
+	wrapped, err := b.WrapKey(context.Background(), []byte("test-key-material"), params)
 	if err != nil {
 		t.Fatalf("WrapKey() failed: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestUnwrapKey(t *testing.T) {
 		Algorithm: backend.WrappingAlgorithmRSA_OAEP_3072_SHA256_AES_256,
 	}
 
-	_, err = b.UnwrapKey(wrapped, params)
+	_, err = b.UnwrapKey(context.Background(), wrapped, params)
 	if err == nil {
 		t.Error("UnwrapKey() expected error, got nil")
 	}
@@ -229,7 +229,7 @@ func TestImportKey(t *testing.T) {
 		ImportToken: []byte("test-import-job"),
 	}
 
-	err = b.ImportKey(attrs, wrapped)
+	err = b.ImportKey(context.Background(), attrs, wrapped)
 	if err != nil {
 		t.Fatalf("ImportKey() failed: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestExportKey(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	_, err = b.ExportKey(attrs, backend.WrappingAlgorithmRSA_OAEP_3072_SHA256_AES_256)
+	_, err = b.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSA_OAEP_3072_SHA256_AES_256)
 	if err == nil {
 		t.Error("ExportKey() expected error, got nil")
 	}

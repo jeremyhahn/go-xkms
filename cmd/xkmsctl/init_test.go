@@ -206,13 +206,15 @@ func TestNewSPKIHTTPClient_HasVerifyConnection(t *testing.T) {
 	if transport.TLSClientConfig == nil {
 		t.Fatal("expected non-nil TLSClientConfig")
 	}
-	// InsecureSkipVerify must be true because this is trust bootstrap mode:
-	// no CA cert available, SPKI pin verification via VerifyConnection IS the security.
-	if !transport.TLSClientConfig.InsecureSkipVerify {
-		t.Fatal("expected InsecureSkipVerify=true for SPKI bootstrap (CA chain skipped, pin verified)")
-	}
+	// VerifyConnection must be set: this IS the actual peer authentication
+	// for trust bootstrap (SPKI pin check replaces CA chain verification).
 	if transport.TLSClientConfig.VerifyConnection == nil {
 		t.Fatal("expected VerifyConnection callback to be set for SPKI pin verification")
+	}
+	// SessionTicketsDisabled must be true so session resumption cannot
+	// bypass the VerifyConnection pin check (CWE-295).
+	if !transport.TLSClientConfig.SessionTicketsDisabled {
+		t.Fatal("expected SessionTicketsDisabled=true to prevent pin bypass via session resumption")
 	}
 }
 

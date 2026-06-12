@@ -1,5 +1,7 @@
 FROM golang:1.26.1-bookworm
 
+ENV GOTOOLCHAIN=auto
+
 # Install ADB for communicating with the Android emulator.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends android-sdk-platform-tools && \
@@ -14,6 +16,10 @@ COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 # Copy local replace directive dependencies.
 COPY --from=go-qrdb . /go-qrdb/
 COPY --from=go-quicraft . /go-quicraft/
+COPY --from=go-truststrap . /go-truststrap/
+COPY --from=go-codec . /go-codec/
+COPY --from=go-frost . /go-frost/
+COPY --from=go-objstore . /go-objstore/
 
 RUN go mod download
 

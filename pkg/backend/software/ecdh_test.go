@@ -67,7 +67,7 @@ func TestSoftwareBackend_DeriveKeyECDH_P256(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	// Generate Bob's key pair (external, just for public key)
@@ -117,7 +117,7 @@ func TestSoftwareBackend_DeriveKeyECDH_P384(t *testing.T) {
 			Curve: elliptic.P384(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	// Generate Bob's P-384 key pair
@@ -158,7 +158,7 @@ func TestSoftwareBackend_DeriveKeyECDH_P521(t *testing.T) {
 			Curve: elliptic.P521(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	// Generate Bob's P-521 key pair
@@ -197,7 +197,7 @@ func TestSoftwareBackend_DeriveKeyECDH_X25519(t *testing.T) {
 		KeyAlgorithm:     x509.PublicKeyAlgorithm(0), // X25519 doesn't have a standard algorithm
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	// Generate Bob's X25519 key pair
@@ -237,7 +237,7 @@ func TestSoftwareBackend_DeriveKeyECDH_X25519_DERFormat(t *testing.T) {
 		StoreType:        backend.STORE_SW,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	// Generate Bob's X25519 key pair and encode to DER
@@ -274,7 +274,7 @@ func TestSoftwareBackend_DeriveKeyECDH_BidirectionalAgreement(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	aliceKey, err := sb.GenerateKey(aliceAttrs)
+	aliceKey, err := sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	// Generate Bob's key pair in the backend as well
@@ -287,7 +287,7 @@ func TestSoftwareBackend_DeriveKeyECDH_BidirectionalAgreement(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	bobKey, err := sb.GenerateKey(bobAttrs)
+	bobKey, err := sb.GenerateKey(context.Background(), bobAttrs)
 	require.NoError(t, err)
 
 	// Get public keys in DER format
@@ -339,7 +339,7 @@ func TestSoftwareBackend_DeriveKeyECDH_SHA3Hashes(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	bobPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -411,7 +411,7 @@ func TestSoftwareBackend_DeriveKeyECDH_EmptyPeerPublicKey(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	kdfParams := types.DefaultKDFParams()
@@ -440,7 +440,7 @@ func TestSoftwareBackend_DeriveKeyECDH_NilKDFParams(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	bobPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -473,7 +473,7 @@ func TestSoftwareBackend_DeriveKeyECDH_InvalidKDFKeyLength(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	bobPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -513,7 +513,7 @@ func TestSoftwareBackend_DeriveKeyECDH_CurveMismatch(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	// Generate Bob's P-384 key pair (different curve)
@@ -549,7 +549,7 @@ func TestSoftwareBackend_DeriveKeyECDH_InvalidPublicKeyFormat(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	kdfParams := types.DefaultKDFParams()
@@ -609,7 +609,7 @@ func TestSoftwareBackend_DeriveKeyECDH_X25519_InvalidPublicKeyLength(t *testing.
 		StoreType:        backend.STORE_SW,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	kdfParams := types.DefaultKDFParams()
@@ -638,7 +638,7 @@ func TestSoftwareBackend_DeriveKeyECDH_BackendClosed(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	bobPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -678,7 +678,7 @@ func TestSoftwareBackend_DeriveKeyECDH_UnsupportedKeyType(t *testing.T) {
 			KeySize: 2048,
 		},
 	}
-	_, err = sb.GenerateKey(rsaAttrs)
+	_, err = sb.GenerateKey(context.Background(), rsaAttrs)
 	require.NoError(t, err)
 
 	bobPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -713,7 +713,7 @@ func TestSoftwareBackend_DeriveKeyECDH_UncompressedPointFormat(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	// Generate Bob's key and convert to ECDH to get uncompressed format
@@ -750,7 +750,7 @@ func TestSoftwareBackend_DeriveKeyECDH_X25519_BidirectionalAgreement(t *testing.
 		StoreType:        backend.STORE_SW,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	aliceKey, err := sb.GenerateKey(aliceAttrs)
+	aliceKey, err := sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	// Generate Bob's X25519 key pair
@@ -760,7 +760,7 @@ func TestSoftwareBackend_DeriveKeyECDH_X25519_BidirectionalAgreement(t *testing.
 		StoreType:        backend.STORE_SW,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	bobKey, err := sb.GenerateKey(bobAttrs)
+	bobKey, err := sb.GenerateKey(context.Background(), bobAttrs)
 	require.NoError(t, err)
 
 	// Get public keys
@@ -809,7 +809,7 @@ func TestSoftwareBackend_DeriveKeyECDH_DifferentInfoProducesDifferentKeys(t *tes
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	bobPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -865,7 +865,7 @@ func TestSoftwareBackend_DeriveKeyECDH_DifferentSaltProducesDifferentKeys(t *tes
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	bobPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -952,7 +952,7 @@ func TestSoftwareBackend_DeriveKeyECDHSecure_ExportMode(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(aliceAttrs)
+	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	// Generate Bob's key pair (external, just for public key)
@@ -1002,7 +1002,7 @@ func TestSoftwareBackend_DeriveKeyECDHSecure_DefaultMode(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(attrs)
+	_, err = sb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Generate peer key
@@ -1046,7 +1046,7 @@ func TestSoftwareBackend_DeriveKeyECDHSecure_UnsupportedModes(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-	_, err = sb.GenerateKey(attrs)
+	_, err = sb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Generate peer key
@@ -1364,7 +1364,7 @@ func TestSoftwareBackend_ListKeys_Empty(t *testing.T) {
 	defer func() { _ = b.Close() }()
 
 	sb := b.(*SoftwareBackend)
-	keys, err := sb.ListKeys()
+	keys, err := sb.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, keys)
 }

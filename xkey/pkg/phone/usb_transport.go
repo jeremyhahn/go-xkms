@@ -122,7 +122,7 @@ func (t *USBTransport) Connect(ctx context.Context) error {
 		// No AOA device found — try to switch an Android device into AOA mode.
 		t.log.Debug("no AOA device found, attempting AOA switchover")
 		if switchErr := t.switchToAOA(usbCtx); switchErr != nil {
-			usbCtx.Close()
+			_ = usbCtx.Close()
 			t.log.Error("AOA switchover failed", "error", switchErr)
 			return ErrConnectionFailed
 		}
@@ -131,34 +131,34 @@ func (t *USBTransport) Connect(ctx context.Context) error {
 		time.Sleep(2 * time.Second)
 
 		// Re-open the USB context after switchover.
-		usbCtx.Close()
+		_ = usbCtx.Close()
 		usbCtx = gousb.NewContext()
 
 		dev, err = t.findAOADevice(usbCtx)
 		if err != nil {
-			usbCtx.Close()
+			_ = usbCtx.Close()
 			t.log.Error("AOA device not found after switchover", "error", err)
 			return ErrConnectionFailed
 		}
 	}
 
 	// Set auto-detach kernel driver so we can claim the interface.
-	dev.SetAutoDetach(true)
+	_ = dev.SetAutoDetach(true)
 
 	// Open the default configuration and claim interface 0.
 	cfg, err := dev.Config(1)
 	if err != nil {
-		dev.Close()
-		usbCtx.Close()
+		_ = dev.Close()
+		_ = usbCtx.Close()
 		t.log.Error("failed to get USB config", "error", err)
 		return ErrConnectionFailed
 	}
 
 	intf, err := cfg.Interface(0, 0)
 	if err != nil {
-		cfg.Close()
-		dev.Close()
-		usbCtx.Close()
+		_ = cfg.Close()
+		_ = dev.Close()
+		_ = usbCtx.Close()
 		t.log.Error("failed to claim USB interface", "error", err)
 		return ErrConnectionFailed
 	}
@@ -185,9 +185,9 @@ func (t *USBTransport) Connect(ctx context.Context) error {
 
 	if inEP == nil || outEP == nil {
 		intf.Close()
-		cfg.Close()
-		dev.Close()
-		usbCtx.Close()
+		_ = cfg.Close()
+		_ = dev.Close()
+		_ = usbCtx.Close()
 		t.log.Error("USB AOA device missing bulk endpoints")
 		return ErrConnectionFailed
 	}
@@ -220,7 +220,7 @@ func (t *USBTransport) findAOADevice(usbCtx *gousb.Context) (*gousb.Device, erro
 
 	// Use the first matching device, close extras.
 	for i := 1; i < len(devs); i++ {
-		devs[i].Close()
+		_ = devs[i].Close()
 	}
 
 	return devs[0], nil
@@ -239,7 +239,7 @@ func (t *USBTransport) switchToAOA(usbCtx *gousb.Context) error {
 
 	defer func() {
 		for _, d := range devs {
-			d.Close()
+			_ = d.Close()
 		}
 	}()
 
@@ -434,12 +434,12 @@ func (t *USBTransport) Close() error {
 	}
 
 	if t.device != nil {
-		t.device.Close()
+		_ = t.device.Close()
 		t.device = nil
 	}
 
 	if t.usbCtx != nil {
-		t.usbCtx.Close()
+		_ = t.usbCtx.Close()
 		t.usbCtx = nil
 	}
 

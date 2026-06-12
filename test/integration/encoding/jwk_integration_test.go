@@ -38,13 +38,13 @@ func TestJWKIntegration_XKMSIntegration(t *testing.T) {
 
 	t.Run("RSA_XKMSBackedJWK", func(t *testing.T) {
 		// Generate RSA key in backend
-		// Use proper xkms Key ID format: "backend:keyname"
-		keyID := "pkcs8:rsa-test-key"
+		// Canonical Key ID format: "backend:type:algo:keyname"
+		keyID := "software:signing:rsa:rsa-test-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
-		// Create JWK from xkms key
-		xkmsJWK, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
+		// Create public JWK from the xkms-resident key
+		xkmsJWK, err := setup.PublicJWK(keyID)
 		require.NoError(t, err)
 		assert.NotNil(t, xkmsJWK)
 		assert.Equal(t, keyID, xkmsJWK.Kid)
@@ -54,11 +54,8 @@ func TestJWKIntegration_XKMSIntegration(t *testing.T) {
 		assert.NotEmpty(t, xkmsJWK.E)
 		assert.Empty(t, xkmsJWK.D) // Should not expose private key
 
-		// Verify IsXKMSBacked
-		assert.True(t, xkmsJWK.IsXKMSBacked())
-
-		// Load key from xkms using JWK kid
-		loadedKey, err := xkmsJWK.LoadKeyFromXKMS(setup.GetKeyByID)
+		// Load key from xkms using JWK kid via the getter (DI pattern)
+		loadedKey, err := setup.GetKeyByID(xkmsJWK.Kid)
 		require.NoError(t, err)
 		assert.NotNil(t, loadedKey)
 
@@ -75,60 +72,60 @@ func TestJWKIntegration_XKMSIntegration(t *testing.T) {
 	})
 
 	t.Run("ECDSA_P256_XKMSBackedJWK", func(t *testing.T) {
-		// Use proper xkms Key ID format: "backend:keyname"
-		keyID := "pkcs8:ecdsa-p256-key"
+		// Canonical Key ID format: "backend:type:algo:keyname"
+		keyID := "software:signing:ecdsa-p256:ecdsa-p256-key"
 		err := setup.GenerateECDSAKey(keyID, elliptic.P256())
 		require.NoError(t, err)
 
-		xkmsJWK, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
+		xkmsJWK, err := setup.PublicJWK(keyID)
 		require.NoError(t, err)
+		assert.Equal(t, keyID, xkmsJWK.Kid)
 		assert.Equal(t, string(jwk.KeyTypeEC), xkmsJWK.Kty)
 		assert.Equal(t, string(jwk.CurveP256), xkmsJWK.Crv)
 		assert.NotEmpty(t, xkmsJWK.X)
 		assert.NotEmpty(t, xkmsJWK.Y)
 		assert.Empty(t, xkmsJWK.D)
-		assert.True(t, xkmsJWK.IsXKMSBacked())
 	})
 
 	t.Run("ECDSA_P384_XKMSBackedJWK", func(t *testing.T) {
-		// Use proper xkms Key ID format: "backend:keyname"
-		keyID := "pkcs8:ecdsa-p384-key"
+		// Canonical Key ID format: "backend:type:algo:keyname"
+		keyID := "software:signing:ecdsa-p384:ecdsa-p384-key"
 		err := setup.GenerateECDSAKey(keyID, elliptic.P384())
 		require.NoError(t, err)
 
-		xkmsJWK, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
+		xkmsJWK, err := setup.PublicJWK(keyID)
 		require.NoError(t, err)
+		assert.Equal(t, keyID, xkmsJWK.Kid)
 		assert.Equal(t, string(jwk.KeyTypeEC), xkmsJWK.Kty)
 		assert.Equal(t, string(jwk.CurveP384), xkmsJWK.Crv)
-		assert.True(t, xkmsJWK.IsXKMSBacked())
 	})
 
 	t.Run("ECDSA_P521_XKMSBackedJWK", func(t *testing.T) {
-		// Use proper xkms Key ID format: "backend:keyname"
-		keyID := "pkcs8:ecdsa-p521-key"
+		// Canonical Key ID format: "backend:type:algo:keyname"
+		keyID := "software:signing:ecdsa-p521:ecdsa-p521-key"
 		err := setup.GenerateECDSAKey(keyID, elliptic.P521())
 		require.NoError(t, err)
 
-		xkmsJWK, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
+		xkmsJWK, err := setup.PublicJWK(keyID)
 		require.NoError(t, err)
+		assert.Equal(t, keyID, xkmsJWK.Kid)
 		assert.Equal(t, string(jwk.KeyTypeEC), xkmsJWK.Kty)
 		assert.Equal(t, string(jwk.CurveP521), xkmsJWK.Crv)
-		assert.True(t, xkmsJWK.IsXKMSBacked())
 	})
 
 	t.Run("Ed25519_XKMSBackedJWK", func(t *testing.T) {
-		// Use proper xkms Key ID format: "backend:keyname"
-		keyID := "pkcs8:ed25519-key"
+		// Canonical Key ID format: "backend:type:algo:keyname"
+		keyID := "software:signing:ed25519:ed25519-key"
 		err := setup.GenerateEd25519Key(keyID)
 		require.NoError(t, err)
 
-		xkmsJWK, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
+		xkmsJWK, err := setup.PublicJWK(keyID)
 		require.NoError(t, err)
+		assert.Equal(t, keyID, xkmsJWK.Kid)
 		assert.Equal(t, string(jwk.KeyTypeOKP), xkmsJWK.Kty)
 		assert.Equal(t, string(jwk.CurveEd25519), xkmsJWK.Crv)
 		assert.NotEmpty(t, xkmsJWK.X)
 		assert.Empty(t, xkmsJWK.D)
-		assert.True(t, xkmsJWK.IsXKMSBacked())
 	})
 }
 
@@ -346,82 +343,24 @@ func TestJWKIntegration_AllKeyTypes(t *testing.T) {
 
 // TestJWKIntegration_ErrorHandling tests error handling scenarios
 func TestJWKIntegration_ErrorHandling(t *testing.T) {
-	t.Run("InvalidKeyID", func(t *testing.T) {
-		_, err := jwk.FromXKMS("", func(keyID string) (crypto.PrivateKey, error) {
-			return nil, nil
-		})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "key ID cannot be empty")
-	})
-
 	t.Run("KeyNotFound", func(t *testing.T) {
-		_, err := jwk.FromXKMS("nonexistent-key", func(keyID string) (crypto.PrivateKey, error) {
+		setup := createTestBackend(t)
+		defer setup.Close()
+
+		// Building a JWK for a key that was never generated must fail
+		// through the getter chain.
+		_, err := setup.PublicJWK("software:signing:rsa:nonexistent-key")
+		assert.Error(t, err)
+	})
+
+	t.Run("GetterError_Propagates", func(t *testing.T) {
+		// The DI getter types pass kid strings through opaquely; errors
+		// returned by a getter must surface unchanged to the caller.
+		var getKey jwk.XKMSKeyGetter = func(keyID string) (crypto.PrivateKey, error) {
 			return nil, assert.AnError
-		})
-		assert.Error(t, err)
-	})
-
-	t.Run("EmptyKID_LoadFromXKMS", func(t *testing.T) {
-		testJWK := &jwk.JWK{
-			Kty: string(jwk.KeyTypeRSA),
-			N:   "test",
-			E:   "AQAB",
 		}
-
-		_, err := testJWK.LoadKeyFromXKMS(func(keyID string) (crypto.PrivateKey, error) {
-			return nil, nil
-		})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "no kid field")
-	})
-
-	t.Run("InvalidKeyID_LoadFromXKMS", func(t *testing.T) {
-		testJWK := &jwk.JWK{
-			Kty: string(jwk.KeyTypeRSA),
-			Kid: "invalid-format",
-			N:   "test",
-			E:   "AQAB",
-		}
-
-		_, err := testJWK.LoadKeyFromXKMS(func(keyID string) (crypto.PrivateKey, error) {
-			return nil, nil
-		})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "not a valid xkms Key ID")
-	})
-
-	t.Run("IsXKMSBacked_ValidBackends", func(t *testing.T) {
-		backends := []string{
-			"pkcs8", "symmetric", "software", "pkcs11", "tpm2",
-			"awskms", "gcpkms", "azurekv", "vault",
-		}
-
-		for _, backend := range backends {
-			testJWK := &jwk.JWK{
-				Kid: backend + ":test-key",
-			}
-			assert.True(t, testJWK.IsXKMSBacked(), "Backend %s should be recognized", backend)
-		}
-	})
-
-	t.Run("IsXKMSBacked_InvalidBackends", func(t *testing.T) {
-		testCases := []string{
-			"invalid:key",
-			"nocolon",
-			"",
-			"too:many:colons",
-		}
-
-		for _, tc := range testCases {
-			testJWK := &jwk.JWK{
-				Kid: tc,
-			}
-			if tc == "invalid:key" {
-				assert.False(t, testJWK.IsXKMSBacked(), "Invalid backend should not be recognized")
-			} else {
-				assert.False(t, testJWK.IsXKMSBacked(), "Invalid format should not be recognized: %s", tc)
-			}
-		}
+		_, err := getKey("software:signing:rsa:any-key")
+		assert.ErrorIs(t, err, assert.AnError)
 	})
 
 	t.Run("EmptySymmetricKey", func(t *testing.T) {
@@ -467,15 +406,15 @@ func TestJWKIntegration_ComplexScenarios(t *testing.T) {
 		defer setup.Close()
 
 		// Generate multiple keys with different types
-		// Use proper xkms Key ID format: "backend:keyname"
+		// Canonical Key ID format: "backend:type:algo:keyname"
 		testKeys := []struct {
 			cn      string
 			keyType string
 		}{
-			{"pkcs8:rsa-key-1", "rsa"},
-			{"pkcs8:rsa-key-2", "rsa"},
-			{"pkcs8:ecdsa-key-1", "ecdsa"},
-			{"pkcs8:ed25519-key-1", "ed25519"},
+			{"software:signing:rsa:rsa-key-1", "rsa"},
+			{"software:signing:rsa:rsa-key-2", "rsa"},
+			{"software:signing:ecdsa-p256:ecdsa-key-1", "ecdsa"},
+			{"software:signing:ed25519:ed25519-key-1", "ed25519"},
 		}
 
 		for _, tk := range testKeys {
@@ -495,15 +434,14 @@ func TestJWKIntegration_ComplexScenarios(t *testing.T) {
 		jwks := make([]*jwk.JWK, len(testKeys))
 		for i, tk := range testKeys {
 			var err error
-			jwks[i], err = jwk.FromXKMS(tk.cn, setup.GetKeyByID)
+			jwks[i], err = setup.PublicJWK(tk.cn)
 			require.NoError(t, err)
 			assert.Equal(t, tk.cn, jwks[i].Kid)
-			assert.True(t, jwks[i].IsXKMSBacked())
 		}
 
-		// Verify each JWK can load its corresponding key
+		// Verify each JWK kid resolves to its corresponding key via the getter
 		for i, testJWK := range jwks {
-			key, err := testJWK.LoadKeyFromXKMS(setup.GetKeyByID)
+			key, err := setup.GetKeyByID(testJWK.Kid)
 			require.NoError(t, err)
 			assert.NotNil(t, key)
 

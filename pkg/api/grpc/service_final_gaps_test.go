@@ -74,7 +74,11 @@ func setupFinalGapsTest(t *testing.T) *Service {
 		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
-	return NewService(nil, nil)
+	svc, err := xkms.Get()
+	if err != nil {
+		t.Fatalf("Failed to get xkms service: %v", err)
+	}
+	return NewService(nil, nil, svc)
 }
 
 // TestVerifyErrorPaths tests Verify error handling paths

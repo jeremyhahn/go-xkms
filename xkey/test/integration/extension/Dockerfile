@@ -21,6 +21,10 @@ COPY xkey/go.mod xkey/go.sum ./xkey/
 # Copy local replace directive dependencies.
 COPY --from=go-qrdb . /go-qrdb/
 COPY --from=go-quicraft . /go-quicraft/
+COPY --from=go-truststrap . /go-truststrap/
+COPY --from=go-codec . /go-codec/
+COPY --from=go-frost . /go-frost/
+COPY --from=go-objstore . /go-objstore/
 
 RUN go mod download
 

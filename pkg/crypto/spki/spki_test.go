@@ -321,12 +321,13 @@ func TestNewPinnedTLSConfig(t *testing.T) {
 	cfg := NewPinnedTLSConfig(pin)
 
 	require.NotNil(t, cfg)
-	// InsecureSkipVerify must be true: CA chain is skipped during bootstrap
-	assert.True(t, cfg.InsecureSkipVerify, "InsecureSkipVerify must be true for SPKI bootstrap")
-	// VerifyConnection must be set: this IS the actual verification
+	// VerifyConnection must be set: this IS the actual peer verification
 	assert.NotNil(t, cfg.VerifyConnection, "VerifyConnection must be set for pin verification")
 	// MinVersion must be TLS 1.3
 	assert.Equal(t, uint16(tls.VersionTLS13), cfg.MinVersion)
+	// SessionTicketsDisabled must be true: session resumption bypasses
+	// VerifyConnection, which would silently skip the SPKI pin check.
+	assert.True(t, cfg.SessionTicketsDisabled, "SessionTicketsDisabled must be true to prevent pin bypass via session resumption")
 }
 
 func TestNewPinnedTLSConfig_VerifiesCorrectPin(t *testing.T) {

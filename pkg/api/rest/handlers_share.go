@@ -16,6 +16,7 @@ package rest
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -87,13 +88,14 @@ func shareInfoToStatus(info *transport.ShareInfo) shareStatusResponse {
 
 // ShareHandlers serves the Shamir share REST endpoints. Share state is owned by
 // the embedded go-qrdb node; the handlers delegate to the unified XKMSService
-// servicer, which passes calls through to the node's share client. The handlers
-// hold no local state.
-type ShareHandlers struct{}
+// servicer, which passes calls through to the node's share client.
+type ShareHandlers struct {
+	xkmsService *xkms.XKMSService
+}
 
-// NewShareHandlers creates a new ShareHandlers.
-func NewShareHandlers() *ShareHandlers {
-	return &ShareHandlers{}
+// NewShareHandlers creates a new ShareHandlers with the provided XKMS service.
+func NewShareHandlers(svc *xkms.XKMSService) *ShareHandlers {
+	return &ShareHandlers{xkmsService: svc}
 }
 
 // SubmitShareHandler handles POST /shares/submit requests.
@@ -111,11 +113,11 @@ func NewShareHandlers() *ShareHandlers {
 //	  "tenant_id": "string (optional)"
 //	}
 func (h *ShareHandlers) SubmitShareHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrShareNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	var req submitShareRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -166,11 +168,11 @@ func (h *ShareHandlers) SubmitShareHandler(w http.ResponseWriter, r *http.Reques
 // ListSharesHandler handles GET /shares requests.
 // Returns all stored shares without exposing the sensitive share data.
 func (h *ShareHandlers) ListSharesHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrShareNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	resp, err := svc.ListShares(r.Context())
 	if err != nil {
@@ -198,11 +200,11 @@ func (h *ShareHandlers) ListSharesHandler(w http.ResponseWriter, r *http.Request
 //   - groupID: custodian group identifier (required)
 //   - shareIndex: 1-based share index within the group (required)
 func (h *ShareHandlers) GetShareHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrShareNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	rawServerURL := chi.URLParam(r, "serverURL")
 	if rawServerURL == "" {
@@ -246,11 +248,11 @@ func (h *ShareHandlers) GetShareHandler(w http.ResponseWriter, r *http.Request) 
 //   - groupID: custodian group identifier (required)
 //   - shareIndex: 1-based share index within the group (required)
 func (h *ShareHandlers) DeleteShareHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrShareNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	rawServerURL := chi.URLParam(r, "serverURL")
 	if rawServerURL == "" {
@@ -291,11 +293,11 @@ func (h *ShareHandlers) DeleteShareHandler(w http.ResponseWriter, r *http.Reques
 // URL parameters:
 //   - groupID: custodian group identifier (required)
 func (h *ShareHandlers) GetShareCollectionStatusHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrShareNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	groupID := chi.URLParam(r, "groupID")
 	if groupID == "" {
@@ -325,6 +327,7 @@ func handleShareError(w http.ResponseWriter, err error) {
 	case errors.Is(err, qrdbsdk.ErrCeremonyShareNotFound):
 		writeError(w, err, http.StatusNotFound)
 	default:
+		slog.Default().Error("share operation failed", "error", err)
 		writeError(w, ErrInternalError, http.StatusInternalServerError)
 	}
 }

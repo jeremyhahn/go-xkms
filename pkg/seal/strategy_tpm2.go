@@ -65,6 +65,11 @@ func (t *TPM2Strategy) HardwareBacked() bool {
 
 // SealRootKey delegates to the underlying types.Sealer and stores the
 // sealed payload as JSON in SealedRootKey.HardwarePayload.
+//
+// When creds.Secret is non-empty it is applied as the sealed object's TPM
+// UserAuth authorization value, so unsealing requires presenting the same
+// secret. An empty secret seals with no authorization value (legacy
+// behavior), keeping existing blobs and callers compatible.
 func (t *TPM2Strategy) SealRootKey(
 	ctx context.Context,
 	rootKey []byte,
@@ -73,7 +78,13 @@ func (t *TPM2Strategy) SealRootKey(
 	if t.sealer == nil {
 		return nil, ErrNoAvailableStrategy
 	}
-	sealed, err := t.sealer.Seal(ctx, rootKey, nil)
+	var opts *types.SealOptions
+	if creds.Secret != "" {
+		opts = &types.SealOptions{
+			Password: types.NewPasswordFromString(creds.Secret),
+		}
+	}
+	sealed, err := t.sealer.Seal(ctx, rootKey, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +104,10 @@ func (t *TPM2Strategy) SealRootKey(
 
 // UnsealRootKey deserializes the HardwarePayload into a types.SealedData
 // and delegates to the underlying types.Sealer.
+//
+// When creds.Secret is non-empty it is presented as the sealed object's TPM
+// UserAuth authorization value. A wrong secret fails TPM session
+// authorization and the unseal is rejected by the hardware.
 func (t *TPM2Strategy) UnsealRootKey(
 	ctx context.Context,
 	sealed *SealedRootKey,
@@ -113,7 +128,13 @@ func (t *TPM2Strategy) UnsealRootKey(
 		return nil, ErrCorruptRootKey
 	}
 
-	return t.sealer.Unseal(ctx, &sd, nil)
+	var opts *types.UnsealOptions
+	if creds.Secret != "" {
+		opts = &types.UnsealOptions{
+			Password: types.NewPasswordFromString(creds.Secret),
+		}
+	}
+	return t.sealer.Unseal(ctx, &sd, opts)
 }
 
 // BarrierEncryptor returns a SymmetricEncrypter for barrier data operations.

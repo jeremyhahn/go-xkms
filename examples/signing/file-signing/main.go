@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -88,14 +89,14 @@ func main() {
 		},
 	}
 
-	_, err = ks.GenerateECDSA(ecdsaAttrs)
+	_, err = ks.GenerateECDSA(context.Background(), ecdsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate ECDSA key: %v", err)
 	}
 	fmt.Printf("   ✓ Signing key generated: %s\n\n", ecdsaAttrs.CN)
 
 	// Get signer for public key access
-	signer, err := ks.Signer(ecdsaAttrs)
+	signer, err := ks.Signer(context.Background(), ecdsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get signer: %v", err)
 	}
@@ -215,7 +216,7 @@ func signFile(ks xkms.Backend, attrs *types.KeyAttributes, filename string) ([]b
 	hash := hasher.Sum(nil)
 
 	// Get signer
-	signer, err := ks.Signer(attrs)
+	signer, err := ks.Signer(context.Background(), attrs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get signer: %w", err)
 	}

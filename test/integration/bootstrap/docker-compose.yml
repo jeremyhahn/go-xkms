@@ -36,6 +36,10 @@ services:
       - XKMS_NOISE_ENABLED=true
       - XKMS_NOISE_PORT=8445
       - CERT_DIR=/etc/xkms/certs
+      # Host the embedded go-qrdb node so the custodian-group / tenant endpoints
+      # (which pass through to the node) are available for the bootstrap flow.
+      - XKMS_STORAGE_BACKEND=qrdb
+      - XKMS_STORAGE_PATH=/data/storage
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
       interval: 5s

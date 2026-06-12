@@ -369,18 +369,32 @@ func TestSoftHSMNewFromSession(t *testing.T) {
 	skipIfNoSoftHSM(t)
 	t.Parallel()
 
-	// Manually initialize PKCS#11 context (simulating what the GUI does).
+	// Pin the library via the module registry for the duration of this
+	// test. C_Initialize/C_Finalize are process-global, so finalizing here
+	// directly would invalidate the sessions of tests running in parallel;
+	// holding a registry reference also prevents a parallel test's Close
+	// from finalizing the library underneath this test. The registry
+	// finalizes exactly once when the last reference is released.
+	_, err := acquireModule(softHSMLibrary)
+	require.NoError(t, err, "acquireModule")
+	defer func() {
+		if rerr := releaseModule(softHSMLibrary); rerr != nil {
+			t.Logf("releaseModule: %v", rerr)
+		}
+	}()
+
+	// Manually create a second context handle (simulating what the GUI
+	// does when it already holds its own PKCS#11 context).
 	ctx := p11.New(softHSMLibrary)
 	require.NotNil(t, ctx, "p11.New must return non-nil context")
 
-	err := ctx.Initialize()
+	err = ctx.Initialize()
 	if err != nil {
-		// CKR_CRYPTOKI_ALREADY_INITIALIZED is expected when other tests
-		// (or the session pool) already initialized the library.
+		// CKR_CRYPTOKI_ALREADY_INITIALIZED is expected because the
+		// registry reference above already initialized the library.
 		require.ErrorIs(t, err, p11.Error(p11.CKR_CRYPTOKI_ALREADY_INITIALIZED),
 			"Initialize should succeed or return CKR_CRYPTOKI_ALREADY_INITIALIZED")
 	}
-	defer ctx.Finalize()
 	defer ctx.Destroy()
 
 	// Resolve slot by token label (same as resolveSlot does internally).

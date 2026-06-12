@@ -97,6 +97,13 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 		keyAttrs.SealData = types.NewSealData(data)
 	}
 
+	// Apply password if provided. The password becomes the sealed object's
+	// UserAuth authorization value (mirrors Unseal, which applies
+	// opts.Password before authorizing the keyed hash session).
+	if opts.Password != nil {
+		keyAttrs.Password = opts.Password
+	}
+
 	// Apply TPM policy if provided
 	if opts.TPMPolicy != nil {
 		if keyAttrs.TPMAttributes == nil {

@@ -178,7 +178,7 @@ func (b *QuantumBackend) Capabilities() types.Capabilities {
 }
 
 // GenerateKey generates a new quantum-safe key with the given attributes.
-func (b *QuantumBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -195,7 +195,7 @@ func (b *QuantumBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.Private
 	}
 
 	keyID := attrs.ID()
-	exists, err := storage.KeyExists(context.Background(), b.storage, keyID)
+	exists, err := storage.KeyExists(ctx, b.storage, keyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check key existence: %w", err)
 	}
@@ -221,7 +221,7 @@ func (b *QuantumBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.Private
 		return nil, fmt.Errorf("key generation failed: %w", err)
 	}
 
-	if err := b.storeKey(keyID, metadata); err != nil {
+	if err := b.storeKey(ctx, keyID, metadata); err != nil {
 		return nil, err
 	}
 
@@ -306,13 +306,13 @@ func (b *QuantumBackend) generateMLKEMKey(algorithm, keyID string) (*MLKEMPrivat
 }
 
 // storeKey stores key metadata using the storage backend.
-func (b *QuantumBackend) storeKey(keyID string, metadata *keyMetadata) error {
+func (b *QuantumBackend) storeKey(ctx context.Context, keyID string, metadata *keyMetadata) error {
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("failed to serialize key metadata: %w", err)
 	}
 
-	if err := storage.SaveKey(context.Background(), b.storage, keyID, data); err != nil {
+	if err := storage.SaveKey(ctx, b.storage, keyID, data); err != nil {
 		return fmt.Errorf("failed to store key: %w", err)
 	}
 
@@ -320,7 +320,7 @@ func (b *QuantumBackend) storeKey(keyID string, metadata *keyMetadata) error {
 }
 
 // GetKey retrieves an existing quantum-safe key by its attributes.
-func (b *QuantumBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -333,7 +333,7 @@ func (b *QuantumBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, 
 	}
 
 	keyID := attrs.ID()
-	keyData, err := storage.GetKey(context.Background(), b.storage, keyID)
+	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
 		if err == storage.ErrNotFound {
 			return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
@@ -410,7 +410,7 @@ func (b *QuantumBackend) loadMLKEMKey(metadata *keyMetadata, keyID string) (*MLK
 }
 
 // DeleteKey removes a key identified by its attributes.
-func (b *QuantumBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *QuantumBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -423,7 +423,7 @@ func (b *QuantumBackend) DeleteKey(attrs *types.KeyAttributes) error {
 	}
 
 	keyID := attrs.ID()
-	if err := storage.DeleteKey(context.Background(), b.storage, keyID); err != nil {
+	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
 		if err == storage.ErrNotFound {
 			return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
 		}
@@ -434,7 +434,7 @@ func (b *QuantumBackend) DeleteKey(attrs *types.KeyAttributes) error {
 }
 
 // ListKeys returns attributes for all keys managed by this backend.
-func (b *QuantumBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *QuantumBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -442,7 +442,7 @@ func (b *QuantumBackend) ListKeys() ([]*types.KeyAttributes, error) {
 		return nil, ErrStorageClosed
 	}
 
-	keyIDs, err := storage.ListKeys(context.Background(), b.storage)
+	keyIDs, err := storage.ListKeys(ctx, b.storage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
@@ -485,8 +485,8 @@ func (b *QuantumBackend) ListKeys() ([]*types.KeyAttributes, error) {
 
 // Signer returns a crypto.Signer for the key identified by attrs.
 // Only ML-DSA keys support signing.
-func (b *QuantumBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
-	key, err := b.GetKey(attrs)
+func (b *QuantumBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	key, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -503,12 +503,12 @@ func (b *QuantumBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, erro
 // ML-KEM keys use Key Encapsulation Mechanism, not direct decryption.
 // This method returns an error as ML-KEM doesn't fit the crypto.Decrypter interface.
 // Use the MLKEMPrivateKey directly for encapsulation/decapsulation operations.
-func (b *QuantumBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *QuantumBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, ErrKeyNotDecrypter
 }
 
 // RotateKey rotates/updates a key identified by attrs.
-func (b *QuantumBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *QuantumBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -522,7 +522,7 @@ func (b *QuantumBackend) RotateKey(attrs *types.KeyAttributes) error {
 
 	keyID := attrs.ID()
 
-	exists, err := storage.KeyExists(context.Background(), b.storage, keyID)
+	exists, err := storage.KeyExists(ctx, b.storage, keyID)
 	if err != nil {
 		return fmt.Errorf("failed to check key existence: %w", err)
 	}
@@ -530,7 +530,7 @@ func (b *QuantumBackend) RotateKey(attrs *types.KeyAttributes) error {
 		return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
 	}
 
-	keyData, err := storage.GetKey(context.Background(), b.storage, keyID)
+	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve key for rotation: %w", err)
 	}
@@ -555,7 +555,7 @@ func (b *QuantumBackend) RotateKey(attrs *types.KeyAttributes) error {
 		return fmt.Errorf("failed to generate new key for rotation: %w", err)
 	}
 
-	if err := b.storeKey(keyID, newMetadata); err != nil {
+	if err := b.storeKey(ctx, keyID, newMetadata); err != nil {
 		return fmt.Errorf("failed to store rotated key: %w", err)
 	}
 

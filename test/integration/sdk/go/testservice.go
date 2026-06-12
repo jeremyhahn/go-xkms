@@ -23,6 +23,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -477,6 +478,41 @@ func (s *TestXKMSService) ListUsers(ctx context.Context, _ ...transport.ListOpti
 	return &xkms.ListUsersResponse{Users: users}, nil
 }
 
+// CreateUser creates a new user record in the in-memory test store.
+func (s *TestXKMSService) CreateUser(ctx context.Context, req *xkms.CreateUserRequest) (*xkms.GetUserResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.users[req.Username]; exists {
+		return nil, fmt.Errorf("user %q already exists", req.Username)
+	}
+
+	role := req.Role
+	if role == "" {
+		role = "user"
+	}
+	u := &testUser{
+		username:    req.Username,
+		displayName: req.DisplayName,
+		role:        role,
+		enabled:     true,
+		createdAt:   time.Now(),
+		credentials: make([]testCredential, 0),
+	}
+	s.users[req.Username] = u
+
+	return &xkms.GetUserResponse{
+		User: xkms.UserInfo{
+			Username:    u.username,
+			DisplayName: u.displayName,
+			Role:        u.role,
+			Enabled:     u.enabled,
+			CreatedAt:   u.createdAt,
+			LastLogin:   u.lastLogin,
+		},
+	}, nil
+}
+
 func (s *TestXKMSService) GetUser(ctx context.Context, username string) (*xkms.GetUserResponse, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -654,10 +690,24 @@ func (s *TestXKMSService) BeginAuthentication(ctx context.Context, req *xkms.Beg
 		credentialIDs[i] = c.id
 	}
 
+	// The transport now carries an opaque session id plus the JSON-marshaled
+	// assertion options (PublicKeyCredentialRequestOptions) rather than the
+	// raw challenge/rpid/credential fields. Mirror that session-based shape.
+	sessionID := base64.RawURLEncoding.EncodeToString(challenge[:16])
+	options := map[string]any{
+		"publicKey": map[string]any{
+			"challenge":        base64.RawURLEncoding.EncodeToString(challenge),
+			"allowCredentials": credentialIDs,
+		},
+	}
+	optsJSON, err := json.Marshal(options)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal authentication options: %w", err)
+	}
+
 	return &xkms.BeginAuthenticationResponse{
-		Challenge:     string(challenge),
-		RPID:          req.RPID,
-		CredentialIDs: credentialIDs,
+		SessionID:   sessionID,
+		OptionsJSON: string(optsJSON),
 	}, nil
 }
 
@@ -670,15 +720,13 @@ func (s *TestXKMSService) FinishAuthentication(ctx context.Context, req *xkms.Fi
 		return nil, ErrUserNotFound
 	}
 
-	// Find and update credential
-	credentialFound := false
-	for i := range u.credentials {
-		if u.credentials[i].id == req.CredentialID {
-			now := time.Now()
-			u.credentials[i].lastUsed = &now
-			credentialFound = true
-			break
-		}
+	// The asserted credential id now travels inside req.AssertionJSON rather
+	// than a dedicated request field; the test double treats any registered
+	// credential for the user as a successful assertion.
+	credentialFound := len(u.credentials) > 0
+	if credentialFound {
+		now := time.Now()
+		u.credentials[0].lastUsed = &now
 	}
 
 	if !credentialFound {
@@ -700,6 +748,17 @@ func (s *TestXKMSService) FinishAuthentication(ctx context.Context, req *xkms.Fi
 		Token:   token,
 		Message: "Authentication successful",
 	}, nil
+}
+
+// BindUserCert binds an mTLS certificate SPKI thumbprint to a user. The test
+// double records nothing and reports success.
+func (s *TestXKMSService) BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.users[username]; !ok {
+		return ErrUserNotFound
+	}
+	return nil
 }
 
 // DeriveKey derives a key using the specified algorithm and parameters.

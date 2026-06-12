@@ -310,7 +310,7 @@ func pivStore(backendName string) (pivcert.PIVCertificateStorage, error) {
 }
 
 // ListPIVSlots returns the status of all PIV slots for the specified backend.
-func ListPIVSlots(_ context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {
+func ListPIVSlots(ctx context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {
 	slog.Debug("ListPIVSlots", "backend", req.Backend)
 	store, err := pivStore(req.Backend)
 	if err != nil {
@@ -332,7 +332,7 @@ func ListPIVSlots(_ context.Context, req *transport.ListPIVSlotsRequest) (*trans
 	// Keys generated with "public-key" or "csr" output format have no
 	// certificate but are stored with CN like "piv-9d".
 	keyOnlySlots := make(map[string]string) // slot -> algorithm string
-	keys, keyErr := ListKeys(req.Backend)
+	keys, keyErr := ListKeys(ctx, req.Backend)
 	if keyErr != nil {
 		slog.Debug("ListPIVSlots: unable to query key backend, showing cert-only data",
 			"backend", req.Backend, "error", keyErr)
@@ -605,7 +605,7 @@ func buildPIVCSR(signer crypto.Signer, subject pkix.Name) ([]byte, error) {
 // PIV slot whose key was previously generated (e.g., via public-key-only or
 // CSR output). It does NOT generate a new key — the existing key in the
 // backend is used to sign the certificate. Returns the PEM-encoded cert.
-func SelfSignExistingPIVKey(backend, slotStr, commonName string, validityDays int) (string, error) {
+func SelfSignExistingPIVKey(ctx context.Context, backend, slotStr, commonName string, validityDays int) (string, error) {
 	slot, err := pivcert.ParseSlot(slotStr)
 	if err != nil {
 		return "", ErrPIVInvalidSlot
@@ -613,7 +613,7 @@ func SelfSignExistingPIVKey(backend, slotStr, commonName string, validityDays in
 
 	// Locate the existing key by CN.
 	cn := PivSlotCN(slot)
-	keys, err := ListKeys(backend)
+	keys, err := ListKeys(ctx, backend)
 	if err != nil {
 		slog.Error("SelfSignExistingPIVKey: list keys failed", "backend", backend, "error", err)
 		return "", err
@@ -629,7 +629,7 @@ func SelfSignExistingPIVKey(backend, slotStr, commonName string, validityDays in
 		return "", ErrPIVNotInitialized
 	}
 
-	signer, err := Signer(attrs)
+	signer, err := Signer(ctx, attrs)
 	if err != nil {
 		return "", err
 	}

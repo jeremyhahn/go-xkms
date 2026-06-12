@@ -130,9 +130,18 @@ func VerifyConnection(pin string) func(tls.ConnectionState) error {
 // during truststrap bootstrap to establish initial trust with a remote server.
 func NewPinnedTLSConfig(spkiPin string) *tls.Config {
 	return &tls.Config{
-		MinVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true, //nolint:gosec // CA chain skipped; VerifyConnection provides SPKI pin verification
-		VerifyConnection:   VerifyConnection(spkiPin),
+		MinVersion: tls.VersionTLS13,
+		// InsecureSkipVerify bypasses CA chain validation, which is impossible
+		// during trust bootstrap (the CA cert is what we are trying to fetch).
+		// VerifyConnection provides the actual peer authentication via SPKI pin.
+		// This is the standard Go pattern for custom TLS verification.
+		InsecureSkipVerify: true, //nolint:gosec // CA chain skipped; VerifyConnection is sole verifier
+		// SessionTicketsDisabled prevents TLS session resumption (tickets/PSK).
+		// On a resumed session the stack does NOT invoke VerifyConnection,
+		// which would silently bypass the SPKI pin. Disabling resumption forces
+		// a full handshake every time so VerifyConnection always runs (CWE-295).
+		SessionTicketsDisabled: true,
+		VerifyConnection:       VerifyConnection(spkiPin),
 	}
 }
 

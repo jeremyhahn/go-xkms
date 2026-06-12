@@ -72,7 +72,7 @@ func TestSealUnsealRSA(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestSealUnsealECDSA(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate ECDSA key: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestSealUnsealEd25519(t *testing.T) {
 		KeyAlgorithm: x509.Ed25519,
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate Ed25519 key: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestSealUnsealWithAAD(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestUnsealWrongBackend(t *testing.T) {
 		},
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
@@ -395,12 +395,12 @@ func TestUnsealKeyMismatch(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(attrs1)
+	_, err := be.GenerateKey(context.Background(), attrs1)
 	if err != nil {
 		t.Fatalf("Failed to generate key1: %v", err)
 	}
 
-	_, err = be.GenerateKey(attrs2)
+	_, err = be.GenerateKey(context.Background(), attrs2)
 	if err != nil {
 		t.Fatalf("Failed to generate key2: %v", err)
 	}
@@ -448,7 +448,7 @@ func TestSealUnsealAfterClose(t *testing.T) {
 		},
 	}
 
-	_, err = pkcs8Backend.GenerateKey(attrs)
+	_, err = pkcs8Backend.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
@@ -496,7 +496,7 @@ func TestSealUnsealEmptyData(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
@@ -540,7 +540,7 @@ func TestSealUnsealLargeData(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
@@ -587,7 +587,7 @@ func TestMarshalUnmarshalSealedData(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
@@ -708,7 +708,7 @@ func TestDeriveSealingKeyDifferentKeyTypes(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := be.GenerateKey(tc.attrs)
+			_, err := be.GenerateKey(context.Background(), tc.attrs)
 			if err != nil {
 				t.Fatalf("Failed to generate key: %v", err)
 			}

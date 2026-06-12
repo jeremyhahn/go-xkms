@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -217,14 +218,18 @@ func (s *Server) ensureSealKey(
 		}
 	}
 
-	if _, err := symProvider.GetSymmetricKey(keyAttrs); err == nil {
+	// Seal-key provisioning runs at server startup, outside any request, so it
+	// is bounded by a background context rather than a request-scoped one.
+	ctx := context.Background()
+
+	if _, err := symProvider.GetSymmetricKey(ctx, keyAttrs); err == nil {
 		return nil
 	} else if !errors.Is(err, backend.ErrKeyNotFound) &&
 		!errors.Is(err, backend.ErrKeyAlreadyExists) {
 		return err
 	}
 
-	if _, err := symProvider.GenerateSymmetricKey(keyAttrs); err != nil &&
+	if _, err := symProvider.GenerateSymmetricKey(ctx, keyAttrs); err != nil &&
 		!errors.Is(err, backend.ErrKeyAlreadyExists) {
 		return err
 	}

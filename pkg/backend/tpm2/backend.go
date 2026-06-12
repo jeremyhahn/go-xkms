@@ -204,7 +204,7 @@ func (b *Backend) Capabilities() types.Capabilities {
 
 // GenerateKey generates a new key in the TPM with the given attributes.
 // The private key never leaves the TPM hardware.
-func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -262,7 +262,7 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 
 // GetKey retrieves an existing key from the TPM by its attributes.
 // Returns a crypto.Signer that performs operations using the TPM.
-func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -308,7 +308,7 @@ func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) 
 }
 
 // DeleteKey removes a key from the TPM and its associated storage.
-func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -334,7 +334,7 @@ func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
 }
 
 // ListKeys returns attributes for all keys managed by this backend.
-func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -424,8 +424,8 @@ func (b *Backend) keyAlgorithmFromPublicBlob(cn string) (x509.PublicKeyAlgorithm
 }
 
 // Signer returns a crypto.Signer for the key identified by attrs.
-func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
-	key, err := b.GetKey(attrs)
+func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	key, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -438,8 +438,8 @@ func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
 
 // Decrypter returns a crypto.Decrypter for the key identified by attrs.
 // Note: Decryption requires the key to be created with encryption capability.
-func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
-	key, err := b.GetKey(attrs)
+func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+	key, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +451,7 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 }
 
 // RotateKey is not supported for TPM2 keys as they are hardware-backed.
-func (b *Backend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	return ErrKeyRotationNotSupported
 }
 
@@ -775,7 +775,7 @@ func (b *Backend) applyKDF(sharedSecret []byte, params *types.KDFParams) ([]byte
 }
 
 // GenerateSymmetricKey generates a new symmetric key in the TPM.
-func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -798,7 +798,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 }
 
 // GetSymmetricKey retrieves an existing symmetric key from the TPM.
-func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -820,7 +820,7 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 }
 
 // SymmetricEncrypter returns a SymmetricEncrypter for the key identified by attrs.
-func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 

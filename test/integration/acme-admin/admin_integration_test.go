@@ -19,15 +19,17 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,7 +40,6 @@ type TestContext struct {
 	qrdbSvc        qrdb.Service
 	adminService   *admin.TenantAwareAdminService
 	storageFactory storage.Factory
-	tmpDir         string
 	cleanup        func()
 }
 
@@ -50,17 +51,14 @@ func setupTestContext(t *testing.T) *TestContext {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	// Create temporary directory for storage
-	tmpDir, err := os.MkdirTemp("", "admin-integration-test-*")
-	require.NoError(t, err)
-
-	// Create local file storage backend
-	store := local.New()
-	err = store.Configure(map[string]string{"path": tmpDir})
+	// Storage is backed by an in-memory KV store via kvadapter, matching the
+	// datastore path used in production (any storage.Backend wrapped by
+	// kvadapter.New).
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
 	require.NoError(t, err)
 
 	// Create tenant-aware storage factory for ACME storage (including EAB and tenants)
-	storageFactory, err := objstore.NewTenantAwareFactory(store)
+	storageFactory, err := objstore.NewTenantAwareFactoryFromKVStore(kv)
 	require.NoError(t, err)
 
 	// Create QRDB service with in-memory components
@@ -74,10 +72,8 @@ func setupTestContext(t *testing.T) *TestContext {
 		qrdbSvc:        qrdbSvc,
 		adminService:   adminSvc,
 		storageFactory: storageFactory,
-		tmpDir:         tmpDir,
 		cleanup: func() {
 			qrdbSvc.Close()
-			_ = os.RemoveAll(tmpDir)
 		},
 	}
 }
@@ -330,10 +326,11 @@ func TestAdminService_TenantUser(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-user", user.Username)
 	assert.Equal(t, tenantID, user.TenantID)
-	assert.NotEmpty(t, user.ID)
+	assert.NotZero(t, user.ID)
+	userID := strconv.FormatUint(user.ID, 10)
 
 	// Get user
-	retrieved, err := ctx.adminService.GetTenantUser(testCtx, tenantID, user.ID)
+	retrieved, err := ctx.adminService.GetTenantUser(testCtx, tenantID, userID)
 	require.NoError(t, err)
 	assert.Equal(t, "test-user", retrieved.Username)
 
@@ -361,11 +358,11 @@ func TestAdminService_TenantUser(t *testing.T) {
 	assert.True(t, foundOurUser, "Our user should be in the list")
 
 	// Delete user
-	err = ctx.adminService.DeleteTenantUser(testCtx, tenantID, user.ID)
+	err = ctx.adminService.DeleteTenantUser(testCtx, tenantID, userID)
 	require.NoError(t, err)
 
 	// Verify deleted
-	_, err = ctx.adminService.GetTenantUser(testCtx, tenantID, user.ID)
+	_, err = ctx.adminService.GetTenantUser(testCtx, tenantID, userID)
 	assert.Error(t, err)
 
 	// Clean up role

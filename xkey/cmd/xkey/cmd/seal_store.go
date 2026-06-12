@@ -314,7 +314,7 @@ func runSealStorePut(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrSealStorePutFailed, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Stored secret: %s\n", name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Stored secret: %s\n", name)
 	return nil
 }
 
@@ -343,7 +343,7 @@ func runSealStoreGet(cmd *cobra.Command, args []string) error {
 		if err := os.WriteFile(outputPath, resp.Secret, 0600); err != nil {
 			return fmt.Errorf("%w: %v", ErrSealStoreOutputWrite, err)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Secret written to: %s\n", outputPath)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Secret written to: %s\n", outputPath)
 		return nil
 	}
 
@@ -371,7 +371,7 @@ func runSealStoreDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrSealStoreDeleteFailed, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Deleted secret: %s\n", name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Deleted secret: %s\n", name)
 	return nil
 }
 
@@ -392,13 +392,13 @@ func runSealStoreList(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 
 	if len(resp.Names) == 0 {
-		fmt.Fprintln(out, "No secrets stored.")
+		_, _ = fmt.Fprintln(out, "No secrets stored.")
 		return nil
 	}
 
-	fmt.Fprintf(out, "Stored Secrets (%d):\n\n", len(resp.Names))
+	_, _ = fmt.Fprintf(out, "Stored Secrets (%d):\n\n", len(resp.Names))
 	for _, name := range resp.Names {
-		fmt.Fprintf(out, "  %s\n", name)
+		_, _ = fmt.Fprintf(out, "  %s\n", name)
 	}
 
 	return nil
@@ -435,13 +435,13 @@ func runSealStoreReseal(cmd *cobra.Command, args []string) error {
 		for _, name := range listResp.Names {
 			req := &transport.SealStoreResealRequest{Name: name}
 			if err := client.SealStoreReseal(ctx, req); err != nil {
-				fmt.Fprintf(out, "  %s: reseal failed: %v\n", name, err)
+				_, _ = fmt.Fprintf(out, "  %s: reseal failed: %v\n", name, err)
 				continue
 			}
-			fmt.Fprintf(out, "  Resealed: %s\n", name)
+			_, _ = fmt.Fprintf(out, "  Resealed: %s\n", name)
 		}
 
-		fmt.Fprintf(out, "\nResealed %d secret(s).\n", len(listResp.Names))
+		_, _ = fmt.Fprintf(out, "\nResealed %d secret(s).\n", len(listResp.Names))
 		return nil
 	}
 
@@ -452,7 +452,7 @@ func runSealStoreReseal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrSealStoreResealFailed, err)
 	}
 
-	fmt.Fprintf(out, "Resealed: %s\n", name)
+	_, _ = fmt.Fprintf(out, "Resealed: %s\n", name)
 	return nil
 }
 
@@ -472,21 +472,21 @@ func runSealStoreStatus(cmd *cobra.Command, args []string) error {
 
 	out := cmd.OutOrStdout()
 
-	fmt.Fprintln(out, "Platform Store Status:")
-	fmt.Fprintln(out)
-	fmt.Fprintf(out, "  Available:     %v\n", resp.Available)
+	_, _ = fmt.Fprintln(out, "Platform Store Status:")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "  Available:     %v\n", resp.Available)
 
 	if resp.SealerID != "" {
-		fmt.Fprintf(out, "  Sealer:        %s\n", resp.SealerID)
+		_, _ = fmt.Fprintf(out, "  Sealer:        %s\n", resp.SealerID)
 	}
 
-	fmt.Fprintf(out, "  Secret Count:  %d\n", resp.SecretCount)
+	_, _ = fmt.Fprintf(out, "  Secret Count:  %d\n", resp.SecretCount)
 
 	if len(resp.SecretNames) > 0 {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, "  Secrets:")
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out, "  Secrets:")
 		for _, name := range resp.SecretNames {
-			fmt.Fprintf(out, "    %s\n", name)
+			_, _ = fmt.Fprintf(out, "    %s\n", name)
 		}
 	}
 

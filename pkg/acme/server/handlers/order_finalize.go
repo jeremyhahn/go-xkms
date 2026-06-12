@@ -520,7 +520,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 					ekRequest.Signer = tenantSigner
 					ekRequest.IssuerCert = issuerCert
 				}
-				cert, err = s.ca.IssueEKCertificate(ekRequest, ekPubKey)
+				cert, err = s.ca.IssueEKCertificate(r.Context(), ekRequest, ekPubKey)
 				if err != nil {
 					s.logger.Error("Failed to issue EK certificate", "error", err)
 					writeError(w, common.ServerInternal("Failed to issue EK certificate"))
@@ -574,7 +574,29 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			signOpts.Signer = tenantSigner
 			signOpts.IssuerCert = issuerCert
 		}
-		cert, err = s.ca.SignCSR(csrPEM, signOpts)
+
+		// Execute pre-sign extension hooks and append returned extensions to signOpts.
+		if s.preSignHooks != nil && s.preSignHooks.Count() > 0 {
+			preSignCtx := &OrderPreSignHookContext{
+				Context:  ctx,
+				Order:    order,
+				CSR:      csr,
+				ClientIP: r.RemoteAddr,
+				IsTCGCSR: false,
+			}
+			extraExts, hookErr := s.preSignHooks.Execute(preSignCtx)
+			if hookErr != nil {
+				s.logger.Warn("Pre-sign hook failed, aborting certificate issuance",
+					"error", hookErr,
+					"order_id", order.ID,
+					"account_id", account.ID)
+				writeError(w, common.ServerInternal(fmt.Sprintf("Pre-sign hook failed: %v", hookErr)))
+				return
+			}
+			signOpts.ExtraExtensions = append(signOpts.ExtraExtensions, extraExts...)
+		}
+
+		cert, err = s.ca.SignCSR(r.Context(), csrPEM, signOpts)
 		if err != nil {
 			writeError(w, common.ServerInternal("Failed to sign CSR"))
 			return
@@ -847,8 +869,29 @@ func (s *RestService) finalizeTCGCSR(
 		}
 	}
 
+	// Execute pre-sign extension hooks and append returned extensions to the IDevID request.
+	// The TCGCSRRequest.ExtraExtensions field is honored by SignTCGCSRIDevID for the IDevID cert.
+	if s.preSignHooks != nil && s.preSignHooks.Count() > 0 {
+		preSignCtx := &OrderPreSignHookContext{
+			Context:  ctx,
+			Order:    order,
+			ClientIP: ip,
+			IsTCGCSR: true,
+			TCGData: &TCGEnrollmentData{
+				ProductModel:        string(tcgCSR.CsrContents.ProdModel),
+				ProductSerial:       string(tcgCSR.CsrContents.ProdSerial),
+				PermanentIdentifier: idevidCN,
+			},
+		}
+		extraExts, hookErr := s.preSignHooks.Execute(preSignCtx)
+		if hookErr != nil {
+			return 0, nil, common.ServerInternal(fmt.Sprintf("Pre-sign hook failed: %v", hookErr))
+		}
+		tcgCSRRequest.ExtraExtensions = append(tcgCSRRequest.ExtraExtensions, extraExts...)
+	}
+
 	// Sign the TCG-CSR-IDEVID
-	iakDER, idevidDER, err := s.ca.SignTCGCSRIDevID(tcgCSR, tcgCSRRequest)
+	iakDER, idevidDER, err := s.ca.SignTCGCSRIDevID(ctx, tcgCSR, tcgCSRRequest)
 	if err != nil {
 		return 0, nil, common.ServerInternal("Failed to sign TCG-CSR-IDEVID")
 	}

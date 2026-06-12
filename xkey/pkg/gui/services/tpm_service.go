@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1276,7 +1277,7 @@ func (s *TPMService) GetPCRs(bank string) (retVal []PCRValue, retErr error) {
 	for _, b := range banks {
 		if !strings.EqualFold(b.Algorithm, targetAlgo) {
 			// Handle the SHA384/SHA386 mismatch from ReadPCRs.
-			if !(strings.EqualFold(targetAlgo, "SHA384") && strings.EqualFold(b.Algorithm, "SHA386")) {
+			if !strings.EqualFold(targetAlgo, "SHA384") || !strings.EqualFold(b.Algorithm, "SHA386") {
 				continue
 			}
 		}
@@ -4710,7 +4711,9 @@ func (s *TPMService) ComparePolicyPCRs(name string) (retVal *PolicyComparisonRes
 		index := 0
 		if len(parts) == 2 {
 			bank = parts[0]
-			fmt.Sscanf(parts[1], "%d", &index)
+			if parsed, parseErr := strconv.Atoi(parts[1]); parseErr == nil {
+				index = parsed
+			}
 		}
 
 		// Decode hex to bytes for constant-time comparison.

@@ -34,11 +34,12 @@ var (
 
 // WebAuthn domain errors.
 var (
-	ErrCDPAuthenticatorFailed = errors.New("cdp: virtual authenticator creation failed")
-	ErrCDPCredentialFailed    = errors.New("cdp: credential registration failed")
-	ErrCDPEnableFailed        = errors.New("cdp: WebAuthn enable failed")
-	ErrCDPDisableFailed       = errors.New("cdp: WebAuthn disable failed")
-	ErrCDPRemoveFailed        = errors.New("cdp: virtual authenticator removal failed")
+	ErrCDPAuthenticatorFailed  = errors.New("cdp: virtual authenticator creation failed")
+	ErrCDPCredentialFailed     = errors.New("cdp: credential registration failed")
+	ErrCDPEnableFailed         = errors.New("cdp: WebAuthn enable failed")
+	ErrCDPDisableFailed        = errors.New("cdp: WebAuthn disable failed")
+	ErrCDPRemoveFailed         = errors.New("cdp: virtual authenticator removal failed")
+	ErrCDPGetCredentialsFailed = errors.New("cdp: get credentials failed")
 )
 
 // Bridge lifecycle errors.

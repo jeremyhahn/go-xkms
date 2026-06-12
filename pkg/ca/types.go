@@ -349,6 +349,13 @@ type CertificateRequest struct {
 	// users, service name for services). Defaults to the certificate subject
 	// CommonName when empty. Runtime-only; not serialized.
 	SPIFFEName string `yaml:"-" json:"-"`
+
+	// ExtraExtensions contains additional X.509 extensions to include in the
+	// issued certificate. These are appended to the certificate template
+	// ExtraExtensions after the CA has added its own extensions. Callers that
+	// need to embed platform-specific data (e.g. the SDN network-zone
+	// extension OIDTPNetworkZone) supply it here. Runtime-only; not serialized.
+	ExtraExtensions []pkix.Extension `yaml:"-" json:"-"`
 }
 
 // Validate checks that the CertificateRequest has valid required fields.
@@ -509,4 +516,10 @@ type SignOptions struct {
 	// users, service name for services). Defaults to the certificate subject
 	// CommonName when empty.
 	SPIFFEName string
+
+	// ExtraExtensions contains additional X.509 extensions to append to the
+	// certificate template. Callers use this to embed platform-specific data
+	// (e.g. the SDN network-zone extension OIDTPNetworkZone) without requiring
+	// a dedicated field per extension type.
+	ExtraExtensions []pkix.Extension
 }

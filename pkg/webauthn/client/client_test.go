@@ -1170,10 +1170,13 @@ func TestLogin_UserIDPropagated(t *testing.T) {
 }
 
 func TestNewClient_WithTLSConfig(t *testing.T) {
+	// Verify that a caller-supplied TLS config is accepted by the constructor.
+	// Use a valid config (system pool, TLS 1.3 minimum) — InsecureSkipVerify
+	// is forbidden per project policy.
 	c, err := NewClient(&Config{
 		ServerURL:            "https://example.com",
 		AuthenticatorAdapter: NewSoftwareAdapter(),
-		TLSConfig:            &tls.Config{InsecureSkipVerify: true},
+		TLSConfig:            &tls.Config{MinVersion: tls.VersionTLS13},
 	})
 	if err != nil {
 		t.Fatalf("NewClient() error: %v", err)

@@ -128,8 +128,8 @@ func (p *PINProtocolV1) GetKeyAgreementKey() ([]byte, error) {
 		coseKeyLabelKty: COSEKeyTypeEC2,
 		coseKeyLabelAlg: COSEAlgECDHESHKDF256,
 		coseKeyLabelCrv: COSECurveP256,
-		coseKeyLabelX:   padCoordinate(p.publicKey.X.Bytes(), ecdhP256CoordSize),
-		coseKeyLabelY:   padCoordinate(p.publicKey.Y.Bytes(), ecdhP256CoordSize),
+		coseKeyLabelX:   padCoordinate(p.publicKey.X.Bytes(), ecdhP256CoordSize), //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
+		coseKeyLabelY:   padCoordinate(p.publicKey.Y.Bytes(), ecdhP256CoordSize), //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 	}
 
 	return cbor.Marshal(coseKey)
@@ -228,7 +228,7 @@ func (p *PINProtocolV1) decodeCOSEKeyAgreementKey(data []byte) (*ecdsa.PublicKey
 	}
 
 	// Verify point is on curve
-	if !elliptic.P256().IsOnCurve(x, y) {
+	if !elliptic.P256().IsOnCurve(x, y) { //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 		return nil, ErrInvalidPeerPublicKey
 	}
 
@@ -239,7 +239,7 @@ func (p *PINProtocolV1) decodeCOSEKeyAgreementKey(data []byte) (*ecdsa.PublicKey
 // For PIN Protocol V1: SharedSecret = SHA-256(x-coordinate of ECDH result)
 func (p *PINProtocolV1) performECDH(peerPublicKey *ecdsa.PublicKey) ([]byte, error) {
 	// Perform scalar multiplication: Z = peerPublicKey * privateKey
-	x, _ := elliptic.P256().ScalarMult(peerPublicKey.X, peerPublicKey.Y, p.privateKey.D.Bytes())
+	x, _ := elliptic.P256().ScalarMult(peerPublicKey.X, peerPublicKey.Y, p.privateKey.D.Bytes()) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 
 	// For PIN Protocol V1, shared secret is SHA-256 of x-coordinate
 	xBytes := padCoordinate(x.Bytes(), ecdhP256CoordSize)

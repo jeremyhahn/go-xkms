@@ -19,6 +19,7 @@
 package ca
 
 import (
+	"context"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -34,7 +35,7 @@ import (
 // with ErrInvalidRequest before any object-store interaction occurs.
 func TestImportAttestation_NilAttrs(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	err := ca.ImportAttestation(nil, AttestBlobQuote, []byte("data"))
+	err := ca.ImportAttestation(context.Background(), nil, AttestBlobQuote, []byte("data"))
 	assert.ErrorIs(t, err, ErrInvalidRequest)
 }
 
@@ -43,7 +44,7 @@ func TestImportAttestation_NilAttrs(t *testing.T) {
 // that VerifyAttestation* cannot reconcile.
 func TestImportAttestation_EmptyData(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	err := ca.ImportAttestation(&types.KeyAttributes{CN: "ak"}, AttestBlobQuote, []byte{})
+	err := ca.ImportAttestation(context.Background(), &types.KeyAttributes{CN: "ak"}, AttestBlobQuote, []byte{})
 	assert.ErrorIs(t, err, ErrInvalidRequest)
 }
 
@@ -55,7 +56,7 @@ func TestImportAttestation_EmptyData(t *testing.T) {
 // rejected with ErrInvalidRequest.
 func TestImportAttestationKeyCertificate_NilAttrs(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	err := ca.ImportAttestationKeyCertificate(nil, []byte("not-a-cert"))
+	err := ca.ImportAttestationKeyCertificate(context.Background(), nil, []byte("not-a-cert"))
 	assert.ErrorIs(t, err, ErrInvalidRequest)
 }
 
@@ -65,7 +66,7 @@ func TestImportAttestationKeyCertificate_NilAttrs(t *testing.T) {
 // front.
 func TestImportAttestationKeyCertificate_EmptyCertificate(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	err := ca.ImportAttestationKeyCertificate(&types.KeyAttributes{CN: "ak"}, nil)
+	err := ca.ImportAttestationKeyCertificate(context.Background(), &types.KeyAttributes{CN: "ak"}, nil)
 	assert.ErrorIs(t, err, ErrInvalidCertificate)
 }
 
@@ -73,7 +74,7 @@ func TestImportAttestationKeyCertificate_EmptyCertificate(t *testing.T) {
 // payload is rejected with ErrInvalidCertificate.
 func TestImportAttestationKeyCertificate_InvalidDER(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	err := ca.ImportAttestationKeyCertificate(&types.KeyAttributes{CN: "ak"}, []byte("not-a-cert"))
+	err := ca.ImportAttestationKeyCertificate(context.Background(), &types.KeyAttributes{CN: "ak"}, []byte("not-a-cert"))
 	assert.ErrorIs(t, err, ErrInvalidCertificate)
 }
 
@@ -88,7 +89,7 @@ func TestImportAttestationEventLog_Roundtrip(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	attrs := &types.KeyAttributes{CN: "ak-eventlog"}
 	data := []byte("event-log-payload")
-	require.NoError(t, ca.ImportAttestationEventLog(attrs, data))
+	require.NoError(t, ca.ImportAttestationEventLog(context.Background(), attrs, data))
 	require.NoError(t, ca.VerifyAttestationEventLog(attrs, data))
 }
 
@@ -97,7 +98,7 @@ func TestImportAttestationPCRs_Roundtrip(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	attrs := &types.KeyAttributes{CN: "ak-pcrs"}
 	data := []byte("pcr-snapshot")
-	require.NoError(t, ca.ImportAttestationPCRs(attrs, data))
+	require.NoError(t, ca.ImportAttestationPCRs(context.Background(), attrs, data))
 	require.NoError(t, ca.VerifyAttestationPCRs(attrs, data))
 }
 
@@ -106,7 +107,7 @@ func TestImportAttestationQuote_Roundtrip(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	attrs := &types.KeyAttributes{CN: "ak-quote"}
 	data := []byte("quote-payload")
-	require.NoError(t, ca.ImportAttestationQuote(attrs, data))
+	require.NoError(t, ca.ImportAttestationQuote(context.Background(), attrs, data))
 	require.NoError(t, ca.VerifyAttestationQuote(attrs, data))
 }
 
@@ -114,7 +115,7 @@ func TestImportAttestationQuote_Roundtrip(t *testing.T) {
 // rejected with ErrInvalidRequest.
 func TestImportLocalAttestation_NilQuote(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	err := ca.ImportLocalAttestation(&types.KeyAttributes{CN: "ak"}, nil)
+	err := ca.ImportLocalAttestation(context.Background(), &types.KeyAttributes{CN: "ak"}, nil)
 	assert.ErrorIs(t, err, ErrInvalidRequest)
 }
 

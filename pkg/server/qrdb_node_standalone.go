@@ -18,7 +18,6 @@ package server
 import (
 	"errors"
 
-	qrdbconfig "github.com/jeremyhahn/go-qrdb/pkg/config"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 )
@@ -33,7 +32,7 @@ var ErrClusterRequiresRaftBuild = errors.New(
 // build; the clustered path lives in qrdb_node_cluster.go under `-tags raft`.
 // If cluster.enabled is set in this build, it fails loudly rather than silently
 // running unclustered.
-func (s *Server) newQRDBNode(qcfg *qrdbconfig.Config, serverOpts []qrdbsdk.ServerOption, nodeOpts []qrdbnode.NodeOption) (*qrdbnode.Node, error) {
+func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbsdk.ServerOption, nodeOpts []qrdbnode.NodeOption) (*qrdbnode.Node, error) {
 	if s.config.Cluster.Enabled {
 		return nil, ErrClusterRequiresRaftBuild
 	}

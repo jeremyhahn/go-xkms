@@ -121,7 +121,7 @@ func TestDecrypter(t *testing.T) {
 			b, err := NewBackendWithClient(config, mockClient)
 			require.NoError(t, err, "Failed to create backend")
 
-			decrypter, err := b.Decrypter(tt.attrs)
+			decrypter, err := b.Decrypter(context.Background(), tt.attrs)
 			if tt.wantErr {
 				assert.Error(t, err, "Expected error but got none")
 				if tt.expectedErr != nil {
@@ -243,7 +243,7 @@ func TestRSADecrypt_PKCS1v15(t *testing.T) {
 			require.NoError(t, err, "Failed to create backend")
 
 			// Get decrypter
-			decrypter, err := b.Decrypter(tt.attrs)
+			decrypter, err := b.Decrypter(context.Background(), tt.attrs)
 			require.NoError(t, err, "Failed to get Decrypter")
 			require.NotNil(t, decrypter, "Decrypter should not be nil")
 
@@ -422,7 +422,7 @@ func TestRSADecrypt_OAEP(t *testing.T) {
 			require.NoError(t, err, "Failed to create backend")
 
 			// Get decrypter
-			decrypter, err := b.Decrypter(tt.attrs)
+			decrypter, err := b.Decrypter(context.Background(), tt.attrs)
 			require.NoError(t, err, "Failed to get Decrypter")
 			require.NotNil(t, decrypter, "Decrypter should not be nil")
 
@@ -565,7 +565,7 @@ func TestDecrypterRoundTrip(t *testing.T) {
 			require.NoError(t, err, "Failed to create backend")
 
 			// Get decrypter
-			decrypter, err := b.Decrypter(tt.attrs)
+			decrypter, err := b.Decrypter(context.Background(), tt.attrs)
 			require.NoError(t, err, "Failed to get Decrypter")
 
 			// Encrypt using public key

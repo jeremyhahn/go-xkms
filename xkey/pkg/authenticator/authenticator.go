@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 
 	"github.com/fxamacker/cbor/v2"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
@@ -189,6 +188,17 @@ type Authenticator struct {
 	matchingCredentials    []*StoredCredential
 	currentCredentialIndex int
 	lastClientDataHash     []byte
+
+	// assertionFlags holds the UP/UV authorization flags established by the
+	// preceding getAssertion. Per CTAP 2.1 §6.3, getNextAssertion MUST NOT
+	// collect user presence or user verification again; it replays these
+	// flags for each subsequent credential in the batch.
+	assertionFlags AuthDataFlags
+
+	// assertionExtensions holds the extension inputs from the preceding
+	// getAssertion so they can be recomputed per credential during
+	// getNextAssertion.
+	assertionExtensions map[string]interface{}
 }
 
 // NewAuthenticator creates a new FIDO2 authenticator with the given configuration.
@@ -468,16 +478,6 @@ func (a *Authenticator) commandContext() context.Context {
 		return h.ctx
 	}
 	return context.Background()
-}
-
-// backendID returns the current key backend identifier string.
-// Returns empty string when no key backend is configured (legacy path),
-// which means software for backward compatibility.
-func (a *Authenticator) backendID() xkms.BackendType {
-	if a.keyBackend != nil {
-		return a.keyBackend.Type()
-	}
-	return ""
 }
 
 // Close releases authenticator resources and saves final state.

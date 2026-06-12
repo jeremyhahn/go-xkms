@@ -89,10 +89,13 @@ func createTestServerWithSealSupport(t *testing.T) (*Server, *xkmsmocks.MockKeyS
 	})
 	require.NoError(t, err)
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -679,10 +682,13 @@ func TestHandleCanSeal(t *testing.T) {
 		require.NoError(t, err)
 		defer xkms.Reset()
 
+		svc, _ := xkms.Get()
+
 		cfg := &Config{
 			Addr:          "localhost:8444",
 			Authenticator: auth.NewNoOpAuthenticator(),
 			Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+			XKMSService:   svc,
 		}
 
 		server, err := NewServer(cfg)

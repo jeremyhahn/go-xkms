@@ -41,7 +41,12 @@ func ThumbprintSHA256(key crypto.PublicKey) (string, error) {
 }
 
 // ThumbprintSHA1 computes the SHA-1 JWK thumbprint.
-// SHA-1 is deprecated for most uses but may be required for legacy compatibility.
+//
+// Deprecated: SHA-1 thumbprints are not used by any production path in this
+// codebase.  No persisted key index or ACME account key is keyed by SHA-1
+// thumbprint — all production paths use ThumbprintSHA256 (RFC 7638) or the
+// inline SHA-256 computation in pkg/acme/server.  This function is retained
+// only as a legacy compatibility shim and must NOT be called from new code.
 func ThumbprintSHA1(key crypto.PublicKey) (string, error) {
 	return Thumbprint(key, crypto.SHA1)
 }

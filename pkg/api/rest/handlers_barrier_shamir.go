@@ -79,8 +79,9 @@ type BarrierGenerateRootTokenRequest struct {
 // --- Shamir barrier handlers ---
 
 // BarrierInitializeShamirHandler handles POST /api/v1/barrier/initialize-shamir requests.
-// Initializes the barrier using Shamir secret sharing. Returns the generated shares
-// that must be distributed to key holders.
+// Initializes the barrier using Shamir secret sharing. Share material is
+// never returned (qrdb share-free contract): shares are sealed to enrolled
+// Security Officers; only the threshold/total metadata is reported.
 func (h *HandlerContext) BarrierInitializeShamirHandler(w http.ResponseWriter, r *http.Request) {
 	if h.Barrier == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
@@ -198,7 +199,8 @@ func (h *HandlerContext) BarrierRekeyHandler(w http.ResponseWriter, r *http.Requ
 
 // BarrierGenerateRecoveryKeysHandler handles POST /api/v1/barrier/recovery-keys/generate requests.
 // Generates an independent set of Shamir shares that can reconstruct the DEK.
-// The shares are returned for offline storage and are not persisted.
+// Recovery shares are sealed to enrolled recovery officers and never
+// returned (qrdb share-free contract).
 func (h *HandlerContext) BarrierGenerateRecoveryKeysHandler(w http.ResponseWriter, r *http.Request) {
 	if h.Barrier == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)

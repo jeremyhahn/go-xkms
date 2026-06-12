@@ -177,9 +177,9 @@ func createPINService(dataDir string) (*qrdbsdk.PINService, error) {
 // readPIN reads a PIN from terminal or piped stdin.
 func readPIN(out io.Writer, prompt string) (string, error) {
 	if term.IsTerminal(int(os.Stdin.Fd())) {
-		fmt.Fprint(out, prompt)
+		_, _ = fmt.Fprint(out, prompt)
 		pinBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 		if err != nil {
 			return "", &PINCommandError{Operation: "read_pin", Err: err}
 		}
@@ -203,16 +203,16 @@ func readAndConfirmPIN(out io.Writer, prompt string) (string, error) {
 
 // readPINFromTerminal reads and confirms a PIN from terminal.
 func readPINFromTerminal(out io.Writer, prompt string) (string, error) {
-	fmt.Fprint(out, prompt)
+	_, _ = fmt.Fprint(out, prompt)
 	pin1, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	if err != nil {
 		return "", &PINCommandError{Operation: "read_pin", Err: err}
 	}
 
-	fmt.Fprint(out, "Confirm PIN: ")
+	_, _ = fmt.Fprint(out, "Confirm PIN: ")
 	pin2, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	if err != nil {
 		return "", &PINCommandError{Operation: "read_pin", Err: err}
 	}

@@ -81,6 +81,12 @@ type SealingStrategy = seal.SealingStrategy
 // Barrier is the storage barrier that encrypts all sensitive data at rest.
 type Barrier = seal.Barrier
 
+// BarrierBackend adapts a Barrier to the storage.Backend interface. The
+// underlying qrdb StorageBarrier natively implements every Backend method
+// including PutIfAbsent; this type is pure embedding retained for API
+// stability.
+type BarrierBackend = seal.BarrierBackend
+
 // BarrierConfig configures a storage barrier.
 type BarrierConfig = seal.BarrierConfig
 
@@ -95,6 +101,10 @@ type SealedRootKey = seal.SealedRootKey
 
 // NewBarrier constructs a storage barrier.
 var NewBarrier = seal.NewBarrier
+
+// NewBarrierBackend wraps a Barrier as a storage.Backend that supports
+// PutIfAbsent.
+var NewBarrierBackend = seal.NewBarrierBackend
 
 // NewSoftwareSealStrategy constructs the passphrase-protected software strategy.
 var NewSoftwareSealStrategy = seal.NewSoftwareStrategy

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -31,12 +31,11 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-	caFixtures "github.com/jeremyhahn/go-xkms/test/integration/acme-ca"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -416,7 +415,8 @@ func TestDeviceProfileValidation_WithRealTPMData(t *testing.T) {
 func TestAttestationSignTCGCSRIDevID_RealTPMGenerated(t *testing.T) {
 	RequireSwtpm(t)
 
-	caInstance, cleanup := caFixtures.NewTestCA(t)
+	ctx := context.Background()
+	caInstance, cleanup := newTestCA(t)
 	defer cleanup()
 
 	deviceID := fmt.Sprintf("tcgcsr-sign-%d", time.Now().Unix())
@@ -448,7 +448,7 @@ func TestAttestationSignTCGCSRIDevID_RealTPMGenerated(t *testing.T) {
 	}
 
 	t.Run("Sign TCG-CSR Successfully", func(t *testing.T) {
-		iakDER, idevidDER, err := caInstance.SignTCGCSRIDevID(tcgCSR, certRequest)
+		iakDER, idevidDER, err := caInstance.SignTCGCSRIDevID(ctx, tcgCSR, certRequest)
 		require.NoError(t, err, "SignTCGCSRIDevID should succeed")
 		require.NotNil(t, iakDER, "IAK certificate should not be nil")
 		require.NotNil(t, idevidDER, "IDevID certificate should not be nil")
@@ -471,7 +471,8 @@ func TestAttestationSignTCGCSRIDevID_RealTPMGenerated(t *testing.T) {
 func TestAttestationSignTCGCSRIDevID_CertificateExtensions(t *testing.T) {
 	RequireSwtpm(t)
 
-	caInstance, cleanup := caFixtures.NewTestCA(t)
+	ctx := context.Background()
+	caInstance, cleanup := newTestCA(t)
 	defer cleanup()
 
 	deviceID := fmt.Sprintf("tcg-ext-%d", time.Now().Unix())
@@ -498,7 +499,7 @@ func TestAttestationSignTCGCSRIDevID_CertificateExtensions(t *testing.T) {
 		Valid: 0,
 	}
 
-	iakDER, idevidDER, err := caInstance.SignTCGCSRIDevID(tcgCSR, certRequest)
+	iakDER, idevidDER, err := caInstance.SignTCGCSRIDevID(ctx, tcgCSR, certRequest)
 	require.NoError(t, err)
 
 	iakCert, err := x509.ParseCertificate(iakDER)
@@ -606,7 +607,8 @@ func TestAttestationSignTCGCSRIDevID_CertificateExtensions(t *testing.T) {
 func TestAttestationCertificateChain_Verification(t *testing.T) {
 	RequireSwtpm(t)
 
-	caInstance, cleanup := caFixtures.NewTestCA(t)
+	ctx := context.Background()
+	caInstance, cleanup := newTestCA(t)
 	defer cleanup()
 
 	deviceID := fmt.Sprintf("chain-verify-%d", time.Now().Unix())
@@ -631,7 +633,7 @@ func TestAttestationCertificateChain_Verification(t *testing.T) {
 		Valid: 0,
 	}
 
-	iakDER, idevidDER, err := caInstance.SignTCGCSRIDevID(tcgCSR, certRequest)
+	iakDER, idevidDER, err := caInstance.SignTCGCSRIDevID(ctx, tcgCSR, certRequest)
 	require.NoError(t, err)
 
 	iakCert, err := x509.ParseCertificate(iakDER)
@@ -676,7 +678,8 @@ func TestAttestationCertificateChain_Verification(t *testing.T) {
 func TestAttestationTamperedQuote_Rejection(t *testing.T) {
 	RequireSwtpm(t)
 
-	caInstance, cleanup := caFixtures.NewTestCA(t)
+	ctx := context.Background()
+	caInstance, cleanup := newTestCA(t)
 	defer cleanup()
 
 	deviceID := fmt.Sprintf("tampered-quote-%d", time.Now().Unix())
@@ -707,7 +710,7 @@ func TestAttestationTamperedQuote_Rejection(t *testing.T) {
 		},
 	}
 
-	iakDER, idevidDER, err := caInstance.SignTCGCSRIDevID(tcgCSR, certRequest)
+	iakDER, idevidDER, err := caInstance.SignTCGCSRIDevID(ctx, tcgCSR, certRequest)
 	assert.Error(t, err, "Tampered CSR should be rejected")
 	assert.Nil(t, iakDER, "No IAK certificate should be issued for tampered CSR")
 	assert.Nil(t, idevidDER, "No IDevID certificate should be issued for tampered CSR")
@@ -716,7 +719,8 @@ func TestAttestationTamperedQuote_Rejection(t *testing.T) {
 
 // TestAttestationNilCSR_Rejection tests that nil CSR is rejected.
 func TestAttestationNilCSR_Rejection(t *testing.T) {
-	caInstance, cleanup := caFixtures.NewTestCA(t)
+	ctx := context.Background()
+	caInstance, cleanup := newTestCA(t)
 	defer cleanup()
 
 	certRequest := &ca.CertificateRequest{
@@ -727,7 +731,7 @@ func TestAttestationNilCSR_Rejection(t *testing.T) {
 		},
 	}
 
-	iakDER, idevidDER, err := caInstance.SignTCGCSRIDevID(nil, certRequest)
+	iakDER, idevidDER, err := caInstance.SignTCGCSRIDevID(ctx, nil, certRequest)
 	assert.Error(t, err, "Nil CSR should be rejected")
 	assert.ErrorIs(t, err, ca.ErrInvalidCSR, "Error should be ErrInvalidCSR")
 	assert.Nil(t, iakDER)
@@ -742,7 +746,8 @@ func TestAttestationNilCSR_Rejection(t *testing.T) {
 func TestCAImportLocalAttestation(t *testing.T) {
 	RequireSwtpm(t)
 
-	caInstance, cleanup := caFixtures.NewTestCA(t)
+	ctx := context.Background()
+	caInstance, cleanup := newTestCA(t)
 	defer cleanup()
 
 	deviceID := fmt.Sprintf("import-attest-%d", time.Now().Unix())
@@ -767,12 +772,12 @@ func TestCAImportLocalAttestation(t *testing.T) {
 	}
 
 	t.Run("Import Quote Successfully", func(t *testing.T) {
-		err := caInstance.ImportAttestationQuote(akAttrs, quote.Quoted)
+		err := caInstance.ImportAttestationQuote(ctx, akAttrs, quote.Quoted)
 		assert.NoError(t, err, "Importing quote should succeed")
 	})
 
 	t.Run("Import PCRs Successfully", func(t *testing.T) {
-		err := caInstance.ImportAttestationPCRs(akAttrs, quote.PCRs)
+		err := caInstance.ImportAttestationPCRs(ctx, akAttrs, quote.PCRs)
 		assert.NoError(t, err, "Importing PCRs should succeed")
 	})
 
@@ -811,7 +816,8 @@ func TestCAImportLocalAttestation(t *testing.T) {
 func TestCAImportLocalAttestation_CompleteFlow(t *testing.T) {
 	RequireSwtpm(t)
 
-	caInstance, cleanup := caFixtures.NewTestCA(t)
+	ctx := context.Background()
+	caInstance, cleanup := newTestCA(t)
 	defer cleanup()
 
 	deviceID := fmt.Sprintf("complete-attest-%d", time.Now().Unix())
@@ -834,7 +840,7 @@ func TestCAImportLocalAttestation_CompleteFlow(t *testing.T) {
 	}
 
 	// Import complete local attestation
-	err = caInstance.ImportLocalAttestation(akAttrs, &xkmssdk.Quote{
+	err = caInstance.ImportLocalAttestation(ctx, akAttrs, &xkmssdk.Quote{
 		Quoted:    quote.Quoted,
 		Signature: quote.Signature,
 		Nonce:     quote.Nonce,

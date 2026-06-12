@@ -25,7 +25,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // FROST request/response types
@@ -207,7 +206,7 @@ func (s *Server) handleFrostListKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(r.Context())
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list keys: %v", err))
 		return
@@ -217,7 +216,7 @@ func (s *Server) handleFrostListKeys(w http.ResponseWriter, r *http.Request) {
 	for _, k := range keys {
 		if k.FrostAttributes != nil {
 			var groupPubKey string
-			handle, err := be.GetKey(k)
+			handle, err := be.GetKey(r.Context(), k)
 			if err == nil {
 				if h, ok := handle.(*frost.FrostKeyHandle); ok {
 					groupPubKey = hex.EncodeToString(h.GroupPublicKey)
@@ -350,7 +349,7 @@ func (s *Server) handleFrostGenerateKey(w http.ResponseWriter, r *http.Request) 
 		},
 	}
 
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(r.Context(), attrs)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to generate FROST key: %v", err))
 		return
@@ -423,7 +422,7 @@ func (s *Server) handleFrostGetKey(w http.ResponseWriter, r *http.Request, keyID
 		StoreType: types.StoreFrost,
 	}
 
-	key, err := be.GetKey(attrs)
+	key, err := be.GetKey(r.Context(), attrs)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
@@ -431,7 +430,7 @@ func (s *Server) handleFrostGetKey(w http.ResponseWriter, r *http.Request, keyID
 
 	handle := key.(*frost.FrostKeyHandle)
 
-	keys, _ := be.ListKeys()
+	keys, _ := be.ListKeys(r.Context())
 	var keyInfo FrostKeyInfo
 	for _, k := range keys {
 		if k.CN == keyID && k.FrostAttributes != nil {
@@ -480,7 +479,7 @@ func (s *Server) handleFrostDeleteKey(w http.ResponseWriter, r *http.Request, ke
 		StoreType: types.StoreFrost,
 	}
 
-	if err := be.DeleteKey(attrs); err != nil {
+	if err := be.DeleteKey(r.Context(), attrs); err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to delete key: %v", err))
 		return
 	}
@@ -583,7 +582,7 @@ func (s *Server) handleFrostSignRound(w http.ResponseWriter, r *http.Request, ke
 		KeyType:   types.KeyTypeSigning,
 		StoreType: types.StoreFrost,
 	}
-	key, err := be.GetKey(attrs)
+	key, err := be.GetKey(r.Context(), attrs)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
@@ -713,7 +712,7 @@ func (s *Server) handleFrostImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ks := be.KeyStore()
-	if err := ks.StoreKeyPackage(pkg.KeyID, keyPackage, metadata); err != nil {
+	if err := ks.StoreKeyPackage(r.Context(), pkg.KeyID, keyPackage, metadata); err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to store key package: %v", err))
 		return
 	}
@@ -872,9 +871,9 @@ func (s *Server) handleFrostVerify(w http.ResponseWriter, r *http.Request) {
 
 // getFrostBackend retrieves the FROST backend from the xkms service
 func (s *Server) getFrostBackend() (*frost.FrostBackend, error) {
-	backends := xkms.Backends()
+	backends := s.backendNames()
 	for _, name := range backends {
-		ks, err := xkms.GetBackend(name)
+		ks, err := s.lookupBackend(name)
 		if err != nil {
 			continue
 		}

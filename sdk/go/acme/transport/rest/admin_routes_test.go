@@ -30,8 +30,9 @@ func TestAdminRoutes_AllRegistered(t *testing.T) {
 	t.Parallel()
 
 	cfg := &transport.Config{
-		Address:  "http://localhost:9443",
-		Insecure: true,
+		Address:   "http://localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -312,8 +313,9 @@ func TestAdminRoutes_RequestIntegration(t *testing.T) {
 	defer server.Close()
 
 	cfg := &transport.Config{
-		Address:  server.URL,
-		Insecure: true,
+		Address:   server.URL,
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {

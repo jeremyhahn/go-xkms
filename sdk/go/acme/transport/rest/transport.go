@@ -36,7 +36,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -150,19 +149,17 @@ func (t *Transport) initHTTPClient() error {
 		timeout = DefaultTimeout
 	}
 
+	// Insecure mode without an explicit TLSConfig is forbidden; callers must
+	// supply a root CA pool or an SPKI-pinned config.
+	if t.cfg.Insecure && t.cfg.TLSConfig == nil {
+		return errors.NewInvalidInput("rest.initHTTPClient",
+			"Insecure=true requires an explicit TLSConfig with RootCAs or VerifyConnection; InsecureSkipVerify is forbidden")
+	}
+
 	tlsConfig := t.cfg.TLSConfig
 	if tlsConfig == nil {
-		if t.cfg.Insecure {
-			slog.Warn("acme/rest: TLS certificate verification disabled via Insecure=true; do not use in production",
-				"address", t.cfg.Address)
-			tlsConfig = &tls.Config{
-				MinVersion:         tls.VersionTLS13,
-				InsecureSkipVerify: true, //nolint:gosec // Intentional for dev/testing
-			}
-		} else {
-			tlsConfig = &tls.Config{
-				MinVersion: tls.VersionTLS13,
-			}
+		tlsConfig = &tls.Config{
+			MinVersion: tls.VersionTLS13,
 		}
 	}
 
@@ -518,7 +515,7 @@ func (t *Transport) doRequest(ctx context.Context, route RouteInfo, url string, 
 		t.healthy.Store(false)
 		return nil, t.wrapHTTPError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	t.healthy.Store(true)
 
@@ -604,11 +601,11 @@ func (t *Transport) parseErrorResponse(resp *http.Response, body []byte) error {
 	}
 
 	caErr := errors.New(code, "rest.Transport.parseErrorResponse", acmeErr.Detail)
-	caErr.WithContext("type", acmeErr.Type)
-	caErr.WithContext("status", acmeErr.Status)
+	_ = caErr.WithContext("type", acmeErr.Type)
+	_ = caErr.WithContext("status", acmeErr.Status)
 
 	if len(acmeErr.Subproblems) > 0 {
-		caErr.WithContext("subproblems", acmeErr.Subproblems)
+		_ = caErr.WithContext("subproblems", acmeErr.Subproblems)
 	}
 
 	return caErr

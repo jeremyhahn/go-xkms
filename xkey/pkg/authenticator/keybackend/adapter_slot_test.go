@@ -16,6 +16,7 @@
 package keybackend
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -119,7 +120,7 @@ func (p *recordingKeyProvider) Capabilities() xkms.Capabilities {
 	}
 }
 
-func (p *recordingKeyProvider) GenerateKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
+func (p *recordingKeyProvider) GenerateKey(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	p.lastAttrs = attrs
 	if p.generateErr != nil {
 		return nil, p.generateErr
@@ -131,7 +132,7 @@ func (p *recordingKeyProvider) GenerateKey(attrs *xkms.KeyAttributes) (crypto.Pr
 	return key, nil
 }
 
-func (p *recordingKeyProvider) GetKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
+func (p *recordingKeyProvider) GetKey(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	if p.getKeyErr != nil {
 		return nil, p.getKeyErr
 	}
@@ -142,15 +143,15 @@ func (p *recordingKeyProvider) GetKey(attrs *xkms.KeyAttributes) (crypto.Private
 	return key, nil
 }
 
-func (p *recordingKeyProvider) DeleteKey(attrs *xkms.KeyAttributes) error {
+func (p *recordingKeyProvider) DeleteKey(ctx context.Context, attrs *xkms.KeyAttributes) error {
 	return p.deleteErr
 }
 
-func (p *recordingKeyProvider) ListKeys() ([]*xkms.KeyAttributes, error) {
+func (p *recordingKeyProvider) ListKeys(ctx context.Context) ([]*xkms.KeyAttributes, error) {
 	return nil, nil
 }
 
-func (p *recordingKeyProvider) Signer(attrs *xkms.KeyAttributes) (crypto.Signer, error) {
+func (p *recordingKeyProvider) Signer(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.Signer, error) {
 	if p.signerErr != nil {
 		return nil, p.signerErr
 	}
@@ -161,11 +162,11 @@ func (p *recordingKeyProvider) Signer(attrs *xkms.KeyAttributes) (crypto.Signer,
 	return key, nil
 }
 
-func (p *recordingKeyProvider) Decrypter(attrs *xkms.KeyAttributes) (crypto.Decrypter, error) {
+func (p *recordingKeyProvider) Decrypter(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, errors.New("not supported")
 }
 
-func (p *recordingKeyProvider) RotateKey(attrs *xkms.KeyAttributes) error {
+func (p *recordingKeyProvider) RotateKey(ctx context.Context, attrs *xkms.KeyAttributes) error {
 	return errors.New("not supported")
 }
 

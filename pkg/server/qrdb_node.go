@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"time"
 
-	qrdbconfig "github.com/jeremyhahn/go-qrdb/pkg/config"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 )
@@ -37,8 +36,8 @@ import (
 // Standalone hosting maps:
 //   - Storage.Path  -> Raft.DataDir (Pebble root)
 //   - embedded      -> Databases[0] = {default, mvcc, pebble|memory}
-func (s *Server) buildXKMSQRDBConfig() *qrdbconfig.Config {
-	qcfg := &qrdbconfig.Config{}
+func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
+	qcfg := &qrdbsdk.DaemonConfig{}
 
 	// Data directory: the qrdb node reads Raft.DataDir for the Pebble root,
 	// both for standalone and single-node clusters.
@@ -51,7 +50,7 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbconfig.Config {
 	if qcfg.Raft.DataDir == "" {
 		innerBackend = "memory"
 	}
-	qcfg.Databases = []qrdbconfig.DatabaseConfig{
+	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
 		{Name: "default", Engine: "mvcc", Backend: innerBackend},
 	}
 
@@ -111,7 +110,10 @@ func (s *Server) newQRDBAuditSink() (qrdbsdk.NodeAuditLogger, error) {
 // The node's own seal is disabled (see buildXKMSQRDBConfig): xkms's barrier —
 // qrdb's StorageBarrier implementation with xkms hardware seal strategies — is
 // the single barrier, layered over this node's KV by initializeBarrier. The
-// hardware auth-factor registry is wired separately into the API layer.
+// hardware auth-factor registry is initialized here and injected into the node
+// via WithFactorRegistry so the node's unified AuthFactorService can verify
+// hardware factor challenges during custodian enrollment and Shamir unseal
+// ceremonies.
 func (s *Server) initEmbeddedQRDBNode() error {
 	qcfg := s.buildXKMSQRDBConfig()
 
@@ -121,14 +123,24 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	}
 	s.qrdbAuditSink = sink
 
+	// Initialize the hardware auth-factor registry before assembling server
+	// options so it can be injected into the qrdb node constructor below.
+	if err := s.initializeFactorRegistry(); err != nil {
+		return &QRDBNodeError{Stage: "initialize factor registry", Err: err}
+	}
+
 	nodeOpts := []qrdbnode.NodeOption{
 		qrdbnode.WithLogger(s.logger),
 	}
 
-	// The audit sink is wired into the node so Client().Audit() emits to the
-	// HMAC-chained subsystem; without it the node has no default audit logger.
+	// The audit sink and the hardware auth-factor registry are wired into the
+	// node: the audit sink so Client().Audit() emits to the HMAC-chained
+	// subsystem, and the factor registry so the node's AuthFactorService can
+	// handle custodian enrollment, challenge, and verify operations for
+	// PIV, PKCS#11, and FIDO2 factors.
 	serverOpts := []qrdbsdk.ServerOption{
 		qrdbsdk.WithAuditLogger(sink),
+		qrdbsdk.WithFactorRegistry(s.factorRegistry),
 	}
 
 	// newQRDBNode is build-tag specific: the default (!raft) build hosts a

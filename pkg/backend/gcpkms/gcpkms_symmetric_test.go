@@ -131,7 +131,7 @@ func TestBackend_GenerateSymmetricKey(t *testing.T) {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
 
-			key, err := b.GenerateSymmetricKey(tt.attrs)
+			key, err := b.GenerateSymmetricKey(context.Background(), tt.attrs)
 
 			if tt.wantErr {
 				if err == nil {
@@ -258,7 +258,7 @@ func TestBackend_GetSymmetricKey(t *testing.T) {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
 
-			key, err := b.GetSymmetricKey(tt.attrs)
+			key, err := b.GetSymmetricKey(context.Background(), tt.attrs)
 
 			if tt.wantErr {
 				if err == nil {
@@ -350,7 +350,7 @@ func TestBackend_SymmetricEncrypter(t *testing.T) {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
 
-			encrypter, err := b.SymmetricEncrypter(tt.attrs)
+			encrypter, err := b.SymmetricEncrypter(context.Background(), tt.attrs)
 
 			if tt.wantErr {
 				if err == nil {
@@ -490,7 +490,7 @@ func TestSymmetricEncrypter_Encrypt(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 			}
 
-			encrypter, err := b.SymmetricEncrypter(attrs)
+			encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to create encrypter: %v", err)
 			}
@@ -653,7 +653,7 @@ func TestSymmetricEncrypter_Decrypt(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 			}
 
-			encrypter, err := b.SymmetricEncrypter(attrs)
+			encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to create encrypter: %v", err)
 			}
@@ -720,7 +720,7 @@ func TestSymmetricEncrypter_RoundTrip(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to create encrypter: %v", err)
 	}
@@ -847,13 +847,13 @@ func TestGCPKMSBackend_BytesLimit(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}

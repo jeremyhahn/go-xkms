@@ -60,7 +60,7 @@ type vaultSymmetricEncrypter struct {
 
 // GenerateSymmetricKey generates a new symmetric key in Vault's Transit engine.
 // Vault Transit supports AES-256-GCM for symmetric encryption.
-func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if attrs == nil || attrs.CN == "" {
 		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
 	}
@@ -81,11 +81,10 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 		return nil, fmt.Errorf("%w: Vault Transit only supports AES-256 symmetric keys, got: %d bits", backend.ErrInvalidAlgorithm, attrs.SymmetricAlgorithm.KeySize())
 	}
 
-	ctx := context.Background()
 	keyName := b.sanitizeKeyName(attrs.CN)
 
 	// Check if key already exists in metadata
-	exists, err := storage.KeyExists(context.Background(), b.config.KeyStorage, attrs.CN)
+	exists, err := storage.KeyExists(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check key existence: %w", err)
 	}
@@ -124,7 +123,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
 		return nil, fmt.Errorf("failed to store metadata: %w", err)
 	}
 
@@ -144,7 +143,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 }
 
 // GetSymmetricKey retrieves an existing symmetric key by its attributes.
-func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if attrs == nil || attrs.CN == "" {
 		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
 	}
@@ -161,7 +160,7 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 	}
 
 	// Load metadata
-	metadataBytes, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.CN)
+	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
 	}
@@ -183,7 +182,6 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 	}
 
 	// Verify key exists in Vault
-	ctx := context.Background()
 	path := fmt.Sprintf("%s/keys/%s", b.config.TransitPath, keyName)
 	logical := b.client.Logical()
 	secret, err := logical.ReadWithContext(ctx, path)
@@ -199,7 +197,7 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 }
 
 // SymmetricEncrypter returns a SymmetricEncrypter for the key identified by attrs.
-func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	if attrs == nil || attrs.CN == "" {
 		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
 	}
@@ -214,7 +212,7 @@ func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.Symmetri
 
 	// Load metadata to verify key exists
 	b.mu.RLock()
-	metadataBytes, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.CN)
+	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	b.mu.RUnlock()
 
 	if err != nil {

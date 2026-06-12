@@ -81,11 +81,11 @@ func (s *Service) CA() xkms.TCGCA {
 // IssueEKCertificate issues an Endorsement Key certificate per TCG EK
 // Credential Profile. The request provides subject/SAN information, and
 // ekPubKey is the EK public key extracted from the TPM.
-func (s *Service) IssueEKCertificate(request *xkms.TrustedCACertificateRequest, ekPubKey crypto.PublicKey) (*x509.Certificate, error) {
+func (s *Service) IssueEKCertificate(ctx context.Context, request *xkms.TrustedCACertificateRequest, ekPubKey crypto.PublicKey) (*x509.Certificate, error) {
 	if request == nil {
 		return nil, ErrNilRequest
 	}
-	cert, err := s.ca.IssueEKCertificate(request, ekPubKey)
+	cert, err := s.ca.IssueEKCertificate(ctx, request, ekPubKey)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrTCGCertIssuance, err)
 	}
@@ -95,11 +95,11 @@ func (s *Service) IssueEKCertificate(request *xkms.TrustedCACertificateRequest, 
 // IssueAKCertificate issues an Attestation Key certificate per TCG spec.
 // The request provides subject/SAN information, and pubKey is the AK
 // public key extracted from the TPM.
-func (s *Service) IssueAKCertificate(request *xkms.TrustedCACertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error) {
+func (s *Service) IssueAKCertificate(ctx context.Context, request *xkms.TrustedCACertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error) {
 	if request == nil {
 		return nil, ErrNilRequest
 	}
-	cert, err := s.ca.IssueAKCertificate(request, pubKey)
+	cert, err := s.ca.IssueAKCertificate(ctx, request, pubKey)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrTCGCertIssuance, err)
 	}
@@ -108,14 +108,14 @@ func (s *Service) IssueAKCertificate(request *xkms.TrustedCACertificateRequest, 
 
 // SignTCGCSRIDevID verifies and signs a TCG-CSR-IDEVID, issuing both IAK
 // and IDevID certificates. Returns DER-encoded IAK and IDevID certificates.
-func (s *Service) SignTCGCSRIDevID(tcgCSR *xkms.TCG_CSR_IDEVID, request *xkms.TrustedCACertificateRequest) (iakDER, idevidDER []byte, err error) {
+func (s *Service) SignTCGCSRIDevID(ctx context.Context, tcgCSR *xkms.TCG_CSR_IDEVID, request *xkms.TrustedCACertificateRequest) (iakDER, idevidDER []byte, err error) {
 	if tcgCSR == nil {
 		return nil, nil, ErrNilTCGCSR
 	}
 	if request == nil {
 		return nil, nil, ErrNilRequest
 	}
-	iakDER, idevidDER, err = s.ca.SignTCGCSRIDevID(tcgCSR, request)
+	iakDER, idevidDER, err = s.ca.SignTCGCSRIDevID(ctx, tcgCSR, request)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", ErrTCGCSRSigning, err)
 	}
@@ -126,14 +126,14 @@ func (s *Service) SignTCGCSRIDevID(tcgCSR *xkms.TCG_CSR_IDEVID, request *xkms.Tr
 // generates a MakeCredential challenge, and prepares certificates. The
 // caller must complete the ActivateCredential challenge/response before
 // delivering the certificates to the device.
-func (s *Service) EnrollDevice(packedCSR []byte, request *xkms.TrustedCACertificateRequest) (*xkms.TCGEnrollmentResult, error) {
+func (s *Service) EnrollDevice(ctx context.Context, packedCSR []byte, request *xkms.TrustedCACertificateRequest) (*xkms.TCGEnrollmentResult, error) {
 	if len(packedCSR) == 0 {
 		return nil, ErrEmptyPackedCSR
 	}
 	if request == nil {
 		return nil, ErrNilRequest
 	}
-	result, err := s.ca.EnrollDevice(packedCSR, request)
+	result, err := s.ca.EnrollDevice(ctx, packedCSR, request)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrTCGEnrollment, err)
 	}
@@ -220,7 +220,7 @@ func (s *Service) GetCACertificate(_ context.Context, req *transport.GetCACertif
 // The CSRPEM field must contain a valid PEM-encoded PKCS#10 CSR. The optional
 // Profile field selects a certificate profile, and ValidityDays overrides
 // the default validity period.
-func (s *Service) SignCSR(_ context.Context, req *transport.SignCSRRequest) (*transport.SignCSRResponse, error) {
+func (s *Service) SignCSR(ctx context.Context, req *transport.SignCSRRequest) (*transport.SignCSRResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -233,7 +233,7 @@ func (s *Service) SignCSR(_ context.Context, req *transport.SignCSRRequest) (*tr
 		ValidityDays: req.ValidityDays,
 	}
 
-	cert, err := s.ca.SignCSR(req.CSRPEM, opts)
+	cert, err := s.ca.SignCSR(ctx, req.CSRPEM, opts)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCSRSigning, err)
 	}
@@ -264,7 +264,7 @@ func (s *Service) SignCSR(_ context.Context, req *transport.SignCSRRequest) (*tr
 //
 // The CommonName field is required. Optional fields include Organization,
 // SANs, ValidityDays, Algorithm, and Profile.
-func (s *Service) IssueCertificate(_ context.Context, req *transport.IssueCertificateRequest) (*transport.IssueCertificateResponse, error) {
+func (s *Service) IssueCertificate(ctx context.Context, req *transport.IssueCertificateRequest) (*transport.IssueCertificateResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -290,9 +290,9 @@ func (s *Service) IssueCertificate(_ context.Context, req *transport.IssueCertif
 	var err error
 
 	if req.Profile != "" {
-		issued, err = s.ca.IssueCertificateWithProfile(certReq, req.Profile)
+		issued, err = s.ca.IssueCertificateWithProfile(ctx, certReq, req.Profile)
 	} else {
-		issued, err = s.ca.IssueCertificate(certReq)
+		issued, err = s.ca.IssueCertificate(ctx, certReq)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCertificateIssuance, err)
@@ -311,7 +311,7 @@ func (s *Service) IssueCertificate(_ context.Context, req *transport.IssueCertif
 // The SerialNumber field must contain a decimal string representation of
 // the certificate's serial number. The Reason field should be an RFC 5280
 // CRLReason code.
-func (s *Service) RevokeCertificate(_ context.Context, req *transport.RevokeCertificateRequest) (*transport.RevokeCertificateResponse, error) {
+func (s *Service) RevokeCertificate(ctx context.Context, req *transport.RevokeCertificateRequest) (*transport.RevokeCertificateResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -324,7 +324,7 @@ func (s *Service) RevokeCertificate(_ context.Context, req *transport.RevokeCert
 		return nil, fmt.Errorf("%w: %s", ErrInvalidSerialNumber, req.SerialNumber)
 	}
 
-	if err := s.ca.Revoke(serial, req.Reason); err != nil {
+	if err := s.ca.Revoke(ctx, serial, req.Reason); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCertificateRevocation, err)
 	}
 
@@ -338,12 +338,12 @@ func (s *Service) RevokeCertificate(_ context.Context, req *transport.RevokeCert
 //
 // The request is currently empty; the CA uses its configured defaults
 // for CRL generation parameters.
-func (s *Service) GenerateCRL(_ context.Context, req *transport.GenerateCRLRequest) (*transport.GenerateCRLResponse, error) {
+func (s *Service) GenerateCRL(ctx context.Context, req *transport.GenerateCRLRequest) (*transport.GenerateCRLResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
 
-	crlDER, err := s.ca.GenerateCRL()
+	crlDER, err := s.ca.GenerateCRL(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCRLGeneration, err)
 	}

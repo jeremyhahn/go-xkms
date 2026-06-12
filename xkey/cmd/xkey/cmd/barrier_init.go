@@ -92,11 +92,16 @@ func runBarrierInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and initialize the barrier.
-	barrier, err := createBarrier(dataDir)
+	barrier, closer, err := createBarrier(dataDir)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = barrier.Close() }()
+	defer func() {
+		_ = barrier.Close()
+		if closer != nil {
+			_ = closer.Close()
+		}
+	}()
 
 	creds := xkms.SealCredentials{Secret: password}
 	if err := barrier.Initialize(context.Background(), creds); err != nil {
@@ -107,21 +112,17 @@ func runBarrierInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Report success with strategy used.
-	strategy := barrier.ActiveStrategy()
-	fmt.Fprintf(out, "Barrier initialized successfully.\n")
-	fmt.Fprintf(out, "  Strategy:        %s\n", strategy)
-	fmt.Fprintf(out, "  Data directory:  %s\n", dataDir)
-	fmt.Fprintf(out, "\nUse 'xkey barrier unseal' to unseal the barrier.\n")
+	strategy := strategyDisplayName(barrier.ActiveStrategy())
+	_, _ = fmt.Fprintf(out, "Barrier initialized successfully.\n")
+	_, _ = fmt.Fprintf(out, "  Strategy:        %s\n", strategy)
+	_, _ = fmt.Fprintf(out, "  Data directory:  %s\n", dataDir)
+	_, _ = fmt.Fprintf(out, "\nUse 'xkey barrier unseal' to unseal the barrier.\n")
 
 	return nil
 }
 
 // isValidStrategy checks whether the given strategy string is recognized.
 func isValidStrategy(s string) bool {
-	valid := map[string]bool{
-		"software": true,
-		"tpm2":     true,
-		"pkcs11":   true,
-	}
-	return valid[s]
+	_, ok := strategyFlagToID[s]
+	return ok
 }

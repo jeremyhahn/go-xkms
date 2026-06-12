@@ -14,6 +14,7 @@
 package mcp
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -31,13 +32,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createTestServer creates a server with initialized xkms for handler tests
+// createTestServer creates a server with initialized xkms for handler tests.
+// It injects the XKMSService into Config so the server has full DI.
 func createTestServer(t *testing.T) *Server {
 	t.Helper()
 
-	setupTestXKMS(t)
+	svc := setupTestXKMS(t)
+	t.Cleanup(cleanupXKMS)
 
-	server, err := NewServer(&Config{Addr: "localhost:0"})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
 	require.NoError(t, err)
 
 	return server
@@ -55,13 +58,46 @@ func TestHandler_Health(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleHealth(req)
+		result, err := server.handleHealth(context.Background(), req)
 		require.NoError(t, err)
 
 		healthResult, ok := result.(HealthResult)
 		require.True(t, ok)
 		assert.Equal(t, "healthy", healthResult.Status)
 	})
+}
+
+// TestHandler_ContextPropagation verifies that a cancelled context is threaded
+// through to handler invocations (F-10).  The health handler itself does not
+// block on the context, but the test validates that passing a cancelled context
+// does not cause a panic and that the handler function signature correctly
+// accepts and passes the ctx parameter through the dispatch chain.
+func TestHandler_ContextPropagation(t *testing.T) {
+	server := createTestServer(t)
+	defer cleanupXKMS()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	req := &JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "health",
+		Params:  json.RawMessage(`{}`),
+		ID:      1,
+	}
+
+	// health is a pure function that does not inspect the context,
+	// so it must return successfully even with a cancelled context.
+	result, err := server.handleHealth(ctx, req)
+	require.NoError(t, err)
+	healthResult, ok := result.(HealthResult)
+	require.True(t, ok)
+	assert.Equal(t, "healthy", healthResult.Status)
+
+	// handleRequest must also not panic when dispatching with a cancelled ctx.
+	resp := server.handleRequest(ctx, req, nil)
+	require.NotNil(t, resp)
+	assert.Nil(t, resp.Error)
 }
 
 // TestHandler_ListBackends tests the list backends handler
@@ -76,7 +112,7 @@ func TestHandler_ListBackends(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleListBackends(req)
+		result, err := server.handleListBackends(context.Background(), req)
 		require.NoError(t, err)
 
 		backendResult, ok := result.(ListBackendsResult)
@@ -115,7 +151,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGenerateKey(req)
+		result, err := server.handleGenerateKey(context.Background(), req)
 		require.NoError(t, err)
 
 		genResult, ok := result.(GenerateKeyResult)
@@ -141,7 +177,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGenerateKey(req)
+		result, err := server.handleGenerateKey(context.Background(), req)
 		require.NoError(t, err)
 
 		genResult, ok := result.(GenerateKeyResult)
@@ -165,7 +201,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGenerateKey(req)
+		result, err := server.handleGenerateKey(context.Background(), req)
 		require.NoError(t, err)
 
 		genResult, ok := result.(GenerateKeyResult)
@@ -188,7 +224,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGenerateKey(req)
+		_, err := server.handleGenerateKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -201,7 +237,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGenerateKey(req)
+		_, err := server.handleGenerateKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -221,7 +257,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGenerateKey(req)
+		_, err := server.handleGenerateKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid backend")
 	})
@@ -241,7 +277,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGenerateKey(req)
+		_, err := server.handleGenerateKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported key type")
 	})
@@ -261,7 +297,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGenerateKey(req)
+		result, err := server.handleGenerateKey(context.Background(), req)
 		require.NoError(t, err)
 
 		genResult, ok := result.(GenerateKeyResult)
@@ -284,7 +320,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGenerateKey(req)
+		result, err := server.handleGenerateKey(context.Background(), req)
 		require.NoError(t, err)
 
 		genResult, ok := result.(GenerateKeyResult)
@@ -308,7 +344,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGenerateKey(req)
+		_, err := server.handleGenerateKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid curve")
 	})
@@ -328,7 +364,7 @@ func TestHandler_GetKey(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("gets existing key", func(t *testing.T) {
@@ -345,7 +381,7 @@ func TestHandler_GetKey(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGetKey(req)
+		result, err := server.handleGetKey(context.Background(), req)
 		require.NoError(t, err)
 
 		getResult, ok := result.(GetKeyResult)
@@ -365,7 +401,7 @@ func TestHandler_GetKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetKey(req)
+		_, err := server.handleGetKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -378,7 +414,7 @@ func TestHandler_GetKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetKey(req)
+		_, err := server.handleGetKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -397,7 +433,7 @@ func TestHandler_GetKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetKey(req)
+		_, err := server.handleGetKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -417,7 +453,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("deletes existing key", func(t *testing.T) {
@@ -434,7 +470,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDeleteKey(req)
+		result, err := server.handleDeleteKey(context.Background(), req)
 		require.NoError(t, err)
 
 		deleteResult, ok := result.(map[string]interface{})
@@ -453,7 +489,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDeleteKey(req)
+		_, err := server.handleDeleteKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -466,7 +502,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDeleteKey(req)
+		_, err := server.handleDeleteKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -481,7 +517,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 		}
 		genParamsJSON, _ := json.Marshal(genParams)
 		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-		_, err := server.handleGenerateKey(genReq)
+		_, err := server.handleGenerateKey(context.Background(), genReq)
 		require.NoError(t, err)
 
 		params := DeleteKeyParams{
@@ -497,7 +533,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDeleteKey(req)
+		result, err := server.handleDeleteKey(context.Background(), req)
 		require.NoError(t, err)
 
 		deleteResult, ok := result.(map[string]interface{})
@@ -516,7 +552,7 @@ func TestHandler_ListKeys(t *testing.T) {
 		genParams := GenerateKeyParams{KeyID: keyID, Backend: "software", KeyType: "rsa", KeySize: 2048}
 		genParamsJSON, _ := json.Marshal(genParams)
 		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-		_, err := server.handleGenerateKey(genReq)
+		_, err := server.handleGenerateKey(context.Background(), genReq)
 		require.NoError(t, err)
 	}
 
@@ -527,7 +563,7 @@ func TestHandler_ListKeys(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleListKeys(req)
+		result, err := server.handleListKeys(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListKeysResult)
@@ -550,7 +586,7 @@ func TestHandler_Sign(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("signs data successfully", func(t *testing.T) {
@@ -569,7 +605,7 @@ func TestHandler_Sign(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleSign(req)
+		result, err := server.handleSign(context.Background(), req)
 		require.NoError(t, err)
 
 		signResult, ok := result.(SignResult)
@@ -592,7 +628,7 @@ func TestHandler_Sign(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSign(req)
+		_, err := server.handleSign(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -605,7 +641,7 @@ func TestHandler_Sign(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSign(req)
+		_, err := server.handleSign(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -626,7 +662,7 @@ func TestHandler_Sign(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSign(req)
+		_, err := server.handleSign(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported hash algorithm")
 	})
@@ -646,7 +682,7 @@ func TestHandler_Verify(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Sign data
@@ -658,7 +694,7 @@ func TestHandler_Verify(t *testing.T) {
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
 	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
-	signResult, err := server.handleSign(signReq)
+	signResult, err := server.handleSign(context.Background(), signReq)
 	require.NoError(t, err)
 
 	signature := signResult.(SignResult).Signature
@@ -680,7 +716,7 @@ func TestHandler_Verify(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -704,7 +740,7 @@ func TestHandler_Verify(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleVerify(req)
+		_, err := server.handleVerify(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -717,7 +753,7 @@ func TestHandler_Verify(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleVerify(req)
+		_, err := server.handleVerify(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -746,7 +782,7 @@ func TestHandler_Verify(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -771,7 +807,7 @@ func TestHandler_Verify(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleVerify(req)
+		_, err := server.handleVerify(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported hash algorithm")
 	})
@@ -791,7 +827,7 @@ func TestHandler_RotateKey(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	initialResult, err := server.handleGenerateKey(genReq)
+	initialResult, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 	initialPEM := initialResult.(GenerateKeyResult).PublicKeyPEM
 
@@ -809,7 +845,7 @@ func TestHandler_RotateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleRotateKey(req)
+		result, err := server.handleRotateKey(context.Background(), req)
 		require.NoError(t, err)
 
 		rotateResult, ok := result.(RotateKeyResult)
@@ -831,7 +867,7 @@ func TestHandler_RotateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleRotateKey(req)
+		_, err := server.handleRotateKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -844,7 +880,7 @@ func TestHandler_RotateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleRotateKey(req)
+		_, err := server.handleRotateKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -863,7 +899,7 @@ func TestHandler_RotateKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleRotateKey(req)
+		_, err := server.handleRotateKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid backend")
 	})
@@ -892,7 +928,7 @@ func TestHandler_Subscribe(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleSubscribe(req, serverConn)
+		result, err := server.handleSubscribe(context.Background(), req, serverConn)
 		require.NoError(t, err)
 
 		subResult, ok := result.(map[string]interface{})
@@ -909,7 +945,7 @@ func TestHandler_Subscribe(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSubscribe(req, serverConn)
+		_, err := server.handleSubscribe(context.Background(), req, serverConn)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -927,7 +963,7 @@ func TestHandler_Subscribe(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleSubscribe(req, serverConn)
+		result, err := server.handleSubscribe(context.Background(), req, serverConn)
 		require.NoError(t, err)
 
 		subResult, ok := result.(map[string]interface{})
@@ -951,7 +987,7 @@ func TestHandler_Certificates(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Create a self-signed certificate for testing
@@ -989,7 +1025,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleSaveCert(req)
+		result, err := server.handleSaveCert(context.Background(), req)
 		require.NoError(t, err)
 
 		saveResult, ok := result.(map[string]interface{})
@@ -1008,7 +1044,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSaveCert(req)
+		_, err := server.handleSaveCert(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -1024,7 +1060,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSaveCert(req)
+		_, err := server.handleSaveCert(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cert_pem is required")
 	})
@@ -1043,7 +1079,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSaveCert(req)
+		_, err := server.handleSaveCert(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid certificate PEM")
 	})
@@ -1056,7 +1092,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSaveCert(req)
+		_, err := server.handleSaveCert(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1072,7 +1108,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGetCert(req)
+		result, err := server.handleGetCert(context.Background(), req)
 		require.NoError(t, err)
 
 		getCertResult, ok := result.(GetCertResult)
@@ -1092,7 +1128,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetCert(req)
+		_, err := server.handleGetCert(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -1105,7 +1141,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetCert(req)
+		_, err := server.handleGetCert(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1121,7 +1157,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleCertExists(req)
+		result, err := server.handleCertExists(context.Background(), req)
 		require.NoError(t, err)
 
 		existsResult, ok := result.(CertExistsResult)
@@ -1140,7 +1176,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCertExists(req)
+		_, err := server.handleCertExists(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -1153,7 +1189,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCertExists(req)
+		_, err := server.handleCertExists(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1165,7 +1201,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleListCerts(req)
+		result, err := server.handleListCerts(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListCertsResult)
@@ -1184,7 +1220,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDeleteCert(req)
+		result, err := server.handleDeleteCert(context.Background(), req)
 		require.NoError(t, err)
 
 		deleteResult, ok := result.(map[string]interface{})
@@ -1203,7 +1239,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDeleteCert(req)
+		_, err := server.handleDeleteCert(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -1216,7 +1252,7 @@ func TestHandler_Certificates(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDeleteCert(req)
+		_, err := server.handleDeleteCert(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1261,7 +1297,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleSaveCertChain(req)
+		result, err := server.handleSaveCertChain(context.Background(), req)
 		require.NoError(t, err)
 
 		saveResult, ok := result.(map[string]interface{})
@@ -1280,7 +1316,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSaveCertChain(req)
+		_, err := server.handleSaveCertChain(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -1299,7 +1335,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSaveCertChain(req)
+		_, err := server.handleSaveCertChain(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "chain_pems is required")
 	})
@@ -1318,7 +1354,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSaveCertChain(req)
+		_, err := server.handleSaveCertChain(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid certificate PEM")
 	})
@@ -1331,7 +1367,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSaveCertChain(req)
+		_, err := server.handleSaveCertChain(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1347,7 +1383,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGetCertChain(req)
+		result, err := server.handleGetCertChain(context.Background(), req)
 		require.NoError(t, err)
 
 		getResult, ok := result.(GetCertChainResult)
@@ -1367,7 +1403,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetCertChain(req)
+		_, err := server.handleGetCertChain(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -1380,7 +1416,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetCertChain(req)
+		_, err := server.handleGetCertChain(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1402,7 +1438,7 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetTLSCertificate(req)
+		_, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -1415,7 +1451,7 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetTLSCertificate(req)
+		_, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1434,7 +1470,7 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetTLSCertificate(req)
+		_, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid backend")
 	})
@@ -1453,7 +1489,7 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetTLSCertificate(req)
+		_, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -1473,7 +1509,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("encrypts data", func(t *testing.T) {
@@ -1491,7 +1527,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleAsymmetricEncrypt(req)
+		result, err := server.handleAsymmetricEncrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		encResult, ok := result.(AsymmetricEncryptResult)
@@ -1513,7 +1549,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleAsymmetricEncrypt(req)
+		_, err := server.handleAsymmetricEncrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -1526,7 +1562,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleAsymmetricEncrypt(req)
+		_, err := server.handleAsymmetricEncrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1546,7 +1582,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleAsymmetricEncrypt(req)
+		_, err := server.handleAsymmetricEncrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid backend")
 	})
@@ -1561,7 +1597,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 		}
 		genParamsJSON, _ := json.Marshal(genParams)
 		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-		_, err := server.handleGenerateKey(genReq)
+		_, err := server.handleGenerateKey(context.Background(), genReq)
 		require.NoError(t, err)
 
 		params := AsymmetricEncryptParams{
@@ -1578,7 +1614,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err = server.handleAsymmetricEncrypt(req)
+		_, err = server.handleAsymmetricEncrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not an RSA key")
 	})
@@ -1598,14 +1634,14 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Get a signer for the key to extract the public key
-	attrs, err := server.findKeyByCN("test-asym-decrypt-key")
+	attrs, err := server.findKeyByCN(context.Background(), "test-asym-decrypt-key")
 	require.NoError(t, err)
 
-	signer, err := server.keystore.Signer(attrs)
+	signer, err := server.keystore.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	rsaPubKey, ok := signer.Public().(*rsa.PublicKey)
@@ -1631,7 +1667,7 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleAsymmetricDecrypt(req)
+		result, err := server.handleAsymmetricDecrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		decResult, ok := result.(AsymmetricDecryptResult)
@@ -1653,7 +1689,7 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleAsymmetricDecrypt(req)
+		_, err := server.handleAsymmetricDecrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -1666,7 +1702,7 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleAsymmetricDecrypt(req)
+		_, err := server.handleAsymmetricDecrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1686,7 +1722,7 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleAsymmetricDecrypt(req)
+		_, err := server.handleAsymmetricDecrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid backend")
 	})
@@ -1713,7 +1749,7 @@ func TestHandler_CopyKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "source_backend is required")
 	})
@@ -1734,7 +1770,7 @@ func TestHandler_CopyKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "source_key_id is required")
 	})
@@ -1755,7 +1791,7 @@ func TestHandler_CopyKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "dest_backend is required")
 	})
@@ -1776,7 +1812,7 @@ func TestHandler_CopyKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "dest_key_id is required")
 	})
@@ -1797,7 +1833,7 @@ func TestHandler_CopyKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "algorithm is required")
 	})
@@ -1810,7 +1846,7 @@ func TestHandler_CopyKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1835,7 +1871,7 @@ func TestHandler_GetImportParameters(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetImportParameters(req)
+		_, err := server.handleGetImportParameters(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -1848,7 +1884,7 @@ func TestHandler_GetImportParameters(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetImportParameters(req)
+		_, err := server.handleGetImportParameters(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1868,7 +1904,7 @@ func TestHandler_GetImportParameters(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetImportParameters(req)
+		_, err := server.handleGetImportParameters(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid backend")
 	})
@@ -1887,7 +1923,7 @@ func TestHandler_WrapKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleWrapKey(req)
+		_, err := server.handleWrapKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1907,7 +1943,7 @@ func TestHandler_WrapKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleWrapKey(req)
+		_, err := server.handleWrapKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid wrapping public key PEM")
 	})
@@ -1930,7 +1966,7 @@ func TestHandler_WrapKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleWrapKey(req)
+		_, err := server.handleWrapKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse public key")
 	})
@@ -1956,7 +1992,7 @@ func TestHandler_ImportKeyMaterial(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleImportKeyMaterial(req)
+		_, err := server.handleImportKeyMaterial(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -1969,7 +2005,7 @@ func TestHandler_ImportKeyMaterial(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleImportKeyMaterial(req)
+		_, err := server.handleImportKeyMaterial(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -1990,7 +2026,7 @@ func TestHandler_ImportKeyMaterial(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleImportKeyMaterial(req)
+		_, err := server.handleImportKeyMaterial(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid backend")
 	})
@@ -2015,7 +2051,7 @@ func TestHandler_ExportKeyMaterial(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleExportKeyMaterial(req)
+		_, err := server.handleExportKeyMaterial(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -2028,7 +2064,7 @@ func TestHandler_ExportKeyMaterial(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleExportKeyMaterial(req)
+		_, err := server.handleExportKeyMaterial(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -2048,7 +2084,7 @@ func TestHandler_ExportKeyMaterial(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleExportKeyMaterial(req)
+		_, err := server.handleExportKeyMaterial(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -2068,7 +2104,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("encrypts data", func(t *testing.T) {
@@ -2086,7 +2122,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleEncrypt(req)
+		result, err := server.handleEncrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		encResult, ok := result.(EncryptResult)
@@ -2111,7 +2147,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleEncrypt(req)
+		result, err := server.handleEncrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		encResult, ok := result.(EncryptResult)
@@ -2133,7 +2169,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleEncrypt(req)
+		_, err := server.handleEncrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -2153,7 +2189,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleEncrypt(req)
+		_, err := server.handleEncrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "plaintext is required")
 	})
@@ -2166,7 +2202,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleEncrypt(req)
+		_, err := server.handleEncrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -2186,7 +2222,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Encrypt data first using the software backend
@@ -2197,7 +2233,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 	}
 	encryptParamsJSON, _ := json.Marshal(encryptParams)
 	encryptReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.encrypt", Params: encryptParamsJSON, ID: 1}
-	encryptResult, err := server.handleEncrypt(encryptReq)
+	encryptResult, err := server.handleEncrypt(context.Background(), encryptReq)
 	require.NoError(t, err)
 
 	encResult := encryptResult.(EncryptResult)
@@ -2219,7 +2255,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDecrypt(req)
+		result, err := server.handleDecrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		decResult, ok := result.(DecryptResult)
@@ -2237,7 +2273,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 		}
 		encryptParamsAADJSON, _ := json.Marshal(encryptParamsAAD)
 		encryptReqAAD := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.encrypt", Params: encryptParamsAADJSON, ID: 1}
-		encryptResultAAD, err := server.handleEncrypt(encryptReqAAD)
+		encryptResultAAD, err := server.handleEncrypt(context.Background(), encryptReqAAD)
 		require.NoError(t, err)
 
 		encResultAAD := encryptResultAAD.(EncryptResult)
@@ -2259,7 +2295,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDecrypt(req)
+		result, err := server.handleDecrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		decResult, ok := result.(DecryptResult)
@@ -2281,7 +2317,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDecrypt(req)
+		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -2294,7 +2330,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDecrypt(req)
+		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -2315,7 +2351,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDecrypt(req)
+		result, err := server.handleDecrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		decResult, ok := result.(DecryptResult)
@@ -2338,17 +2374,17 @@ func TestHandler_FindKeyByCN(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("finds existing key", func(t *testing.T) {
-		attrs, err := server.findKeyByCN("find-key-test")
+		attrs, err := server.findKeyByCN(context.Background(), "find-key-test")
 		require.NoError(t, err)
 		assert.Equal(t, "find-key-test", attrs.CN)
 	})
 
 	t.Run("returns error for non-existent key", func(t *testing.T) {
-		_, err := server.findKeyByCN("non-existent-key")
+		_, err := server.findKeyByCN(context.Background(), "non-existent-key")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key not found")
 	})
@@ -2368,22 +2404,22 @@ func TestHandler_FindKeyInBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("finds key in specified backend", func(t *testing.T) {
-		attrs, err := server.findKeyInBackend("find-backend-key-test", "software")
+		attrs, err := server.findKeyInBackend(context.Background(), "find-backend-key-test", "software")
 		require.NoError(t, err)
 		assert.Equal(t, "find-backend-key-test", attrs.CN)
 	})
 
 	t.Run("returns error for invalid backend", func(t *testing.T) {
-		_, err := server.findKeyInBackend("find-backend-key-test", "nonexistent")
+		_, err := server.findKeyInBackend(context.Background(), "find-backend-key-test", "nonexistent")
 		require.Error(t, err)
 	})
 
 	t.Run("returns error for non-existent key", func(t *testing.T) {
-		_, err := server.findKeyInBackend("non-existent-key", "software")
+		_, err := server.findKeyInBackend(context.Background(), "non-existent-key", "software")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key not found")
 	})
@@ -2408,7 +2444,7 @@ func TestHandler_DeleteKey_NonExistent(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDeleteKey(req)
+		_, err := server.handleDeleteKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -2430,7 +2466,7 @@ func TestHandler_ListKeys_WithParams(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleListKeys(req)
+		result, err := server.handleListKeys(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListKeysResult)
@@ -2451,7 +2487,7 @@ func TestHandler_ListCerts_Empty(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleListCerts(req)
+		result, err := server.handleListCerts(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListCertsResult)
@@ -2476,7 +2512,7 @@ func TestHandler_CertExists_NotFound(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleCertExists(req)
+		result, err := server.handleCertExists(context.Background(), req)
 		require.NoError(t, err)
 
 		existsResult, ok := result.(CertExistsResult)
@@ -2501,7 +2537,7 @@ func TestHandler_GetCert_NotFound(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetCert(req)
+		_, err := server.handleGetCert(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to get certificate")
 	})
@@ -2523,7 +2559,7 @@ func TestHandler_GetCertChain_NotFound(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetCertChain(req)
+		_, err := server.handleGetCertChain(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to get certificate chain")
 	})
@@ -2545,7 +2581,7 @@ func TestHandler_DeleteCert_NotFound(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDeleteCert(req)
+		_, err := server.handleDeleteCert(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to delete certificate")
 	})
@@ -2572,7 +2608,7 @@ func TestHandler_Sign_NonExistentKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSign(req)
+		_, err := server.handleSign(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -2600,7 +2636,7 @@ func TestHandler_Verify_NonExistentKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleVerify(req)
+		_, err := server.handleVerify(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -2625,7 +2661,7 @@ func TestHandler_RotateKey_NonExistent(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleRotateKey(req)
+		_, err := server.handleRotateKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -2651,7 +2687,7 @@ func TestHandler_Encrypt_NonExistentKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleEncrypt(req)
+		_, err := server.handleEncrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -2677,7 +2713,7 @@ func TestHandler_Decrypt_NonExistentKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDecrypt(req)
+		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -2703,7 +2739,7 @@ func TestHandler_AsymmetricEncrypt_NonExistentKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleAsymmetricEncrypt(req)
+		_, err := server.handleAsymmetricEncrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -2729,7 +2765,7 @@ func TestHandler_AsymmetricDecrypt_NonExistentKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleAsymmetricDecrypt(req)
+		_, err := server.handleAsymmetricDecrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -2754,7 +2790,7 @@ func TestHandler_GetKey_NonExistentBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetKey(req)
+		_, err := server.handleGetKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -2774,7 +2810,7 @@ func TestHandler_Verify_InvalidSignature(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("returns false for invalid signature", func(t *testing.T) {
@@ -2794,7 +2830,7 @@ func TestHandler_Verify_InvalidSignature(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -2824,7 +2860,7 @@ func TestHandler_GenerateKey_Symmetric(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGenerateKey(req)
+		result, err := server.handleGenerateKey(context.Background(), req)
 		require.NoError(t, err)
 
 		genResult, ok := result.(GenerateKeyResult)
@@ -2847,7 +2883,7 @@ func TestHandler_GenerateKey_Symmetric(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGenerateKey(req)
+		result, err := server.handleGenerateKey(context.Background(), req)
 		require.NoError(t, err)
 
 		genResult, ok := result.(GenerateKeyResult)
@@ -2870,7 +2906,7 @@ func TestHandler_Sign_WithECDSA(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("signs data with ECDSA", func(t *testing.T) {
@@ -2889,7 +2925,7 @@ func TestHandler_Sign_WithECDSA(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleSign(req)
+		result, err := server.handleSign(context.Background(), req)
 		require.NoError(t, err)
 
 		signResult, ok := result.(SignResult)
@@ -2911,7 +2947,7 @@ func TestHandler_Sign_WithEd25519(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("signs data with Ed25519", func(t *testing.T) {
@@ -2930,7 +2966,7 @@ func TestHandler_Sign_WithEd25519(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleSign(req)
+		result, err := server.handleSign(context.Background(), req)
 		require.NoError(t, err)
 
 		signResult, ok := result.(SignResult)
@@ -2953,7 +2989,7 @@ func TestHandler_Verify_WithECDSA(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Sign data
@@ -2965,7 +3001,7 @@ func TestHandler_Verify_WithECDSA(t *testing.T) {
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
 	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
-	signResult, err := server.handleSign(signReq)
+	signResult, err := server.handleSign(context.Background(), signReq)
 	require.NoError(t, err)
 
 	signature := signResult.(SignResult).Signature
@@ -2987,7 +3023,7 @@ func TestHandler_Verify_WithECDSA(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -3009,7 +3045,7 @@ func TestHandler_Verify_WithEd25519(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Sign data
@@ -3021,7 +3057,7 @@ func TestHandler_Verify_WithEd25519(t *testing.T) {
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
 	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
-	signResult, err := server.handleSign(signReq)
+	signResult, err := server.handleSign(context.Background(), signReq)
 	require.NoError(t, err)
 
 	signature := signResult.(SignResult).Signature
@@ -3043,7 +3079,7 @@ func TestHandler_Verify_WithEd25519(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -3066,7 +3102,7 @@ func TestHandler_Sign_WithDifferentHashes(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	hashAlgs := []string{"SHA1", "SHA224", "SHA256", "SHA384", "SHA512"}
@@ -3088,7 +3124,7 @@ func TestHandler_Sign_WithDifferentHashes(t *testing.T) {
 				ID:      1,
 			}
 
-			result, err := server.handleSign(req)
+			result, err := server.handleSign(context.Background(), req)
 			require.NoError(t, err)
 
 			signResult, ok := result.(SignResult)
@@ -3112,7 +3148,7 @@ func TestHandler_Verify_SignatureAsArray(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Sign data
@@ -3124,7 +3160,7 @@ func TestHandler_Verify_SignatureAsArray(t *testing.T) {
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
 	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
-	signResult, err := server.handleSign(signReq)
+	signResult, err := server.handleSign(context.Background(), signReq)
 	require.NoError(t, err)
 
 	signature := signResult.(SignResult).Signature.([]byte)
@@ -3152,7 +3188,7 @@ func TestHandler_Verify_SignatureAsArray(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -3178,7 +3214,7 @@ func TestHandler_Verify_SignatureAsArray(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -3201,7 +3237,7 @@ func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Create a self-signed certificate
@@ -3232,7 +3268,7 @@ func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 	}
 	saveCertParamsJSON, _ := json.Marshal(saveCertParams)
 	saveCertReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.saveCert", Params: saveCertParamsJSON, ID: 1}
-	_, err = server.handleSaveCert(saveCertReq)
+	_, err = server.handleSaveCert(context.Background(), saveCertReq)
 	require.NoError(t, err)
 
 	t.Run("gets TLS certificate", func(t *testing.T) {
@@ -3249,7 +3285,7 @@ func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGetTLSCertificate(req)
+		result, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.NoError(t, err)
 
 		tlsResult, ok := result.(GetTLSCertificateResult)
@@ -3270,7 +3306,7 @@ func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGetTLSCertificate(req)
+		result, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.NoError(t, err)
 
 		tlsResult, ok := result.(GetTLSCertificateResult)
@@ -3293,14 +3329,14 @@ func TestHandler_DecryptAsymmetric(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Get the signer to extract the public key
-	attrs, err := server.findKeyByCN("test-asym-decrypt-path")
+	attrs, err := server.findKeyByCN(context.Background(), "test-asym-decrypt-path")
 	require.NoError(t, err)
 
-	signer, err := server.keystore.Signer(attrs)
+	signer, err := server.keystore.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	rsaPubKey, ok := signer.Public().(*rsa.PublicKey)
@@ -3326,7 +3362,7 @@ func TestHandler_DecryptAsymmetric(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDecrypt(req)
+		result, err := server.handleDecrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		decResult, ok := result.(DecryptResult)
@@ -3349,7 +3385,7 @@ func TestHandler_DecryptAsymmetric(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDecrypt(req)
+		result, err := server.handleDecrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		decResult, ok := result.(DecryptResult)
@@ -3380,7 +3416,7 @@ func TestHandler_CopyKey_InvalidSourceBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
 	})
 
@@ -3401,7 +3437,7 @@ func TestHandler_CopyKey_InvalidSourceBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
 	})
 }
@@ -3451,7 +3487,7 @@ func TestHandler_SaveCertChain_InvalidCertInMiddle(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSaveCertChain(req)
+		_, err := server.handleSaveCertChain(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse certificate")
 	})
@@ -3482,7 +3518,7 @@ func TestHandler_SaveCert_CorruptCertificate(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSaveCert(req)
+		_, err := server.handleSaveCert(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse certificate")
 	})
@@ -3507,7 +3543,7 @@ func TestHandler_SaveCert_CorruptCertificate(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSaveCert(req)
+		_, err := server.handleSaveCert(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid certificate PEM")
 	})
@@ -3527,7 +3563,7 @@ func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("fails when trying symmetric encrypt with asymmetric key", func(t *testing.T) {
@@ -3545,7 +3581,7 @@ func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleEncrypt(req)
+		_, err := server.handleEncrypt(context.Background(), req)
 		require.Error(t, err)
 	})
 }
@@ -3570,7 +3606,7 @@ func TestHandler_Decrypt_InvalidBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDecrypt(req)
+		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -3590,7 +3626,7 @@ func TestHandler_DeleteKey_SymmetricBackendSearch(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("deletes symmetric key without specifying backend", func(t *testing.T) {
@@ -3607,7 +3643,7 @@ func TestHandler_DeleteKey_SymmetricBackendSearch(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDeleteKey(req)
+		result, err := server.handleDeleteKey(context.Background(), req)
 		require.NoError(t, err)
 
 		deleteResult, ok := result.(map[string]interface{})
@@ -3637,7 +3673,7 @@ func TestHandler_GenerateKey_SymmetricBadBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGenerateKey(req)
+		_, err := server.handleGenerateKey(context.Background(), req)
 		require.Error(t, err)
 	})
 }
@@ -3656,7 +3692,7 @@ func TestHandler_Verify_SHA1Hash(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Sign with SHA1
@@ -3668,7 +3704,7 @@ func TestHandler_Verify_SHA1Hash(t *testing.T) {
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
 	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
-	signResult, err := server.handleSign(signReq)
+	signResult, err := server.handleSign(context.Background(), signReq)
 	require.NoError(t, err)
 
 	signature := signResult.(SignResult).Signature
@@ -3690,7 +3726,7 @@ func TestHandler_Verify_SHA1Hash(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -3713,7 +3749,7 @@ func TestHandler_Verify_SHA384Hash(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Sign with SHA384
@@ -3725,7 +3761,7 @@ func TestHandler_Verify_SHA384Hash(t *testing.T) {
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
 	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
-	signResult, err := server.handleSign(signReq)
+	signResult, err := server.handleSign(context.Background(), signReq)
 	require.NoError(t, err)
 
 	signature := signResult.(SignResult).Signature
@@ -3747,7 +3783,7 @@ func TestHandler_Verify_SHA384Hash(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -3770,7 +3806,7 @@ func TestHandler_Verify_SHA512Hash(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Sign with SHA512
@@ -3782,7 +3818,7 @@ func TestHandler_Verify_SHA512Hash(t *testing.T) {
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
 	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
-	signResult, err := server.handleSign(signReq)
+	signResult, err := server.handleSign(context.Background(), signReq)
 	require.NoError(t, err)
 
 	signature := signResult.(SignResult).Signature
@@ -3804,7 +3840,7 @@ func TestHandler_Verify_SHA512Hash(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -3827,7 +3863,7 @@ func TestHandler_GetTLSCertificate_WithChain(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Create certificates for chain
@@ -3883,7 +3919,7 @@ func TestHandler_GetTLSCertificate_WithChain(t *testing.T) {
 	}
 	saveCertParamsJSON, _ := json.Marshal(saveCertParams)
 	saveCertReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.saveCert", Params: saveCertParamsJSON, ID: 1}
-	_, err = server.handleSaveCert(saveCertReq)
+	_, err = server.handleSaveCert(context.Background(), saveCertReq)
 	require.NoError(t, err)
 
 	// Save certificate chain
@@ -3893,7 +3929,7 @@ func TestHandler_GetTLSCertificate_WithChain(t *testing.T) {
 	}
 	saveChainParamsJSON, _ := json.Marshal(saveChainParams)
 	saveChainReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.saveCertChain", Params: saveChainParamsJSON, ID: 1}
-	_, err = server.handleSaveCertChain(saveChainReq)
+	_, err = server.handleSaveCertChain(context.Background(), saveChainReq)
 	require.NoError(t, err)
 
 	t.Run("gets TLS certificate with chain", func(t *testing.T) {
@@ -3910,7 +3946,7 @@ func TestHandler_GetTLSCertificate_WithChain(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGetTLSCertificate(req)
+		result, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.NoError(t, err)
 
 		tlsResult, ok := result.(GetTLSCertificateResult)
@@ -3933,7 +3969,7 @@ func TestHandler_Encrypt_DefaultBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("encrypts without specifying backend", func(t *testing.T) {
@@ -3951,7 +3987,7 @@ func TestHandler_Encrypt_DefaultBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleEncrypt(req)
+		result, err := server.handleEncrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		encResult, ok := result.(EncryptResult)
@@ -3980,7 +4016,7 @@ func TestHandler_GetImportParameters_Success(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGetImportParameters(req)
+		result, err := server.handleGetImportParameters(context.Background(), req)
 		require.NoError(t, err)
 
 		importResult, ok := result.(GetImportParametersResult)
@@ -4003,7 +4039,7 @@ func TestHandler_WrapKey_Success(t *testing.T) {
 	}
 	importParamsJSON, _ := json.Marshal(importParamsReq)
 	importReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getImportParameters", Params: importParamsJSON, ID: 1}
-	importResult, err := server.handleGetImportParameters(importReq)
+	importResult, err := server.handleGetImportParameters(context.Background(), importReq)
 	require.NoError(t, err)
 
 	importParams := importResult.(GetImportParametersResult)
@@ -4029,7 +4065,7 @@ func TestHandler_WrapKey_Success(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleWrapKey(req)
+		result, err := server.handleWrapKey(context.Background(), req)
 		require.NoError(t, err)
 
 		wrapResult, ok := result.(WrapKeyResult)
@@ -4053,7 +4089,7 @@ func TestHandler_ImportExportKeyFlow(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("handles export when wrapping key is too small", func(t *testing.T) {
@@ -4072,7 +4108,7 @@ func TestHandler_ImportExportKeyFlow(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleExportKeyMaterial(req)
+		_, err := server.handleExportKeyMaterial(context.Background(), req)
 		// This will error due to key size limitations
 		require.Error(t, err)
 	})
@@ -4091,7 +4127,7 @@ func TestHandler_ImportKey_ErrorPath(t *testing.T) {
 	}
 	importParamsJSON, _ := json.Marshal(importParamsReq)
 	importReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getImportParameters", Params: importParamsJSON, ID: 1}
-	importResult, err := server.handleGetImportParameters(importReq)
+	importResult, err := server.handleGetImportParameters(context.Background(), importReq)
 	require.NoError(t, err)
 
 	importParams := importResult.(GetImportParametersResult)
@@ -4109,7 +4145,7 @@ func TestHandler_ImportKey_ErrorPath(t *testing.T) {
 	}
 	wrapParamsJSON, _ := json.Marshal(wrapParamsReq)
 	wrapReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.wrapKey", Params: wrapParamsJSON, ID: 1}
-	wrapResult, err := server.handleWrapKey(wrapReq)
+	wrapResult, err := server.handleWrapKey(context.Background(), wrapReq)
 	require.NoError(t, err)
 
 	wrapped := wrapResult.(WrapKeyResult)
@@ -4133,7 +4169,7 @@ func TestHandler_ImportKey_ErrorPath(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleImportKeyMaterial(req)
+		_, err := server.handleImportKeyMaterial(context.Background(), req)
 		require.Error(t, err)
 	})
 }
@@ -4150,7 +4186,7 @@ func TestHandler_ListKeys_Empty(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleListKeys(req)
+		result, err := server.handleListKeys(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListKeysResult)
@@ -4174,7 +4210,7 @@ func TestHandler_CopyKey_ErrorFlow(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("fails to copy non-exportable key", func(t *testing.T) {
@@ -4194,7 +4230,7 @@ func TestHandler_CopyKey_ErrorFlow(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to export key")
 	})
@@ -4215,7 +4251,7 @@ func TestHandler_ExportKey_NonExportableKey(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("fails to export non-exportable key", func(t *testing.T) {
@@ -4232,7 +4268,7 @@ func TestHandler_ExportKey_NonExportableKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleExportKeyMaterial(req)
+		_, err := server.handleExportKeyMaterial(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not exportable")
 	})
@@ -4252,7 +4288,7 @@ func TestHandler_Decrypt_SymmetricWithInvalidCiphertext(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("fails with invalid ciphertext", func(t *testing.T) {
@@ -4271,7 +4307,7 @@ func TestHandler_Decrypt_SymmetricWithInvalidCiphertext(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDecrypt(req)
+		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
 	})
 }
@@ -4306,7 +4342,7 @@ func TestHandler_ListCerts_WithCerts(t *testing.T) {
 	}
 	saveCertParamsJSON, _ := json.Marshal(saveCertParams)
 	saveCertReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.saveCert", Params: saveCertParamsJSON, ID: 1}
-	_, err = server.handleSaveCert(saveCertReq)
+	_, err = server.handleSaveCert(context.Background(), saveCertReq)
 	require.NoError(t, err)
 
 	t.Run("lists certs with existing certs", func(t *testing.T) {
@@ -4316,7 +4352,7 @@ func TestHandler_ListCerts_WithCerts(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleListCerts(req)
+		result, err := server.handleListCerts(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListCertsResult)
@@ -4339,7 +4375,7 @@ func TestHandler_DeleteKey_SearchFallback(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("deletes key without specifying backend", func(t *testing.T) {
@@ -4356,7 +4392,7 @@ func TestHandler_DeleteKey_SearchFallback(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDeleteKey(req)
+		result, err := server.handleDeleteKey(context.Background(), req)
 		require.NoError(t, err)
 
 		deleteResult, ok := result.(map[string]interface{})
@@ -4381,7 +4417,7 @@ func TestHandler_ListKeys_MultipleKeys(t *testing.T) {
 		}
 		genParamsJSON, _ := json.Marshal(genParams)
 		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-		_, err := server.handleGenerateKey(genReq)
+		_, err := server.handleGenerateKey(context.Background(), genReq)
 		require.NoError(t, err)
 	}
 
@@ -4392,7 +4428,7 @@ func TestHandler_ListKeys_MultipleKeys(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleListKeys(req)
+		result, err := server.handleListKeys(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListKeysResult)
@@ -4415,7 +4451,7 @@ func TestHandler_Sign_InvalidHashAlgorithm(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("fails with invalid hash algorithm", func(t *testing.T) {
@@ -4434,7 +4470,7 @@ func TestHandler_Sign_InvalidHashAlgorithm(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSign(req)
+		_, err := server.handleSign(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported hash algorithm")
 	})
@@ -4454,7 +4490,7 @@ func TestHandler_Verify_InvalidHashAlgorithm(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("fails with invalid hash algorithm", func(t *testing.T) {
@@ -4474,7 +4510,7 @@ func TestHandler_Verify_InvalidHashAlgorithm(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleVerify(req)
+		_, err := server.handleVerify(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported hash algorithm")
 	})
@@ -4494,7 +4530,7 @@ func TestHandler_GetKey_WithDefaultBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("gets key without specifying backend", func(t *testing.T) {
@@ -4511,7 +4547,7 @@ func TestHandler_GetKey_WithDefaultBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGetKey(req)
+		result, err := server.handleGetKey(context.Background(), req)
 		require.NoError(t, err)
 
 		getResult, ok := result.(GetKeyResult)
@@ -4534,7 +4570,7 @@ func TestHandler_DeleteKey_WithBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("deletes key with backend specified", func(t *testing.T) {
@@ -4551,7 +4587,7 @@ func TestHandler_DeleteKey_WithBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDeleteKey(req)
+		result, err := server.handleDeleteKey(context.Background(), req)
 		require.NoError(t, err)
 
 		deleteResult, ok := result.(map[string]interface{})
@@ -4580,7 +4616,7 @@ func TestHandler_Decrypt_WithEmptyCiphertext(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDecrypt(req)
+		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -4606,7 +4642,7 @@ func TestHandler_Encrypt_InvalidBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleEncrypt(req)
+		_, err := server.handleEncrypt(context.Background(), req)
 		require.Error(t, err)
 	})
 }
@@ -4631,7 +4667,7 @@ func TestHandler_GenerateKey_Ed25519(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleGenerateKey(req)
+		result, err := server.handleGenerateKey(context.Background(), req)
 		require.NoError(t, err)
 
 		genResult, ok := result.(GenerateKeyResult)
@@ -4654,7 +4690,7 @@ func TestHandler_Sign_DefaultHash(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("signs with default hash when not specified", func(t *testing.T) {
@@ -4673,7 +4709,7 @@ func TestHandler_Sign_DefaultHash(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleSign(req)
+		result, err := server.handleSign(context.Background(), req)
 		require.NoError(t, err)
 
 		signResult, ok := result.(SignResult)
@@ -4696,7 +4732,7 @@ func TestHandler_RotateKey_WithBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("rotates key with backend specified", func(t *testing.T) {
@@ -4713,7 +4749,7 @@ func TestHandler_RotateKey_WithBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleRotateKey(req)
+		result, err := server.handleRotateKey(context.Background(), req)
 		require.NoError(t, err)
 
 		rotateResult, ok := result.(RotateKeyResult)
@@ -4736,7 +4772,7 @@ func TestHandler_Sign_WithoutBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("signs without specifying backend", func(t *testing.T) {
@@ -4755,7 +4791,7 @@ func TestHandler_Sign_WithoutBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleSign(req)
+		result, err := server.handleSign(context.Background(), req)
 		require.NoError(t, err)
 
 		signResult, ok := result.(SignResult)
@@ -4778,7 +4814,7 @@ func TestHandler_Verify_WithoutBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Sign data
@@ -4790,7 +4826,7 @@ func TestHandler_Verify_WithoutBackend(t *testing.T) {
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
 	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
-	signResult, err := server.handleSign(signReq)
+	signResult, err := server.handleSign(context.Background(), signReq)
 	require.NoError(t, err)
 
 	signature := signResult.(SignResult).Signature
@@ -4812,7 +4848,7 @@ func TestHandler_Verify_WithoutBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -4835,7 +4871,7 @@ func TestHandler_ListKeys_InvalidParams(t *testing.T) {
 		}
 
 		// Should not error - listKeys can work without params
-		result, err := server.handleListKeys(req)
+		result, err := server.handleListKeys(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListKeysResult)
@@ -4858,7 +4894,7 @@ func TestHandler_AsymmetricEncrypt_DefaultBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("encrypts without specifying backend", func(t *testing.T) {
@@ -4876,7 +4912,7 @@ func TestHandler_AsymmetricEncrypt_DefaultBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleAsymmetricEncrypt(req)
+		result, err := server.handleAsymmetricEncrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		encResult, ok := result.(AsymmetricEncryptResult)
@@ -4899,14 +4935,14 @@ func TestHandler_AsymmetricDecrypt_DefaultBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Get signer to get public key
-	attrs, err := server.findKeyByCN("test-asym-dec-no-backend")
+	attrs, err := server.findKeyByCN(context.Background(), "test-asym-dec-no-backend")
 	require.NoError(t, err)
 
-	signer, err := server.keystore.Signer(attrs)
+	signer, err := server.keystore.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	rsaPubKey := signer.Public().(*rsa.PublicKey)
@@ -4931,7 +4967,7 @@ func TestHandler_AsymmetricDecrypt_DefaultBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleAsymmetricDecrypt(req)
+		result, err := server.handleAsymmetricDecrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		decResult, ok := result.(AsymmetricDecryptResult)
@@ -4954,7 +4990,7 @@ func TestHandler_DeleteKey_SearchSymmetric(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("deletes key found in search", func(t *testing.T) {
@@ -4971,7 +5007,7 @@ func TestHandler_DeleteKey_SearchSymmetric(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDeleteKey(req)
+		result, err := server.handleDeleteKey(context.Background(), req)
 		require.NoError(t, err)
 
 		deleteResult, ok := result.(map[string]interface{})
@@ -4994,7 +5030,7 @@ func TestHandler_ListKeys_WithBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("lists keys with backend filter", func(t *testing.T) {
@@ -5010,7 +5046,7 @@ func TestHandler_ListKeys_WithBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleListKeys(req)
+		result, err := server.handleListKeys(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListKeysResult)
@@ -5033,7 +5069,7 @@ func TestHandler_Decrypt_Asymmetric(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Get the public key to encrypt with
@@ -5043,7 +5079,7 @@ func TestHandler_Decrypt_Asymmetric(t *testing.T) {
 	}
 	getParamsJSON, _ := json.Marshal(getParams)
 	getReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getKey", Params: getParamsJSON, ID: 2}
-	result, err := server.handleGetKey(getReq)
+	result, err := server.handleGetKey(context.Background(), getReq)
 	require.NoError(t, err)
 	getResult := result.(GetKeyResult)
 
@@ -5074,7 +5110,7 @@ func TestHandler_Decrypt_Asymmetric(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDecrypt(req)
+		result, err := server.handleDecrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		decryptResult, ok := result.(DecryptResult)
@@ -5096,7 +5132,7 @@ func TestHandler_DeleteKey_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDeleteKey(req)
+		_, err := server.handleDeleteKey(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -5114,7 +5150,7 @@ func TestHandler_DeleteKey_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDeleteKey(req)
+		_, err := server.handleDeleteKey(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -5133,7 +5169,7 @@ func TestHandler_DeleteKey_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDeleteKey(req)
+		_, err := server.handleDeleteKey(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -5152,7 +5188,7 @@ func TestHandler_Verify_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleVerify(req)
+		_, err := server.handleVerify(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -5171,7 +5207,7 @@ func TestHandler_Verify_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleVerify(req)
+		_, err := server.handleVerify(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -5191,7 +5227,7 @@ func TestHandler_Verify_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleVerify(req)
+		_, err := server.handleVerify(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -5210,7 +5246,7 @@ func TestHandler_Sign_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSign(req)
+		_, err := server.handleSign(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -5228,7 +5264,7 @@ func TestHandler_Sign_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSign(req)
+		_, err := server.handleSign(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -5254,7 +5290,7 @@ func TestHandler_HandleGenerateKey_MoreErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGenerateKey(req)
+		_, err := server.handleGenerateKey(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported key type")
 	})
@@ -5281,7 +5317,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "dest_backend is required")
 	})
@@ -5302,7 +5338,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "dest_key_id is required")
 	})
@@ -5323,7 +5359,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "algorithm is required")
 	})
@@ -5345,7 +5381,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "source backend not found")
 	})
@@ -5367,7 +5403,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "destination backend not found")
 	})
@@ -5387,7 +5423,7 @@ func TestHandler_Decrypt_WithBackendSearch(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Encrypt some data
@@ -5398,7 +5434,7 @@ func TestHandler_Decrypt_WithBackendSearch(t *testing.T) {
 	}
 	encryptParamsJSON, _ := json.Marshal(encryptParams)
 	encryptReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.encrypt", Params: encryptParamsJSON, ID: 2}
-	encResult, err := server.handleEncrypt(encryptReq)
+	encResult, err := server.handleEncrypt(context.Background(), encryptReq)
 	require.NoError(t, err)
 	encryptResult := encResult.(EncryptResult)
 
@@ -5419,7 +5455,7 @@ func TestHandler_Decrypt_WithBackendSearch(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDecrypt(req)
+		result, err := server.handleDecrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		decryptResult, ok := result.(DecryptResult)
@@ -5443,7 +5479,7 @@ func TestHandler_Decrypt_SearchInSoftwareBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Get the public key to encrypt with
@@ -5453,7 +5489,7 @@ func TestHandler_Decrypt_SearchInSoftwareBackend(t *testing.T) {
 	}
 	getParamsJSON, _ := json.Marshal(getParams)
 	getReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getKey", Params: getParamsJSON, ID: 2}
-	result, err := server.handleGetKey(getReq)
+	result, err := server.handleGetKey(context.Background(), getReq)
 	require.NoError(t, err)
 	getResult := result.(GetKeyResult)
 
@@ -5484,7 +5520,7 @@ func TestHandler_Decrypt_SearchInSoftwareBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDecrypt(req)
+		result, err := server.handleDecrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		decryptResult, ok := result.(DecryptResult)
@@ -5513,7 +5549,7 @@ func TestHandler_Decrypt_KeyNotFoundAnywhere(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDecrypt(req)
+		_, err := server.handleDecrypt(context.Background(), req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -5534,7 +5570,7 @@ func TestHandler_Verify_SignatureAsStruct(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("handles signature as map/struct type", func(t *testing.T) {
@@ -5557,7 +5593,7 @@ func TestHandler_Verify_SignatureAsStruct(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -5583,7 +5619,7 @@ func TestHandler_Verify_SignatureAsStruct(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -5606,7 +5642,7 @@ func TestHandler_Verify_WithByteSliceSignature(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Sign data
@@ -5618,7 +5654,7 @@ func TestHandler_Verify_WithByteSliceSignature(t *testing.T) {
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
 	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
-	signResult, err := server.handleSign(signReq)
+	signResult, err := server.handleSign(context.Background(), signReq)
 	require.NoError(t, err)
 
 	signature := signResult.(SignResult).Signature.([]byte)
@@ -5640,7 +5676,7 @@ func TestHandler_Verify_WithByteSliceSignature(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(req)
+		result, err := server.handleVerify(context.Background(), req)
 		require.NoError(t, err)
 
 		verifyResult, ok := result.(VerifyResult)
@@ -5680,7 +5716,7 @@ func TestHandler_ListCerts_Success(t *testing.T) {
 	}
 	saveCertParamsJSON, _ := json.Marshal(saveCertParams)
 	saveCertReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.saveCert", Params: saveCertParamsJSON, ID: 1}
-	_, err = server.handleSaveCert(saveCertReq)
+	_, err = server.handleSaveCert(context.Background(), saveCertReq)
 	require.NoError(t, err)
 
 	t.Run("lists certificates with at least one cert", func(t *testing.T) {
@@ -5690,7 +5726,7 @@ func TestHandler_ListCerts_Success(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleListCerts(req)
+		result, err := server.handleListCerts(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListCertsResult)

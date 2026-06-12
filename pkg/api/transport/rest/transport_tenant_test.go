@@ -93,7 +93,7 @@ func newTenantTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 	}
 	svc.SetBarrierRegistry(registry)
 
-	handlers := restapi.NewTenantHandlers(registry)
+	handlers := restapi.NewTenantHandlers(registry, svc)
 
 	r := chi.NewRouter()
 

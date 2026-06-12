@@ -59,14 +59,14 @@ func setupTestWithPasswordStore(t *testing.T) *Service {
 	})
 	require.NoError(t, err)
 
-	svc, err := xkms.Get()
+	xkmsSvc, err := xkms.Get()
 	require.NoError(t, err)
 
 	pwBackend := storage.NewMemory()
 	store := staticpw.NewStore(pwBackend)
-	svc.SetPasswordStore(store)
+	xkmsSvc.SetPasswordStore(store)
 
-	return NewService(nil, nil)
+	return NewService(nil, nil, xkmsSvc)
 }
 
 // ---- AttestKey with initialized backend ----
@@ -349,7 +349,7 @@ func TestPasswordEntryToProto_AllFields(t *testing.T) {
 
 func TestPasswordOps_XKMSNotInitialized(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	ctx := context.Background()
 
 	_, err := svc.PasswordAdd(ctx, &pb.PasswordAddRequest{Name: "t", Password: "p"})

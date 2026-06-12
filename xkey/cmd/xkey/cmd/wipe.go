@@ -119,21 +119,21 @@ func runWipe(cmd *cobra.Command, args []string) error {
 
 	// Confirmation prompt
 	if !wipeForce {
-		fmt.Fprintln(cmd.OutOrStdout(), "======================================================================")
-		fmt.Fprintln(cmd.OutOrStdout(), "                         WARNING")
-		fmt.Fprintln(cmd.OutOrStdout(), "")
-		fmt.Fprintln(cmd.OutOrStdout(), "  You are about to PERMANENTLY DESTROY the encrypted container")
-		fmt.Fprintln(cmd.OutOrStdout(), "  and ALL data stored within it.")
-		fmt.Fprintln(cmd.OutOrStdout(), "")
-		fmt.Fprintln(cmd.OutOrStdout(), "  THIS ACTION CANNOT BE UNDONE!")
-		fmt.Fprintln(cmd.OutOrStdout(), "======================================================================")
-		fmt.Fprintln(cmd.OutOrStdout())
-		fmt.Fprintf(cmd.OutOrStdout(), "Container: %s\n", vol.LUKSPath)
-		fmt.Fprintf(cmd.OutOrStdout(), "Size:      %s\n", formatSize(size))
-		fmt.Fprintf(cmd.OutOrStdout(), "Standard:  %s\n", wipeStandard)
-		fmt.Fprintf(cmd.OutOrStdout(), "Pattern:   %s\n", patternDesc)
-		fmt.Fprintln(cmd.OutOrStdout())
-		fmt.Fprint(cmd.OutOrStdout(), "Type 'DESTROY' to confirm: ")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "======================================================================")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "                         WARNING")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  You are about to PERMANENTLY DESTROY the encrypted container")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  and ALL data stored within it.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  THIS ACTION CANNOT BE UNDONE!")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "======================================================================")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout())
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Container: %s\n", vol.LUKSPath)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Size:      %s\n", formatSize(size))
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Standard:  %s\n", wipeStandard)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pattern:   %s\n", patternDesc)
+		_, _ = fmt.Fprintln(cmd.OutOrStdout())
+		_, _ = fmt.Fprint(cmd.OutOrStdout(), "Type 'DESTROY' to confirm: ")
 
 		reader := bufio.NewReader(os.Stdin)
 		confirmation, err := reader.ReadString('\n')
@@ -149,26 +149,26 @@ func runWipe(cmd *cobra.Command, args []string) error {
 
 	// Lock container if mounted
 	if vol.IsMounted() || vol.IsOpen() {
-		fmt.Fprintln(cmd.OutOrStdout(), "Locking container...")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Locking container...")
 		if err := vol.Lock(); err != nil {
 			return &WipeError{Operation: "lock", Message: "container must be unlocked first", Err: err}
 		}
 	}
 
 	// Perform wipe operation using local wipe implementation
-	fmt.Fprintf(cmd.OutOrStdout(), "Wiping container (%s)...\n", wipeStandard)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Wiping container (%s)...\n", wipeStandard)
 	if err := wipeContainerWithStandard(vol.LUKSPath, standard); err != nil {
 		return &WipeError{Operation: "wipe", Err: err}
 	}
 
 	// Remove the container file
-	fmt.Fprintln(cmd.OutOrStdout(), "Removing container file...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Removing container file...")
 	if err := os.Remove(vol.LUKSPath); err != nil {
 		return &WipeError{Operation: "remove_file", Err: err}
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Container securely destroyed.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Container securely destroyed.")
 	return nil
 }
 

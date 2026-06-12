@@ -14,6 +14,7 @@
 package migration
 
 import (
+	"context"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend/mocks"
@@ -95,7 +96,7 @@ func TestMigrateKeyNilAttributes(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = m.Close() }()
 
-	err = m.MigrateKey(nil, nil)
+	err = m.MigrateKey(context.Background(), nil, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "nil")
 }
@@ -117,7 +118,7 @@ func TestMigrateKeyAfterClose(t *testing.T) {
 		StoreType: types.StoreSoftware,
 	}
 
-	err = m.MigrateKey(attrs, nil)
+	err = m.MigrateKey(context.Background(), attrs, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
 }
@@ -138,7 +139,7 @@ func TestMigrateKeyWithoutExportSupport(t *testing.T) {
 		StoreType: types.StoreSoftware,
 	}
 
-	err = m.MigrateKey(attrs, nil)
+	err = m.MigrateKey(context.Background(), attrs, nil)
 	assert.Error(t, err)
 	assert.Equal(t, ErrExportNotSupported, err)
 }
@@ -160,7 +161,7 @@ func TestMigrateKeyWithoutImportSupport(t *testing.T) {
 		StoreType: types.StoreSoftware,
 	}
 
-	err = m.MigrateKey(attrs, nil)
+	err = m.MigrateKey(context.Background(), attrs, nil)
 	assert.Error(t, err)
 	assert.Equal(t, ErrExportNotSupported, err)
 }
@@ -176,7 +177,7 @@ func TestMigrationPlanAfterClose(t *testing.T) {
 	err = m.Close()
 	require.NoError(t, err)
 
-	plan, err := m.MigrationPlan(nil)
+	plan, err := m.MigrationPlan(context.Background(), nil)
 	assert.Error(t, err)
 	assert.Nil(t, plan)
 	assert.Contains(t, err.Error(), "closed")
@@ -199,7 +200,7 @@ func TestValidateMigrationAfterClose(t *testing.T) {
 		StoreType: types.StoreSoftware,
 	}
 
-	result, err := m.ValidateMigration(attrs)
+	result, err := m.ValidateMigration(context.Background(), attrs)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "closed")
@@ -216,7 +217,7 @@ func TestMigrateAllAfterClose(t *testing.T) {
 	err = m.Close()
 	require.NoError(t, err)
 
-	result, err := m.MigrateAll(nil, nil)
+	result, err := m.MigrateAll(context.Background(), nil, nil)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "closed")

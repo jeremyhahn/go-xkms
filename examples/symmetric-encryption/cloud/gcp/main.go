@@ -68,7 +68,7 @@ func gcpKMSExample() error {
 
 	// Generate key in GCP KMS
 	fmt.Println("1. Generating AES-256 key in GCP KMS...")
-	key, err := b.GenerateSymmetricKey(attrs)
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		return fmt.Errorf("failed to generate key: %w", err)
 	}
@@ -77,7 +77,7 @@ func gcpKMSExample() error {
 
 	// Get encrypter
 	fmt.Println("\n2. Creating encrypter...")
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		return fmt.Errorf("failed to get encrypter: %w", err)
 	}

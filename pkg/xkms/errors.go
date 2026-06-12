@@ -243,6 +243,12 @@ var (
 
 	// ErrImportExportNotSupported indicates the backend does not support import/export operations.
 	ErrImportExportNotSupported = errors.New("keystore: backend does not support import/export operations")
+
+	// ErrWeakOAEPHash indicates that an RSA-OAEP operation was requested with a
+	// hash algorithm weaker than SHA-256.  SHA-1 OAEP is rejected on both wrap
+	// and unwrap because no blobs were ever persisted with SHA-1 OAEP in this
+	// codebase — the wrap path has always defaulted to SHA-256.
+	ErrWeakOAEPHash = errors.New("keystore: RSA-OAEP hash must be SHA-256 or stronger")
 )
 
 // Sealing errors

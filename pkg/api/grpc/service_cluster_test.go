@@ -53,19 +53,21 @@ func (f *grpcFakeClusterReader) Leader(_ context.Context, _ uint64) (uint64, boo
 }
 
 // setClusterClientForTest wires the global servicer with the given cluster
-// reader, shard, and node id, and registers cleanup.
-func setClusterClientForTest(t *testing.T, reader xkms.ClusterReader, shardID, nodeID uint64) {
+// reader, shard, and node id, registers cleanup, and returns the XKMSService
+// so callers can construct a Service with the injected dependency.
+func setClusterClientForTest(t *testing.T, reader xkms.ClusterReader, shardID, nodeID uint64) *xkms.XKMSService {
 	t.Helper()
 	setupXKMSForTest(t)
-	svc, err := xkms.Get()
+	xkmsSvc, err := xkms.Get()
 	require.NoError(t, err)
-	svc.SetClusterClient(reader, shardID, nodeID)
+	xkmsSvc.SetClusterClient(reader, shardID, nodeID)
 	t.Cleanup(func() { xkms.Reset() })
+	return xkmsSvc
 }
 
 func TestGetClusterStatus_Standalone(t *testing.T) {
-	setClusterClientForTest(t, nil, 1, 7)
-	svc := NewService(nil, nil)
+	xkmsSvc := setClusterClientForTest(t, nil, 1, 7)
+	svc := NewService(nil, nil, xkmsSvc)
 
 	resp, err := svc.GetClusterStatus(context.Background(), &emptypb.Empty{})
 	require.NoError(t, err)
@@ -78,8 +80,8 @@ func TestGetClusterStatus_Standalone(t *testing.T) {
 
 func TestGetClusterStatus_Clustered(t *testing.T) {
 	reader := &grpcFakeClusterReader{leaderID: 2, hasLeader: true}
-	setClusterClientForTest(t, reader, 3, 1)
-	svc := NewService(nil, nil)
+	xkmsSvc := setClusterClientForTest(t, reader, 3, 1)
+	svc := NewService(nil, nil, xkmsSvc)
 
 	resp, err := svc.GetClusterStatus(context.Background(), &emptypb.Empty{})
 	require.NoError(t, err)
@@ -92,8 +94,8 @@ func TestGetClusterStatus_Clustered(t *testing.T) {
 
 func TestGetClusterStatus_ReaderError(t *testing.T) {
 	reader := &grpcFakeClusterReader{leaderErr: errors.New("raft unreachable")}
-	setClusterClientForTest(t, reader, 1, 1)
-	svc := NewService(nil, nil)
+	xkmsSvc := setClusterClientForTest(t, reader, 1, 1)
+	svc := NewService(nil, nil, xkmsSvc)
 
 	_, err := svc.GetClusterStatus(context.Background(), &emptypb.Empty{})
 	require.Error(t, err)
@@ -101,8 +103,8 @@ func TestGetClusterStatus_ReaderError(t *testing.T) {
 }
 
 func TestListClusterMembers_Standalone(t *testing.T) {
-	setClusterClientForTest(t, nil, 1, 1)
-	svc := NewService(nil, nil)
+	xkmsSvc := setClusterClientForTest(t, nil, 1, 1)
+	svc := NewService(nil, nil, xkmsSvc)
 
 	resp, err := svc.ListClusterMembers(context.Background(), &emptypb.Empty{})
 	require.NoError(t, err)
@@ -116,8 +118,8 @@ func TestListClusterMembers_Clustered(t *testing.T) {
 			{ReplicaID: 2, Address: "10.0.0.2:63001", IsLeader: false},
 		},
 	}
-	setClusterClientForTest(t, reader, 5, 1)
-	svc := NewService(nil, nil)
+	xkmsSvc := setClusterClientForTest(t, reader, 5, 1)
+	svc := NewService(nil, nil, xkmsSvc)
 
 	resp, err := svc.ListClusterMembers(context.Background(), &emptypb.Empty{})
 	require.NoError(t, err)
@@ -131,8 +133,8 @@ func TestListClusterMembers_Clustered(t *testing.T) {
 
 func TestListClusterMembers_ReaderError(t *testing.T) {
 	reader := &grpcFakeClusterReader{membersErr: errors.New("raft unreachable")}
-	setClusterClientForTest(t, reader, 2, 1)
-	svc := NewService(nil, nil)
+	xkmsSvc := setClusterClientForTest(t, reader, 2, 1)
+	svc := NewService(nil, nil, xkmsSvc)
 
 	_, err := svc.ListClusterMembers(context.Background(), &emptypb.Empty{})
 	require.Error(t, err)

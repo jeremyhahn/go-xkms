@@ -26,7 +26,7 @@
 //
 // Server configuration with mutual TLS:
 //
-//	tlsConfig, err := ca.MutualTLSConfig(serverKeyAttrs)
+//	tlsConfig, err := ca.MutualTLSConfig(ctx, serverKeyAttrs)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -37,7 +37,7 @@
 //
 // Client configuration:
 //
-//	tlsConfig, err := ca.ClientTLSConfig(clientKeyAttrs, "server.example.com")
+//	tlsConfig, err := ca.ClientTLSConfig(ctx, clientKeyAttrs, "server.example.com")
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -54,10 +54,11 @@
 //	    RequireClientCert: true,
 //	    MinVersion:        tls.VersionTLS13,
 //	}
-//	tlsConfig, err := ca.TLSConfigWithOptions(keyAttrs, opts)
+//	tlsConfig, err := ca.TLSConfigWithOptions(ctx, keyAttrs, opts)
 package ca
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -199,11 +200,11 @@ func (o *TLSConfigOptions) applyDefaults() {
 //	    KeyType:      types.KeyTypeTLS,
 //	    KeyAlgorithm: x509.ECDSA,
 //	}
-//	tlsCert, err := ca.TLSCertificate(attrs)
+//	tlsCert, err := ca.TLSCertificate(ctx, attrs)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
-func (ca *CA) TLSCertificate(attrs *types.KeyAttributes) (tls.Certificate, error) {
+func (ca *CA) TLSCertificate(ctx context.Context, attrs *types.KeyAttributes) (tls.Certificate, error) {
 	if !ca.initialized.Load() {
 		return tls.Certificate{}, ErrNotInitialized
 	}
@@ -212,7 +213,7 @@ func (ca *CA) TLSCertificate(attrs *types.KeyAttributes) (tls.Certificate, error
 		return tls.Certificate{}, fmt.Errorf("%w: key attributes required", ErrInvalidTLSOptions)
 	}
 
-	tlsCert, err := ca.keyStore.GetTLSCertificate(attrs.CN, attrs)
+	tlsCert, err := ca.keyStore.GetTLSCertificate(ctx, attrs.CN, attrs)
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("%w: %v", ErrTLSConfigFailed, err)
 	}
@@ -242,13 +243,13 @@ func (ca *CA) TLSCertificate(attrs *types.KeyAttributes) (tls.Certificate, error
 //
 // Example:
 //
-//	tlsConfig, err := ca.TLSConfig(serverKeyAttrs)
+//	tlsConfig, err := ca.TLSConfig(ctx, serverKeyAttrs)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //	listener, err := tls.Listen("tcp", ":443", tlsConfig)
-func (ca *CA) TLSConfig(attrs *types.KeyAttributes) (*tls.Config, error) {
-	return ca.TLSConfigWithOptions(attrs, nil)
+func (ca *CA) TLSConfig(ctx context.Context, attrs *types.KeyAttributes) (*tls.Config, error) {
+	return ca.TLSConfigWithOptions(ctx, attrs, nil)
 }
 
 // TLSConfigWithOptions returns a TLS configuration with custom options.
@@ -277,8 +278,8 @@ func (ca *CA) TLSConfig(attrs *types.KeyAttributes) (*tls.Config, error) {
 //	    RequireClientCert: true,
 //	    MinVersion:        tls.VersionTLS13,
 //	}
-//	tlsConfig, err := ca.TLSConfigWithOptions(serverKeyAttrs, opts)
-func (ca *CA) TLSConfigWithOptions(attrs *types.KeyAttributes, opts *TLSConfigOptions) (*tls.Config, error) {
+//	tlsConfig, err := ca.TLSConfigWithOptions(ctx, serverKeyAttrs, opts)
+func (ca *CA) TLSConfigWithOptions(ctx context.Context, attrs *types.KeyAttributes, opts *TLSConfigOptions) (*tls.Config, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
@@ -295,7 +296,7 @@ func (ca *CA) TLSConfigWithOptions(attrs *types.KeyAttributes, opts *TLSConfigOp
 	opts.applyDefaults()
 
 	// Get TLS certificate
-	tlsCert, err := ca.TLSCertificate(attrs)
+	tlsCert, err := ca.TLSCertificate(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -367,17 +368,17 @@ func (ca *CA) TLSConfigWithOptions(attrs *types.KeyAttributes, opts *TLSConfigOp
 // Example:
 //
 //	// Server without client auth
-//	tlsConfig, err := ca.ServerTLSConfig(serverKeyAttrs, false)
+//	tlsConfig, err := ca.ServerTLSConfig(ctx, serverKeyAttrs, false)
 //
 //	// Server with mutual TLS
-//	tlsConfig, err := ca.ServerTLSConfig(serverKeyAttrs, true)
-func (ca *CA) ServerTLSConfig(attrs *types.KeyAttributes, requireClientCert bool) (*tls.Config, error) {
+//	tlsConfig, err := ca.ServerTLSConfig(ctx, serverKeyAttrs, true)
+func (ca *CA) ServerTLSConfig(ctx context.Context, attrs *types.KeyAttributes, requireClientCert bool) (*tls.Config, error) {
 	opts := &TLSConfigOptions{
 		IsServer:                 true,
 		RequireClientCert:        requireClientCert,
 		PreferServerCipherSuites: true,
 	}
-	return ca.TLSConfigWithOptions(attrs, opts)
+	return ca.TLSConfigWithOptions(ctx, attrs, opts)
 }
 
 // ClientTLSConfig returns a TLS configuration suitable for clients.
@@ -397,17 +398,17 @@ func (ca *CA) ServerTLSConfig(attrs *types.KeyAttributes, requireClientCert bool
 //
 // Example:
 //
-//	tlsConfig, err := ca.ClientTLSConfig(clientKeyAttrs, "api.example.com")
+//	tlsConfig, err := ca.ClientTLSConfig(ctx, clientKeyAttrs, "api.example.com")
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //	conn, err := tls.Dial("tcp", "api.example.com:443", tlsConfig)
-func (ca *CA) ClientTLSConfig(attrs *types.KeyAttributes, serverName string) (*tls.Config, error) {
+func (ca *CA) ClientTLSConfig(ctx context.Context, attrs *types.KeyAttributes, serverName string) (*tls.Config, error) {
 	opts := &TLSConfigOptions{
 		IsServer:   false,
 		ServerName: serverName,
 	}
-	return ca.TLSConfigWithOptions(attrs, opts)
+	return ca.TLSConfigWithOptions(ctx, attrs, opts)
 }
 
 // QuantumSafeTLSConfig creates a TLS configuration optimized for post-quantum
@@ -426,8 +427,8 @@ func (ca *CA) ClientTLSConfig(attrs *types.KeyAttributes, serverName string) (*t
 //   - ErrTLSConfigFailed if the TLS configuration cannot be created
 //
 // Thread-safe: Yes
-func (ca *CA) QuantumSafeTLSConfig(attrs *types.KeyAttributes) (*tls.Config, error) {
-	tlsConfig, err := ca.TLSConfig(attrs)
+func (ca *CA) QuantumSafeTLSConfig(ctx context.Context, attrs *types.KeyAttributes) (*tls.Config, error) {
+	tlsConfig, err := ca.TLSConfig(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +460,7 @@ func (ca *CA) QuantumSafeTLSConfig(attrs *types.KeyAttributes) (*tls.Config, err
 //
 // Example (Server):
 //
-//	tlsConfig, err := ca.MutualTLSConfig(serverKeyAttrs)
+//	tlsConfig, err := ca.MutualTLSConfig(ctx, serverKeyAttrs)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -470,15 +471,15 @@ func (ca *CA) QuantumSafeTLSConfig(attrs *types.KeyAttributes) (*tls.Config, err
 //
 // Example (Client):
 //
-//	tlsConfig, err := ca.MutualTLSConfig(clientKeyAttrs)
+//	tlsConfig, err := ca.MutualTLSConfig(ctx, clientKeyAttrs)
 //	tlsConfig.ServerName = "server.example.com"
-func (ca *CA) MutualTLSConfig(attrs *types.KeyAttributes) (*tls.Config, error) {
+func (ca *CA) MutualTLSConfig(ctx context.Context, attrs *types.KeyAttributes) (*tls.Config, error) {
 	opts := &TLSConfigOptions{
 		IsServer:                 true,
 		RequireClientCert:        true,
 		PreferServerCipherSuites: true,
 	}
-	return ca.TLSConfigWithOptions(attrs, opts)
+	return ca.TLSConfigWithOptions(ctx, attrs, opts)
 }
 
 // VerifyPeerCertificate creates a verification callback for TLS connections.

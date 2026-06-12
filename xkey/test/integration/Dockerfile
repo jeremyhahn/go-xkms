@@ -55,8 +55,10 @@ RUN go mod download
 # Copy the entire project
 COPY . .
 
-# Build the xkey binary for testing
-RUN go build -o /usr/local/bin/xkey ./cmd/xkey
+# Build the xkey binary for testing. codec_json is required for the
+# go-codec based DAOs (e.g. pcrpolicy); GUI/hardware tags (webkit, pkcs11)
+# are omitted because this image lacks their development headers.
+RUN go build -tags codec_json -o /usr/local/bin/xkey ./cmd/xkey
 
 # Create test storage directory
 RUN mkdir -p /var/lib/xkey

@@ -16,6 +16,7 @@
 package pkcs11
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -647,7 +648,7 @@ func TestBackend_GenerateKey(t *testing.T) {
 				KeyAlgorithm: tt.algorithm,
 			}
 
-			_, err := b.GenerateKey(attrs)
+			_, err := b.GenerateKey(context.Background(), attrs)
 			if err == nil {
 				t.Error("GenerateKey() should return error")
 			}
@@ -860,7 +861,7 @@ func TestBackend_Signer(t *testing.T) {
 				KeyAlgorithm: tt.algorithm,
 			}
 
-			_, err = b.Signer(attrs)
+			_, err = b.Signer(context.Background(), attrs)
 			if err != ErrNotInitialized {
 				t.Errorf("Signer() error = %v, want %v", err, ErrNotInitialized)
 			}
@@ -1220,7 +1221,7 @@ func TestBackend_TypedNilChecks(t *testing.T) {
 			t.Error("Delete() with zero attrs should return error")
 		}
 
-		_, err = b.Signer(zeroAttrs)
+		_, err = b.Signer(context.Background(), zeroAttrs)
 		if err == nil {
 			t.Error("Signer() with zero attrs should return error")
 		}
@@ -1257,7 +1258,7 @@ func TestBackend_GenerateKey_AllPaths(t *testing.T) {
 				KeyAlgorithm: alg,
 			}
 
-			_, err := b.GenerateKey(attrs)
+			_, err := b.GenerateKey(context.Background(), attrs)
 			if err == nil {
 				t.Error("GenerateKey() should return error without initialized context")
 			}
@@ -2023,7 +2024,7 @@ func TestGenerateKey_MLDSA_PKCS11(t *testing.T) {
 			},
 		}
 
-		_, err = b.GenerateKey(attrs)
+		_, err = b.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Error("GenerateKey() with quantum attrs should return error without context")
 		}
@@ -2050,7 +2051,7 @@ func TestGenerateKey_MLDSA_PKCS11(t *testing.T) {
 			},
 		}
 
-		_, err = b.GenerateKey(attrs)
+		_, err = b.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Error("GenerateKey() should return error without initialized context")
 		}
@@ -2077,7 +2078,7 @@ func TestGenerateKey_MLDSA_PKCS11(t *testing.T) {
 			},
 		}
 
-		_, err = b.GenerateKey(attrs)
+		_, err = b.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Error("GenerateKey() should return error when ML-DSA is not supported")
 		}
@@ -2106,7 +2107,7 @@ func TestGenerateKey_MLDSA_PKCS11(t *testing.T) {
 			},
 		}
 
-		_, err = b.GenerateKey(attrs)
+		_, err = b.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Error("GenerateKey() should return error when ML-KEM is not supported")
 		}
@@ -2131,7 +2132,7 @@ func TestGenerateKey_MLDSA_PKCS11(t *testing.T) {
 			QuantumAttributes: nil,
 		}
 
-		_, err = b.GenerateKey(attrs)
+		_, err = b.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Error("GenerateKey() should return error without initialized context")
 		}
@@ -2157,7 +2158,7 @@ func TestGenerateKey_MLDSA_PKCS11(t *testing.T) {
 			},
 		}
 
-		_, err = b.GenerateKey(attrs)
+		_, err = b.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Error("GenerateKey() should return error for unsupported quantum algorithm")
 		}
@@ -2223,7 +2224,7 @@ func TestGenerateKey_MLDSA_PKCS11(t *testing.T) {
 
 				// Will fail at PKCS#11 session level since library is fake,
 				// but should get past the mechanism support check
-				_, err = b.GenerateKey(attrs)
+				_, err = b.GenerateKey(context.Background(), attrs)
 				if err == nil {
 					t.Error("GenerateKey() should return error with fake library")
 				}
@@ -2265,7 +2266,7 @@ func TestGenerateKey_MLDSA_PKCS11(t *testing.T) {
 
 				// Will fail at PKCS#11 session level since library is fake,
 				// but should get past the mechanism support check
-				_, err = b.GenerateKey(attrs)
+				_, err = b.GenerateKey(context.Background(), attrs)
 				if err == nil {
 					t.Error("GenerateKey() should return error with fake library")
 				}

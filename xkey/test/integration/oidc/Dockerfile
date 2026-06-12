@@ -3,6 +3,8 @@
 
 FROM golang:1.26.1-bookworm
 
+ENV GOTOOLCHAIN=auto
+
 # Install dependencies (libusb-dev needed for gousb CGO build)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -15,11 +17,15 @@ RUN apt-get update \
 # Install ORY Hydra CLI for client management
 RUN bash -c "bash <(curl https://raw.githubusercontent.com/ory/meta/master/install.sh) -b /usr/local/bin hydra v2.2.0"
 
-# Setup workspace — copy go-xkms source and go-qrdb (needed by replace directive)
+# Setup workspace — copy go-xkms source and sibling modules (needed by replace directives)
 WORKDIR /workspace
 COPY . .
 COPY --from=go-qrdb . /go-qrdb/
 COPY --from=go-quicraft . /go-quicraft/
+COPY --from=go-truststrap . /go-truststrap/
+COPY --from=go-codec . /go-codec/
+COPY --from=go-frost . /go-frost/
+COPY --from=go-objstore . /go-objstore/
 
 # Environment
 ENV CGO_ENABLED=1 \

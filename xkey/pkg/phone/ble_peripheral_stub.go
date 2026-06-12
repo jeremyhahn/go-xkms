@@ -59,10 +59,9 @@ type PeripheralRequestHandler interface {
 }
 
 // BLEPeripheral manages BLE peripheral (GATT server) mode.
-// This is a stub implementation for platforms without BLE support.
-type BLEPeripheral struct {
-	cfg *BLEPeripheralConfig
-}
+// This is a stub implementation for platforms without BLE support; every
+// method returns ErrBLEUnavailable, so it carries no state.
+type BLEPeripheral struct{}
 
 // NewBLEPeripheral creates a new BLE peripheral.
 // On platforms without BLE support, this returns ErrBLEUnavailable.

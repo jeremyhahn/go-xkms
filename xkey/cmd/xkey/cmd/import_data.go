@@ -148,27 +148,27 @@ func runImportData(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &ImportDataError{Operation: "create_temp_mount", Err: err}
 	}
-	defer os.RemoveAll(tmpMount)
+	defer func() { _ = os.RemoveAll(tmpMount) }()
 
 	// Unlock the volume at the temp mount point
 	vol.MountPoint = tmpMount
-	fmt.Fprintf(cmd.OutOrStdout(), "Unlocking volume at temporary mount point...\n")
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Unlocking volume at temporary mount point...\n")
 	if err := vol.Unlock(passphrase); err != nil {
 		return &ImportDataError{Operation: "unlock", Err: err}
 	}
 
 	// Copy data from source to the mounted volume
-	fmt.Fprintf(cmd.OutOrStdout(), "Importing data from %s...\n", sourceDir)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Importing data from %s...\n", sourceDir)
 	if err := vol.CopyDataToVolume(sourceDir); err != nil {
 		lockErr := vol.Lock()
 		if lockErr != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock volume: %v\n", lockErr)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock volume: %v\n", lockErr)
 		}
 		return &ImportDataError{Operation: "copy_data", Err: err}
 	}
 
 	// Lock the temporary mount
-	fmt.Fprintln(cmd.OutOrStdout(), "Locking volume...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Locking volume...")
 	if err := vol.Lock(); err != nil {
 		return &ImportDataError{Operation: "lock", Err: err}
 	}
@@ -186,15 +186,15 @@ func runImportData(cmd *cobra.Command, args []string) error {
 	// immediately usable. Doing this in the same elevated command as
 	// cleanup ensures no window exists for the app to recreate data.
 	if importDataUnseal {
-		fmt.Fprintf(cmd.OutOrStdout(), "Unlocking volume at %s...\n", mountPoint)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Unlocking volume at %s...\n", mountPoint)
 		finalVol := luks.NewVolumeWithPaths(luksPath, mountPoint)
 		if err := finalVol.Unlock(passphrase); err != nil {
 			return &ImportDataError{Operation: "final_unlock", Err: err}
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "\nData imported and volume unlocked at %s\n", mountPoint)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nData imported and volume unlocked at %s\n", mountPoint)
 	} else {
-		fmt.Fprintln(cmd.OutOrStdout(), "\nData imported successfully!")
-		fmt.Fprintln(cmd.OutOrStdout(), "Restart xKey to use the encrypted volume.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nData imported successfully!")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Restart xKey to use the encrypted volume.")
 	}
 
 	return nil
@@ -207,7 +207,7 @@ func runImportData(cmd *cobra.Command, args []string) error {
 func cleanupSourceDir(out io.Writer, sourceDir string, backup bool) error {
 	if backup {
 		backupDir := sourceDir + "-backup"
-		fmt.Fprintf(out, "Creating backup at %s...\n", backupDir)
+		_, _ = fmt.Fprintf(out, "Creating backup at %s...\n", backupDir)
 		// Remove any stale backup from a previous migration.
 		if _, err := os.Stat(backupDir); err == nil {
 			if err := os.RemoveAll(backupDir); err != nil {
@@ -218,7 +218,7 @@ func cleanupSourceDir(out io.Writer, sourceDir string, backup bool) error {
 			return &ImportDataError{Operation: "backup_source", Err: err}
 		}
 	} else {
-		fmt.Fprintf(out, "Removing original plaintext data from %s...\n", sourceDir)
+		_, _ = fmt.Fprintf(out, "Removing original plaintext data from %s...\n", sourceDir)
 		if err := os.RemoveAll(sourceDir); err != nil {
 			return &ImportDataError{Operation: "cleanup_source", Err: err}
 		}
@@ -238,9 +238,9 @@ func cleanupSourceDir(out io.Writer, sourceDir string, backup bool) error {
 // readImportPassphrase reads a passphrase from terminal or piped stdin.
 func readImportPassphrase(out io.Writer) (string, error) {
 	if term.IsTerminal(int(os.Stdin.Fd())) {
-		fmt.Fprint(out, "Enter passphrase for LUKS volume: ")
+		_, _ = fmt.Fprint(out, "Enter passphrase for LUKS volume: ")
 		passphrase, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 		if err != nil {
 			return "", &ImportDataError{Operation: "read_passphrase", Err: err}
 		}

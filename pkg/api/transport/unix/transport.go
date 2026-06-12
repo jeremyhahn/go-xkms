@@ -1154,9 +1154,9 @@ func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *transport.
 	}
 
 	return &transport.BarrierInitializeShamirResponse{
-		Shares:      resp.Shares,
 		Threshold:   int(resp.Threshold),
 		TotalShares: int(resp.TotalShares),
+		ShareCount:  int(resp.ShareCount),
 	}, nil
 }
 
@@ -1211,9 +1211,9 @@ func (t *Transport) BarrierRekey(ctx context.Context, req *transport.BarrierReke
 	}
 
 	return &transport.BarrierRekeyResponse{
-		Shares:      resp.Shares,
 		Threshold:   int(resp.Threshold),
 		TotalShares: int(resp.TotalShares),
+		ShareCount:  int(resp.ShareCount),
 	}, nil
 }
 
@@ -1232,9 +1232,9 @@ func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *transp
 	}
 
 	return &transport.BarrierRecoveryKeysResponse{
-		Keys:      resp.Shares,
-		Threshold: int(resp.Threshold),
-		Total:     int(resp.TotalShares),
+		Threshold:   int(resp.Threshold),
+		TotalShares: int(resp.TotalShares),
+		ShareCount:  int(resp.ShareCount),
 	}, nil
 }
 

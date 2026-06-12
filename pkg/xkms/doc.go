@@ -71,14 +71,14 @@
 //	    Hash:               crypto.SHA256,
 //	}
 //
-//	key, err := store.GenerateRSA(attrs)
+//	key, err := store.GenerateRSA(ctx, attrs)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //
 // Sign data with a key:
 //
-//	signer, err := store.Signer(attrs)
+//	signer, err := store.Signer(ctx, attrs)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}

@@ -25,17 +25,17 @@ import (
 //
 // These endpoints mirror the browser ceremony served by pkg/webauthn/http, but
 // transport the full WebAuthn options and attestation as JSON so the SDK can
-// drive the ceremony losslessly. They delegate to the XKMSService singleton,
+// drive the ceremony losslessly. They delegate to the injected XKMSService,
 // which shares the same WebAuthn relying-party service as the browser handlers,
 // so sessions and credentials live in one place.
 
 // handleSDKBeginRegistration handles POST /api/v1/webauthn/sdk/registration/begin.
 func (s *Server) handleSDKBeginRegistration(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if s.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
+	svc := s.xkmsService
 
 	var req transport.BeginRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -54,11 +54,11 @@ func (s *Server) handleSDKBeginRegistration(w http.ResponseWriter, r *http.Reque
 
 // handleSDKFinishRegistration handles POST /api/v1/webauthn/sdk/registration/finish.
 func (s *Server) handleSDKFinishRegistration(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if s.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
+	svc := s.xkmsService
 
 	var req transport.FinishRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -77,11 +77,11 @@ func (s *Server) handleSDKFinishRegistration(w http.ResponseWriter, r *http.Requ
 
 // handleSDKBeginAuthentication handles POST /api/v1/webauthn/sdk/authentication/begin.
 func (s *Server) handleSDKBeginAuthentication(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if s.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
+	svc := s.xkmsService
 
 	var req transport.BeginAuthenticationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -100,11 +100,11 @@ func (s *Server) handleSDKBeginAuthentication(w http.ResponseWriter, r *http.Req
 
 // handleSDKFinishAuthentication handles POST /api/v1/webauthn/sdk/authentication/finish.
 func (s *Server) handleSDKFinishAuthentication(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if s.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
+	svc := s.xkmsService
 
 	var req transport.FinishAuthenticationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

@@ -120,7 +120,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if logCloser != nil {
-		defer logCloser.Close()
+		defer func() { _ = logCloser.Close() }()
 	}
 
 	logger.Info("starting headless autofill IPC server",
@@ -219,7 +219,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 
 	// Ensure TPM resources are released on exit.
 	if tpmCloser != nil {
-		defer tpmCloser.Close()
+		defer func() { _ = tpmCloser.Close() }()
 	}
 
 	// 6. Initialize PIN manager.
@@ -741,7 +741,7 @@ func probeTPMSealer(logger *slog.Logger, dataDir string) (xkms.Sealer, io.Closer
 	})
 	if err != nil {
 		logger.Warn("failed to open TPM", "error", err)
-		factory.Close()
+		_ = factory.Close()
 		return nil, nil
 	}
 

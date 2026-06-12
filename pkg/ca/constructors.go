@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"crypto"
 	"errors"
 	"fmt"
@@ -248,7 +249,7 @@ func NewParentCA(params *Params) (TrustedCA, error) {
 //
 // Thread-safe: Yes. The parent must remain valid for the lifetime of this
 // call.
-func NewIntermediateCA(params *Params, parent TrustedCA) (TrustedCA, error) {
+func NewIntermediateCA(ctx context.Context, params *Params, parent TrustedCA) (TrustedCA, error) {
 	if params == nil {
 		return nil, ErrInvalidConfig
 	}
@@ -306,7 +307,7 @@ func NewIntermediateCA(params *Params, parent TrustedCA) (TrustedCA, error) {
 		return nil, fmt.Errorf("ca: unexpected TrustedCA implementation %T", instance)
 	}
 
-	if err := initializeAsIntermediate(caInstance, intermediateID, parent); err != nil {
+	if err := initializeAsIntermediate(ctx, caInstance, intermediateID, parent); err != nil {
 		return nil, err
 	}
 
@@ -324,7 +325,7 @@ func NewIntermediateCA(params *Params, parent TrustedCA) (TrustedCA, error) {
 // as issuer, stores it, and marks the CA initialized. This avoids invoking
 // Init(), which would attempt to create a new root in the intermediate's
 // stores.
-func initializeAsIntermediate(caInstance *CA, identity Identity, parent TrustedCA) error {
+func initializeAsIntermediate(ctx context.Context, caInstance *CA, identity Identity, parent TrustedCA) error {
 	caInstance.mu.Lock()
 	defer caInstance.mu.Unlock()
 
@@ -345,7 +346,7 @@ func initializeAsIntermediate(caInstance *CA, identity Identity, parent TrustedC
 		return fmt.Errorf("ca: parent %T does not implement crypto.Signer", parent)
 	}
 
-	cert, err := caInstance.createSingleIntermediateCertificate(&identity, parentCert, parentSigner)
+	cert, err := caInstance.createSingleIntermediateCertificate(ctx, &identity, parentCert, parentSigner)
 	if err != nil {
 		return fmt.Errorf("ca: create intermediate certificate: %w", err)
 	}
@@ -373,7 +374,7 @@ func initializeAsIntermediate(caInstance *CA, identity Identity, parent TrustedC
 // On success both returned CAs are initialized (IsInitialized() == true).
 //
 // Thread-safe: Yes.
-func NewCA(params *Params) (TrustedCA, TrustedCA, error) {
+func NewCA(ctx context.Context, params *Params) (TrustedCA, TrustedCA, error) {
 	if params == nil {
 		return nil, nil, ErrInvalidConfig
 	}
@@ -386,7 +387,7 @@ func NewCA(params *Params) (TrustedCA, TrustedCA, error) {
 		return nil, nil, err
 	}
 
-	if err := root.Init(); err != nil {
+	if err := root.Init(ctx); err != nil {
 		return nil, nil, fmt.Errorf("ca: initialize parent ca: %w", err)
 	}
 
@@ -394,7 +395,7 @@ func NewCA(params *Params) (TrustedCA, TrustedCA, error) {
 		return root, nil, nil
 	}
 
-	intermediate, err := NewIntermediateCA(params, root)
+	intermediate, err := NewIntermediateCA(ctx, params, root)
 	if err != nil {
 		return nil, nil, err
 	}

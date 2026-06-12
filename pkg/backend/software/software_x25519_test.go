@@ -15,6 +15,7 @@ package software_test
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
@@ -39,7 +40,7 @@ func TestSoftwareBackend_X25519_GenerateKey(t *testing.T) {
 		X25519Attributes: &types.X25519Attributes{},
 	}
 
-	key, err := backend.GenerateKey(attrs)
+	key, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, key)
 
@@ -65,12 +66,12 @@ func TestSoftwareBackend_X25519_GetKey(t *testing.T) {
 	}
 
 	// Generate key
-	generatedKey, err := backend.GenerateKey(attrs)
+	generatedKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	generatedBytes := generatedKey.(*x25519.PrivateKeyStorage).Bytes()
 
 	// Retrieve key
-	retrievedKey, err := backend.GetKey(attrs)
+	retrievedKey, err := backend.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 	retrievedBytes := retrievedKey.(*x25519.PrivateKeyStorage).Bytes()
 
@@ -95,7 +96,7 @@ func TestSoftwareBackend_X25519_DeriveSharedSecret(t *testing.T) {
 		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	aliceKey, err := backend.GenerateKey(aliceAttrs)
+	aliceKey, err := backend.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	// Generate Bob's key pair
@@ -105,14 +106,14 @@ func TestSoftwareBackend_X25519_DeriveSharedSecret(t *testing.T) {
 		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	bobKey, err := backend.GenerateKey(bobAttrs)
+	bobKey, err := backend.GenerateKey(context.Background(), bobAttrs)
 	require.NoError(t, err)
 
 	// Get Bob's public key
 	bobPublicKey := bobKey.(*x25519.PrivateKeyStorage).Public().(*x25519.PublicKeyStorage)
 
 	// Alice derives shared secret using Bob's public key
-	aliceSecret, err := concreteBackend.DeriveSharedSecret(aliceAttrs, bobPublicKey)
+	aliceSecret, err := concreteBackend.DeriveSharedSecret(context.Background(), aliceAttrs, bobPublicKey)
 	require.NoError(t, err)
 	assert.Len(t, aliceSecret, 32)
 
@@ -120,7 +121,7 @@ func TestSoftwareBackend_X25519_DeriveSharedSecret(t *testing.T) {
 	alicePublicKey := aliceKey.(*x25519.PrivateKeyStorage).Public().(*x25519.PublicKeyStorage)
 
 	// Bob derives shared secret using Alice's public key
-	bobSecret, err := concreteBackend.DeriveSharedSecret(bobAttrs, alicePublicKey)
+	bobSecret, err := concreteBackend.DeriveSharedSecret(context.Background(), bobAttrs, alicePublicKey)
 	require.NoError(t, err)
 	assert.Len(t, bobSecret, 32)
 
@@ -144,7 +145,7 @@ func TestSoftwareBackend_X25519_DeriveSharedSecretDeterministic(t *testing.T) {
 		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	_, err = backend.GenerateKey(aliceAttrs)
+	_, err = backend.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	bobAttrs := &types.KeyAttributes{
@@ -153,7 +154,7 @@ func TestSoftwareBackend_X25519_DeriveSharedSecretDeterministic(t *testing.T) {
 		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	bobKey, err := backend.GenerateKey(bobAttrs)
+	bobKey, err := backend.GenerateKey(context.Background(), bobAttrs)
 	require.NoError(t, err)
 
 	bobPublicKey := bobKey.(*x25519.PrivateKeyStorage).Public().(*x25519.PublicKeyStorage)
@@ -163,7 +164,7 @@ func TestSoftwareBackend_X25519_DeriveSharedSecretDeterministic(t *testing.T) {
 	secrets := make([][]byte, numIterations)
 
 	for i := 0; i < numIterations; i++ {
-		secret, err := concreteBackend.DeriveSharedSecret(aliceAttrs, bobPublicKey)
+		secret, err := concreteBackend.DeriveSharedSecret(context.Background(), aliceAttrs, bobPublicKey)
 		require.NoError(t, err)
 		secrets[i] = secret
 	}
@@ -189,7 +190,7 @@ func TestSoftwareBackend_X25519_PublicKeyFromPrivate(t *testing.T) {
 		X25519Attributes: &types.X25519Attributes{},
 	}
 
-	privateKey, err := backend.GenerateKey(attrs)
+	privateKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	wrapped := privateKey.(*x25519.PrivateKeyStorage)
@@ -238,19 +239,19 @@ func TestSoftwareBackend_X25519_DeleteKey(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify it exists
-	_, err = backend.GetKey(attrs)
+	_, err = backend.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Delete it
-	err = backend.DeleteKey(attrs)
+	err = backend.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify it's gone
-	_, err = backend.GetKey(attrs)
+	_, err = backend.GetKey(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -268,11 +269,11 @@ func TestSoftwareBackend_X25519_ListKeys(t *testing.T) {
 		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// List keys
-	keys, err := backend.ListKeys()
+	keys, err := backend.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.NotNil(t, keys)
 
@@ -303,7 +304,7 @@ func TestSoftwareBackend_X25519_DeriveWithKDF(t *testing.T) {
 		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	_, err = backend.GenerateKey(aliceAttrs)
+	_, err = backend.GenerateKey(context.Background(), aliceAttrs)
 	require.NoError(t, err)
 
 	bobAttrs := &types.KeyAttributes{
@@ -312,13 +313,13 @@ func TestSoftwareBackend_X25519_DeriveWithKDF(t *testing.T) {
 		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	bobKey, err := backend.GenerateKey(bobAttrs)
+	bobKey, err := backend.GenerateKey(context.Background(), bobAttrs)
 	require.NoError(t, err)
 
 	bobPublicKey := bobKey.(*x25519.PrivateKeyStorage).Public().(*x25519.PublicKeyStorage)
 
 	// Derive shared secret
-	sharedSecret, err := concreteBackend.DeriveSharedSecret(aliceAttrs, bobPublicKey)
+	sharedSecret, err := concreteBackend.DeriveSharedSecret(context.Background(), aliceAttrs, bobPublicKey)
 	require.NoError(t, err)
 
 	// Derive encryption key from shared secret using HKDF
@@ -364,11 +365,11 @@ func TestSoftwareBackend_X25519_InvalidPublicKey(t *testing.T) {
 		X25519Attributes: &types.X25519Attributes{},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Try to use a nil public key
-	_, err = concreteBackend.DeriveSharedSecret(attrs, nil)
+	_, err = concreteBackend.DeriveSharedSecret(context.Background(), attrs, nil)
 	assert.Error(t, err)
 }
 
@@ -382,6 +383,6 @@ func TestSoftwareBackend_X25519_InvalidAttributes(t *testing.T) {
 	concreteBackend := backend.(*software.SoftwareBackend)
 
 	// Try to use nil attributes
-	_, err = concreteBackend.DeriveSharedSecret(nil, nil)
+	_, err = concreteBackend.DeriveSharedSecret(context.Background(), nil, nil)
 	assert.Error(t, err)
 }

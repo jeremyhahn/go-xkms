@@ -319,7 +319,7 @@ func runPolicyCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPolicyStoreOpenFailed, err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 
@@ -332,9 +332,9 @@ func runPolicyCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Created policy: %s\n", entity.Name)
-	fmt.Fprintf(out, "  Bank:  %s\n", entity.Bank)
-	fmt.Fprintf(out, "  PCRs:  %s\n", formatPCRIndices(entity.PCRs))
+	_, _ = fmt.Fprintf(out, "Created policy: %s\n", entity.Name)
+	_, _ = fmt.Fprintf(out, "  Bank:  %s\n", entity.Bank)
+	_, _ = fmt.Fprintf(out, "  PCRs:  %s\n", formatPCRIndices(entity.PCRs))
 	return nil
 }
 
@@ -347,10 +347,10 @@ func runPolicyList(cmd *cobra.Command, args []string) error {
 
 	store, err := policyStoreFactory(storePath)
 	if err != nil {
-		fmt.Fprintln(out, "No policies found.")
+		_, _ = fmt.Fprintln(out, "No policies found.")
 		return nil
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 
@@ -366,22 +366,22 @@ func runPolicyList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(policies) == 0 {
-		fmt.Fprintln(out, "No policies found.")
+		_, _ = fmt.Fprintln(out, "No policies found.")
 		return nil
 	}
 
 	// Determine auto-unseal policy name for marking.
 	autoName := autoUnsealName(store, ctx)
 
-	fmt.Fprintf(out, "PCR Policies (%d):\n\n", len(policies))
+	_, _ = fmt.Fprintf(out, "PCR Policies (%d):\n\n", len(policies))
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "NAME\tBANK\tPCRS\tCREATED\tAUTO-UNSEAL\n")
+	_, _ = fmt.Fprintf(w, "NAME\tBANK\tPCRS\tCREATED\tAUTO-UNSEAL\n")
 	for _, p := range policies {
 		autoTag := ""
 		if p.Name == autoName {
 			autoTag = "[auto-unseal]"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			p.Name,
 			p.Bank,
 			formatPCRIndices(p.PCRs),
@@ -389,7 +389,7 @@ func runPolicyList(cmd *cobra.Command, args []string) error {
 			autoTag,
 		)
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	return nil
 }
@@ -407,21 +407,21 @@ func runPolicyListPaginated(cmd *cobra.Command, store pcrpolicy.PolicyStore, ctx
 	}
 
 	if len(result.Entities) == 0 {
-		fmt.Fprintln(out, "No policies found.")
+		_, _ = fmt.Fprintln(out, "No policies found.")
 		return nil
 	}
 
 	autoName := autoUnsealName(store, ctx)
 
-	fmt.Fprintf(out, "PCR Policies (page %d, %d total):\n\n", page, result.Total)
+	_, _ = fmt.Fprintf(out, "PCR Policies (page %d, %d total):\n\n", page, result.Total)
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "NAME\tBANK\tPCRS\tCREATED\tAUTO-UNSEAL\n")
+	_, _ = fmt.Fprintf(w, "NAME\tBANK\tPCRS\tCREATED\tAUTO-UNSEAL\n")
 	for _, p := range result.Entities {
 		autoTag := ""
 		if p.Name == autoName {
 			autoTag = "[auto-unseal]"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			p.Name,
 			p.Bank,
 			formatPCRIndices(p.PCRs),
@@ -429,10 +429,10 @@ func runPolicyListPaginated(cmd *cobra.Command, store pcrpolicy.PolicyStore, ctx
 			autoTag,
 		)
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	if result.HasMore {
-		fmt.Fprintf(out, "\nPage %d of %d. Use --page %d for next page.\n",
+		_, _ = fmt.Fprintf(out, "\nPage %d of %d. Use --page %d for next page.\n",
 			page, (result.Total+pageSize-1)/pageSize, page+1)
 	}
 
@@ -449,7 +449,7 @@ func runPolicyGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPolicyGetFailed, err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 
@@ -466,19 +466,19 @@ func runPolicyGet(cmd *cobra.Command, args []string) error {
 		autoTag = " [auto-unseal]"
 	}
 
-	fmt.Fprintf(out, "Policy: %s%s\n", entity.Name, autoTag)
-	fmt.Fprintf(out, "  Bank:     %s\n", entity.Bank)
-	fmt.Fprintf(out, "  PCRs:     %s\n", formatPCRIndices(entity.PCRs))
-	fmt.Fprintf(out, "  Created:  %s\n", entity.CreatedAt.Format("2006-01-02 15:04:05"))
-	fmt.Fprintf(out, "  Updated:  %s\n", entity.UpdatedAt.Format("2006-01-02 15:04:05"))
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "Policy: %s%s\n", entity.Name, autoTag)
+	_, _ = fmt.Fprintf(out, "  Bank:     %s\n", entity.Bank)
+	_, _ = fmt.Fprintf(out, "  PCRs:     %s\n", formatPCRIndices(entity.PCRs))
+	_, _ = fmt.Fprintf(out, "  Created:  %s\n", entity.CreatedAt.Format("2006-01-02 15:04:05"))
+	_, _ = fmt.Fprintf(out, "  Updated:  %s\n", entity.UpdatedAt.Format("2006-01-02 15:04:05"))
+	_, _ = fmt.Fprintln(out)
 
 	// Print PCR values sorted by index.
 	indices := sortedPCRIndices(entity.PCRs)
 
-	fmt.Fprintln(out, "  PCR Values:")
+	_, _ = fmt.Fprintln(out, "  PCR Values:")
 	for _, idx := range indices {
-		fmt.Fprintf(out, "    PCR[%2d]: %s\n", idx, hex.EncodeToString(entity.PCRs[idx]))
+		_, _ = fmt.Fprintf(out, "    PCR[%2d]: %s\n", idx, hex.EncodeToString(entity.PCRs[idx]))
 	}
 
 	return nil
@@ -493,7 +493,7 @@ func runPolicyDelete(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPolicyDeleteFailed, err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 
@@ -508,7 +508,7 @@ func runPolicyDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrPolicyDeleteFailed, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Deleted policy: %s\n", name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Deleted policy: %s\n", name)
 	return nil
 }
 
@@ -521,7 +521,7 @@ func runPolicySetAutoUnseal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPolicyAutoUnsealFailed, err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 
@@ -532,7 +532,7 @@ func runPolicySetAutoUnseal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrPolicyAutoUnsealFailed, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Auto-unseal policy set: %s\n", name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Auto-unseal policy set: %s\n", name)
 	return nil
 }
 
@@ -544,7 +544,7 @@ func runPolicyClearAutoUnseal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPolicyClearAutoFailed, err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 
@@ -552,7 +552,7 @@ func runPolicyClearAutoUnseal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrPolicyClearAutoFailed, err)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Auto-unseal policy cleared.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Auto-unseal policy cleared.")
 	return nil
 }
 
@@ -565,7 +565,7 @@ func runPolicyRefresh(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPolicyRefreshFailed, err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 
@@ -580,13 +580,12 @@ func runPolicyRefresh(cmd *cobra.Command, args []string) error {
 	// Build the PCR indices from the entity.
 	pcrIndices := sortedPCRIndices(entity.PCRs)
 	uintIndices := make([]uint, len(pcrIndices))
-	for i, idx := range pcrIndices {
-		uintIndices[i] = idx
-	}
+	copy(uintIndices, pcrIndices)
 
 	// Read current PCR values from TPM.
 	bankLower := strings.ToLower(entity.Bank)
 	values, err := readCurrentPCRValues(uintIndices, bankLower)
+
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPolicyRefreshFailed, err)
 	}
@@ -599,7 +598,7 @@ func runPolicyRefresh(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrPolicyRefreshFailed, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Refreshed policy: %s\n", name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Refreshed policy: %s\n", name)
 	return nil
 }
 
@@ -613,7 +612,7 @@ func runPolicyVerify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPolicyVerifyFailed, err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 
@@ -628,13 +627,12 @@ func runPolicyVerify(cmd *cobra.Command, args []string) error {
 	// Build PCR indices from the entity.
 	pcrIndices := sortedPCRIndices(entity.PCRs)
 	uintIndices := make([]uint, len(pcrIndices))
-	for i, idx := range pcrIndices {
-		uintIndices[i] = idx
-	}
+	copy(uintIndices, pcrIndices)
 
 	// Read current PCR values from TPM.
 	bankLower := strings.ToLower(entity.Bank)
 	currentHex, err := readCurrentPCRValues(uintIndices, bankLower)
+
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPolicyVerifyFailed, err)
 	}
@@ -644,15 +642,15 @@ func runPolicyVerify(cmd *cobra.Command, args []string) error {
 	mismatches := comparePCRByteValues(entity.PCRs, currentBytes)
 
 	if len(mismatches) == 0 {
-		fmt.Fprintf(out, "Policy '%s': VALID - all PCR values match\n", name)
+		_, _ = fmt.Fprintf(out, "Policy '%s': VALID - all PCR values match\n", name)
 		return nil
 	}
 
-	fmt.Fprintf(out, "Policy '%s': MISMATCH - %d PCR(s) differ\n\n", name, len(mismatches))
+	_, _ = fmt.Fprintf(out, "Policy '%s': MISMATCH - %d PCR(s) differ\n\n", name, len(mismatches))
 	for _, m := range mismatches {
-		fmt.Fprintf(out, "  PCR[%2d]:\n", m.index)
-		fmt.Fprintf(out, "    Expected: %s\n", m.expected)
-		fmt.Fprintf(out, "    Current:  %s\n", m.current)
+		_, _ = fmt.Fprintf(out, "  PCR[%2d]:\n", m.index)
+		_, _ = fmt.Fprintf(out, "    Expected: %s\n", m.expected)
+		_, _ = fmt.Fprintf(out, "    Current:  %s\n", m.current)
 	}
 
 	return fmt.Errorf("%w: %d PCR value(s) do not match", ErrPolicyVerifyFailed, len(mismatches))
@@ -667,7 +665,7 @@ func runPolicyExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPolicyExportFailed, err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 
@@ -757,7 +755,7 @@ func readCurrentPCRValues(indices []uint, bank string) (map[int]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrPolicyReadCurrentFailed, err)
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	banks, err := tpm.ReadPCRs(indices)
 	if err != nil {

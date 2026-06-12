@@ -18,7 +18,6 @@ package bootstrap
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -457,6 +456,17 @@ func TestSDK_Share_CollectionStatus(t *testing.T) {
 	serverURL := requiredEnv(t, EnvServerURL)
 	groupID := uniqueID("status-grp")
 
+	// The collection status reports against the custodian group's threshold and
+	// total, so the group must exist before querying it.
+	if _, err := tr.CreateCustodianGroup(ctx, &transport.CreateCustodianGroupRequest{
+		ID:        groupID,
+		Name:      "Status Test Group",
+		Threshold: 2,
+		Total:     3,
+	}); err != nil {
+		t.Fatalf("CreateCustodianGroup: %v", err)
+	}
+
 	// Submit 3 shares from different "servers" for the same group
 	for i := 1; i <= 3; i++ {
 		_, err := tr.SubmitShare(ctx, &transport.SubmitShareRequest{
@@ -491,8 +501,19 @@ func TestSDK_Share_CollectionStatus_Empty(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Create the group but submit no shares; status must report 0 collected.
+	groupID := uniqueID("no-shares-group")
+	if _, err := tr.CreateCustodianGroup(ctx, &transport.CreateCustodianGroupRequest{
+		ID:        groupID,
+		Name:      "Empty Status Group",
+		Threshold: 2,
+		Total:     3,
+	}); err != nil {
+		t.Fatalf("CreateCustodianGroup: %v", err)
+	}
+
 	// Query status for a group with no shares — should return 0
-	status, err := tr.GetShareCollectionStatus(ctx, "no-shares-group")
+	status, err := tr.GetShareCollectionStatus(ctx, groupID)
 	if err != nil {
 		t.Fatalf("GetShareCollectionStatus: %v", err)
 	}
@@ -642,10 +663,13 @@ func TestSDK_Tenant_BarrierInit(t *testing.T) {
 	defer tr.DeleteTenant(ctx, tenantID)
 
 	// --- Init barrier ---
+	// The server holds no tenant secret; the barrier credentials must be
+	// supplied by the caller (ErrTenantPassphraseRequired otherwise).
 	err = tr.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
-		TenantID:  tenantID,
-		Threshold: 2,
-		Shares:    3,
+		TenantID:   tenantID,
+		Passphrase: "tenant-barrier-init-passphrase",
+		Threshold:  2,
+		Shares:     3,
 	})
 	if err != nil {
 		t.Fatalf("TenantBarrierInit: %v", err)
@@ -696,26 +720,27 @@ func TestSDK_Tenant_BarrierUnseal(t *testing.T) {
 	t.Logf("Correctly returned error for unseal without init: %v", err)
 
 	// --- Initialize barrier ---
+	// The server holds no tenant secret; supply caller credentials.
 	err = tr.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
-		TenantID: tenantID,
+		TenantID:   tenantID,
+		Passphrase: "tenant-barrier-unseal-passphrase",
 	})
 	if err != nil {
 		t.Fatalf("TenantBarrierInit: %v", err)
 	}
 	t.Logf("Initialized barrier for tenant: %s", tenantID)
 
-	// --- Unseal after init returns already-unsealed (barrier is unsealed after init) ---
+	// --- Unseal after init is idempotent ---
+	// TenantBarrierInit leaves the tenant barrier unsealed, so a redundant
+	// unseal is a no-op that succeeds rather than an error.
 	err = tr.TenantBarrierUnseal(ctx, &transport.TenantBarrierUnsealRequest{
 		TenantID: tenantID,
 		Key:      []byte("test-unseal-key"),
 	})
-	if err == nil {
-		t.Fatal("expected already-unsealed error after init, got nil")
+	if err != nil {
+		t.Fatalf("expected idempotent success unsealing an already-unsealed tenant, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "already unsealed") {
-		t.Fatalf("expected 'already unsealed' error, got: %v", err)
-	}
-	t.Logf("Correctly returned already-unsealed error: %v", err)
+	t.Logf("Unseal after init correctly succeeded (idempotent no-op)")
 }
 
 func TestSDK_Tenant_BarrierUnseal_NonExistent(t *testing.T) {

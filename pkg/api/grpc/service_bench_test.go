@@ -56,7 +56,11 @@ func createBenchmarkService(b *testing.B) *Service {
 		b.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
-	return NewService(nil, nil)
+	svc, err := xkms.Get()
+	if err != nil {
+		b.Fatalf("Failed to get xkms service: %v", err)
+	}
+	return NewService(nil, nil, svc)
 }
 
 // BenchmarkGRPC_Health benchmarks the health check

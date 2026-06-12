@@ -8,6 +8,7 @@
 package frost
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,10 +47,10 @@ func createTestSigner(t *testing.T) (*FrostSigner, *FrostBackend) {
 			Algorithm:     types.FrostAlgorithmEd25519,
 		},
 	}
-	_, err := backend.GenerateKey(attrs)
+	_, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	return signer.(*FrostSigner), backend
@@ -185,10 +186,10 @@ func TestFrostSigner_AllAlgorithms(t *testing.T) {
 					ParticipantID: 1,
 				},
 			}
-			_, err = backend.GenerateKey(attrs)
+			_, err = backend.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err)
 
-			signer, err := backend.Signer(attrs)
+			signer, err := backend.Signer(context.Background(), attrs)
 			require.NoError(t, err)
 
 			frostSigner := signer.(*FrostSigner)

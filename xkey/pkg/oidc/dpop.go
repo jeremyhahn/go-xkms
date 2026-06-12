@@ -90,29 +90,14 @@ func (k *DPoPKey) GenerateProof(opts *DPoPProofOptions) (string, error) {
 		return "", ErrDPoPInvalidProof
 	}
 
-	// Build JWK for the header
+	// Build JWK for the header using the fixed-width P-256 coordinates.
+	xBytes, yBytes := dpopCoordinates(&k.PrivateKey.PublicKey)
 	jwk := DPoPJWK{
 		KeyType: "EC",
 		Curve:   "P-256",
-		X:       base64.RawURLEncoding.EncodeToString(k.PrivateKey.PublicKey.X.Bytes()),
-		Y:       base64.RawURLEncoding.EncodeToString(k.PrivateKey.PublicKey.Y.Bytes()),
+		X:       base64.RawURLEncoding.EncodeToString(xBytes),
+		Y:       base64.RawURLEncoding.EncodeToString(yBytes),
 	}
-
-	// Pad X and Y coordinates to 32 bytes (P-256 requirement)
-	xBytes := k.PrivateKey.PublicKey.X.Bytes()
-	yBytes := k.PrivateKey.PublicKey.Y.Bytes()
-	if len(xBytes) < 32 {
-		padded := make([]byte, 32)
-		copy(padded[32-len(xBytes):], xBytes)
-		xBytes = padded
-	}
-	if len(yBytes) < 32 {
-		padded := make([]byte, 32)
-		copy(padded[32-len(yBytes):], yBytes)
-		yBytes = padded
-	}
-	jwk.X = base64.RawURLEncoding.EncodeToString(xBytes)
-	jwk.Y = base64.RawURLEncoding.EncodeToString(yBytes)
 
 	// Build claims
 	now := time.Now()
@@ -151,20 +136,7 @@ func (k *DPoPKey) PublicJWK() *DPoPJWK {
 		return nil
 	}
 
-	xBytes := k.PrivateKey.PublicKey.X.Bytes()
-	yBytes := k.PrivateKey.PublicKey.Y.Bytes()
-
-	// Pad to 32 bytes
-	if len(xBytes) < 32 {
-		padded := make([]byte, 32)
-		copy(padded[32-len(xBytes):], xBytes)
-		xBytes = padded
-	}
-	if len(yBytes) < 32 {
-		padded := make([]byte, 32)
-		copy(padded[32-len(yBytes):], yBytes)
-		yBytes = padded
-	}
+	xBytes, yBytes := dpopCoordinates(&k.PrivateKey.PublicKey)
 
 	return &DPoPJWK{
 		KeyType: "EC",
@@ -229,6 +201,26 @@ func sha256Hash(data []byte) []byte {
 	h := newSHA256()
 	h.Write(data)
 	return h.Sum(nil)
+}
+
+// dpopCoordinates returns the fixed-width 32-byte P-256 X and Y coordinates of
+// pub. It uses the SEC1 uncompressed encoding (0x04 || X || Y) returned by
+// PublicKey.Bytes, which already left-pads each coordinate to the curve's byte
+// size, avoiding the deprecated math/big field accessors.
+func dpopCoordinates(pub *ecdsa.PublicKey) (x, y []byte) {
+	uncompressed, err := pub.Bytes()
+	if err != nil {
+		return nil, nil
+	}
+	// For P-256 the encoding is 65 bytes: a 0x04 prefix followed by two
+	// 32-byte coordinates.
+	const coordLen = 32
+	if len(uncompressed) != 1+2*coordLen {
+		return nil, nil
+	}
+	x = uncompressed[1 : 1+coordLen]
+	y = uncompressed[1+coordLen:]
+	return x, y
 }
 
 // dpopSigningMethod wraps ES256 for DPoP-specific signing.

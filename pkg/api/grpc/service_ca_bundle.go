@@ -20,6 +20,7 @@ import (
 	"errors"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -38,6 +39,36 @@ type CABundler interface {
 
 	// CACertificate returns the CA's certificate.
 	CACertificate() (*x509.Certificate, error)
+}
+
+// caBundleSource is the minimal interface needed to fetch a CA bundle.
+// CABundler satisfies it; so does the request-scoped servicer adapter below.
+type caBundleSource interface {
+	CABundle() ([]byte, error)
+}
+
+// grpcCABundleServicer mirrors the transport-shaped GetCABundle method on the
+// CA servicer (*xkms.XKMSService) wired via SetCA.
+type grpcCABundleServicer interface {
+	GetCABundle(ctx context.Context, req *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error)
+}
+
+// servicerBundleSource adapts the transport-shaped CA servicer to the
+// ctx-less caBundleSource contract. It is request-scoped: constructed inside
+// a handler with that handler's context and discarded when the call returns.
+type servicerBundleSource struct {
+	ctx      context.Context
+	servicer grpcCABundleServicer
+}
+
+// CABundle fetches the CA bundle from the servicer using the captured
+// request context.
+func (a *servicerBundleSource) CABundle() ([]byte, error) {
+	resp, err := a.servicer.GetCABundle(a.ctx, &transport.GetCABundleRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return resp.BundlePEM, nil
 }
 
 // CABundleFilter defines optional filters for CA bundle retrieval.
@@ -82,19 +113,23 @@ func GetCABundler() CABundler {
 //   - certificates: Individual certificates in DER format
 //   - content_type: "application/pem-certificate-chain"
 func (s *Service) GetCABundle(ctx context.Context, req *pb.GetCABundleRequest) (*pb.GetCABundleResponse, error) {
-	// Resolve the CA bundler: prefer explicit bundler (SetCABundler), fall back
-	// to the CA instance (SetCA) which also implements CABundler via duck typing.
-	bundler := caBundler
-	if bundler == nil {
+	// Resolve the CA bundle source: prefer the explicit bundler (SetCABundler),
+	// fall back to the CA servicer (SetCA) which exposes either the raw
+	// CABundle method or the transport-shaped GetCABundle method.
+	var bundler caBundleSource = caBundler
+	if caBundler == nil {
 		ca := getCAInstance()
 		if ca == nil {
 			return nil, status.Error(codes.FailedPrecondition, ErrCABundlerNotConfigured.Error())
 		}
-		b, ok := ca.(CABundler)
-		if !ok {
+		switch src := ca.(type) {
+		case caBundleSource:
+			bundler = src
+		case grpcCABundleServicer:
+			bundler = &servicerBundleSource{ctx: ctx, servicer: src}
+		default:
 			return nil, status.Error(codes.FailedPrecondition, ErrCABundlerNotConfigured.Error())
 		}
-		bundler = b
 	}
 
 	if err := s.authorize(ctx, "certs", "read", ""); err != nil {
@@ -132,7 +167,7 @@ func (s *Service) GetCABundle(ctx context.Context, req *pb.GetCABundleRequest) (
 
 // getFilteredCABundle retrieves the CA bundle with optional filtering.
 // Returns the PEM-encoded bundle and the parsed certificates.
-func getFilteredCABundle(bundler CABundler, filter *CABundleFilter) ([]byte, []*x509.Certificate, error) {
+func getFilteredCABundle(bundler caBundleSource, filter *CABundleFilter) ([]byte, []*x509.Certificate, error) {
 	// Get the raw PEM bundle
 	bundlePEM, err := bundler.CABundle()
 	if err != nil {

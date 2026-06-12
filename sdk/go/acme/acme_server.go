@@ -104,6 +104,20 @@ type ACMEComplianceConfig = acmehandler.ComplianceConfig
 // ACMEGlobalComplianceConfig is the server-wide default compliance configuration.
 type ACMEGlobalComplianceConfig = acmehandler.GlobalComplianceConfig
 
+// ACMEOrderPreSignHook fires immediately before the CA signs the certificate and
+// returns additional X.509 extensions to embed in the issued certificate.
+type ACMEOrderPreSignHook = acmehandler.OrderPreSignHook
+
+// ACMEOrderPreSignHookContext contains contextual information available to pre-sign
+// extension hooks. CSR is nil when IsTCGCSR is true.
+type ACMEOrderPreSignHookContext = acmehandler.OrderPreSignHookContext
+
+// ACMEOrderPreSignHookRegistry manages registered pre-sign extension hooks.
+type ACMEOrderPreSignHookRegistry = acmehandler.OrderPreSignHookRegistry
+
+// ACMEErrPreSignHookFailed is returned when an OrderPreSignHook aborts finalization.
+type ACMEErrPreSignHookFailed = acmehandler.ErrPreSignHookFailed
+
 // =============================================================================
 // ACME Storage Types
 // =============================================================================
@@ -169,6 +183,9 @@ var NewACMEOrderFinalizeHookRegistry = acmehandler.NewOrderFinalizeHookRegistry
 
 // NewACMEPreIssuanceHookRegistry creates a new pre-issuance hook registry.
 var NewACMEPreIssuanceHookRegistry = acmehandler.NewPreIssuanceHookRegistry
+
+// NewACMEOrderPreSignHookRegistry creates a new pre-sign extension hook registry.
+var NewACMEOrderPreSignHookRegistry = acmehandler.NewOrderPreSignHookRegistry
 
 // NewACMEStorageFactoryFromKVStore creates an ACME storage factory backed by a
 // go-qrdb KVStore directly. This is the datastore path: ACME persistence
@@ -270,6 +287,10 @@ var ACMEVerifyHTTP01 = http01.Verify
 
 // ACMEVerifyDNS01 verifies a DNS-01 ACME challenge.
 var ACMEVerifyDNS01 = dns01.Verify
+
+// ACMEComputeDNS01ChallengeValue computes the DNS-01 TXT record value
+// (base64url SHA-256 of the key authorization) for a challenge.
+var ACMEComputeDNS01ChallengeValue = dns01.ComputeChallengeValue
 
 // ACMEVerifyEnroll01 verifies an enroll-01 ACME challenge.
 var ACMEVerifyEnroll01 = enroll01.Verify

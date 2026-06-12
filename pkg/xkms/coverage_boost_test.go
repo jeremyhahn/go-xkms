@@ -49,7 +49,7 @@ func (m *boostIEKeyProvider) Type() types.BackendType { return "mock-ie" }
 func (m *boostIEKeyProvider) Capabilities() types.Capabilities {
 	return types.Capabilities{Keys: true, Import: true, Export: true}
 }
-func (m *boostIEKeyProvider) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *boostIEKeyProvider) GenerateKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
@@ -58,19 +58,19 @@ func (m *boostIEKeyProvider) GenerateKey(attrs *types.KeyAttributes) (crypto.Pri
 	m.keyAttrs[attrs.CN] = attrs
 	return key, nil
 }
-func (m *boostIEKeyProvider) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *boostIEKeyProvider) GetKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	k, ok := m.keys[attrs.CN]
 	if !ok {
 		return nil, errors.New("key not found")
 	}
 	return k, nil
 }
-func (m *boostIEKeyProvider) DeleteKey(attrs *types.KeyAttributes) error {
+func (m *boostIEKeyProvider) DeleteKey(_ context.Context, attrs *types.KeyAttributes) error {
 	delete(m.keys, attrs.CN)
 	delete(m.keyAttrs, attrs.CN)
 	return nil
 }
-func (m *boostIEKeyProvider) ListKeys() ([]*types.KeyAttributes, error) {
+func (m *boostIEKeyProvider) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
 	var attrs []*types.KeyAttributes
 	for cn := range m.keys {
 		if a, ok := m.keyAttrs[cn]; ok {
@@ -81,8 +81,8 @@ func (m *boostIEKeyProvider) ListKeys() ([]*types.KeyAttributes, error) {
 	}
 	return attrs, nil
 }
-func (m *boostIEKeyProvider) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
-	k, err := m.GetKey(attrs)
+func (m *boostIEKeyProvider) Signer(_ context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	k, err := m.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -92,13 +92,15 @@ func (m *boostIEKeyProvider) Signer(attrs *types.KeyAttributes) (crypto.Signer, 
 	}
 	return s, nil
 }
-func (m *boostIEKeyProvider) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *boostIEKeyProvider) Decrypter(_ context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, errors.New("not supported")
 }
-func (m *boostIEKeyProvider) RotateKey(attrs *types.KeyAttributes) error { return nil }
-func (m *boostIEKeyProvider) Close() error                               { return nil }
+func (m *boostIEKeyProvider) RotateKey(_ context.Context, attrs *types.KeyAttributes) error {
+	return nil
+}
+func (m *boostIEKeyProvider) Close() error { return nil }
 
-func (m *boostIEKeyProvider) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (m *boostIEKeyProvider) GetImportParameters(_ context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	if m.getParamsErr != nil {
 		return nil, m.getParamsErr
 	}
@@ -109,7 +111,7 @@ func (m *boostIEKeyProvider) GetImportParameters(attrs *types.KeyAttributes, alg
 	}, nil
 }
 
-func (m *boostIEKeyProvider) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (m *boostIEKeyProvider) WrapKey(_ context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if m.wrapErr != nil {
 		return nil, m.wrapErr
 	}
@@ -119,7 +121,7 @@ func (m *boostIEKeyProvider) WrapKey(keyMaterial []byte, params *backend.ImportP
 	}, nil
 }
 
-func (m *boostIEKeyProvider) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (m *boostIEKeyProvider) UnwrapKey(_ context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if m.unwrapErr != nil {
 		return nil, m.unwrapErr
 	}
@@ -129,7 +131,7 @@ func (m *boostIEKeyProvider) UnwrapKey(wrapped *backend.WrappedKeyMaterial, para
 	return []byte("unwrapped-key-material"), nil
 }
 
-func (m *boostIEKeyProvider) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (m *boostIEKeyProvider) ImportKey(_ context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	if m.importErr != nil {
 		return m.importErr
 	}
@@ -137,7 +139,7 @@ func (m *boostIEKeyProvider) ImportKey(attrs *types.KeyAttributes, wrapped *back
 	return nil
 }
 
-func (m *boostIEKeyProvider) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (m *boostIEKeyProvider) ExportKey(_ context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if m.exportErr != nil {
 		return nil, m.exportErr
 	}
@@ -147,7 +149,7 @@ func (m *boostIEKeyProvider) ExportKey(attrs *types.KeyAttributes, algorithm bac
 	}, nil
 }
 
-func (m *boostIEKeyProvider) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (m *boostIEKeyProvider) ExportKeyMaterial(_ context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	return nil, errors.New("not supported")
 }
 
@@ -204,7 +206,7 @@ func newBoostSymKeyProvider() *boostSymKeyProvider {
 	}
 }
 
-func (m *boostSymKeyProvider) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (m *boostSymKeyProvider) GenerateSymmetricKey(_ context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	key := &boostSymKey{
 		attrs:   attrs,
 		keyData: []byte("symmetric-key-material-32-bytes!"),
@@ -216,7 +218,7 @@ func (m *boostSymKeyProvider) GenerateSymmetricKey(attrs *types.KeyAttributes) (
 	return key, nil
 }
 
-func (m *boostSymKeyProvider) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (m *boostSymKeyProvider) GetSymmetricKey(_ context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	k, ok := m.symKeys[attrs.CN]
 	if !ok {
 		return nil, errors.New("symmetric key not found")
@@ -224,7 +226,7 @@ func (m *boostSymKeyProvider) GetSymmetricKey(attrs *types.KeyAttributes) (types
 	return k, nil
 }
 
-func (m *boostSymKeyProvider) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (m *boostSymKeyProvider) SymmetricEncrypter(_ context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	if enc, ok := m.encrypters[attrs.CN]; ok {
 		return enc, nil
 	}
@@ -1048,7 +1050,7 @@ func TestBoostGet_NotInitialized(t *testing.T) {
 func TestBoostGetImportParameters_PackageLevel_InvalidBackend(t *testing.T) {
 	setupService(t)
 
-	_, err := GetImportParameters("software", &types.KeyAttributes{CN: "key"}, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err := GetImportParameters(context.Background(), "software", &types.KeyAttributes{CN: "key"}, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrImportExportNotSupported))
 }
@@ -1056,14 +1058,14 @@ func TestBoostGetImportParameters_PackageLevel_InvalidBackend(t *testing.T) {
 func TestBoostGetImportParameters_PackageLevel_EmptyBackendName(t *testing.T) {
 	setupService(t)
 
-	_, err := GetImportParameters("", &types.KeyAttributes{CN: "key"}, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err := GetImportParameters(context.Background(), "", &types.KeyAttributes{CN: "key"}, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.Error(t, err)
 }
 
 func TestBoostWrapKey_PackageLevel_InvalidBackend(t *testing.T) {
 	setupService(t)
 
-	_, err := WrapKey("software", []byte("data"), &backend.ImportParameters{})
+	_, err := WrapKey(context.Background(), "software", []byte("data"), &backend.ImportParameters{})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrImportExportNotSupported))
 }
@@ -1071,14 +1073,14 @@ func TestBoostWrapKey_PackageLevel_InvalidBackend(t *testing.T) {
 func TestBoostWrapKey_PackageLevel_EmptyBackendName(t *testing.T) {
 	setupService(t)
 
-	_, err := WrapKey("", []byte("data"), &backend.ImportParameters{})
+	_, err := WrapKey(context.Background(), "", []byte("data"), &backend.ImportParameters{})
 	require.Error(t, err)
 }
 
 func TestBoostUnwrapKey_PackageLevel_InvalidBackend(t *testing.T) {
 	setupService(t)
 
-	_, err := UnwrapKey("software", &backend.WrappedKeyMaterial{}, &backend.ImportParameters{})
+	_, err := UnwrapKey(context.Background(), "software", &backend.WrappedKeyMaterial{}, &backend.ImportParameters{})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrImportExportNotSupported))
 }
@@ -1086,14 +1088,14 @@ func TestBoostUnwrapKey_PackageLevel_InvalidBackend(t *testing.T) {
 func TestBoostUnwrapKey_PackageLevel_EmptyBackendName(t *testing.T) {
 	setupService(t)
 
-	_, err := UnwrapKey("", &backend.WrappedKeyMaterial{}, &backend.ImportParameters{})
+	_, err := UnwrapKey(context.Background(), "", &backend.WrappedKeyMaterial{}, &backend.ImportParameters{})
 	require.Error(t, err)
 }
 
 func TestBoostImportKey_PackageLevel_InvalidBackend(t *testing.T) {
 	setupService(t)
 
-	err := ImportKey("software", &types.KeyAttributes{CN: "key"}, &backend.WrappedKeyMaterial{})
+	err := ImportKey(context.Background(), "software", &types.KeyAttributes{CN: "key"}, &backend.WrappedKeyMaterial{})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrImportExportNotSupported))
 }
@@ -1101,35 +1103,35 @@ func TestBoostImportKey_PackageLevel_InvalidBackend(t *testing.T) {
 func TestBoostImportKey_PackageLevel_EmptyBackendName(t *testing.T) {
 	setupService(t)
 
-	err := ImportKey("", &types.KeyAttributes{CN: "key"}, &backend.WrappedKeyMaterial{})
+	err := ImportKey(context.Background(), "", &types.KeyAttributes{CN: "key"}, &backend.WrappedKeyMaterial{})
 	require.Error(t, err)
 }
 
 func TestBoostExportKey_PackageLevel_InvalidRef(t *testing.T) {
 	setupService(t)
 
-	_, err := ExportKey("", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err := ExportKey(context.Background(), "", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.Error(t, err)
 }
 
 func TestBoostCopyKey_PackageLevel_InvalidRef(t *testing.T) {
 	setupService(t)
 
-	err := CopyKey("", "software", &types.KeyAttributes{CN: "dest"})
+	err := CopyKey(context.Background(), "", "software", &types.KeyAttributes{CN: "dest"})
 	require.Error(t, err)
 }
 
 func TestBoostGenerateSymmetricKey_PackageLevel_EmptyBackend(t *testing.T) {
 	setupService(t)
 
-	_, err := GenerateSymmetricKey("", &types.KeyAttributes{CN: "key"})
+	_, err := GenerateSymmetricKey(context.Background(), "", &types.KeyAttributes{CN: "key"})
 	require.Error(t, err)
 }
 
 func TestBoostGenerateSymmetricKey_PackageLevel_NotSupported(t *testing.T) {
 	setupService(t)
 
-	_, err := GenerateSymmetricKey("software", &types.KeyAttributes{CN: "key"})
+	_, err := GenerateSymmetricKey(context.Background(), "software", &types.KeyAttributes{CN: "key"})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrSymmetricNotSupported))
 }
@@ -1137,35 +1139,35 @@ func TestBoostGenerateSymmetricKey_PackageLevel_NotSupported(t *testing.T) {
 func TestBoostGetSymmetricKey_PackageLevel_InvalidRef(t *testing.T) {
 	setupService(t)
 
-	_, err := GetSymmetricKey("")
+	_, err := GetSymmetricKey(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestBoostEncrypt_PackageLevel_InvalidRef(t *testing.T) {
 	setupService(t)
 
-	_, err := Encrypt("", []byte("data"), nil)
+	_, err := Encrypt(context.Background(), "", []byte("data"), nil)
 	require.Error(t, err)
 }
 
 func TestBoostDecrypt_PackageLevel_InvalidRef(t *testing.T) {
 	setupService(t)
 
-	_, err := Decrypt("", &types.EncryptedData{}, nil)
+	_, err := Decrypt(context.Background(), "", &types.EncryptedData{}, nil)
 	require.Error(t, err)
 }
 
 func TestBoostGenerateKeyWithBackend_EmptyBackend(t *testing.T) {
 	setupService(t)
 
-	_, err := GenerateKeyWithBackend("", &types.KeyAttributes{CN: "key", KeyAlgorithm: x509.ECDSA})
+	_, err := GenerateKeyWithBackend(context.Background(), "", &types.KeyAttributes{CN: "key", KeyAlgorithm: x509.ECDSA})
 	require.Error(t, err)
 }
 
 func TestBoostGenerateKeyWithBackend_UnsupportedAlgo(t *testing.T) {
 	setupService(t)
 
-	_, err := GenerateKeyWithBackend("software", &types.KeyAttributes{
+	_, err := GenerateKeyWithBackend(context.Background(), "software", &types.KeyAttributes{
 		CN:           "key",
 		KeyAlgorithm: x509.PublicKeyAlgorithm(99),
 	})
@@ -1175,7 +1177,7 @@ func TestBoostGenerateKeyWithBackend_UnsupportedAlgo(t *testing.T) {
 func TestBoostGenerateKeyWithBackend_RSASuccess(t *testing.T) {
 	setupService(t)
 
-	key, err := GenerateKeyWithBackend("software", &types.KeyAttributes{
+	key, err := GenerateKeyWithBackend(context.Background(), "software", &types.KeyAttributes{
 		CN:            "rsa-boost",
 		KeyAlgorithm:  x509.RSA,
 		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
@@ -1187,7 +1189,7 @@ func TestBoostGenerateKeyWithBackend_RSASuccess(t *testing.T) {
 func TestBoostGenerateKeyWithBackend_Ed25519(t *testing.T) {
 	setupService(t)
 
-	key, err := GenerateKeyWithBackend("software", &types.KeyAttributes{
+	key, err := GenerateKeyWithBackend(context.Background(), "software", &types.KeyAttributes{
 		CN:           "ed-boost",
 		KeyAlgorithm: x509.Ed25519,
 	})
@@ -1198,49 +1200,49 @@ func TestBoostGenerateKeyWithBackend_Ed25519(t *testing.T) {
 func TestBoostSign_PackageLevel_InvalidRef(t *testing.T) {
 	setupService(t)
 
-	_, err := Sign("", []byte("data"), nil)
+	_, err := Sign(context.Background(), "", []byte("data"), nil)
 	require.Error(t, err)
 }
 
 func TestBoostVerify_PackageLevel_InvalidRef(t *testing.T) {
 	setupService(t)
 
-	err := Verify("", []byte("data"), []byte("sig"), nil)
+	err := Verify(context.Background(), "", []byte("data"), []byte("sig"), nil)
 	require.Error(t, err)
 }
 
 func TestBoostSaveCertificateChainByID_InvalidRef(t *testing.T) {
 	setupService(t)
 
-	err := SaveCertificateChainByID("", nil)
+	err := SaveCertificateChainByID(context.Background(), "", nil)
 	require.Error(t, err)
 }
 
 func TestBoostCertificateChainByID_InvalidRef(t *testing.T) {
 	setupService(t)
 
-	_, err := CertificateChainByID("")
+	_, err := CertificateChainByID(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestBoostCertificateExistsByID_InvalidRef(t *testing.T) {
 	setupService(t)
 
-	_, err := CertificateExistsByID("")
+	_, err := CertificateExistsByID(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestBoostTLSCertificateByID_InvalidRef(t *testing.T) {
 	setupService(t)
 
-	_, err := TLSCertificateByID("")
+	_, err := TLSCertificateByID(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestBoostRotateKey_PackageLevel_InvalidRef(t *testing.T) {
 	setupService(t)
 
-	_, err := RotateKey("")
+	_, err := RotateKey(context.Background(), "")
 	require.Error(t, err)
 }
 
@@ -1504,7 +1506,7 @@ func TestBoostListKeys_AllBackends_OneBackendError(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateECDSA(&types.KeyAttributes{CN: "sw-boost", KeyAlgorithm: x509.ECDSA})
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{CN: "sw-boost", KeyAlgorithm: x509.ECDSA})
 	require.NoError(t, err)
 	pkcs11.listKeysErr = errors.New("pkcs11 error")
 

@@ -19,6 +19,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -796,6 +797,119 @@ func TestBackendStorage_LoadState(t *testing.T) {
 		_, err = s.LoadState()
 		require.ErrorIs(t, err, ErrDeserializationFailed)
 	})
+
+	// Regression: legacy barrier-sealed state read through the plain JSON path.
+	// An older xkey build (and the GUI's encrypted storage path) wrote
+	// barrier-sealed ciphertext to the "xkey/state" key. The current
+	// `--storage file` path reads raw bytes and JSON-unmarshals them, which
+	// previously produced a terse, non-actionable ErrDeserializationFailed.
+	// LoadState must now surface an actionable ErrIncompatibleState that names
+	// the key, the byte count, and a remediation hint — while still satisfying
+	// errors.Is(err, ErrDeserializationFailed) for existing callers.
+	t.Run("returns actionable ErrIncompatibleState for legacy sealed state", func(t *testing.T) {
+		t.Parallel()
+
+		// Reproduce the exact on-disk shape observed in the live failure:
+		// an 8-byte big-endian seal/version header (value 1) followed by
+		// high-entropy ciphertext. This is NOT JSON.
+		sealed := make([]byte, 189)
+		binary.BigEndian.PutUint64(sealed[:8], 1)
+		if _, err := rand.Read(sealed[8:]); err != nil {
+			t.Fatalf("seed rand: %v", err)
+		}
+
+		mockBackend := newMockBackend()
+		mockBackend.data["xkey/state"] = sealed
+
+		s, err := NewBackendStorage(mockBackend, "xkey/")
+		require.NoError(t, err)
+		s.WaitForIndex()
+		defer func() { _ = s.Close() }()
+
+		_, err = s.LoadState()
+		require.Error(t, err)
+
+		// Still chains to the sentinel for backward-compatible callers.
+		require.ErrorIs(t, err, ErrDeserializationFailed)
+
+		// Carries actionable, typed detail.
+		var incompat ErrIncompatibleState
+		require.ErrorAs(t, err, &incompat)
+		require.Equal(t, "xkey/state", incompat.StorageKey)
+		require.Equal(t, len(sealed), incompat.Size)
+		require.NotNil(t, incompat.Cause)
+
+		// Message names the key, the byte count, and a remediation hint.
+		msg := err.Error()
+		require.Contains(t, msg, "xkey/state")
+		require.Contains(t, msg, "189 bytes")
+		require.Contains(t, msg, "Remediation")
+	})
+
+	// Regression: the file backend (the production `--storage file` engine)
+	// reads raw bytes, so the failure reproduces end-to-end through a real
+	// file storage backend rooted at a temp dir, not only the mock.
+	t.Run("file backend surfaces ErrIncompatibleState for legacy sealed state", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		backend, err := xkms.NewFileStorageBackend(dir)
+		require.NoError(t, err)
+		defer func() { _ = backend.Close() }()
+
+		// Seed the legacy sealed bytes at the production "xkey/state" key.
+		sealed := make([]byte, 189)
+		binary.BigEndian.PutUint64(sealed[:8], 1)
+		if _, err := rand.Read(sealed[8:]); err != nil {
+			t.Fatalf("seed rand: %v", err)
+		}
+		require.NoError(t, backend.Put(context.Background(), "xkey/state", sealed))
+
+		s, err := NewBackendStorage(backend, "xkey/")
+		require.NoError(t, err)
+		s.WaitForIndex()
+		defer func() { _ = s.Close() }()
+
+		_, err = s.LoadState()
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrDeserializationFailed)
+
+		var incompat ErrIncompatibleState
+		require.ErrorAs(t, err, &incompat)
+		require.Equal(t, "xkey/state", incompat.StorageKey)
+	})
+
+	// Happy path: a fresh file backend with no prior state initializes cleanly
+	// (ErrStateNotFound), and a saved valid state round-trips through the file
+	// backend. This mirrors the working `--storage-path /tmp/fresh` behavior.
+	t.Run("fresh file backend initializes and round-trips valid state", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		backend, err := xkms.NewFileStorageBackend(dir)
+		require.NoError(t, err)
+		defer func() { _ = backend.Close() }()
+
+		s, err := NewBackendStorage(backend, "xkey/")
+		require.NoError(t, err)
+		s.WaitForIndex()
+		defer func() { _ = s.Close() }()
+
+		// Fresh path: no state yet.
+		_, err = s.LoadState()
+		require.ErrorIs(t, err, ErrStateNotFound)
+
+		// Valid state round-trips.
+		state := createTestStateForBackend(t)
+		state.PINSet = true
+		state.PINHash = []byte{9, 8, 7, 6}
+		require.NoError(t, s.SaveState(state))
+
+		loaded, err := s.LoadState()
+		require.NoError(t, err)
+		require.True(t, loaded.PINSet)
+		require.Equal(t, []byte{9, 8, 7, 6}, loaded.PINHash)
+	})
 }
 
 func TestBackendStorage_Close(t *testing.T) {
@@ -1381,6 +1495,20 @@ func (m *mockBackend) Put(_ context.Context, key string, value []byte) error {
 	}
 	m.data[key] = value
 	return nil
+}
+
+func (m *mockBackend) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.putErr != nil {
+		return false, m.putErr
+	}
+	if _, ok := m.data[key]; ok {
+		return false, nil
+	}
+	m.data[key] = value
+	return true, nil
 }
 
 func (m *mockBackend) Delete(_ context.Context, key string) error {

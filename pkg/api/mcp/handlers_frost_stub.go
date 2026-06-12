@@ -16,12 +16,13 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
 
 // routeFrostMethods returns an error for FROST methods when not compiled with frost tag
-func (s *Server) routeFrostMethods(req *JSONRPCRequest) (interface{}, error, bool) {
+func (s *Server) routeFrostMethods(ctx context.Context, req *JSONRPCRequest) (interface{}, error, bool) {
 	if strings.HasPrefix(req.Method, "frost.") {
 		return nil, fmt.Errorf("FROST support not compiled - rebuild with '-tags frost'"), true
 	}

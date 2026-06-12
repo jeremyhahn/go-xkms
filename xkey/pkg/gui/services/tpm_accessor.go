@@ -76,5 +76,6 @@ func (a *TPMAccessor) Shutdown() {
 	a.closed.Store(true)
 	// Acquire and release the mutex to wait for any in-flight operation.
 	a.mu.Lock()
+	//nolint:staticcheck // SA2001: intentional empty critical section to drain in-flight ops
 	a.mu.Unlock()
 }

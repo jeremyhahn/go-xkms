@@ -462,7 +462,7 @@ func TestDeriveKeyECDH_Validation(t *testing.T) {
 // ===================== Password validation tests =====================
 
 func TestPasswordAdd_InputValidation(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("nil request", func(t *testing.T) {
 		_, err := svc.PasswordAdd(context.Background(), nil)
@@ -490,7 +490,7 @@ func TestPasswordAdd_InputValidation(t *testing.T) {
 }
 
 func TestPasswordGet_InputValidation(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("nil request", func(t *testing.T) {
 		_, err := svc.PasswordGet(context.Background(), nil)
@@ -510,7 +510,7 @@ func TestPasswordGet_InputValidation(t *testing.T) {
 }
 
 func TestPasswordUpdate_InputValidation(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("nil request", func(t *testing.T) {
 		_, err := svc.PasswordUpdate(context.Background(), nil)
@@ -530,7 +530,7 @@ func TestPasswordUpdate_InputValidation(t *testing.T) {
 }
 
 func TestPasswordDelete_InputValidation(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("nil request", func(t *testing.T) {
 		_, err := svc.PasswordDelete(context.Background(), nil)

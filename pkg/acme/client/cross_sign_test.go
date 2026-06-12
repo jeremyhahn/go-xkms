@@ -657,8 +657,24 @@ func TestClient_processAuthorization(t *testing.T) {
 		require.NoError(t, err)
 
 		authzURL := ""
+		var serverURL string
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/authz/123" {
+			// Supply a Replay-Nonce on every response so x/crypto/acme never
+			// dials the default Let's Encrypt directory to mint a JWS nonce.
+			w.Header().Set("Replay-Nonce", "bm9uY2UtdG9rZW4")
+			switch r.URL.Path {
+			case "/directory":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"newNonce":   serverURL + "/new-nonce",
+					"newAccount": serverURL + "/new-account",
+					"newOrder":   serverURL + "/new-order",
+					"revokeCert": serverURL + "/revoke",
+					"keyChange":  serverURL + "/key-change",
+				})
+			case "/new-nonce":
+				w.WriteHeader(http.StatusOK)
+			case "/authz/123":
 				authz := map[string]interface{}{
 					"identifier": map[string]string{
 						"type":  "dns",
@@ -671,6 +687,7 @@ func TestClient_processAuthorization(t *testing.T) {
 			}
 		}))
 		defer ts.Close()
+		serverURL = ts.URL
 		authzURL = ts.URL + "/authz/123"
 
 		mockStore := newMockStorage()
@@ -681,7 +698,8 @@ func TestClient_processAuthorization(t *testing.T) {
 			logger:        logger,
 			storage:       mockStore,
 			client: &acme.Client{
-				Key: privateKey,
+				Key:          privateKey,
+				DirectoryURL: serverURL + "/directory",
 			},
 		}
 
@@ -693,8 +711,24 @@ func TestClient_processAuthorization(t *testing.T) {
 		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
 
+		var serverURL string
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/authz/456" {
+			// Supply a Replay-Nonce on every response so x/crypto/acme never
+			// dials the default Let's Encrypt directory to mint a JWS nonce.
+			w.Header().Set("Replay-Nonce", "bm9uY2UtdG9rZW4")
+			switch r.URL.Path {
+			case "/directory":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"newNonce":   serverURL + "/new-nonce",
+					"newAccount": serverURL + "/new-account",
+					"newOrder":   serverURL + "/new-order",
+					"revokeCert": serverURL + "/revoke",
+					"keyChange":  serverURL + "/key-change",
+				})
+			case "/new-nonce":
+				w.WriteHeader(http.StatusOK)
+			case "/authz/456":
 				authz := map[string]interface{}{
 					"identifier": map[string]string{
 						"type":  "dns",
@@ -705,7 +739,7 @@ func TestClient_processAuthorization(t *testing.T) {
 						{
 							"type":  "unsupported-challenge",
 							"token": "test-token",
-							"url":   "http://localhost/challenge/1",
+							"url":   serverURL + "/challenge/1",
 						},
 					},
 				}
@@ -714,6 +748,7 @@ func TestClient_processAuthorization(t *testing.T) {
 			}
 		}))
 		defer ts.Close()
+		serverURL = ts.URL
 
 		mockStore := newMockStorage()
 		client := &Client{
@@ -723,7 +758,8 @@ func TestClient_processAuthorization(t *testing.T) {
 			logger:        logger,
 			storage:       mockStore,
 			client: &acme.Client{
-				Key: privateKey,
+				Key:          privateKey,
+				DirectoryURL: serverURL + "/directory",
 			},
 		}
 
@@ -736,13 +772,34 @@ func TestClient_processAuthorization(t *testing.T) {
 		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
 
+		var serverURL string
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Return an ACME error that won't trigger retries
-			w.Header().Set("Content-Type", "application/problem+json")
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"type":"urn:ietf:params:acme:error:malformed","detail":"authorization not found"}`))
+			// Supply a Replay-Nonce on every response so x/crypto/acme never
+			// dials the default Let's Encrypt directory to mint a JWS nonce, and
+			// serve a valid directory + new-nonce so the request reaches the
+			// authz endpoint where the intended ACME error is returned.
+			w.Header().Set("Replay-Nonce", "bm9uY2UtdG9rZW4")
+			switch r.URL.Path {
+			case "/directory":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"newNonce":   serverURL + "/new-nonce",
+					"newAccount": serverURL + "/new-account",
+					"newOrder":   serverURL + "/new-order",
+					"revokeCert": serverURL + "/revoke",
+					"keyChange":  serverURL + "/key-change",
+				})
+			case "/new-nonce":
+				w.WriteHeader(http.StatusOK)
+			default:
+				// Return an ACME error that won't trigger retries
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"type":"urn:ietf:params:acme:error:malformed","detail":"authorization not found"}`))
+			}
 		}))
 		defer ts.Close()
+		serverURL = ts.URL
 
 		mockStore := newMockStorage()
 		client := &Client{
@@ -752,7 +809,8 @@ func TestClient_processAuthorization(t *testing.T) {
 			logger:        logger,
 			storage:       mockStore,
 			client: &acme.Client{
-				Key: privateKey,
+				Key:          privateKey,
+				DirectoryURL: serverURL + "/directory",
 			},
 		}
 
@@ -771,7 +829,23 @@ func TestClient_processAuthorization(t *testing.T) {
 		acceptCalled := false
 		var serverURL string
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// x/crypto/acme caches Replay-Nonce values from every response and
+			// signs JWS requests (POST-as-GET, Accept) with one. Always supply a
+			// nonce so the client never reaches for the default Let's Encrypt
+			// directory to discover a new-nonce endpoint.
+			w.Header().Set("Replay-Nonce", "bm9uY2UtdG9rZW4")
 			switch r.URL.Path {
+			case "/directory":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"newNonce":   serverURL + "/new-nonce",
+					"newAccount": serverURL + "/new-account",
+					"newOrder":   serverURL + "/new-order",
+					"revokeCert": serverURL + "/revoke",
+					"keyChange":  serverURL + "/key-change",
+				})
+			case "/new-nonce":
+				w.WriteHeader(http.StatusOK)
 			case "/authz/http01":
 				authz := map[string]interface{}{
 					"identifier": map[string]string{
@@ -816,7 +890,8 @@ func TestClient_processAuthorization(t *testing.T) {
 			logger:        logger,
 			storage:       mockStore,
 			client: &acme.Client{
-				Key: privateKey,
+				Key:          privateKey,
+				DirectoryURL: serverURL + "/directory",
 			},
 		}
 

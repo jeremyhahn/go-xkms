@@ -109,7 +109,9 @@ func (t *TCPTransport) Write(data []byte) error {
 	frame[1] = byte(len(data))
 	copy(frame[2:], data)
 
-	t.conn.SetWriteDeadline(time.Now().Add(t.timeout))
+	if err := t.conn.SetWriteDeadline(time.Now().Add(t.timeout)); err != nil {
+		return err
+	}
 	_, err := t.conn.Write(frame)
 	return err
 }
@@ -125,7 +127,9 @@ func (t *TCPTransport) Read() ([]byte, error) {
 	}
 
 	// Read 2-byte length header
-	conn.SetReadDeadline(time.Now().Add(t.timeout))
+	if err := conn.SetReadDeadline(time.Now().Add(t.timeout)); err != nil {
+		return nil, err
+	}
 	lenBuf := make([]byte, 2)
 	if _, err := io.ReadFull(conn, lenBuf); err != nil {
 		if err == io.EOF {

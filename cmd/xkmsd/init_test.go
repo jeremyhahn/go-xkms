@@ -135,6 +135,7 @@ func TestReadAndValidateCSR_ValidCSR(t *testing.T) {
 	block, _ := pem.Decode(result)
 	if block == nil {
 		t.Fatal("returned data is not valid PEM")
+		return
 	}
 	_, err = x509.ParseCertificateRequest(block.Bytes)
 	if err != nil {

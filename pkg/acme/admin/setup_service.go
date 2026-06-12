@@ -100,10 +100,14 @@ type SetupShamirConfig struct {
 }
 
 // SetupBarrierResponse is returned after barrier initialization.
+//
+// Share-free contract: the response carries Shamir metadata only. Shares are
+// sealed to enrolled Security Officers via the ceremony distributor and are
+// never returned over the wire.
 type SetupBarrierResponse struct {
-	Shares    []string `json:"shares,omitempty"`
-	Threshold int      `json:"threshold,omitempty"`
-	Total     int      `json:"total,omitempty"`
+	Threshold  int `json:"threshold,omitempty"`
+	Total      int `json:"total,omitempty"`
+	ShareCount int `json:"share_count,omitempty"`
 }
 
 // SetupCARequest configures the Certificate Authority.
@@ -279,9 +283,9 @@ func (s *setupService) configureBarrierShamir(ctx context.Context, req *SetupBar
 		slog.Int("total_shares", resp.TotalShares))
 
 	return &SetupBarrierResponse{
-		Shares:    resp.Shares,
-		Threshold: resp.Threshold,
-		Total:     resp.TotalShares,
+		Threshold:  resp.Threshold,
+		Total:      resp.TotalShares,
+		ShareCount: resp.ShareCount,
 	}, nil
 }
 

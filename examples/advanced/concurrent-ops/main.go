@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
@@ -114,7 +115,7 @@ func demonstrateConcurrentGeneration(ks xkms.Backend) {
 				},
 			}
 
-			_, err := ks.GenerateECDSA(keyAttrs)
+			_, err := ks.GenerateECDSA(context.Background(), keyAttrs)
 			if err != nil {
 				errorCount.Add(1)
 				log.Printf("Failed to generate key %d: %v", id, err)
@@ -147,12 +148,12 @@ func demonstrateConcurrentSigning(ks xkms.Backend) {
 		},
 	}
 
-	_, err := ks.GenerateECDSA(keyAttrs)
+	_, err := ks.GenerateECDSA(context.Background(), keyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate signing key: %v", err)
 	}
 
-	signer, err := ks.Signer(keyAttrs)
+	signer, err := ks.Signer(context.Background(), keyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get signer: %v", err)
 	}
@@ -211,7 +212,7 @@ func demonstrateConcurrentReads(ks xkms.Backend) {
 			},
 		}
 
-		_, err := ks.GenerateECDSA(keyAttrs[i])
+		_, err := ks.GenerateECDSA(context.Background(), keyAttrs[i])
 		if err != nil {
 			log.Fatalf("Failed to generate key %d: %v", i, err)
 		}
@@ -232,7 +233,7 @@ func demonstrateConcurrentReads(ks xkms.Backend) {
 
 			// Read a random key
 			keyIndex := id % numKeys
-			_, err := ks.GetKey(keyAttrs[keyIndex])
+			_, err := ks.GetKey(context.Background(), keyAttrs[keyIndex])
 			if err != nil {
 				errorCount.Add(1)
 				log.Printf("Failed to read key %d: %v", id, err)
@@ -282,7 +283,7 @@ func demonstrateMixedOperations(ks xkms.Backend) {
 			// Perform different operations based on ID
 			switch id % 3 {
 			case 0: // Write
-				_, err := ks.GenerateECDSA(keyAttrs)
+				_, err := ks.GenerateECDSA(context.Background(), keyAttrs)
 				if err != nil {
 					errorCount.Add(1)
 					return
@@ -290,13 +291,13 @@ func demonstrateMixedOperations(ks xkms.Backend) {
 				writeCount.Add(1)
 
 			case 1: // Read (might fail if key doesn't exist)
-				_, err := ks.GetKey(keyAttrs)
+				_, err := ks.GetKey(context.Background(), keyAttrs)
 				if err == nil {
 					readCount.Add(1)
 				}
 
 			case 2: // Delete (might fail if key doesn't exist)
-				err := ks.DeleteKey(keyAttrs)
+				err := ks.DeleteKey(context.Background(), keyAttrs)
 				if err == nil {
 					deleteCount.Add(1)
 				}
@@ -348,14 +349,14 @@ func demonstrateLoadTest(ks xkms.Backend) {
 				}
 
 				// Generate key
-				_, err := ks.GenerateECDSA(keyAttrs)
+				_, err := ks.GenerateECDSA(context.Background(), keyAttrs)
 				if err != nil {
 					errors.Add(1)
 					continue
 				}
 
 				// Sign something
-				signer, err := ks.Signer(keyAttrs)
+				signer, err := ks.Signer(context.Background(), keyAttrs)
 				if err == nil {
 					hash := sha256.Sum256([]byte("test"))
 					_, err = signer.Sign(rand.Reader, hash[:], nil)
@@ -365,7 +366,7 @@ func demonstrateLoadTest(ks xkms.Backend) {
 				}
 
 				// Delete key
-				_ = ks.DeleteKey(keyAttrs)
+				_ = ks.DeleteKey(context.Background(), keyAttrs)
 
 				operations.Add(1)
 				opCount++

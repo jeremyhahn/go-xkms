@@ -293,7 +293,7 @@ func TestClient_DPoPRefresh(t *testing.T) {
 	// Verify SetDPoPKey / GetDPoPKey round-trip returns the same key
 	retrievedKey := client.GetDPoPKey()
 	require.NotNil(t, retrievedKey)
-	assert.Equal(t, dpopKey.PrivateKey.D, retrievedKey.PrivateKey.D,
+	assert.True(t, dpopKey.PrivateKey.Equal(retrievedKey.PrivateKey),
 		"GetDPoPKey must return the same key that was set")
 
 	ctx := context.Background()
@@ -490,12 +490,10 @@ func TestTokenResponse_DPoPKeyRoundTrip(t *testing.T) {
 		assert.Equal(t, "https://example.com/token", payload["htu"])
 
 		// Verify the key material matches the original
-		assert.Equal(t, dpopKey.PrivateKey.D.Bytes(), restored.PrivateKey.D.Bytes(),
-			"restored key D value must match original")
-		assert.Equal(t, dpopKey.PrivateKey.PublicKey.X.Bytes(), restored.PrivateKey.PublicKey.X.Bytes(),
-			"restored key X value must match original")
-		assert.Equal(t, dpopKey.PrivateKey.PublicKey.Y.Bytes(), restored.PrivateKey.PublicKey.Y.Bytes(),
-			"restored key Y value must match original")
+		assert.True(t, dpopKey.PrivateKey.Equal(restored.PrivateKey),
+			"restored private key must match original")
+		assert.True(t, dpopKey.PrivateKey.PublicKey.Equal(&restored.PrivateKey.PublicKey),
+			"restored public key must match original")
 	})
 
 	t.Run("SetDPoPKey with nil key returns error", func(t *testing.T) {

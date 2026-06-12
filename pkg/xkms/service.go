@@ -247,6 +247,90 @@ func (s *XKMSService) CA() provider.CA {
 	return s.ca
 }
 
+// LookupBackend returns the raw Backend instance for the given name.
+// Unlike GetBackend (which is part of the transport.XKMSServicer interface and
+// returns a DTO), LookupBackend returns the Backend interface for direct use.
+func (s *XKMSService) LookupBackend(name string) (Backend, error) {
+	if err := validation.ValidateBackendName(name); err != nil {
+		return nil, &ErrBackendNameValidation{Err: err}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	b, ok := s.backends[name]
+	if !ok {
+		return nil, &ErrBackendLookup{
+			Sentinel: ErrBackendNotFound,
+			Name:     validation.SanitizeForLog(name),
+		}
+	}
+	return b, nil
+}
+
+// LookupDefaultBackend returns the raw Backend interface for the configured
+// default backend. Callers that need the backend for direct crypto operations
+// should use this instead of the DTO-returning transport interface method.
+func (s *XKMSService) LookupDefaultBackend() (Backend, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.defaultBackend == "" {
+		return nil, ErrNoDefaultBackend
+	}
+	b, ok := s.backends[s.defaultBackend]
+	if !ok {
+		return nil, &ErrBackendLookup{
+			Sentinel: ErrBackendNotFound,
+			Name:     s.defaultBackend,
+		}
+	}
+	return b, nil
+}
+
+// BackendNames returns the names of all registered backends on this service instance.
+func (s *XKMSService) BackendNames() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	names := make([]string, 0, len(s.backends))
+	for name := range s.backends {
+		names = append(names, name)
+	}
+	return names
+}
+
+// SealWithBackend seals data using a specific backend on this service instance.
+func (s *XKMSService) SealWithBackend(ctx context.Context, backendName string, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	b, err := s.LookupBackend(backendName)
+	if err != nil {
+		return nil, err
+	}
+	return b.Seal(ctx, data, opts)
+}
+
+// UnsealWithBackend unseals data using a specific backend on this service instance.
+func (s *XKMSService) UnsealWithBackend(ctx context.Context, backendName string, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	b, err := s.LookupBackend(backendName)
+	if err != nil {
+		return nil, err
+	}
+	return b.Unseal(ctx, sealed, opts)
+}
+
+// CanSealDirect returns true if the specified backend supports sealing operations.
+// If backendName is empty, checks the default backend. This is the low-level
+// boolean check; the transport interface's CanSeal returns a structured response.
+func (s *XKMSService) CanSealDirect(backendName ...string) bool {
+	var b Backend
+	var err error
+	if len(backendName) > 0 && backendName[0] != "" {
+		b, err = s.LookupBackend(backendName[0])
+	} else {
+		b, err = s.LookupDefaultBackend()
+	}
+	if err != nil {
+		return false
+	}
+	return b.CanSeal()
+}
+
 // validateTenantAccess checks that the TenantID in KeyAttributes is valid.
 // Returns nil when TenantID is empty (single-tenant mode).
 func validateTenantAccess(attrs *types.KeyAttributes) error {
@@ -334,7 +418,6 @@ func IsInitialized() bool {
 	return service != nil
 }
 
-// GetBackend returns a specific backend by name
 // UnregisterBackend removes a backend from the service. This is used when
 // a backend needs to be replaced (e.g., after a PKCS#11 token reconnection).
 func UnregisterBackend(name string) {
@@ -548,7 +631,7 @@ func getBackendForKID(kid string) (Backend, *types.KeyAttributes, error) {
 
 // GenerateKey generates a new key with the given attributes.
 // Uses BackendFor(attrs) to resolve the correct backend based on StoreType.
-func GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if err := validateTenantAccess(attrs); err != nil {
 		return nil, err
 	}
@@ -561,11 +644,11 @@ func GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	// Route to appropriate generation method based on algorithm
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		return b.GenerateRSA(attrs)
+		return b.GenerateRSA(ctx, attrs)
 	case x509.ECDSA:
-		return b.GenerateECDSA(attrs)
+		return b.GenerateECDSA(ctx, attrs)
 	case x509.Ed25519:
-		return b.GenerateEd25519(attrs)
+		return b.GenerateEd25519(ctx, attrs)
 	default:
 		return nil, &ErrUnsupportedPublicKeyAlgorithm{Algorithm: attrs.KeyAlgorithm}
 	}
@@ -573,7 +656,7 @@ func GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 
 // Key retrieves a key by its attributes.
 // Uses BackendFor(attrs) to resolve the correct backend based on StoreType.
-func Key(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func Key(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if err := validateTenantAccess(attrs); err != nil {
 		return nil, err
 	}
@@ -583,12 +666,12 @@ func Key(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 		return nil, err
 	}
 
-	return b.GetKey(attrs)
+	return b.GetKey(ctx, attrs)
 }
 
 // Signer returns a crypto.Signer for the specified key attributes.
 // This is the primary method - use SignerByID for string-based lookups.
-func Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	if err := validateTenantAccess(attrs); err != nil {
 		return nil, err
 	}
@@ -598,12 +681,12 @@ func Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
 		return nil, err
 	}
 
-	return b.Signer(attrs)
+	return b.Signer(ctx, attrs)
 }
 
 // Decrypter returns a crypto.Decrypter for the specified key attributes.
 // This is the primary method - use DecrypterByID for string-based lookups.
-func Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	if err := validateTenantAccess(attrs); err != nil {
 		return nil, err
 	}
@@ -613,12 +696,12 @@ func Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 		return nil, err
 	}
 
-	return b.Decrypter(attrs)
+	return b.Decrypter(ctx, attrs)
 }
 
 // DeleteKey deletes a key by its attributes.
 // This is the primary method - use DeleteKeyByID for string-based lookups.
-func DeleteKey(attrs *types.KeyAttributes) error {
+func DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if err := validateTenantAccess(attrs); err != nil {
 		return err
 	}
@@ -628,12 +711,12 @@ func DeleteKey(attrs *types.KeyAttributes) error {
 		return err
 	}
 
-	return b.DeleteKey(attrs)
+	return b.DeleteKey(ctx, attrs)
 }
 
 // Certificate retrieves a certificate by key attributes.
 // This is the primary method - use CertificateByID for string-based lookups.
-func Certificate(attrs *types.KeyAttributes) (*x509.Certificate, error) {
+func Certificate(ctx context.Context, attrs *types.KeyAttributes) (*x509.Certificate, error) {
 	if err := validateTenantAccess(attrs); err != nil {
 		return nil, err
 	}
@@ -643,12 +726,12 @@ func Certificate(attrs *types.KeyAttributes) (*x509.Certificate, error) {
 		return nil, err
 	}
 
-	return b.GetCert(attrs.CertificateID())
+	return b.GetCert(ctx, attrs.CertificateID())
 }
 
 // SaveCertificate saves a certificate using key attributes.
 // This is the primary method - use SaveCertificateByID for string-based lookups.
-func SaveCertificate(attrs *types.KeyAttributes, cert *x509.Certificate) error {
+func SaveCertificate(ctx context.Context, attrs *types.KeyAttributes, cert *x509.Certificate) error {
 	if err := validateTenantAccess(attrs); err != nil {
 		return err
 	}
@@ -658,12 +741,12 @@ func SaveCertificate(attrs *types.KeyAttributes, cert *x509.Certificate) error {
 		return err
 	}
 
-	return b.SaveCert(attrs.CertificateID(), cert)
+	return b.SaveCert(ctx, attrs.CertificateID(), cert)
 }
 
 // DeleteCertificate deletes a certificate by key attributes.
 // This is the primary method - use DeleteCertificateByID for string-based lookups.
-func DeleteCertificate(attrs *types.KeyAttributes) error {
+func DeleteCertificate(ctx context.Context, attrs *types.KeyAttributes) error {
 	if err := validateTenantAccess(attrs); err != nil {
 		return err
 	}
@@ -673,12 +756,12 @@ func DeleteCertificate(attrs *types.KeyAttributes) error {
 		return err
 	}
 
-	return b.DeleteCert(attrs.CertificateID())
+	return b.DeleteCert(ctx, attrs.CertificateID())
 }
 
 // CertificateChain retrieves a certificate chain by key attributes.
 // This is the primary method - use CertificateChainByID for string-based lookups.
-func CertificateChain(attrs *types.KeyAttributes) ([]*x509.Certificate, error) {
+func CertificateChain(ctx context.Context, attrs *types.KeyAttributes) ([]*x509.Certificate, error) {
 	if err := validateTenantAccess(attrs); err != nil {
 		return nil, err
 	}
@@ -688,12 +771,12 @@ func CertificateChain(attrs *types.KeyAttributes) ([]*x509.Certificate, error) {
 		return nil, err
 	}
 
-	return b.GetCertChain(attrs.CertificateID())
+	return b.GetCertChain(ctx, attrs.CertificateID())
 }
 
 // SaveCertificateChain saves a certificate chain using key attributes.
 // This is the primary method - use SaveCertificateChainByID for string-based lookups.
-func SaveCertificateChain(attrs *types.KeyAttributes, chain []*x509.Certificate) error {
+func SaveCertificateChain(ctx context.Context, attrs *types.KeyAttributes, chain []*x509.Certificate) error {
 	if err := validateTenantAccess(attrs); err != nil {
 		return err
 	}
@@ -703,12 +786,12 @@ func SaveCertificateChain(attrs *types.KeyAttributes, chain []*x509.Certificate)
 		return err
 	}
 
-	return b.SaveCertChain(attrs.CertificateID(), chain)
+	return b.SaveCertChain(ctx, attrs.CertificateID(), chain)
 }
 
 // CertificateExists checks if a certificate exists for the given key attributes.
 // This is the primary method - use CertificateExistsByID for string-based lookups.
-func CertificateExists(attrs *types.KeyAttributes) (bool, error) {
+func CertificateExists(ctx context.Context, attrs *types.KeyAttributes) (bool, error) {
 	if err := validateTenantAccess(attrs); err != nil {
 		return false, err
 	}
@@ -718,12 +801,12 @@ func CertificateExists(attrs *types.KeyAttributes) (bool, error) {
 		return false, err
 	}
 
-	return b.CertExists(attrs.CertificateID())
+	return b.CertExists(ctx, attrs.CertificateID())
 }
 
 // TLSCertificate returns a complete tls.Certificate for the given key attributes.
 // This is the primary method - use TLSCertificateByID for string-based lookups.
-func TLSCertificate(attrs *types.KeyAttributes) (tls.Certificate, error) {
+func TLSCertificate(ctx context.Context, attrs *types.KeyAttributes) (tls.Certificate, error) {
 	if err := validateTenantAccess(attrs); err != nil {
 		return tls.Certificate{}, err
 	}
@@ -733,7 +816,7 @@ func TLSCertificate(attrs *types.KeyAttributes) (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 
-	return b.GetTLSCertificate(attrs.CertificateID(), attrs)
+	return b.GetTLSCertificate(ctx, attrs.CertificateID(), attrs)
 }
 
 // ========================================================================
@@ -743,7 +826,7 @@ func TLSCertificate(attrs *types.KeyAttributes) (tls.Certificate, error) {
 // KeyByID retrieves a key by its key ID (kid).
 // Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
 // Prefer Key(attrs) for type-safe lookups.
-func KeyByID(kid string) (crypto.PrivateKey, error) {
+func KeyByID(ctx context.Context, kid string) (crypto.PrivateKey, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
@@ -753,13 +836,13 @@ func KeyByID(kid string) (crypto.PrivateKey, error) {
 		return nil, err
 	}
 
-	return b.GetKeyByID(kid)
+	return b.GetKeyByID(ctx, kid)
 }
 
 // SignerByID returns a signer for the specified key ID (kid).
 // Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
 // Prefer Signer(attrs) for type-safe lookups.
-func SignerByID(kid string) (crypto.Signer, error) {
+func SignerByID(ctx context.Context, kid string) (crypto.Signer, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
@@ -769,13 +852,13 @@ func SignerByID(kid string) (crypto.Signer, error) {
 		return nil, err
 	}
 
-	return b.GetSignerByID(kid)
+	return b.GetSignerByID(ctx, kid)
 }
 
 // DecrypterByID returns a decrypter for the specified key ID (kid).
 // Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
 // Prefer Decrypter(attrs) for type-safe lookups.
-func DecrypterByID(kid string) (crypto.Decrypter, error) {
+func DecrypterByID(ctx context.Context, kid string) (crypto.Decrypter, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
@@ -785,13 +868,13 @@ func DecrypterByID(kid string) (crypto.Decrypter, error) {
 		return nil, err
 	}
 
-	return b.GetDecrypterByID(kid)
+	return b.GetDecrypterByID(ctx, kid)
 }
 
 // DeleteKeyByID deletes a key by its key ID (kid).
 // Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
 // Prefer DeleteKey(attrs) for type-safe lookups.
-func DeleteKeyByID(kid string) error {
+func DeleteKeyByID(ctx context.Context, kid string) error {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return &ErrKeyIDParse{Err: err}
 	}
@@ -801,11 +884,11 @@ func DeleteKeyByID(kid string) error {
 		return err
 	}
 
-	return b.DeleteKey(attrs)
+	return b.DeleteKey(ctx, attrs)
 }
 
 // ListKeys lists all keys across all backends or from a specific backend
-func ListKeys(backendName ...string) ([]*types.KeyAttributes, error) {
+func ListKeys(ctx context.Context, backendName ...string) ([]*types.KeyAttributes, error) {
 	if !IsInitialized() {
 		return nil, ErrNotInitialized
 	}
@@ -832,12 +915,12 @@ func ListKeys(backendName ...string) ([]*types.KeyAttributes, error) {
 			}
 		}
 
-		return b.ListKeys()
+		return b.ListKeys(ctx)
 	}
 
 	// List from all backends
 	for _, b := range service.backends {
-		keys, err := b.ListKeys()
+		keys, err := b.ListKeys(ctx)
 		if err != nil {
 			// Log error but continue with other backends
 			continue
@@ -851,7 +934,7 @@ func ListKeys(backendName ...string) ([]*types.KeyAttributes, error) {
 // SaveCertificateByID saves a certificate by key ID.
 // Format: "backend:key-id" or just "key-id" (uses default backend).
 // Prefer SaveCertificate(attrs, cert) for type-safe lookups.
-func SaveCertificateByID(kid string, cert *x509.Certificate) error {
+func SaveCertificateByID(ctx context.Context, kid string, cert *x509.Certificate) error {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return &ErrKeyIDParse{Err: err}
 	}
@@ -861,13 +944,13 @@ func SaveCertificateByID(kid string, cert *x509.Certificate) error {
 		return err
 	}
 
-	return b.SaveCert(kid, cert)
+	return b.SaveCert(ctx, kid, cert)
 }
 
 // CertificateByID retrieves a certificate by key ID (kid).
 // Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
 // Prefer Certificate(attrs) for type-safe lookups.
-func CertificateByID(kid string) (*x509.Certificate, error) {
+func CertificateByID(ctx context.Context, kid string) (*x509.Certificate, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
@@ -877,13 +960,13 @@ func CertificateByID(kid string) (*x509.Certificate, error) {
 		return nil, err
 	}
 
-	return b.GetCert(kid)
+	return b.GetCert(ctx, kid)
 }
 
 // DeleteCertificateByID deletes a certificate by key ID (kid).
 // Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
 // Prefer DeleteCertificate(attrs) for type-safe lookups.
-func DeleteCertificateByID(kid string) error {
+func DeleteCertificateByID(ctx context.Context, kid string) error {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return &ErrKeyIDParse{Err: err}
 	}
@@ -893,11 +976,11 @@ func DeleteCertificateByID(kid string) error {
 		return err
 	}
 
-	return b.DeleteCert(kid)
+	return b.DeleteCert(ctx, kid)
 }
 
 // ListCertificates lists all certificate IDs across all backends or from a specific backend
-func ListCertificates(backendName ...string) ([]string, error) {
+func ListCertificates(ctx context.Context, backendName ...string) ([]string, error) {
 	if !IsInitialized() {
 		return nil, ErrNotInitialized
 	}
@@ -924,12 +1007,12 @@ func ListCertificates(backendName ...string) ([]string, error) {
 			}
 		}
 
-		return b.ListCerts()
+		return b.ListCerts(ctx)
 	}
 
 	// List from all backends
 	for _, b := range service.backends {
-		certs, err := b.ListCerts()
+		certs, err := b.ListCerts(ctx)
 		if err != nil {
 			// Log error but continue with other backends
 			continue
@@ -1134,7 +1217,7 @@ func GetBackendCapabilities(name string) (types.Capabilities, error) {
 // ========================================================================
 
 // GenerateKeyWithBackend generates a new key on a specific backend.
-func GenerateKeyWithBackend(backendName string, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func GenerateKeyWithBackend(ctx context.Context, backendName string, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if err := validateTenantAccess(attrs); err != nil {
 		return nil, err
 	}
@@ -1150,11 +1233,11 @@ func GenerateKeyWithBackend(backendName string, attrs *types.KeyAttributes) (cry
 
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		return b.GenerateRSA(attrs)
+		return b.GenerateRSA(ctx, attrs)
 	case x509.ECDSA:
-		return b.GenerateECDSA(attrs)
+		return b.GenerateECDSA(ctx, attrs)
 	case x509.Ed25519:
-		return b.GenerateEd25519(attrs)
+		return b.GenerateEd25519(ctx, attrs)
 	default:
 		return nil, &ErrUnsupportedPublicKeyAlgorithm{Algorithm: attrs.KeyAlgorithm}
 	}
@@ -1162,7 +1245,7 @@ func GenerateKeyWithBackend(backendName string, attrs *types.KeyAttributes) (cry
 
 // RotateKey rotates (replaces) an existing key with a new one.
 // The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
-func RotateKey(kid string) (crypto.PrivateKey, error) {
+func RotateKey(ctx context.Context, kid string) (crypto.PrivateKey, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
@@ -1172,7 +1255,7 @@ func RotateKey(kid string) (crypto.PrivateKey, error) {
 		return nil, err
 	}
 
-	return b.RotateKey(attrs)
+	return b.RotateKey(ctx, attrs)
 }
 
 // ========================================================================
@@ -1190,7 +1273,7 @@ type SignOptions struct {
 
 // Sign signs data using the specified key.
 // The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
-func Sign(kid string, data []byte, opts *SignOptions) ([]byte, error) {
+func Sign(ctx context.Context, kid string, data []byte, opts *SignOptions) ([]byte, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
@@ -1200,7 +1283,7 @@ func Sign(kid string, data []byte, opts *SignOptions) ([]byte, error) {
 		return nil, err
 	}
 
-	signer, err := b.Signer(attrs)
+	signer, err := b.Signer(ctx, attrs)
 	if err != nil {
 		return nil, &ErrCryptoOperation{Operation: "signer", Err: err}
 	}
@@ -1232,7 +1315,7 @@ func Sign(kid string, data []byte, opts *SignOptions) ([]byte, error) {
 
 // Verify verifies a signature against data using the specified key.
 // The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
-func Verify(kid string, data, signature []byte, opts *types.VerifyOpts) error {
+func Verify(ctx context.Context, kid string, data, signature []byte, opts *types.VerifyOpts) error {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return &ErrKeyIDParse{Err: err}
 	}
@@ -1242,7 +1325,7 @@ func Verify(kid string, data, signature []byte, opts *types.VerifyOpts) error {
 		return err
 	}
 
-	privKey, err := b.GetKey(attrs)
+	privKey, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return &ErrKeyOperation{Operation: "get key", Err: err}
 	}
@@ -1282,7 +1365,7 @@ func Verify(kid string, data, signature []byte, opts *types.VerifyOpts) error {
 
 // Encrypt encrypts data using a symmetric key.
 // The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
-func Encrypt(kid string, data []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
+func Encrypt(ctx context.Context, kid string, data []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
@@ -1297,7 +1380,7 @@ func Encrypt(kid string, data []byte, opts *types.EncryptOptions) (*types.Encryp
 		return nil, &ErrBackendUnsupported{Sentinel: ErrSymmetricNotSupported}
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrEncryptionFailed, Detail: "failed to get symmetric encrypter", Err: err}
 	}
@@ -1307,7 +1390,7 @@ func Encrypt(kid string, data []byte, opts *types.EncryptOptions) (*types.Encryp
 
 // Decrypt decrypts data using a symmetric key.
 // The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
-func Decrypt(kid string, data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
+func Decrypt(ctx context.Context, kid string, data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
@@ -1322,7 +1405,7 @@ func Decrypt(kid string, data *types.EncryptedData, opts *types.DecryptOptions) 
 		return nil, &ErrBackendUnsupported{Sentinel: ErrSymmetricNotSupported}
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrDecryptionFailed, Detail: "failed to get symmetric encrypter", Err: err}
 	}
@@ -1337,7 +1420,7 @@ func Decrypt(kid string, data *types.EncryptedData, opts *types.DecryptOptions) 
 // SaveCertificateChainByID saves a certificate chain by key ID (kid).
 // Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
 // Prefer SaveCertificateChain(attrs, chain) for type-safe lookups.
-func SaveCertificateChainByID(kid string, chain []*x509.Certificate) error {
+func SaveCertificateChainByID(ctx context.Context, kid string, chain []*x509.Certificate) error {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return &ErrKeyIDParse{Err: err}
 	}
@@ -1347,13 +1430,13 @@ func SaveCertificateChainByID(kid string, chain []*x509.Certificate) error {
 		return err
 	}
 
-	return b.SaveCertChain(kid, chain)
+	return b.SaveCertChain(ctx, kid, chain)
 }
 
 // CertificateChainByID retrieves a certificate chain by key ID (kid).
 // Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
 // Prefer CertificateChain(attrs) for type-safe lookups.
-func CertificateChainByID(kid string) ([]*x509.Certificate, error) {
+func CertificateChainByID(ctx context.Context, kid string) ([]*x509.Certificate, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
@@ -1363,13 +1446,13 @@ func CertificateChainByID(kid string) ([]*x509.Certificate, error) {
 		return nil, err
 	}
 
-	return b.GetCertChain(kid)
+	return b.GetCertChain(ctx, kid)
 }
 
 // CertificateExistsByID checks if a certificate exists for the given key ID (kid).
 // Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
 // Prefer CertificateExists(attrs) for type-safe lookups.
-func CertificateExistsByID(kid string) (bool, error) {
+func CertificateExistsByID(ctx context.Context, kid string) (bool, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return false, &ErrKeyIDParse{Err: err}
 	}
@@ -1379,7 +1462,7 @@ func CertificateExistsByID(kid string) (bool, error) {
 		return false, err
 	}
 
-	return b.CertExists(kid)
+	return b.CertExists(ctx, kid)
 }
 
 // ========================================================================
@@ -1389,7 +1472,7 @@ func CertificateExistsByID(kid string) (bool, error) {
 // TLSCertificateByID returns a complete tls.Certificate by key ID (kid).
 // Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
 // Prefer TLSCertificate(attrs) for type-safe lookups.
-func TLSCertificateByID(kid string) (tls.Certificate, error) {
+func TLSCertificateByID(ctx context.Context, kid string) (tls.Certificate, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return tls.Certificate{}, &ErrKeyIDParse{Err: err}
 	}
@@ -1399,7 +1482,7 @@ func TLSCertificateByID(kid string) (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 
-	return b.GetTLSCertificate(kid, attrs)
+	return b.GetTLSCertificate(ctx, kid, attrs)
 }
 
 // ========================================================================
@@ -1407,7 +1490,7 @@ func TLSCertificateByID(kid string) (tls.Certificate, error) {
 // ========================================================================
 
 // GetImportParameters retrieves parameters needed to import a key into a backend.
-func GetImportParameters(backendName string, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func GetImportParameters(ctx context.Context, backendName string, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	if err := validateTenantAccess(attrs); err != nil {
 		return nil, err
 	}
@@ -1429,11 +1512,11 @@ func GetImportParameters(backendName string, attrs *types.KeyAttributes, algorit
 		}
 	}
 
-	return importExportBackend.GetImportParameters(attrs, algorithm)
+	return importExportBackend.GetImportParameters(ctx, attrs, algorithm)
 }
 
 // WrapKey wraps key material for secure transport using the specified parameters.
-func WrapKey(backendName string, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func WrapKey(ctx context.Context, backendName string, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if err := validation.ValidateBackendName(backendName); err != nil {
 		return nil, &ErrBackendNameValidation{Err: err}
 	}
@@ -1451,11 +1534,11 @@ func WrapKey(backendName string, keyMaterial []byte, params *backend.ImportParam
 		}
 	}
 
-	return importExportBackend.WrapKey(keyMaterial, params)
+	return importExportBackend.WrapKey(ctx, keyMaterial, params)
 }
 
 // UnwrapKey unwraps key material that was previously wrapped.
-func UnwrapKey(backendName string, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func UnwrapKey(ctx context.Context, backendName string, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if err := validation.ValidateBackendName(backendName); err != nil {
 		return nil, &ErrBackendNameValidation{Err: err}
 	}
@@ -1473,11 +1556,11 @@ func UnwrapKey(backendName string, wrapped *backend.WrappedKeyMaterial, params *
 		}
 	}
 
-	return importExportBackend.UnwrapKey(wrapped, params)
+	return importExportBackend.UnwrapKey(ctx, wrapped, params)
 }
 
 // ImportKey imports externally generated key material into a backend.
-func ImportKey(backendName string, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func ImportKey(ctx context.Context, backendName string, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	if err := validateTenantAccess(attrs); err != nil {
 		return err
 	}
@@ -1499,12 +1582,12 @@ func ImportKey(backendName string, attrs *types.KeyAttributes, wrapped *backend.
 		}
 	}
 
-	return importExportBackend.ImportKey(attrs, wrapped)
+	return importExportBackend.ImportKey(ctx, attrs, wrapped)
 }
 
 // ExportKey exports a key in wrapped form for secure transport.
 // The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
-func ExportKey(kid string, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func ExportKey(ctx context.Context, kid string, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
@@ -1519,7 +1602,7 @@ func ExportKey(kid string, algorithm backend.WrappingAlgorithm) (*backend.Wrappe
 		return nil, &ErrBackendUnsupported{Sentinel: ErrImportExportNotSupported}
 	}
 
-	return importExportBackend.ExportKey(attrs, algorithm)
+	return importExportBackend.ExportKey(ctx, attrs, algorithm)
 }
 
 // ========================================================================
@@ -1528,7 +1611,7 @@ func ExportKey(kid string, algorithm backend.WrappingAlgorithm) (*backend.Wrappe
 
 // CopyKey copies a key from one backend to another.
 // The sourceKID format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
-func CopyKey(sourceKID string, destBackend string, destAttrs *types.KeyAttributes) error {
+func CopyKey(ctx context.Context, sourceKID string, destBackend string, destAttrs *types.KeyAttributes) error {
 	if err := validation.ValidateKeyReference(sourceKID); err != nil {
 		return &ErrKeyIDParse{Err: err}
 	}
@@ -1572,19 +1655,19 @@ func CopyKey(sourceKID string, destBackend string, destAttrs *types.KeyAttribute
 	}
 
 	algorithm := backend.WrappingAlgorithmRSAES_OAEP_SHA_256
-	importParams, err := destImportExport.GetImportParameters(destAttrs, algorithm)
+	importParams, err := destImportExport.GetImportParameters(ctx, destAttrs, algorithm)
 	if err != nil {
 		return &ErrImportExportOperation{Operation: "get import parameters", Err: err}
 	}
 
-	wrappedKey, err := sourceImportExport.ExportKey(sourceAttrs, algorithm)
+	wrappedKey, err := sourceImportExport.ExportKey(ctx, sourceAttrs, algorithm)
 	if err != nil {
 		return &ErrImportExportOperation{Operation: "export key", Err: err}
 	}
 
 	wrappedKey.ImportToken = importParams.ImportToken
 
-	return destImportExport.ImportKey(destAttrs, wrappedKey)
+	return destImportExport.ImportKey(ctx, destAttrs, wrappedKey)
 }
 
 // ========================================================================
@@ -1592,7 +1675,7 @@ func CopyKey(sourceKID string, destBackend string, destAttrs *types.KeyAttribute
 // ========================================================================
 
 // GenerateSymmetricKey generates a new symmetric key.
-func GenerateSymmetricKey(backendName string, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func GenerateSymmetricKey(ctx context.Context, backendName string, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if err := validateTenantAccess(attrs); err != nil {
 		return nil, err
 	}
@@ -1614,12 +1697,12 @@ func GenerateSymmetricKey(backendName string, attrs *types.KeyAttributes) (types
 		}
 	}
 
-	return symBackend.GenerateSymmetricKey(attrs)
+	return symBackend.GenerateSymmetricKey(ctx, attrs)
 }
 
 // GetSymmetricKey retrieves an existing symmetric key.
 // The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
-func GetSymmetricKey(kid string) (types.SymmetricKey, error) {
+func GetSymmetricKey(ctx context.Context, kid string) (types.SymmetricKey, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
@@ -1634,5 +1717,5 @@ func GetSymmetricKey(kid string) (types.SymmetricKey, error) {
 		return nil, &ErrBackendUnsupported{Sentinel: ErrSymmetricNotSupported}
 	}
 
-	return symBackend.GetSymmetricKey(attrs)
+	return symBackend.GetSymmetricKey(ctx, attrs)
 }

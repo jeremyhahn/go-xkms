@@ -69,7 +69,7 @@ func TestPasswordUpdate_AllOptionalFields(t *testing.T) {
 
 // TestPasswordUpdate_NilRequest exercises the nil request validation.
 func TestPasswordUpdate_NilRequest(t *testing.T) {
-	service := NewService(nil, nil)
+	service := NewService(nil, nil, nil)
 	ctx := context.Background()
 
 	_, err := service.PasswordUpdate(ctx, nil)

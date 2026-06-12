@@ -16,6 +16,7 @@
 package integration
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -107,7 +108,7 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Generate key
-			key, err := b.GenerateKey(attrs)
+			key, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate RSA 2048 key")
 			require.NotNil(t, key, "Key should not be nil")
 
@@ -121,7 +122,7 @@ func TestVaultIntegration(t *testing.T) {
 			message := []byte("test message for RSA 2048")
 			hash := sha256.Sum256(message)
 
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get signer")
 
 			signature, err := signer.Sign(rand.Reader, hash[:], crypto.SHA256)
@@ -137,7 +138,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Verified RSA 2048 signature")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -154,7 +155,7 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Generate key
-			key, err := b.GenerateKey(attrs)
+			key, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate RSA 2048 key")
 			require.NotNil(t, key, "Key should not be nil")
 
@@ -170,7 +171,7 @@ func TestVaultIntegration(t *testing.T) {
 			h.Write(message)
 			digest := h.Sum(nil)
 
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get signer")
 
 			// Vault backend uses PSSSaltLengthAuto
@@ -193,7 +194,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Verified RSA 2048 PSS signature")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -209,7 +210,7 @@ func TestVaultIntegration(t *testing.T) {
 				},
 			}
 
-			key, err := b.GenerateKey(attrs)
+			key, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate RSA 4096 key")
 
 			pubKey, ok := key.(*rsa.PublicKey)
@@ -219,7 +220,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Generated RSA 4096 key")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -236,7 +237,7 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Generate key
-			key, err := b.GenerateKey(attrs)
+			key, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate RSA 4096 key")
 			require.NotNil(t, key, "Key should not be nil")
 
@@ -252,7 +253,7 @@ func TestVaultIntegration(t *testing.T) {
 			h.Write(message)
 			digest := h.Sum(nil)
 
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get signer")
 
 			// Vault backend uses PSSSaltLengthAuto
@@ -275,7 +276,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Verified RSA 4096 PSS signature")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -291,7 +292,7 @@ func TestVaultIntegration(t *testing.T) {
 				},
 			}
 
-			_, err := b.GenerateKey(attrs)
+			_, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate RSA key with SHA384")
 
 			message := []byte("test message for SHA384")
@@ -300,7 +301,7 @@ func TestVaultIntegration(t *testing.T) {
 			h.Write(message)
 			hash := h.Sum(nil)
 
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get signer")
 
 			signature, err := signer.Sign(rand.Reader, hash, crypto.SHA384)
@@ -310,7 +311,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Signed message with RSA-SHA384")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -327,7 +328,7 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Generate key
-			key, err := b.GenerateKey(attrs)
+			key, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate RSA key with SHA384")
 			require.NotNil(t, key, "Key should not be nil")
 
@@ -342,7 +343,7 @@ func TestVaultIntegration(t *testing.T) {
 			h.Write(message)
 			digest := h.Sum(nil)
 
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get signer")
 
 			pssOpts := &rsa.PSSOptions{
@@ -364,7 +365,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Verified RSA-SHA384 PSS signature")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 	})
@@ -386,7 +387,7 @@ func TestVaultIntegration(t *testing.T) {
 				},
 			}
 
-			key, err := b.GenerateKey(attrs)
+			key, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate ECDSA P-256 key")
 
 			pubKey, ok := key.(*ecdsa.PublicKey)
@@ -399,7 +400,7 @@ func TestVaultIntegration(t *testing.T) {
 			message := []byte("test message for ECDSA P-256")
 			hash := sha256.Sum256(message)
 
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get signer")
 
 			signature, err := signer.Sign(rand.Reader, hash[:], crypto.SHA256)
@@ -409,7 +410,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Signed message with ECDSA P-256 (signature length: %d)", len(signature))
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -425,7 +426,7 @@ func TestVaultIntegration(t *testing.T) {
 				},
 			}
 
-			key, err := b.GenerateKey(attrs)
+			key, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate ECDSA P-384 key")
 
 			pubKey, ok := key.(*ecdsa.PublicKey)
@@ -435,7 +436,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Generated ECDSA P-384 key")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -451,7 +452,7 @@ func TestVaultIntegration(t *testing.T) {
 				},
 			}
 
-			key, err := b.GenerateKey(attrs)
+			key, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate ECDSA P-521 key")
 
 			pubKey, ok := key.(*ecdsa.PublicKey)
@@ -461,7 +462,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Generated ECDSA P-521 key")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 	})
@@ -479,7 +480,7 @@ func TestVaultIntegration(t *testing.T) {
 			Hash:         crypto.SHA256,
 		}
 
-		key, err := b.GenerateKey(attrs)
+		key, err := b.GenerateKey(context.Background(), attrs)
 		require.NoError(t, err, "Failed to generate Ed25519 key")
 
 		pubKey, ok := key.(ed25519.PublicKey)
@@ -491,7 +492,7 @@ func TestVaultIntegration(t *testing.T) {
 		// Test signing
 		message := []byte("test message for Ed25519")
 
-		signer, err := b.Signer(attrs)
+		signer, err := b.Signer(context.Background(), attrs)
 		require.NoError(t, err, "Failed to get signer")
 
 		signature, err := signer.Sign(rand.Reader, message, crypto.Hash(0))
@@ -508,7 +509,7 @@ func TestVaultIntegration(t *testing.T) {
 		t.Logf("✓ Verified Ed25519 signature")
 
 		// Cleanup
-		err = b.DeleteKey(attrs)
+		err = b.DeleteKey(context.Background(), attrs)
 		require.NoError(t, err, "Failed to delete key")
 	})
 
@@ -530,18 +531,18 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Generate key
-			_, err := b.GenerateKey(attrs)
+			_, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Get key
-			key, err := b.GetKey(attrs)
+			key, err := b.GetKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get key")
 			require.NotNil(t, key, "Key should not be nil")
 
 			t.Logf("✓ Retrieved key successfully")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -560,12 +561,12 @@ func TestVaultIntegration(t *testing.T) {
 					},
 				}
 
-				_, err := b.GenerateKey(attrs)
+				_, err := b.GenerateKey(context.Background(), attrs)
 				require.NoError(t, err, "Failed to generate key %s", cn)
 			}
 
 			// List keys
-			keyList, err := b.ListKeys()
+			keyList, err := b.ListKeys(context.Background())
 			require.NoError(t, err, "Failed to list keys")
 			assert.GreaterOrEqual(t, len(keyList), 3, "Should have at least 3 keys")
 
@@ -576,7 +577,7 @@ func TestVaultIntegration(t *testing.T) {
 				attrs := &types.KeyAttributes{
 					CN: cn,
 				}
-				err = b.DeleteKey(attrs)
+				err = b.DeleteKey(context.Background(), attrs)
 				require.NoError(t, err, "Failed to delete key %s", cn)
 			}
 		})
@@ -594,24 +595,24 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Generate key
-			_, err := b.GenerateKey(attrs)
+			_, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Rotate key
-			err = b.RotateKey(attrs)
+			err = b.RotateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to rotate key")
 
 			t.Logf("✓ Rotated key successfully")
 
 			// Key should still be usable
-			key, err := b.GetKey(attrs)
+			key, err := b.GetKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get rotated key")
 			require.NotNil(t, key, "Rotated key should not be nil")
 
 			t.Logf("✓ Retrieved rotated key successfully")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 	})
@@ -641,10 +642,10 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Clean up if exists from previous test
-			_ = b.DeleteKey(attrs)
+			_ = b.DeleteKey(context.Background(), attrs)
 
 			// Generate symmetric key
-			symmetricKey, err := symBackend.GenerateSymmetricKey(attrs)
+			symmetricKey, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate AES-256-GCM key")
 			require.NotNil(t, symmetricKey, "Symmetric key should not be nil")
 			assert.Equal(t, string(types.SymmetricAES256GCM), symmetricKey.Algorithm())
@@ -652,7 +653,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Generated AES-256-GCM symmetric key")
 
 			// Get encrypter
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get symmetric encrypter")
 			require.NotNil(t, encrypter, "Encrypter should not be nil")
 			t.Logf("✓ Retrieved symmetric encrypter")
@@ -677,7 +678,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Successfully decrypted ciphertext: %s", string(decrypted))
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -691,14 +692,14 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Clean up if exists
-			_ = b.DeleteKey(attrs)
+			_ = b.DeleteKey(context.Background(), attrs)
 
 			// Generate key
-			_, err := symBackend.GenerateSymmetricKey(attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Get encrypter
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get encrypter")
 
 			// Test data with AAD
@@ -745,7 +746,7 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -759,14 +760,14 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Clean up if exists
-			_ = b.DeleteKey(attrs)
+			_ = b.DeleteKey(context.Background(), attrs)
 
 			// Generate key
-			_, err := symBackend.GenerateSymmetricKey(attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Get encrypter
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get encrypter")
 
 			// Encrypt same plaintext multiple times
@@ -801,7 +802,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ All unique ciphertexts decrypted to the same plaintext")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -814,14 +815,14 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Clean up if exists
-			_ = b.DeleteKey(attrs)
+			_ = b.DeleteKey(context.Background(), attrs)
 
 			// Generate key
-			_, err := symBackend.GenerateSymmetricKey(attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Get encrypter
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get encrypter")
 
 			// Test 1: Empty plaintext
@@ -894,7 +895,7 @@ func TestVaultIntegration(t *testing.T) {
 			})
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -910,7 +911,7 @@ func TestVaultIntegration(t *testing.T) {
 					StoreType:          backend.STORE_VAULT,
 				}
 
-				_, err := symBackend.GenerateSymmetricKey(attrs)
+				_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 				assert.Error(t, err, "Should reject AES-128 (Vault only supports AES-256)")
 				assert.Contains(t, err.Error(), "only supports AES-256", "Error should mention AES-256 requirement")
 				t.Logf("✓ Correctly rejected unsupported key size: %v", err)
@@ -925,7 +926,7 @@ func TestVaultIntegration(t *testing.T) {
 					StoreType:          backend.STORE_VAULT,
 				}
 
-				_, err := symBackend.GetSymmetricKey(attrs)
+				_, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 				assert.Error(t, err, "Should error when getting non-existent key")
 				t.Logf("✓ Correctly rejected non-existent key: %v", err)
 			})
@@ -939,7 +940,7 @@ func TestVaultIntegration(t *testing.T) {
 					StoreType:          backend.STORE_VAULT,
 				}
 
-				_, err := symBackend.SymmetricEncrypter(attrs)
+				_, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 				assert.Error(t, err, "Should error when getting encrypter for non-existent key")
 				t.Logf("✓ Correctly rejected encrypter for non-existent key: %v", err)
 			})
@@ -954,14 +955,14 @@ func TestVaultIntegration(t *testing.T) {
 				}
 
 				// Clean up if exists
-				_ = b.DeleteKey(attrs)
+				_ = b.DeleteKey(context.Background(), attrs)
 
 				// Generate key
-				_, err := symBackend.GenerateSymmetricKey(attrs)
+				_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 				require.NoError(t, err)
 
 				// Get encrypter
-				encrypter, err := symBackend.SymmetricEncrypter(attrs)
+				encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 				require.NoError(t, err)
 
 				// Encrypt valid data first
@@ -982,7 +983,7 @@ func TestVaultIntegration(t *testing.T) {
 				t.Logf("✓ Correctly rejected corrupted ciphertext: %v", err)
 
 				// Cleanup
-				_ = b.DeleteKey(attrs)
+				_ = b.DeleteKey(context.Background(), attrs)
 			})
 
 			// Test 5: Duplicate key generation
@@ -995,20 +996,20 @@ func TestVaultIntegration(t *testing.T) {
 				}
 
 				// Clean up if exists
-				_ = b.DeleteKey(attrs)
+				_ = b.DeleteKey(context.Background(), attrs)
 
 				// Generate key first time
-				_, err := symBackend.GenerateSymmetricKey(attrs)
+				_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 				require.NoError(t, err, "First key generation should succeed")
 
 				// Try to generate same key again
-				_, err = symBackend.GenerateSymmetricKey(attrs)
+				_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 				assert.Error(t, err, "Duplicate key generation should fail")
 				assert.Contains(t, err.Error(), "already exists", "Error should mention key already exists")
 				t.Logf("✓ Correctly rejected duplicate key generation: %v", err)
 
 				// Cleanup
-				_ = b.DeleteKey(attrs)
+				_ = b.DeleteKey(context.Background(), attrs)
 			})
 		})
 
@@ -1022,23 +1023,23 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Clean up if exists
-			_ = b.DeleteKey(attrs)
+			_ = b.DeleteKey(context.Background(), attrs)
 
 			// Step 1: Generate key
-			symmetricKey, err := symBackend.GenerateSymmetricKey(attrs)
+			symmetricKey, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 			require.NotNil(t, symmetricKey)
 			t.Logf("✓ Step 1: Generated key")
 
 			// Step 2: Retrieve key
-			retrievedKey, err := symBackend.GetSymmetricKey(attrs)
+			retrievedKey, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to retrieve key")
 			assert.Equal(t, symmetricKey.Algorithm(), retrievedKey.Algorithm())
 			assert.Equal(t, symmetricKey.KeySize(), retrievedKey.KeySize())
 			t.Logf("✓ Step 2: Retrieved key successfully")
 
 			// Step 3: Use key for encryption/decryption
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get encrypter")
 
 			plaintext := []byte("lifecycle test data")
@@ -1051,17 +1052,17 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Step 3: Used key for encryption/decryption")
 
 			// Step 4: Delete key
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 			t.Logf("✓ Step 4: Deleted key")
 
 			// Step 5: Verify key is gone
-			_, err = symBackend.GetSymmetricKey(attrs)
+			_, err = symBackend.GetSymmetricKey(context.Background(), attrs)
 			assert.Error(t, err, "Should error when retrieving deleted key")
 			t.Logf("✓ Step 5: Verified key is deleted")
 
 			// Step 6: Verify operations fail on deleted key
-			_, err = symBackend.SymmetricEncrypter(attrs)
+			_, err = symBackend.SymmetricEncrypter(context.Background(), attrs)
 			assert.Error(t, err, "Should error when getting encrypter for deleted key")
 			t.Logf("✓ Step 6: Verified operations fail on deleted key")
 
@@ -1086,10 +1087,10 @@ func TestVaultIntegration(t *testing.T) {
 				},
 			}
 
-			_, err := b.GenerateKey(attrs)
+			_, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get signer")
 			require.NotNil(t, signer, "Signer should not be nil")
 
@@ -1104,7 +1105,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Signer interface works correctly")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -1121,14 +1122,14 @@ func TestVaultIntegration(t *testing.T) {
 			}
 
 			// Generate key
-			key, err := b.GenerateKey(attrs)
+			key, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 			require.NotNil(t, key, "Key should not be nil")
 
 			_, ok := key.(*rsa.PublicKey)
 			require.True(t, ok, "Key should be RSA public key")
 
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get signer")
 			require.NotNil(t, signer, "Signer should not be nil")
 
@@ -1158,7 +1159,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Verified Signer PSS signature")
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 
@@ -1174,19 +1175,19 @@ func TestVaultIntegration(t *testing.T) {
 				},
 			}
 
-			_, err := b.GenerateKey(attrs)
+			_, err := b.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			plaintext := []byte("test message for decryption")
 
 			// Encrypt using Vault's encrypt endpoint
-			ciphertext, err := b.Encrypt(attrs, plaintext)
+			ciphertext, err := b.Encrypt(context.Background(), attrs, plaintext)
 			require.NoError(t, err, "Failed to encrypt with Vault")
 			require.NotEmpty(t, ciphertext, "Ciphertext should not be empty")
 			t.Logf("✓ Encrypted plaintext with Vault (ciphertext length: %d)", len(ciphertext))
 
 			// Get decrypter
-			decrypter, err := b.Decrypter(attrs)
+			decrypter, err := b.Decrypter(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get decrypter")
 			require.NotNil(t, decrypter, "Decrypter should not be nil")
 
@@ -1202,7 +1203,7 @@ func TestVaultIntegration(t *testing.T) {
 			t.Logf("✓ Successfully decrypted ciphertext: %s", string(decrypted))
 
 			// Cleanup
-			err = b.DeleteKey(attrs)
+			err = b.DeleteKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to delete key")
 		})
 	})

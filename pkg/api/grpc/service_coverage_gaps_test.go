@@ -2833,7 +2833,7 @@ func TestGetKey_BackendNotFound(t *testing.T) {
 
 func TestSaveCert_NoBackendsAvailable(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	certPEM := testCertPEM(t)
 	_, err := svc.SaveCert(context.Background(), &pb.SaveCertRequest{
@@ -2849,7 +2849,7 @@ func TestSaveCert_NoBackendsAvailable(t *testing.T) {
 
 func TestGetCert_NoBackendsAvailable(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	_, err := svc.GetCert(context.Background(), &pb.GetCertRequest{
 		KeyId: "key",
@@ -2862,7 +2862,7 @@ func TestGetCert_NoBackendsAvailable(t *testing.T) {
 
 func TestDeleteCert_NoBackendsAvailable(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	_, err := svc.DeleteCert(context.Background(), &pb.DeleteCertRequest{
 		KeyId: "key",
@@ -2875,7 +2875,7 @@ func TestDeleteCert_NoBackendsAvailable(t *testing.T) {
 
 func TestListCerts_NoBackendsAvailable(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	_, err := svc.ListCerts(context.Background(), &pb.ListCertsRequest{})
 	require.Error(t, err)
@@ -2886,7 +2886,7 @@ func TestListCerts_NoBackendsAvailable(t *testing.T) {
 
 func TestCertExists_NoBackendsAvailable(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	_, err := svc.CertExists(context.Background(), &pb.CertExistsRequest{
 		KeyId: "key",
@@ -2899,7 +2899,7 @@ func TestCertExists_NoBackendsAvailable(t *testing.T) {
 
 func TestSaveCertChain_NoBackendsAvailable(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	certPEM := testCertPEM(t)
 	_, err := svc.SaveCertChain(context.Background(), &pb.SaveCertChainRequest{
@@ -2914,7 +2914,7 @@ func TestSaveCertChain_NoBackendsAvailable(t *testing.T) {
 
 func TestGetCertChain_NoBackendsAvailable(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	_, err := svc.GetCertChain(context.Background(), &pb.GetCertChainRequest{
 		KeyId: "key",
@@ -2927,7 +2927,7 @@ func TestGetCertChain_NoBackendsAvailable(t *testing.T) {
 
 func TestWrapKey_NoBackendsAvailable(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	// Create a valid RSA public key for the test
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -2948,7 +2948,7 @@ func TestWrapKey_NoBackendsAvailable(t *testing.T) {
 
 func TestUnwrapKey_NoBackendsAvailable(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -2968,7 +2968,7 @@ func TestUnwrapKey_NoBackendsAvailable(t *testing.T) {
 
 func TestListBackends_NoBackendsAvailable(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	resp, err := svc.ListBackends(context.Background(), &pb.ListBackendsRequest{})
 	require.NoError(t, err)
@@ -2977,7 +2977,7 @@ func TestListBackends_NoBackendsAvailable(t *testing.T) {
 
 func TestSeal_NoBackendsAvailable(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	_, err := svc.Seal(context.Background(), &pb.SealRequest{
 		Backend: "software",
@@ -2988,7 +2988,7 @@ func TestSeal_NoBackendsAvailable(t *testing.T) {
 
 func TestUnseal_NoBackendsAvailable(t *testing.T) {
 	xkms.Reset()
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	_, err := svc.Unseal(context.Background(), &pb.UnsealRequest{
 		Backend:    "software",

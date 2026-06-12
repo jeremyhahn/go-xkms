@@ -60,11 +60,16 @@ func runBarrierSeal(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create barrier instance and seal it.
-	barrier, err := createBarrier(dataDir)
+	barrier, closer, err := createBarrier(dataDir)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = barrier.Close() }()
+	defer func() {
+		_ = barrier.Close()
+		if closer != nil {
+			_ = closer.Close()
+		}
+	}()
 
 	if err := barrier.Seal(); err != nil {
 		return &BarrierError{
@@ -73,7 +78,7 @@ func runBarrierSeal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintln(out, "Barrier sealed successfully.")
+	_, _ = fmt.Fprintln(out, "Barrier sealed successfully.")
 
 	return nil
 }

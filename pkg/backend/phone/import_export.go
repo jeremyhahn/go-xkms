@@ -27,7 +27,7 @@ var _ backend.ImportExportBackend = (*Backend)(nil)
 // ExportPublicKey exports the public key for the given key attributes.
 // The phone backend only supports exporting public keys; private keys
 // cannot leave the phone's secure hardware.
-func (b *Backend) ExportPublicKey(attrs *types.KeyAttributes, format string) ([]byte, error) {
+func (b *Backend) ExportPublicKey(ctx context.Context, attrs *types.KeyAttributes, format string) ([]byte, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -37,7 +37,7 @@ func (b *Backend) ExportPublicKey(attrs *types.KeyAttributes, format string) ([]
 		Format: format,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), b.config.RequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
 	resp, err := b.sendLocalRequest(ctx, phoneproto.MethodLocalGetPublicKey, params)
@@ -55,36 +55,36 @@ func (b *Backend) ExportPublicKey(attrs *types.KeyAttributes, format string) ([]
 
 // GetImportParameters returns ErrImportNotSupported since the phone's hardware
 // keystore does not support importing private key material.
-func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	return nil, ErrImportNotSupported
 }
 
 // WrapKey returns ErrExportNotSupported since the phone's hardware keystore
 // does not support exporting private key material.
-func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	return nil, ErrExportNotSupported
 }
 
 // UnwrapKey returns ErrImportNotSupported since the phone's hardware keystore
 // does not support importing private key material.
-func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	return nil, ErrImportNotSupported
 }
 
 // ImportKey returns ErrImportNotSupported since the phone's hardware keystore
 // does not support importing private key material.
-func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	return ErrImportNotSupported
 }
 
 // ExportKey returns ErrExportNotSupported since the phone's hardware keystore
 // does not support exporting private key material.
-func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	return nil, ErrExportNotSupported
 }
 
 // ExportKeyMaterial returns ErrExportNotSupported since the phone's hardware
 // keystore does not support exporting raw key material.
-func (b *Backend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	return nil, ErrExportNotSupported
 }

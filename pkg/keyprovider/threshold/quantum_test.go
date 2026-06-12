@@ -43,7 +43,7 @@ func TestThresholdBackend_GenerateQuantumKey_MLDSA44(t *testing.T) {
 		},
 	}
 
-	privKey, err := backend.GenerateKey(attrs)
+	privKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, privKey)
 
@@ -83,7 +83,7 @@ func TestThresholdBackend_GenerateQuantumKey_MLDSA65(t *testing.T) {
 		},
 	}
 
-	privKey, err := backend.GenerateKey(attrs)
+	privKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, privKey)
 
@@ -113,7 +113,7 @@ func TestThresholdBackend_GenerateQuantumKey_MLDSA87(t *testing.T) {
 		},
 	}
 
-	privKey, err := backend.GenerateKey(attrs)
+	privKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, privKey)
 
@@ -221,11 +221,11 @@ func TestThresholdSigner_Quantum_MLDSA44(t *testing.T) {
 		},
 	}
 
-	privKey, err := backend.GenerateKey(attrs)
+	privKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, privKey)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 
@@ -271,10 +271,10 @@ func TestThresholdSigner_Quantum_MLDSA65_SignVerify(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	message := []byte("ML-DSA-65 threshold test message")
@@ -311,10 +311,10 @@ func TestThresholdSigner_Quantum_MLDSA87_SignVerify(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	message := []byte("ML-DSA-87 threshold test message")
@@ -493,12 +493,12 @@ func TestThresholdSigner_Quantum_KeyReconstruction(t *testing.T) {
 	}
 
 	// Generate the key (splits and stores shares)
-	originalKey, err := backend.GenerateKey(attrs)
+	originalKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, originalKey)
 
 	// Get a signer (reconstructs the key from shares)
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 

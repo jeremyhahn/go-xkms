@@ -381,7 +381,7 @@ func NewServer(socketPath string, handler Handler, logger *slog.Logger) (*Server
 	if _, statErr := os.Stat(socketPath); statErr == nil {
 		probe, dialErr := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
 		if dialErr == nil {
-			probe.Close()
+			_ = probe.Close()
 			return nil, fmt.Errorf("%w: another IPC server is already listening on %s",
 				ErrSocketCreateFailed, socketPath)
 		}
@@ -397,14 +397,14 @@ func NewServer(socketPath string, handler Handler, logger *slog.Logger) (*Server
 	}
 
 	if err := os.Chmod(socketPath, socketFileMode); err != nil {
-		listener.Close()
+		_ = listener.Close()
 		return nil, fmt.Errorf("%w: %v", ErrSocketPermission, err)
 	}
 
 	// When running as root via sudo, chown the socket to the original user.
 	if uid, gid, ok := sudoOwnership(); ok {
 		if err := os.Chown(socketPath, uid, gid); err != nil {
-			listener.Close()
+			_ = listener.Close()
 			return nil, fmt.Errorf("%w: chown socket: %v", ErrSocketPermission, err)
 		}
 	}
@@ -446,7 +446,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	// Watch for context cancellation to close the listener.
 	go func() {
 		<-ctx.Done()
-		s.Close()
+		_ = s.Close()
 	}()
 
 	for {
@@ -488,7 +488,7 @@ func (s *Server) Close() error {
 	s.wg.Wait()
 
 	// Best-effort removal of the socket file.
-	os.Remove(s.socketPath)
+	_ = os.Remove(s.socketPath)
 
 	return err
 }
@@ -496,7 +496,7 @@ func (s *Server) Close() error {
 // handleConnection processes a single client connection: reads one JSON
 // message, dispatches to the appropriate handler, and writes the JSON response.
 func (s *Server) handleConnection(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if err := conn.SetReadDeadline(time.Now().Add(readDeadline)); err != nil {
 		s.logger.Error("set read deadline failed", "error", err)

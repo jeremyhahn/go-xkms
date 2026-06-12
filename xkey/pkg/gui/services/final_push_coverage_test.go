@@ -19,26 +19,6 @@ import (
 // Mock types scoped to TestFP_ tests
 // ---------------------------------------------------------------------------
 
-// fpMockSealer implements types.Sealer for testing purposes.
-type fpMockSealer struct {
-	canSeal bool
-}
-
-func (m *fpMockSealer) Seal(_ context.Context, data []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
-	return &xkms.SealedData{
-		Backend:    xkms.BackendTypeSoftware,
-		Ciphertext: data,
-	}, nil
-}
-
-func (m *fpMockSealer) Unseal(_ context.Context, sealed *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
-	return sealed.Ciphertext, nil
-}
-
-func (m *fpMockSealer) CanSeal() bool {
-	return m.canSeal
-}
-
 // fpMockTrustStore implements truststore.TrustStore with configurable errors.
 type fpMockTrustStore struct {
 	containsResult     bool
@@ -69,21 +49,6 @@ func (m *fpMockTrustStore) SetSource(_ string, _ string) error                  
 func (m *fpMockTrustStore) SetSystemInstalled(_ string, _ bool) error           { return nil }
 func (m *fpMockTrustStore) SetTags(_ string, _ []string) error                  { return nil }
 func (m *fpMockTrustStore) Close() error                                        { return nil }
-
-// fpMockSealerFail implements types.Sealer that always fails Seal.
-type fpMockSealerFail struct{}
-
-func (m *fpMockSealerFail) Seal(_ context.Context, _ []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
-	return nil, errors.New("fp_test: seal failed")
-}
-
-func (m *fpMockSealerFail) Unseal(_ context.Context, _ *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
-	return nil, errors.New("fp_test: unseal failed")
-}
-
-func (m *fpMockSealerFail) CanSeal() bool {
-	return true
-}
 
 // fpMockStaticPWStore implements staticpw.Store (libpw.Store) with configurable
 // List() behavior to exercise barrier-sealed detection.

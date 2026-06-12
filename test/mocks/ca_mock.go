@@ -14,6 +14,7 @@
 package mocks
 
 import (
+	"context"
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
@@ -65,13 +66,13 @@ func (m *MockCertificateAuthority) Public() crypto.PublicKey {
 // ========================================================================
 
 // Init explicitly initializes the CA by creating root and intermediate certificates.
-func (m *MockCertificateAuthority) Init() error {
+func (m *MockCertificateAuthority) Init(ctx context.Context) error {
 	args := m.Called()
 	return args.Error(0)
 }
 
 // Load loads an existing CA from storage.
-func (m *MockCertificateAuthority) Load() error {
+func (m *MockCertificateAuthority) Load(ctx context.Context) error {
 	args := m.Called()
 	return args.Error(0)
 }
@@ -87,7 +88,7 @@ func (m *MockCertificateAuthority) IsInitialized() bool {
 // ========================================================================
 
 // SignCSR signs a CSR using the provided options.
-func (m *MockCertificateAuthority) SignCSR(csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
+func (m *MockCertificateAuthority) SignCSR(ctx context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
 	args := m.Called(csrPEM, opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -96,7 +97,7 @@ func (m *MockCertificateAuthority) SignCSR(csrPEM []byte, opts *ca.SignOptions) 
 }
 
 // CreateCSR generates a CSR for the given request.
-func (m *MockCertificateAuthority) CreateCSR(request *ca.CertificateRequest) ([]byte, error) {
+func (m *MockCertificateAuthority) CreateCSR(ctx context.Context, request *ca.CertificateRequest) ([]byte, error) {
 	args := m.Called(request)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -105,7 +106,7 @@ func (m *MockCertificateAuthority) CreateCSR(request *ca.CertificateRequest) ([]
 }
 
 // IssueCertificate issues a certificate directly without ACME protocol.
-func (m *MockCertificateAuthority) IssueCertificate(request *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
+func (m *MockCertificateAuthority) IssueCertificate(ctx context.Context, request *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
 	args := m.Called(request)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -114,7 +115,7 @@ func (m *MockCertificateAuthority) IssueCertificate(request *ca.CertificateReque
 }
 
 // IssueCertificateWithProfile issues a certificate using a named profile.
-func (m *MockCertificateAuthority) IssueCertificateWithProfile(request *ca.CertificateRequest, profile string) (*ca.IssuedCertificate, error) {
+func (m *MockCertificateAuthority) IssueCertificateWithProfile(ctx context.Context, request *ca.CertificateRequest, profile string) (*ca.IssuedCertificate, error) {
 	args := m.Called(request, profile)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -180,13 +181,13 @@ func (m *MockCertificateAuthority) TrustedIntermediate() (*x509.Certificate, err
 // ========================================================================
 
 // Revoke marks a certificate with the given serial as revoked.
-func (m *MockCertificateAuthority) Revoke(serial *big.Int, reason int) error {
+func (m *MockCertificateAuthority) Revoke(ctx context.Context, serial *big.Int, reason int) error {
 	args := m.Called(serial, reason)
 	return args.Error(0)
 }
 
 // RevokeCert revokes the given certificate, optionally deleting its keys.
-func (m *MockCertificateAuthority) RevokeCert(cert *x509.Certificate, opts ca.RevokeOptions) error {
+func (m *MockCertificateAuthority) RevokeCert(ctx context.Context, cert *x509.Certificate, opts ca.RevokeOptions) error {
 	args := m.Called(cert, opts)
 	return args.Error(0)
 }
@@ -198,7 +199,7 @@ func (m *MockCertificateAuthority) IsRevoked(serial *big.Int) (bool, error) {
 }
 
 // GenerateCRL generates a Certificate Revocation List.
-func (m *MockCertificateAuthority) GenerateCRL() ([]byte, error) {
+func (m *MockCertificateAuthority) GenerateCRL(ctx context.Context) ([]byte, error) {
 	args := m.Called()
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -211,13 +212,13 @@ func (m *MockCertificateAuthority) GenerateCRL() ([]byte, error) {
 // ========================================================================
 
 // TLSCertificate returns a TLS certificate for the given key attributes.
-func (m *MockCertificateAuthority) TLSCertificate(attrs *types.KeyAttributes) (tls.Certificate, error) {
+func (m *MockCertificateAuthority) TLSCertificate(ctx context.Context, attrs *types.KeyAttributes) (tls.Certificate, error) {
 	args := m.Called(attrs)
 	return args.Get(0).(tls.Certificate), args.Error(1)
 }
 
 // TLSConfig returns a TLS configuration for the given key attributes.
-func (m *MockCertificateAuthority) TLSConfig(attrs *types.KeyAttributes) (*tls.Config, error) {
+func (m *MockCertificateAuthority) TLSConfig(ctx context.Context, attrs *types.KeyAttributes) (*tls.Config, error) {
 	args := m.Called(attrs)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -226,7 +227,7 @@ func (m *MockCertificateAuthority) TLSConfig(attrs *types.KeyAttributes) (*tls.C
 }
 
 // ServerTLSConfig returns a server TLS configuration.
-func (m *MockCertificateAuthority) ServerTLSConfig(attrs *types.KeyAttributes, requireClientCert bool) (*tls.Config, error) {
+func (m *MockCertificateAuthority) ServerTLSConfig(ctx context.Context, attrs *types.KeyAttributes, requireClientCert bool) (*tls.Config, error) {
 	args := m.Called(attrs, requireClientCert)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -235,7 +236,7 @@ func (m *MockCertificateAuthority) ServerTLSConfig(attrs *types.KeyAttributes, r
 }
 
 // ClientTLSConfig returns a client TLS configuration with SNI.
-func (m *MockCertificateAuthority) ClientTLSConfig(attrs *types.KeyAttributes, serverName string) (*tls.Config, error) {
+func (m *MockCertificateAuthority) ClientTLSConfig(ctx context.Context, attrs *types.KeyAttributes, serverName string) (*tls.Config, error) {
 	args := m.Called(attrs, serverName)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -244,7 +245,7 @@ func (m *MockCertificateAuthority) ClientTLSConfig(attrs *types.KeyAttributes, s
 }
 
 // QuantumSafeTLSConfig returns a quantum-safe TLS configuration.
-func (m *MockCertificateAuthority) QuantumSafeTLSConfig(attrs *types.KeyAttributes) (*tls.Config, error) {
+func (m *MockCertificateAuthority) QuantumSafeTLSConfig(ctx context.Context, attrs *types.KeyAttributes) (*tls.Config, error) {
 	args := m.Called(attrs)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -253,7 +254,7 @@ func (m *MockCertificateAuthority) QuantumSafeTLSConfig(attrs *types.KeyAttribut
 }
 
 // TLSBundle returns a PEM bundle (chain + private key).
-func (m *MockCertificateAuthority) TLSBundle(attrs *types.KeyAttributes) ([]byte, error) {
+func (m *MockCertificateAuthority) TLSBundle(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	args := m.Called(attrs)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -262,7 +263,7 @@ func (m *MockCertificateAuthority) TLSBundle(attrs *types.KeyAttributes) ([]byte
 }
 
 // TLSBundleWithCrossSigner returns a TLS bundle with cross-signed certs prepended.
-func (m *MockCertificateAuthority) TLSBundleWithCrossSigner(attrs *types.KeyAttributes, xsigner crypto.Signer) ([]byte, error) {
+func (m *MockCertificateAuthority) TLSBundleWithCrossSigner(ctx context.Context, attrs *types.KeyAttributes, xsigner crypto.Signer) ([]byte, error) {
 	args := m.Called(attrs, xsigner)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -271,7 +272,7 @@ func (m *MockCertificateAuthority) TLSBundleWithCrossSigner(attrs *types.KeyAttr
 }
 
 // TLSConfigWithXSigner returns a TLS config with cross-signer trust augmentation.
-func (m *MockCertificateAuthority) TLSConfigWithXSigner(attrs *types.KeyAttributes, xsigner crypto.Signer) (*tls.Config, error) {
+func (m *MockCertificateAuthority) TLSConfigWithXSigner(ctx context.Context, attrs *types.KeyAttributes, xsigner crypto.Signer) (*tls.Config, error) {
 	args := m.Called(attrs, xsigner)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -379,7 +380,7 @@ func (m *MockCertificateAuthority) Identity() string {
 }
 
 // Signer returns a crypto.Signer backed by the CA's issuing identity key.
-func (m *MockCertificateAuthority) Signer() (crypto.Signer, error) {
+func (m *MockCertificateAuthority) Signer(ctx context.Context) (crypto.Signer, error) {
 	args := m.Called()
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -388,13 +389,13 @@ func (m *MockCertificateAuthority) Signer() (crypto.Signer, error) {
 }
 
 // PrivateKey retrieves a private key handle.
-func (m *MockCertificateAuthority) PrivateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *MockCertificateAuthority) PrivateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	args := m.Called(attrs)
 	return args.Get(0), args.Error(1)
 }
 
 // PubKey returns the public key.
-func (m *MockCertificateAuthority) PubKey(attrs *types.KeyAttributes) (crypto.PublicKey, error) {
+func (m *MockCertificateAuthority) PubKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PublicKey, error) {
 	args := m.Called(attrs)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -403,7 +404,7 @@ func (m *MockCertificateAuthority) PubKey(attrs *types.KeyAttributes) (crypto.Pu
 }
 
 // SignedBlob signs arbitrary data using the CA's signing key.
-func (m *MockCertificateAuthority) SignedBlob(data []byte) ([]byte, error) {
+func (m *MockCertificateAuthority) SignedBlob(ctx context.Context, data []byte) ([]byte, error) {
 	args := m.Called(data)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -416,20 +417,20 @@ func (m *MockCertificateAuthority) SignedBlob(data []byte) ([]byte, error) {
 // ========================================================================
 
 // Issued reports whether a certificate for cn has been issued.
-func (m *MockCertificateAuthority) Issued(cn string) (bool, error) {
-	args := m.Called(cn)
+func (m *MockCertificateAuthority) Issued(ctx context.Context, cn string) (bool, error) {
+	args := m.Called(ctx, cn)
 	return args.Bool(0), args.Error(1)
 }
 
 // Exists reports whether a certificate exists for cn with the given algorithm.
-func (m *MockCertificateAuthority) Exists(cn string, algo x509.PublicKeyAlgorithm) (bool, error) {
-	args := m.Called(cn, algo)
+func (m *MockCertificateAuthority) Exists(ctx context.Context, cn string, algo x509.PublicKeyAlgorithm) (bool, error) {
+	args := m.Called(ctx, cn, algo)
 	return args.Bool(0), args.Error(1)
 }
 
 // Certificate retrieves a certificate using its KeyAttributes.
-func (m *MockCertificateAuthority) Certificate(attrs *types.KeyAttributes) (*x509.Certificate, error) {
-	args := m.Called(attrs)
+func (m *MockCertificateAuthority) Certificate(ctx context.Context, attrs *types.KeyAttributes) (*x509.Certificate, error) {
+	args := m.Called(ctx, attrs)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -437,8 +438,8 @@ func (m *MockCertificateAuthority) Certificate(attrs *types.KeyAttributes) (*x50
 }
 
 // CertificatePEM retrieves a certificate in PEM form.
-func (m *MockCertificateAuthority) CertificatePEM(cn string) ([]byte, error) {
-	args := m.Called(cn)
+func (m *MockCertificateAuthority) CertificatePEM(ctx context.Context, cn string) ([]byte, error) {
+	args := m.Called(ctx, cn)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -446,20 +447,20 @@ func (m *MockCertificateAuthority) CertificatePEM(cn string) ([]byte, error) {
 }
 
 // ImportCertificate stores an externally-issued certificate.
-func (m *MockCertificateAuthority) ImportCertificate(cert *x509.Certificate) error {
-	args := m.Called(cert)
+func (m *MockCertificateAuthority) ImportCertificate(ctx context.Context, cert *x509.Certificate) error {
+	args := m.Called(ctx, cert)
 	return args.Error(0)
 }
 
 // ImportCertificatePEM parses and imports a PEM-encoded certificate.
-func (m *MockCertificateAuthority) ImportCertificatePEM(cn string, pemBytes []byte) error {
-	args := m.Called(cn, pemBytes)
+func (m *MockCertificateAuthority) ImportCertificatePEM(ctx context.Context, cn string, pemBytes []byte) error {
+	args := m.Called(ctx, cn, pemBytes)
 	return args.Error(0)
 }
 
 // PEM returns a certificate in PEM form.
-func (m *MockCertificateAuthority) PEM(attrs *types.KeyAttributes) ([]byte, error) {
-	args := m.Called(attrs)
+func (m *MockCertificateAuthority) PEM(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
+	args := m.Called(ctx, attrs)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -496,8 +497,8 @@ func (m *MockCertificateAuthority) ImportDistributionCRLs(cert *x509.Certificate
 }
 
 // ImportIssuingCAs recursively imports issuing CAs via AIA.
-func (m *MockCertificateAuthority) ImportIssuingCAs(cert *x509.Certificate) error {
-	args := m.Called(cert)
+func (m *MockCertificateAuthority) ImportIssuingCAs(ctx context.Context, cert *x509.Certificate) error {
+	args := m.Called(ctx, cert)
 	return args.Error(0)
 }
 
@@ -570,37 +571,37 @@ func (m *MockCertificateAuthority) CrossSignedPEM(attrs *types.KeyAttributes) ([
 // ========================================================================
 
 // ImportAttestation stores a TPM attestation blob.
-func (m *MockCertificateAuthority) ImportAttestation(akAttrs *types.KeyAttributes, blobType string, data []byte) error {
+func (m *MockCertificateAuthority) ImportAttestation(ctx context.Context, akAttrs *types.KeyAttributes, blobType string, data []byte) error {
 	args := m.Called(akAttrs, blobType, data)
 	return args.Error(0)
 }
 
 // ImportAttestationKeyCertificate stores a DER-encoded AK certificate.
-func (m *MockCertificateAuthority) ImportAttestationKeyCertificate(attrs *types.KeyAttributes, akDER []byte) error {
+func (m *MockCertificateAuthority) ImportAttestationKeyCertificate(ctx context.Context, attrs *types.KeyAttributes, akDER []byte) error {
 	args := m.Called(attrs, akDER)
 	return args.Error(0)
 }
 
 // ImportAttestationEventLog stores a TPM event log blob.
-func (m *MockCertificateAuthority) ImportAttestationEventLog(akAttrs *types.KeyAttributes, eventLog []byte) error {
+func (m *MockCertificateAuthority) ImportAttestationEventLog(ctx context.Context, akAttrs *types.KeyAttributes, eventLog []byte) error {
 	args := m.Called(akAttrs, eventLog)
 	return args.Error(0)
 }
 
 // ImportAttestationPCRs stores a TPM PCR snapshot blob.
-func (m *MockCertificateAuthority) ImportAttestationPCRs(akAttrs *types.KeyAttributes, pcrs []byte) error {
+func (m *MockCertificateAuthority) ImportAttestationPCRs(ctx context.Context, akAttrs *types.KeyAttributes, pcrs []byte) error {
 	args := m.Called(akAttrs, pcrs)
 	return args.Error(0)
 }
 
 // ImportAttestationQuote stores a TPM quote blob.
-func (m *MockCertificateAuthority) ImportAttestationQuote(akAttrs *types.KeyAttributes, quote []byte) error {
+func (m *MockCertificateAuthority) ImportAttestationQuote(ctx context.Context, akAttrs *types.KeyAttributes, quote []byte) error {
 	args := m.Called(akAttrs, quote)
 	return args.Error(0)
 }
 
 // ImportLocalAttestation imports a complete local attestation.
-func (m *MockCertificateAuthority) ImportLocalAttestation(akAttrs *types.KeyAttributes, quote *tpm2.Quote) error {
+func (m *MockCertificateAuthority) ImportLocalAttestation(ctx context.Context, akAttrs *types.KeyAttributes, quote *tpm2.Quote) error {
 	args := m.Called(akAttrs, quote)
 	return args.Error(0)
 }
@@ -657,7 +658,7 @@ func (m *MockCertificateAuthority) CAKeyAttributes(storeType types.StoreType) (*
 }
 
 // CASigner returns a crypto.Signer filtered by store type/algorithm.
-func (m *MockCertificateAuthority) CASigner(storeType types.StoreType, algo x509.PublicKeyAlgorithm) (crypto.Signer, error) {
+func (m *MockCertificateAuthority) CASigner(ctx context.Context, storeType types.StoreType, algo x509.PublicKeyAlgorithm) (crypto.Signer, error) {
 	args := m.Called(storeType, algo)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -728,7 +729,7 @@ func (m *MockCertificateAuthority) CABundleFiltered(storeType types.StoreType, k
 // ========================================================================
 
 // IssueEKCertificate issues an Endorsement Key certificate.
-func (m *MockCertificateAuthority) IssueEKCertificate(request *ca.CertificateRequest, ekPubKey crypto.PublicKey) (*x509.Certificate, error) {
+func (m *MockCertificateAuthority) IssueEKCertificate(ctx context.Context, request *ca.CertificateRequest, ekPubKey crypto.PublicKey) (*x509.Certificate, error) {
 	args := m.Called(request, ekPubKey)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -737,7 +738,7 @@ func (m *MockCertificateAuthority) IssueEKCertificate(request *ca.CertificateReq
 }
 
 // IssueAKCertificate issues an Attestation Key certificate.
-func (m *MockCertificateAuthority) IssueAKCertificate(request *ca.CertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error) {
+func (m *MockCertificateAuthority) IssueAKCertificate(ctx context.Context, request *ca.CertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error) {
 	args := m.Called(request, pubKey)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -746,7 +747,7 @@ func (m *MockCertificateAuthority) IssueAKCertificate(request *ca.CertificateReq
 }
 
 // SignTCGCSRIDevID verifies and signs a TCG-CSR-IDEVID for enrollment.
-func (m *MockCertificateAuthority) SignTCGCSRIDevID(tcgCSR *tpm2.TCG_CSR_IDEVID, request *ca.CertificateRequest) ([]byte, []byte, error) {
+func (m *MockCertificateAuthority) SignTCGCSRIDevID(ctx context.Context, tcgCSR *tpm2.TCG_CSR_IDEVID, request *ca.CertificateRequest) ([]byte, []byte, error) {
 	args := m.Called(tcgCSR, request)
 	var iakDER, idevidDER []byte
 	if args.Get(0) != nil {
@@ -759,7 +760,7 @@ func (m *MockCertificateAuthority) SignTCGCSRIDevID(tcgCSR *tpm2.TCG_CSR_IDEVID,
 }
 
 // EnrollDevice performs complete TCG enrollment.
-func (m *MockCertificateAuthority) EnrollDevice(packedCSR []byte, request *ca.CertificateRequest) (*ca.TCGEnrollmentResult, error) {
+func (m *MockCertificateAuthority) EnrollDevice(ctx context.Context, packedCSR []byte, request *ca.CertificateRequest) (*ca.TCGEnrollmentResult, error) {
 	args := m.Called(packedCSR, request)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

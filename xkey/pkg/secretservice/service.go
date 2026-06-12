@@ -45,9 +45,7 @@ type Daemon struct {
 	sessionCount atomic.Uint64
 
 	// prompts tracks pending prompts.
-	prompts     map[dbus.ObjectPath]*PromptInfo
-	promptsMu   sync.RWMutex
-	promptCount atomic.Uint64
+	prompts map[dbus.ObjectPath]*PromptInfo
 
 	// running indicates whether the service is running.
 	running atomic.Bool
@@ -119,7 +117,7 @@ func (d *Daemon) Start() error {
 		d.logger.Error("failed to request D-Bus name",
 			slog.String("name", BusName),
 			slog.String("error", err.Error()))
-		conn.Close()
+		_ = conn.Close()
 		return ErrDBusUnavailable
 	}
 
@@ -127,13 +125,13 @@ func (d *Daemon) Start() error {
 		d.logger.Error("failed to become primary owner of D-Bus name",
 			slog.String("name", BusName),
 			slog.Int("reply", int(reply)))
-		conn.Close()
+		_ = conn.Close()
 		return ErrServiceAlreadyRunning
 	}
 
 	// Export the service object
 	if err := d.exportObjects(); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return err
 	}
 
@@ -169,7 +167,7 @@ func (d *Daemon) Stop() error {
 			d.logger.Warn("failed to release D-Bus name",
 				slog.String("error", err.Error()))
 		}
-		d.conn.Close()
+		_ = d.conn.Close()
 		d.conn = nil
 	}
 
@@ -348,8 +346,8 @@ func (d *Daemon) OpenSession(algorithm string, input dbus.Variant) (dbus.Variant
 		output = dbus.MakeVariant(PublicKeyToBytes(keyPair.Public))
 
 	default:
-		return dbus.Variant{}, "/", dbus.MakeFailedError(ErrInvalidAlgorithm)
 		d.logSecretServiceEvent(audit.OpSecretServiceSessionOpened, false, ErrInvalidAlgorithm, map[string]any{"algorithm": algorithm})
+		return dbus.Variant{}, "/", dbus.MakeFailedError(ErrInvalidAlgorithm)
 	}
 
 	// Store the session

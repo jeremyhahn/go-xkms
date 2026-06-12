@@ -360,19 +360,19 @@ func runShareList(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 
 	if len(entries) == 0 {
-		fmt.Fprintln(out, "No shares stored locally.")
+		_, _ = fmt.Fprintln(out, "No shares stored locally.")
 		return nil
 	}
 
-	fmt.Fprintf(out, "Locally Stored Shares (%d):\n\n", len(entries))
+	_, _ = fmt.Fprintf(out, "Locally Stored Shares (%d):\n\n", len(entries))
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SERVER\tGROUP ID\tGROUP NAME\tINDEX\tPURPOSE\tRECEIVED AT")
-	fmt.Fprintln(w, "------\t--------\t----------\t-----\t-------\t-----------")
+	_, _ = fmt.Fprintln(w, "SERVER\tGROUP ID\tGROUP NAME\tINDEX\tPURPOSE\tRECEIVED AT")
+	_, _ = fmt.Fprintln(w, "------\t--------\t----------\t-----\t-------\t-----------")
 
 	for _, entry := range entries {
 		receivedAt := entry.ReceivedAt.Format(time.RFC3339)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
 			entry.ServerURL,
 			entry.GroupID,
 			entry.GroupName,
@@ -414,7 +414,7 @@ func runShareReceive(cmd *cobra.Command, _ []string) error {
 	}
 
 	if len(resp.Shares) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No shares available on the server.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No shares available on the server.")
 		return nil
 	}
 
@@ -448,7 +448,7 @@ func runShareReceive(cmd *cobra.Command, _ []string) error {
 				)
 				continue
 			}
-			fmt.Fprintf(out, "  Failed to save share %s/%d: %v\n", share.GroupID, share.ShareIndex, err)
+			_, _ = fmt.Fprintf(out, "  Failed to save share %s/%d: %v\n", share.GroupID, share.ShareIndex, err)
 			continue
 		}
 
@@ -459,7 +459,7 @@ func runShareReceive(cmd *cobra.Command, _ []string) error {
 		)
 	}
 
-	fmt.Fprintf(out, "Received %d share(s), saved %d new share(s).\n", len(resp.Shares), saved)
+	_, _ = fmt.Fprintf(out, "Received %d share(s), saved %d new share(s).\n", len(resp.Shares), saved)
 	return nil
 }
 
@@ -501,7 +501,7 @@ func runShareImport(cmd *cobra.Command, _ []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Imported share: server=%s group=%s index=%d\n",
+	_, _ = fmt.Fprintf(out, "Imported share: server=%s group=%s index=%d\n",
 		entry.ServerURL, entry.GroupID, entry.ShareIndex)
 	return nil
 }
@@ -552,7 +552,7 @@ func runShareExport(cmd *cobra.Command, _ []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Exported share to: %s\n", filePath)
+	_, _ = fmt.Fprintf(out, "Exported share to: %s\n", filePath)
 	return nil
 }
 
@@ -608,15 +608,15 @@ func runShareUnseal(cmd *cobra.Command, _ []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Share submitted for group %s (index %d)\n", groupID, shareIndex)
-	fmt.Fprintf(out, "  Required:  %d\n", resp.Required)
-	fmt.Fprintf(out, "  Submitted: %d\n", resp.Submitted)
+	_, _ = fmt.Fprintf(out, "Share submitted for group %s (index %d)\n", groupID, shareIndex)
+	_, _ = fmt.Fprintf(out, "  Required:  %d\n", resp.Required)
+	_, _ = fmt.Fprintf(out, "  Submitted: %d\n", resp.Submitted)
 
 	if resp.Complete {
-		fmt.Fprintln(out, "  Status:    Quorum reached - barrier unsealed!")
+		_, _ = fmt.Fprintln(out, "  Status:    Quorum reached - barrier unsealed!")
 	} else {
 		remaining := resp.Required - resp.Submitted
-		fmt.Fprintf(out, "  Status:    %d more share(s) needed\n", remaining)
+		_, _ = fmt.Fprintf(out, "  Status:    %d more share(s) needed\n", remaining)
 	}
 
 	return nil
@@ -652,7 +652,7 @@ func runShareDelete(cmd *cobra.Command, _ []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Deleted share: server=%s group=%s index=%d\n", serverURL, groupID, shareIndex)
+	_, _ = fmt.Fprintf(out, "Deleted share: server=%s group=%s index=%d\n", serverURL, groupID, shareIndex)
 	return nil
 }
 

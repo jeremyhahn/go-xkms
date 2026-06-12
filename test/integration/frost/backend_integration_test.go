@@ -90,7 +90,7 @@ func TestFrostBackend_KeyLifecycle(t *testing.T) {
 	}
 
 	// Generate key
-	privateKey, err := backend.GenerateKey(attrs)
+	privateKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, privateKey)
 
@@ -105,7 +105,7 @@ func TestFrostBackend_KeyLifecycle(t *testing.T) {
 	t.Logf("Group public key size: %d bytes", len(handle.GroupPublicKey))
 
 	// Get signer
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 
@@ -113,7 +113,7 @@ func TestFrostBackend_KeyLifecycle(t *testing.T) {
 	var _ crypto.Signer = signer
 
 	// List keys
-	keys, err := backend.ListKeys()
+	keys, err := backend.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(keys), 1)
 
@@ -129,11 +129,11 @@ func TestFrostBackend_KeyLifecycle(t *testing.T) {
 	assert.True(t, foundKey, "Should find the generated key")
 
 	// Rotate key
-	err = backend.RotateKey(attrs)
+	err = backend.RotateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get rotated key
-	rotatedKey, err := backend.GetKey(attrs)
+	rotatedKey, err := backend.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	rotatedHandle, ok := rotatedKey.(*frost.FrostKeyHandle)
@@ -144,11 +144,11 @@ func TestFrostBackend_KeyLifecycle(t *testing.T) {
 		"Public key should change after rotation")
 
 	// Delete key
-	err = backend.DeleteKey(attrs)
+	err = backend.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify deletion
-	_, err = backend.GetKey(attrs)
+	_, err = backend.GetKey(context.Background(), attrs)
 	assert.Error(t, err, "Key should be deleted")
 }
 
@@ -196,7 +196,7 @@ func TestFrostBackend_AllAlgorithms(t *testing.T) {
 			}
 
 			// Generate key
-			key, err := backend.GenerateKey(attrs)
+			key, err := backend.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key with algorithm %s", algo)
 
 			handle := key.(*frost.FrostKeyHandle)
@@ -204,7 +204,7 @@ func TestFrostBackend_AllAlgorithms(t *testing.T) {
 			t.Logf("%s group public key size: %d bytes", algo, len(handle.GroupPublicKey))
 
 			// Clean up
-			_ = backend.DeleteKey(attrs)
+			_ = backend.DeleteKey(context.Background(), attrs)
 		})
 	}
 }
@@ -257,14 +257,14 @@ func TestFrostBackend_ThresholdVariations(t *testing.T) {
 			}
 
 			// Generate key
-			key, err := backend.GenerateKey(attrs)
+			key, err := backend.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate %s key", tc.name)
 
 			handle := key.(*frost.FrostKeyHandle)
 			t.Logf("%s: Generated key with %d byte public key", tc.name, len(handle.GroupPublicKey))
 
 			// Clean up
-			_ = backend.DeleteKey(attrs)
+			_ = backend.DeleteKey(context.Background(), attrs)
 		})
 	}
 }
@@ -302,7 +302,7 @@ func TestFrostBackend_ErrorHandling(t *testing.T) {
 			},
 		}
 
-		_, err := backend.GenerateKey(attrs)
+		_, err := backend.GenerateKey(context.Background(), attrs)
 		assert.Error(t, err, "Should fail without CN")
 	})
 
@@ -319,13 +319,13 @@ func TestFrostBackend_ErrorHandling(t *testing.T) {
 			},
 		}
 
-		_, err := backend.GenerateKey(attrs)
+		_, err := backend.GenerateKey(context.Background(), attrs)
 		require.NoError(t, err)
 
-		_, err = backend.GenerateKey(attrs)
+		_, err = backend.GenerateKey(context.Background(), attrs)
 		assert.Error(t, err, "Should fail on duplicate key")
 
-		_ = backend.DeleteKey(attrs)
+		_ = backend.DeleteKey(context.Background(), attrs)
 	})
 
 	t.Run("Non-existent key", func(t *testing.T) {
@@ -335,7 +335,7 @@ func TestFrostBackend_ErrorHandling(t *testing.T) {
 			StoreType: types.StoreFrost,
 		}
 
-		_, err := backend.GetKey(attrs)
+		_, err := backend.GetKey(context.Background(), attrs)
 		assert.Error(t, err, "Should fail for non-existent key")
 	})
 
@@ -352,13 +352,13 @@ func TestFrostBackend_ErrorHandling(t *testing.T) {
 			},
 		}
 
-		_, err := backend.GenerateKey(attrs)
+		_, err := backend.GenerateKey(context.Background(), attrs)
 		require.NoError(t, err)
 
-		_, err = backend.Decrypter(attrs)
+		_, err = backend.Decrypter(context.Background(), attrs)
 		assert.Error(t, err, "Should fail - FROST doesn't support decryption")
 
-		_ = backend.DeleteKey(attrs)
+		_ = backend.DeleteKey(context.Background(), attrs)
 	})
 }
 
@@ -388,9 +388,7 @@ func (b *testSecretBackend) Capabilities() types.Capabilities {
 	}
 }
 
-func (b *testSecretBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	ctx := context.Background()
-
+func (b *testSecretBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	// For FROST, store the secret share data from SealData
 	if attrs.SealData != nil {
 		data := attrs.SealData.Bytes()
@@ -404,9 +402,7 @@ func (b *testSecretBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.Priv
 	return nil, nil
 }
 
-func (b *testSecretBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	ctx := context.Background()
-
+func (b *testSecretBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	path := "frost/secrets/" + attrs.CN + ".secret"
 	data, err := b.store.Get(ctx, path)
 	if err != nil {
@@ -415,26 +411,24 @@ func (b *testSecretBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKe
 	return data, nil
 }
 
-func (b *testSecretBackend) DeleteKey(attrs *types.KeyAttributes) error {
-	ctx := context.Background()
-
+func (b *testSecretBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	path := "frost/secrets/" + attrs.CN + ".secret"
 	return b.store.Delete(ctx, path)
 }
 
-func (b *testSecretBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *testSecretBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	return nil, nil
 }
 
-func (b *testSecretBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *testSecretBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	return nil, nil
 }
 
-func (b *testSecretBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *testSecretBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, nil
 }
 
-func (b *testSecretBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *testSecretBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	return nil
 }
 

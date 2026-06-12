@@ -695,8 +695,8 @@ func (s *Service) TenantBarrierInit(ctx context.Context, req *pb.TenantBarrierIn
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	if err := svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
@@ -729,8 +729,8 @@ func (s *Service) TenantBarrierUnseal(ctx context.Context, req *pb.TenantBarrier
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 

@@ -196,7 +196,7 @@ The CA uses [go-xkms](https://github.com/jeremyhahn/go-xkms) for all key operati
 
 | Backend | Description |
 |---------|-------------|
-| `pkcs8` | Software keystore (default) |
+| `software` | Software keystore (default) |
 | `tpm2` | Hardware TPM 2.0 |
 | `pkcs11` | HSM/SmartCard via PKCS#11 |
 

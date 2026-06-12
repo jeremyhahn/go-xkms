@@ -19,11 +19,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// newPKCS11PIVCertStorage returns an error when PKCS#11 support is not compiled in.
-func newPKCS11PIVCertStorage(config *xkms.PIVPKCS11StorageConfig) (xkms.PIVCertificateStorage, error) {
-	return nil, xkms.NewPIVStorageTypeError("newPKCS11PIVCertStorage", xkms.PIVStorageTypePKCS11, xkms.ErrPIVPKCS11NotAvailable)
-}
-
 // newPKCS11PIVCertStorageFromConnection returns an error when PKCS#11 support is not compiled in.
 func newPKCS11PIVCertStorageFromConnection(conn *xkms.PKCS11Connection, soPin, userPin string) (xkms.PIVCertificateStorage, error) {
 	return nil, xkms.NewPIVStorageTypeError("newPKCS11PIVCertStorageFromConnection", xkms.PIVStorageTypePKCS11, xkms.ErrPIVPKCS11NotAvailable)

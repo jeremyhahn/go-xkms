@@ -166,6 +166,8 @@ func (a *Authenticator) clearAssertionState() {
 	a.matchingCredentials = nil
 	a.currentCredentialIndex = 0
 	a.lastClientDataHash = nil
+	a.assertionFlags = 0
+	a.assertionExtensions = nil
 }
 
 // clearCredMgmtState clears any credential management enumeration state.

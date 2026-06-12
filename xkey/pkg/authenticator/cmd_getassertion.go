@@ -609,15 +609,6 @@ func (a *Authenticator) checkAssertionCredentialProtection(cred *StoredCredentia
 	return nil
 }
 
-// generateAssertionResponse creates the assertion response for a credential.
-func (a *Authenticator) generateAssertionResponse(
-	credential *StoredCredential,
-	request *GetAssertionRequest,
-	totalCredentials int,
-) (*GetAssertionResponse, error) {
-	return a.generateAssertionResponseWithPolicy(credential, request, totalCredentials, nil)
-}
-
 // generateAssertionResponseWithPolicy creates the assertion response with SO policy overrides.
 func (a *Authenticator) generateAssertionResponseWithPolicy(
 	credential *StoredCredential,
@@ -625,7 +616,7 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 	totalCredentials int,
 	rpPolicy *RPPolicy,
 ) (*GetAssertionResponse, error) {
-	debugLog("generateAssertionResponse: starting for credential ID=%x, signCount=%d",
+	debugLog("generateAssertionResponseWithPolicy: starting for credential ID=%x, signCount=%d",
 		credential.CredentialID[:8], credential.SignCount)
 
 	// NOTE: signCount increment is deferred until after all validation passes
@@ -782,18 +773,10 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 		debugLog("UP implicitly satisfied by %s", reason)
 	}
 
-	// All validation passed — now increment and persist signCount.
-	// This is deferred from the top of the function to avoid wasting signCount
-	// values on denied assertions (PIN wrong, user denies touch, etc.).
-	credential.SignCount++
-	debugLog("incremented signCount to %d", credential.SignCount)
-	if err := a.storage.Store(credential); err != nil {
-		debugLog("storage.Store failed: %v", err)
-		return nil, ErrStorageError
-	}
-	debugLog("credential stored with signCount=%d", credential.SignCount)
-
-	// Build flags. UP flag reflects whether user presence was actually satisfied.
+	// Build the base UP/UV flags established by this getAssertion. These same
+	// flags are replayed (without re-collecting presence/verification) by any
+	// subsequent getNextAssertion calls for the remaining credentials in the
+	// batch, per CTAP 2.1 §6.3.
 	var flags AuthDataFlags
 	if upRequired {
 		flags = FlagUP
@@ -815,12 +798,51 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 		debugLog("UV flag set (internal PIN hash verified), flags now: 0x%02x", byte(flags))
 	}
 
+	// Persist the authorized UP/UV flags and extension inputs so getNextAssertion
+	// can replay them for the rest of the batch without prompting again. The ED
+	// flag is intentionally excluded — extension outputs are recomputed per
+	// credential in buildSignedAssertion.
+	a.mu.Lock()
+	a.assertionFlags = flags
+	if len(request.Extensions) > 0 {
+		a.assertionExtensions = request.Extensions
+	} else {
+		a.assertionExtensions = nil
+	}
+	a.mu.Unlock()
+
+	return a.buildSignedAssertion(credential, request, flags, request.Extensions, len(request.AllowList) == 0, totalCredentials)
+}
+
+// buildSignedAssertion increments the signCount, processes extensions, builds
+// authenticator data, signs it, and assembles the GetAssertionResponse. It
+// performs NO user-presence or user-verification collection — the caller is
+// responsible for having already established (or replayed) the UP/UV flags.
+// This is the shared, presence-free core used by both the first getAssertion
+// (after gating) and getNextAssertion (which must never gate, per CTAP 2.1 §6.3).
+func (a *Authenticator) buildSignedAssertion(
+	credential *StoredCredential,
+	request *GetAssertionRequest,
+	flags AuthDataFlags,
+	extensions map[string]interface{},
+	includeUser bool,
+	totalCredentials int,
+) (*GetAssertionResponse, error) {
+	// Increment and persist signCount only after all gating has passed.
+	credential.SignCount++
+	debugLog("incremented signCount to %d", credential.SignCount)
+	if err := a.storage.Store(credential); err != nil {
+		debugLog("storage.Store failed: %v", err)
+		return nil, ErrStorageError
+	}
+	debugLog("credential stored with signCount=%d", credential.SignCount)
+
 	// Process extensions and build extension data
 	var extensionOutputs map[string]interface{}
-	if len(request.Extensions) > 0 {
-		debugLog("processing %d extensions", len(request.Extensions))
+	if len(extensions) > 0 {
+		debugLog("processing %d extensions", len(extensions))
 		var err error
-		extensionOutputs, err = a.processAssertionExtensions(credential, request.Extensions)
+		extensionOutputs, err = a.processAssertionExtensions(credential, extensions)
 		if err != nil {
 			debugLog("processAssertionExtensions failed: %v", err)
 			return nil, err
@@ -920,7 +942,7 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 	// Include user info for discoverable credentials ONLY when no allowList was provided.
 	// Per CTAP2.1 spec: "user (0x04): MUST NOT be present if the allowList member
 	// was present in the authenticatorGetAssertion request."
-	if len(request.AllowList) == 0 && credential.Discoverable && len(credential.UserID) > 0 {
+	if includeUser && credential.Discoverable && len(credential.UserID) > 0 {
 		response.User = &User{
 			ID:          credential.UserID,
 			Name:        credential.UserName,
@@ -929,13 +951,15 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 		debugLog("user info included: name=%s", credential.UserName)
 	}
 
-	// Include number of credentials if multiple
+	// Include number of credentials if multiple. Per CTAP 2.1 §6.3 the
+	// numberOfCredentials field is reported only by the initial getAssertion,
+	// never by getNextAssertion — callers pass totalCredentials=0 to omit it.
 	if totalCredentials > 1 {
 		response.NumberOfCredentials = uint(totalCredentials)
 		debugLog("numberOfCredentials set to %d", response.NumberOfCredentials)
 	}
 
-	debugLog("generateAssertionResponse completed successfully")
+	debugLog("buildSignedAssertion completed successfully")
 	return response, nil
 }
 
@@ -1109,11 +1133,19 @@ func encodeGetAssertionResponse(response *GetAssertionResponse) ([]byte, error) 
 // handleGetNextAssertion returns the next credential's assertion in a multi-credential response.
 // This implements the CTAP2 authenticatorGetNextAssertion command.
 func (a *Authenticator) handleGetNextAssertion() ([]byte, error) {
-	// Extract state under lock, then release before calling generateAssertionResponse
-	// which acquires its own locks (IsPINSet, requestUserPresence, etc.).
+	// CTAP 2.1 §6.3: getNextAssertion returns the next assertion from the batch
+	// already authorized by the preceding getAssertion. The authenticator MUST
+	// NOT collect user presence or user verification here — the UP/UV decision
+	// was made once during getAssertion and is replayed via the stored
+	// assertionFlags. No PIN/UV gating and no requestUserPresence call occurs in
+	// this path.
+	//
+	// Extract state under lock, then release before calling buildSignedAssertion
+	// which acquires its own locks (storage, key backend).
 	var credential *StoredCredential
 	var clientDataHash []byte
-	var totalCredentials int
+	var flags AuthDataFlags
+	var extensions map[string]interface{}
 
 	a.mu.Lock()
 	if len(a.matchingCredentials) == 0 {
@@ -1127,22 +1159,30 @@ func (a *Authenticator) handleGetNextAssertion() ([]byte, error) {
 		a.matchingCredentials = nil
 		a.currentCredentialIndex = 0
 		a.lastClientDataHash = nil
+		a.assertionFlags = 0
+		a.assertionExtensions = nil
 		a.mu.Unlock()
 		return nil, ErrNoCredentials
 	}
 
 	credential = a.matchingCredentials[a.currentCredentialIndex]
-	totalCredentials = len(a.matchingCredentials)
 	clientDataHash = make([]byte, len(a.lastClientDataHash))
 	copy(clientDataHash, a.lastClientDataHash)
+	flags = a.assertionFlags
+	extensions = a.assertionExtensions
 	a.mu.Unlock()
 
 	request := &GetAssertionRequest{
 		RPID:           credential.RPID,
 		ClientDataHash: clientDataHash,
+		Extensions:     extensions,
 	}
 
-	response, err := a.generateAssertionResponse(credential, request, totalCredentials)
+	// Replay the previously authorized UP/UV flags. Pass totalCredentials=0 so
+	// the numberOfCredentials field is omitted from getNextAssertion responses
+	// (it is reported only by the initial getAssertion). Discoverable batches
+	// always originate from an empty allowList, so user info is included.
+	response, err := a.buildSignedAssertion(credential, request, flags, extensions, true, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -1163,6 +1203,8 @@ func (a *Authenticator) ClearAssertionState() {
 	a.matchingCredentials = nil
 	a.currentCredentialIndex = 0
 	a.lastClientDataHash = nil
+	a.assertionFlags = 0
+	a.assertionExtensions = nil
 }
 
 // ValidateGetAssertionRequest performs comprehensive validation on a GetAssertionRequest.

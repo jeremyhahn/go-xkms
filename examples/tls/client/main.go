@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -81,7 +82,7 @@ func main() {
 
 	// Step 3: Get TLS certificate from keystore
 	fmt.Println("3. Loading TLS certificate from xkms...")
-	tlsCert, err := ks.GetTLSCertificate("client@example.com", &types.KeyAttributes{
+	tlsCert, err := ks.GetTLSCertificate(context.Background(), "client@example.com", &types.KeyAttributes{
 		CN:           "client@example.com",
 		KeyType:      backend.KEY_TYPE_TLS,
 		StoreType:    backend.STORE_SW,
@@ -162,13 +163,13 @@ func createCA(ks xkms.Backend) (*x509.Certificate, crypto.Signer) {
 		},
 	}
 
-	_, err := ks.GenerateECDSA(keyAttrs)
+	_, err := ks.GenerateECDSA(context.Background(), keyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate CA key: %v", err)
 	}
 
 	// Get signer for the CA key
-	caSigner, err := ks.Signer(keyAttrs)
+	caSigner, err := ks.Signer(context.Background(), keyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get CA signer: %v", err)
 	}
@@ -203,7 +204,7 @@ func createCA(ks xkms.Backend) (*x509.Certificate, crypto.Signer) {
 
 	caCert, _ := x509.ParseCertificate(caCertBytes)
 	// #nosec G104 - Example code, error handling omitted for clarity
-	_ = ks.SaveCert(keyAttrs.CN, caCert)
+	_ = ks.SaveCert(context.Background(), keyAttrs.CN, caCert)
 
 	return caCert, caSigner
 }
@@ -220,13 +221,13 @@ func createClientCertificate(ks xkms.Backend, caCert *x509.Certificate, caSigner
 		},
 	}
 
-	_, err := ks.GenerateECDSA(clientKeyAttrs)
+	_, err := ks.GenerateECDSA(context.Background(), clientKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate client key: %v", err)
 	}
 
 	// Get signer for the client key
-	clientSigner, err := ks.Signer(clientKeyAttrs)
+	clientSigner, err := ks.Signer(context.Background(), clientKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get client signer: %v", err)
 	}
@@ -261,7 +262,7 @@ func createClientCertificate(ks xkms.Backend, caCert *x509.Certificate, caSigner
 
 	clientCert, _ := x509.ParseCertificate(clientCertBytes)
 	// #nosec G104 - Example code, error handling omitted for clarity
-	_ = ks.SaveCert("client@example.com", clientCert)
+	_ = ks.SaveCert(context.Background(), "client@example.com", clientCert)
 
 	return clientCert
 }

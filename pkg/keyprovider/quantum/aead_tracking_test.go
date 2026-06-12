@@ -1,6 +1,7 @@
 package quantum
 
 import (
+	"context"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -32,7 +33,7 @@ func TestAEADTracking_NonceReusePrevention(t *testing.T) {
 		},
 	}
 
-	privKey, err := quantumBackend.GenerateKey(attrs)
+	privKey, err := quantumBackend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -87,7 +88,7 @@ func TestAEADTracking_BytesLimitEnforcement(t *testing.T) {
 		},
 	}
 
-	privKey, err := quantumBackend.GenerateKey(attrs)
+	privKey, err := quantumBackend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -166,7 +167,7 @@ func TestAEADTracking_KeyRotationResetsTracking(t *testing.T) {
 		},
 	}
 
-	privKey, err := quantumBackend.GenerateKey(attrs)
+	privKey, err := quantumBackend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	mlkemKey := privKey.(*MLKEMPrivateKey)
@@ -185,13 +186,13 @@ func TestAEADTracking_KeyRotationResetsTracking(t *testing.T) {
 	t.Logf("Before rotation: %d bytes encrypted", bytesBeforeRotation)
 
 	// Rotate the key
-	err = quantumBackend.RotateKey(attrs)
+	err = quantumBackend.RotateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	t.Log("✓ Key rotated")
 
 	// Get new key
-	newPrivKey, err := quantumBackend.GetKey(attrs)
+	newPrivKey, err := quantumBackend.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	newMLKemKey := newPrivKey.(*MLKEMPrivateKey)
@@ -237,7 +238,7 @@ func TestAEADTracking_DefaultOptions(t *testing.T) {
 		},
 	}
 
-	_, err = quantumBackend.GenerateKey(attrs)
+	_, err = quantumBackend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Check default AEAD options were set
@@ -281,7 +282,7 @@ func TestAEADTracking_DisabledForMLDSA(t *testing.T) {
 		},
 	}
 
-	_, err = quantumBackend.GenerateKey(attrs)
+	_, err = quantumBackend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// AEAD options should NOT be set for ML-DSA keys

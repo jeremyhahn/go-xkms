@@ -14,6 +14,7 @@
 package tpm2
 
 import (
+	"context"
 	"crypto/x509"
 	"io"
 	"log/slog"
@@ -106,7 +107,7 @@ func TestListKeys_RecoversECDSAAlgorithmAndPIVSlot(t *testing.T) {
 	}
 
 	b := &Backend{config: &Config{KeyDir: tmpDir}, keyBackend: kb}
-	keys, err := b.ListKeys()
+	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys() error = %v", err)
 	}
@@ -144,7 +145,7 @@ func TestListKeys_MissingOrMalformedPublicBlobIsBestEffort(t *testing.T) {
 		}
 
 		b := &Backend{config: &Config{KeyDir: tmpDir}, keyBackend: kb}
-		keys, err := b.ListKeys()
+		keys, err := b.ListKeys(context.Background())
 		if err != nil {
 			t.Fatalf("ListKeys() error = %v", err)
 		}
@@ -172,7 +173,7 @@ func TestListKeys_MissingOrMalformedPublicBlobIsBestEffort(t *testing.T) {
 		}
 
 		b := &Backend{config: &Config{KeyDir: tmpDir}, keyBackend: kb}
-		keys, err := b.ListKeys()
+		keys, err := b.ListKeys(context.Background())
 		if err != nil {
 			t.Fatalf("ListKeys() error = %v", err)
 		}

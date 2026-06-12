@@ -46,11 +46,11 @@ func (b *backendStorage) key(serial *big.Int) string {
 }
 
 // SerialExists reports whether the serial number has already been recorded.
-func (b *backendStorage) SerialExists(serial *big.Int) (bool, error) {
+func (b *backendStorage) SerialExists(ctx context.Context, serial *big.Int) (bool, error) {
 	if serial == nil {
 		return false, &SerialValidationError{Reason: "serial number is nil"}
 	}
-	exists, err := b.backend.Exists(context.Background(), b.key(serial))
+	exists, err := b.backend.Exists(ctx, b.key(serial))
 	if err != nil {
 		return false, &SerialStorageError{Op: "check", Err: err}
 	}
@@ -59,11 +59,11 @@ func (b *backendStorage) SerialExists(serial *big.Int) (bool, error) {
 
 // StoreSerial durably records a serial number as used. The write is flushed by
 // the backend before returning, satisfying the Storage durability contract.
-func (b *backendStorage) StoreSerial(serial *big.Int) error {
+func (b *backendStorage) StoreSerial(ctx context.Context, serial *big.Int) error {
 	if serial == nil {
 		return &SerialValidationError{Reason: "serial number is nil"}
 	}
-	if err := b.backend.Put(context.Background(), b.key(serial), []byte{1}); err != nil {
+	if err := b.backend.Put(ctx, b.key(serial), []byte{1}); err != nil {
 		return &SerialStorageError{Op: "store", Err: err}
 	}
 	return nil

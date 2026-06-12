@@ -149,7 +149,7 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 	// login can derive the tenant from the verified peer certificate. The
 	// SPIFFE kind defaults to "user" and the name defaults to the CSR subject
 	// CommonName (resolved inside the CA).
-	cert, err := ca.SignCSRWithSPIFFE(req.CSRPEM, req.Profile, req.ValidityDays, s.SPIFFETrustDomain(), req.TenantID, "", "")
+	cert, err := ca.SignCSRWithSPIFFE(ctx, req.CSRPEM, req.Profile, req.ValidityDays, s.SPIFFETrustDomain(), req.TenantID, "", "")
 	if err != nil {
 		return nil, &ErrCAOperation{Operation: "sign csr", Err: err}
 	}
@@ -243,6 +243,7 @@ func (s *XKMSService) IssueCertificate(ctx context.Context, req *transport.Issue
 	}
 
 	certPEM, chainPEM, keyPEM, serialHex, err := ca.IssueCertificateRaw(
+		ctx,
 		req.CommonName,
 		req.Organization,
 		req.SANs,
@@ -281,7 +282,7 @@ func (s *XKMSService) RevokeCertificate(ctx context.Context, req *transport.Revo
 		return nil, err
 	}
 
-	if err := ca.Revoke(serial, req.Reason); err != nil {
+	if err := ca.Revoke(ctx, serial, req.Reason); err != nil {
 		return nil, &ErrCAOperation{Operation: "revoke", Err: err}
 	}
 
@@ -298,7 +299,7 @@ func (s *XKMSService) GenerateCRL(ctx context.Context, req *transport.GenerateCR
 		return nil, err
 	}
 
-	crlDER, err := ca.GenerateCRL()
+	crlDER, err := ca.GenerateCRL(ctx)
 	if err != nil {
 		return nil, &ErrCAOperation{Operation: "generate crl", Err: err}
 	}

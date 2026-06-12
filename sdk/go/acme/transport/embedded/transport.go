@@ -252,8 +252,6 @@ func (t *Transport) adminHTTPMethod(service, method string) string {
 
 // parseResponse parses the HTTP response and returns the appropriate type.
 func (t *Transport) parseResponse(recorder *httptest.ResponseRecorder, service, method string) (interface{}, error) {
-	const op = "embedded.Transport.parseResponse"
-
 	// Check for error responses
 	if recorder.Code >= 400 {
 		return nil, t.parseErrorResponse(recorder)
@@ -469,8 +467,6 @@ func (t *Transport) parseChallengeResponse(body []byte, nonce string) (interface
 
 // parseCertificateResponse parses a certificate response.
 func (t *Transport) parseCertificateResponse(body []byte, nonce, method string) (interface{}, error) {
-	const op = "embedded.Transport.parseCertificateResponse"
-
 	if method == "revoke" {
 		return &RevokeCertificateResponse{Nonce: nonce}, nil
 	}

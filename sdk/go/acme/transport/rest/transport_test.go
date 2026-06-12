@@ -16,6 +16,7 @@ package rest
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -37,6 +38,18 @@ func (m *mockURLExtractor) ExtractURL() string {
 	return m.url
 }
 
+// insecureTestTLSConfig returns the explicit TLS configuration that the
+// hardened transport contract requires alongside Insecure=true
+// (InsecureSkipVerify is forbidden). These tests speak plain HTTP to
+// httptest servers, so the TLS handshake never occurs and an empty
+// root pool is sufficient.
+func insecureTestTLSConfig() *tls.Config {
+	return &tls.Config{
+		RootCAs:    x509.NewCertPool(),
+		MinVersion: tls.VersionTLS13,
+	}
+}
+
 // TestNewTransport_Success tests successful transport creation.
 func TestNewTransport_Success(t *testing.T) {
 	tests := []struct {
@@ -54,8 +67,9 @@ func TestNewTransport_Success(t *testing.T) {
 		{
 			name: "HTTP URL",
 			cfg: &transport.Config{
-				Address:  "http://localhost:8080",
-				Insecure: true,
+				Address:   "http://localhost:8080",
+				Insecure:  true,
+				TLSConfig: insecureTestTLSConfig(),
 			},
 			wantURL: "http://localhost:8080",
 		},
@@ -69,8 +83,9 @@ func TestNewTransport_Success(t *testing.T) {
 		{
 			name: "TCP address without TLS",
 			cfg: &transport.Config{
-				Address:  "localhost:8080",
-				Insecure: true,
+				Address:   "localhost:8080",
+				Insecure:  true,
+				TLSConfig: insecureTestTLSConfig(),
 			},
 			wantURL: "http://localhost:8080",
 		},
@@ -204,8 +219,9 @@ func TestTransport_Request_Directory(t *testing.T) {
 	defer server.Close()
 
 	cfg := &transport.Config{
-		Address:  server.URL,
-		Insecure: true,
+		Address:   server.URL,
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -261,8 +277,9 @@ func TestTransport_Request_Nonce(t *testing.T) {
 	defer server.Close()
 
 	cfg := &transport.Config{
-		Address:  server.URL,
-		Insecure: true,
+		Address:   server.URL,
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -321,8 +338,9 @@ func TestTransport_Request_AccountCreate(t *testing.T) {
 	defer server.Close()
 
 	cfg := &transport.Config{
-		Address:  server.URL,
-		Insecure: true,
+		Address:   server.URL,
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -382,8 +400,9 @@ func TestTransport_Request_OrderCreate(t *testing.T) {
 	defer server.Close()
 
 	cfg := &transport.Config{
-		Address:  server.URL,
-		Insecure: true,
+		Address:   server.URL,
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -441,8 +460,9 @@ MIIBkTCB+wIJAKHBfpE...
 	defer server.Close()
 
 	cfg := &transport.Config{
-		Address:  server.URL,
-		Insecure: true,
+		Address:   server.URL,
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -522,8 +542,9 @@ func TestTransport_Request_URLExtractor(t *testing.T) {
 			defer server.Close()
 
 			cfg := &transport.Config{
-				Address:  server.URL,
-				Insecure: true,
+				Address:   server.URL,
+				Insecure:  true,
+				TLSConfig: insecureTestTLSConfig(),
 			}
 			tr, err := NewTransport(cfg)
 			if err != nil {
@@ -547,8 +568,9 @@ func TestTransport_Request_URLExtractor(t *testing.T) {
 // TestTransport_Request_UnknownRoute tests request with unknown route.
 func TestTransport_Request_UnknownRoute(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "https://localhost:8443",
-		Insecure: true,
+		Address:   "https://localhost:8443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -571,8 +593,9 @@ func TestTransport_Request_UnknownRoute(t *testing.T) {
 // TestTransport_Request_EmptyPath tests request that fails to build path.
 func TestTransport_Request_EmptyPath(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "https://localhost:8443",
-		Insecure: true,
+		Address:   "https://localhost:8443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -593,8 +616,9 @@ func TestTransport_Request_EmptyPath(t *testing.T) {
 // TestTransport_Request_ClosedTransport tests request on closed transport.
 func TestTransport_Request_ClosedTransport(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "https://localhost:8443",
-		Insecure: true,
+		Address:   "https://localhost:8443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -621,8 +645,9 @@ func TestTransport_Request_ContextCanceled(t *testing.T) {
 	defer server.Close()
 
 	cfg := &transport.Config{
-		Address:  server.URL,
-		Insecure: true,
+		Address:   server.URL,
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -713,6 +738,7 @@ func TestTransport_Request_ACMEError(t *testing.T) {
 			cfg := &transport.Config{
 				Address:    server.URL,
 				Insecure:   true,
+				TLSConfig:  insecureTestTLSConfig(),
 				MaxRetries: 1, // No retries
 			}
 			tr, err := NewTransport(cfg)
@@ -808,6 +834,7 @@ func TestTransport_Request_HTTPStatusErrors(t *testing.T) {
 			cfg := &transport.Config{
 				Address:    server.URL,
 				Insecure:   true,
+				TLSConfig:  insecureTestTLSConfig(),
 				MaxRetries: 1, // No retries
 			}
 			tr, err := NewTransport(cfg)
@@ -846,6 +873,7 @@ func TestTransport_Request_Retry(t *testing.T) {
 	cfg := &transport.Config{
 		Address:         server.URL,
 		Insecure:        true,
+		TLSConfig:       insecureTestTLSConfig(),
 		MaxRetries:      5,
 		RetryBackoff:    10 * time.Millisecond,
 		MaxRetryBackoff: 100 * time.Millisecond,
@@ -887,6 +915,7 @@ func TestTransport_Request_RetryExhausted(t *testing.T) {
 	cfg := &transport.Config{
 		Address:      server.URL,
 		Insecure:     true,
+		TLSConfig:    insecureTestTLSConfig(),
 		MaxRetries:   3,
 		RetryBackoff: 10 * time.Millisecond,
 	}
@@ -922,6 +951,7 @@ func TestTransport_Request_NonRetryableError(t *testing.T) {
 	cfg := &transport.Config{
 		Address:      server.URL,
 		Insecure:     true,
+		TLSConfig:    insecureTestTLSConfig(),
 		MaxRetries:   5,
 		RetryBackoff: 10 * time.Millisecond,
 	}
@@ -970,6 +1000,7 @@ func TestTransport_Request_BadNonceRetry(t *testing.T) {
 	cfg := &transport.Config{
 		Address:      server.URL,
 		Insecure:     true,
+		TLSConfig:    insecureTestTLSConfig(),
 		MaxRetries:   3,
 		RetryBackoff: 10 * time.Millisecond,
 	}
@@ -1002,8 +1033,9 @@ func TestTransport_Request_BadNonceRetry(t *testing.T) {
 // TestTransport_RequestStream tests streaming (unsupported).
 func TestTransport_RequestStream(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "https://localhost:8443",
-		Insecure: true,
+		Address:   "https://localhost:8443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -1023,8 +1055,9 @@ func TestTransport_RequestStream(t *testing.T) {
 // TestTransport_Close tests transport close behavior.
 func TestTransport_Close(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "https://localhost:8443",
-		Insecure: true,
+		Address:   "https://localhost:8443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -1054,8 +1087,9 @@ func TestTransport_Close(t *testing.T) {
 // TestTransport_Healthy tests health status.
 func TestTransport_Healthy(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "https://localhost:8443",
-		Insecure: true,
+		Address:   "https://localhost:8443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -1071,8 +1105,9 @@ func TestTransport_Healthy(t *testing.T) {
 // TestTransport_Conn tests Conn method.
 func TestTransport_Conn(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "https://localhost:8443",
-		Insecure: true,
+		Address:   "https://localhost:8443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -1098,8 +1133,9 @@ func TestTransport_Conn(t *testing.T) {
 // TestTransport_BaseURL tests BaseURL method.
 func TestTransport_BaseURL(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "https://acme.example.com:8443/v2",
-		Insecure: true,
+		Address:   "https://acme.example.com:8443/v2",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -1126,8 +1162,9 @@ func TestTransport_GetNonce(t *testing.T) {
 	defer server.Close()
 
 	cfg := &transport.Config{
-		Address:  server.URL,
-		Insecure: true,
+		Address:   server.URL,
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -1158,8 +1195,9 @@ func TestFactory_Create(t *testing.T) {
 	factory := NewFactory()
 
 	cfg := &transport.Config{
-		Address:  "https://localhost:8443",
-		Insecure: true,
+		Address:   "https://localhost:8443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := factory.Create(cfg)
@@ -1357,6 +1395,7 @@ func TestACMEErrorWithSubproblems(t *testing.T) {
 	cfg := &transport.Config{
 		Address:    server.URL,
 		Insecure:   true,
+		TLSConfig:  insecureTestTLSConfig(),
 		MaxRetries: 1,
 	}
 	tr, err := NewTransport(cfg)
@@ -1391,8 +1430,9 @@ func TestACMEErrorWithSubproblems(t *testing.T) {
 // TestTransport_wrapHTTPError tests HTTP error wrapping.
 func TestTransport_wrapHTTPError(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "https://localhost:8443",
-		Insecure: true,
+		Address:   "https://localhost:8443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -1468,8 +1508,9 @@ func (e *testError) Error() string {
 // TestTransport_httpStatusToErrorCode tests HTTP status to error code mapping.
 func TestTransport_httpStatusToErrorCode(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "https://localhost:8443",
-		Insecure: true,
+		Address:   "https://localhost:8443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -1600,6 +1641,7 @@ func TestTransport_ConnectionError(t *testing.T) {
 	cfg := &transport.Config{
 		Address:    "http://127.0.0.1:1", // Port 1 should refuse connection
 		Insecure:   true,
+		TLSConfig:  insecureTestTLSConfig(),
 		Timeout:    1 * time.Second,
 		MaxRetries: 1,
 	}
@@ -1628,8 +1670,9 @@ func TestTransport_HealthyAfterFailedRequest(t *testing.T) {
 	}))
 
 	cfg := &transport.Config{
-		Address:  server.URL,
-		Insecure: true,
+		Address:   server.URL,
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -1668,8 +1711,9 @@ func TestTransport_HealthyAfterSuccessfulRequest(t *testing.T) {
 	defer server.Close()
 
 	cfg := &transport.Config{
-		Address:  server.URL,
-		Insecure: true,
+		Address:   server.URL,
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -1698,8 +1742,9 @@ func TestTransport_InvalidJSONResponse(t *testing.T) {
 	defer server.Close()
 
 	cfg := &transport.Config{
-		Address:  server.URL,
-		Insecure: true,
+		Address:   server.URL,
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -1727,8 +1772,9 @@ func TestTransport_EmptyResponse(t *testing.T) {
 	defer server.Close()
 
 	cfg := &transport.Config{
-		Address:  server.URL,
-		Insecure: true,
+		Address:   server.URL,
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -1769,6 +1815,7 @@ func TestTransport_RetryBackoffCapped(t *testing.T) {
 	cfg := &transport.Config{
 		Address:         server.URL,
 		Insecure:        true,
+		TLSConfig:       insecureTestTLSConfig(),
 		MaxRetries:      10,
 		RetryBackoff:    50 * time.Millisecond,
 		MaxRetryBackoff: 100 * time.Millisecond,

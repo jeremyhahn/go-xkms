@@ -115,9 +115,9 @@ func mockHandler() http.Handler {
 		case strings.Contains(path, "/barrier/status"):
 			respond(transport.BarrierStatusResponse{Sealed: false, InitializedAt: "2024-01-01"})
 		case strings.Contains(path, "/barrier/initialize-shamir"):
-			respond(transport.BarrierInitializeShamirResponse{Shares: []string{"s1", "s2"}, Threshold: 2, TotalShares: 3})
+			respond(transport.BarrierInitializeShamirResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
 		case strings.Contains(path, "/barrier/rekey"):
-			respond(transport.BarrierRekeyResponse{Shares: []string{"s1"}, Threshold: 2})
+			respond(transport.BarrierRekeyResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
 		case strings.Contains(path, "/barrier"):
 			w.WriteHeader(http.StatusOK)
 			respond(map[string]bool{"success": true})
@@ -775,7 +775,8 @@ func TestBarrierInitializeShamir_MockConnected(t *testing.T) {
 	defer cleanup()
 	resp, err := tr.BarrierInitializeShamir(context.Background(), &transport.BarrierInitializeShamirRequest{Threshold: 2, TotalShares: 3})
 	require.NoError(t, err)
-	assert.NotEmpty(t, resp.Shares)
+	assert.Equal(t, 2, resp.Threshold)
+	assert.Equal(t, 3, resp.ShareCount)
 }
 
 func TestBarrierRekey_MockConnected(t *testing.T) {
@@ -783,7 +784,8 @@ func TestBarrierRekey_MockConnected(t *testing.T) {
 	defer cleanup()
 	resp, err := tr.BarrierRekey(context.Background(), &transport.BarrierRekeyRequest{Threshold: 2, Total: 3})
 	require.NoError(t, err)
-	assert.NotEmpty(t, resp.Shares)
+	assert.Equal(t, 2, resp.Threshold)
+	assert.Equal(t, 3, resp.ShareCount)
 }
 
 func TestGetCABundle_MockConnected(t *testing.T) {

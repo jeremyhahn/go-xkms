@@ -59,20 +59,20 @@ type mockCA struct {
 
 func (m *mockCA) CABundle() ([]byte, error)                 { return m.bundlePEM, m.bundleErr }
 func (m *mockCA) CACertificate() (*x509.Certificate, error) { return m.cert, m.certErr }
-func (m *mockCA) SignCSRRaw(csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error) {
+func (m *mockCA) SignCSRRaw(_ context.Context, csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error) {
 	return m.signCSRCert, m.signCSRErr
 }
-func (m *mockCA) SignCSRWithSPIFFE(csrPEM []byte, profile string, validityDays int, trustDomain, tenantID, kind, name string) (*x509.Certificate, error) {
+func (m *mockCA) SignCSRWithSPIFFE(_ context.Context, csrPEM []byte, profile string, validityDays int, trustDomain, tenantID, kind, name string) (*x509.Certificate, error) {
 	return m.signCSRCert, m.signCSRErr
 }
-func (m *mockCA) IssueCertificateRaw(commonName, organization string, sans []string, validityDays int, profile, algorithm string) (certPEM, chainPEM, keyPEM []byte, serialHex string, err error) {
+func (m *mockCA) IssueCertificateRaw(_ context.Context, commonName, organization string, sans []string, validityDays int, profile, algorithm string) (certPEM, chainPEM, keyPEM []byte, serialHex string, err error) {
 	return m.issueCertPEM, m.issueChainPEM, m.issueKeyPEM, m.issueSerial, m.issueErr
 }
-func (m *mockCA) Revoke(serial *big.Int, reason int) error { return m.revokeErr }
-func (m *mockCA) GenerateCRL() ([]byte, error)             { return m.crlDER, m.crlErr }
-func (m *mockCA) IsRevoked(serial *big.Int) (bool, error)  { return m.isRevoked, m.isRevokedErr }
-func (m *mockCA) Identity() string                         { return m.identity }
-func (m *mockCA) IsInitialized() bool                      { return m.initialized }
+func (m *mockCA) Revoke(_ context.Context, serial *big.Int, reason int) error { return m.revokeErr }
+func (m *mockCA) GenerateCRL(_ context.Context) ([]byte, error)               { return m.crlDER, m.crlErr }
+func (m *mockCA) IsRevoked(serial *big.Int) (bool, error)                     { return m.isRevoked, m.isRevokedErr }
+func (m *mockCA) Identity() string                                            { return m.identity }
+func (m *mockCA) IsInitialized() bool                                         { return m.initialized }
 
 // createSelfSignedCert generates a self-signed CA certificate for testing.
 func createSelfSignedCert(t *testing.T) *x509.Certificate {

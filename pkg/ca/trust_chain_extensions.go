@@ -19,13 +19,21 @@ package ca
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
+
+// aiaHTTPClient downloads AIA-referenced issuer certificates. A dedicated
+// client with a timeout prevents a stalled issuer endpoint from hanging an
+// import indefinitely (http.DefaultClient sets no timeout); the per-request
+// context still allows earlier cancellation.
+var aiaHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // TrustedRoot returns the root CA certificate that anchors this CA's
 // hierarchy. Returns ErrNotInitialized if Init/Load has not been called,
@@ -249,7 +257,7 @@ func (ca *CA) RootCertificate(childCert *x509.Certificate) (*x509.Certificate, e
 // Returns nil when cert has no AIA extension (not an error).
 //
 // Thread-safe: Yes (stateless once initialised)
-func (ca *CA) ImportIssuingCAs(cert *x509.Certificate) error {
+func (ca *CA) ImportIssuingCAs(ctx context.Context, cert *x509.Certificate) error {
 	if cert == nil {
 		return ErrInvalidCertificate
 	}
@@ -259,7 +267,11 @@ func (ca *CA) ImportIssuingCAs(cert *x509.Certificate) error {
 
 	for _, issuerURL := range cert.IssuingCertificateURL {
 		// #nosec G107 - URL is from X.509 certificate AIA extension (issuer-controlled)
-		resp, err := http.Get(issuerURL)
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, issuerURL, nil)
+		if reqErr != nil {
+			return fmt.Errorf("%w: failed to build request %s: %v", ErrStorageError, issuerURL, reqErr)
+		}
+		resp, err := aiaHTTPClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("%w: failed to download %s: %v", ErrStorageError, issuerURL, err)
 		}
@@ -282,18 +294,18 @@ func (ca *CA) ImportIssuingCAs(cert *x509.Certificate) error {
 		// Skip if the certificate already exists in the store.
 		if existing, err := ca.certStore.GetCertificate(issuerCert.Subject.CommonName); err == nil && existing != nil {
 			// Still recurse in case the parent chain hasn't been populated.
-			if err := ca.ImportIssuingCAs(issuerCert); err != nil {
+			if err := ca.ImportIssuingCAs(ctx, issuerCert); err != nil {
 				return err
 			}
 			continue
 		}
 
-		if err := ca.ImportCertificate(issuerCert); err != nil {
+		if err := ca.ImportCertificate(ctx, issuerCert); err != nil {
 			return err
 		}
 
 		if len(issuerCert.IssuingCertificateURL) > 0 {
-			if err := ca.ImportIssuingCAs(issuerCert); err != nil {
+			if err := ca.ImportIssuingCAs(ctx, issuerCert); err != nil {
 				return err
 			}
 		}

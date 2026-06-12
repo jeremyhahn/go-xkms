@@ -640,7 +640,7 @@ func TestIntegration_PIV_TPM2_SignAndVerify(t *testing.T) {
 
 	// The backendPIVKeyGenerator stored the key under CN "piv-9e", so
 	// retrieve a signer for it from the backend.
-	signer, err := backend.Signer(&types.KeyAttributes{CN: cn})
+	signer, err := backend.Signer(context.Background(), &types.KeyAttributes{CN: cn})
 	if err != nil {
 		// If the backend does not support signer retrieval by CN alone
 		// (e.g., requires full attributes), we still verified the key

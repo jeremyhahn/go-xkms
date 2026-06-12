@@ -38,7 +38,7 @@ import (
 //   - "::rsa:my-key" - specify algorithm only
 //
 // Examples of full Key IDs:
-//   - pkcs8:signing:rsa:server-key
+//   - software:signing:rsa:server-key
 //   - pkcs11:signing:ecdsa-p256:hsm-key
 //   - tpm2:attestation:rsa:device-attestation
 //   - awskms:encryption:aes256-gcm:prod-key
@@ -250,7 +250,7 @@ func NewKeyID(backend, keyType, algo, keyname string) (KeyID, error) {
 //
 // Example:
 //
-//	err := ValidateKeyID("pkcs8:signing:rsa:valid-key")    // nil
+//	err := ValidateKeyID("software:signing:rsa:valid-key") // nil
 //	err := ValidateKeyID("invalid:key:format")              // error
 func ValidateKeyID(keyID string) error {
 	_, _, _, _, err := ParseKeyID(keyID)

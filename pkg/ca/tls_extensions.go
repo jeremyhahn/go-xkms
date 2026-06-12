@@ -17,6 +17,7 @@ package ca
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
@@ -37,7 +38,7 @@ import (
 // backends and pass the resulting crypto.Signer to the TLS stack directly.
 //
 // Thread-safe: Yes
-func (ca *CA) TLSBundle(attrs *types.KeyAttributes) ([]byte, error) {
+func (ca *CA) TLSBundle(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
@@ -49,9 +50,9 @@ func (ca *CA) TLSBundle(attrs *types.KeyAttributes) ([]byte, error) {
 
 	// Prefer the keystore's chain when available so that intermediates are
 	// included in the bundle.
-	chain, err := ca.keyStore.GetCertChain(attrs.CN)
+	chain, err := ca.keyStore.GetCertChain(ctx, attrs.CN)
 	if err != nil || len(chain) == 0 {
-		cert, certErr := ca.Certificate(attrs)
+		cert, certErr := ca.Certificate(ctx, attrs)
 		if certErr != nil {
 			return nil, certErr
 		}
@@ -67,7 +68,7 @@ func (ca *CA) TLSBundle(attrs *types.KeyAttributes) ([]byte, error) {
 		}
 	}
 
-	key, err := ca.keyStore.GetKey(attrs)
+	key, err := ca.keyStore.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("%w: private key export unsupported by backend: %v",
 			ErrTLSConfigFailed, err)
@@ -93,8 +94,8 @@ func (ca *CA) TLSBundle(attrs *types.KeyAttributes) ([]byte, error) {
 // When xsigner is nil the result is identical to TLSBundle.
 //
 // Thread-safe: Yes
-func (ca *CA) TLSBundleWithCrossSigner(attrs *types.KeyAttributes, xsigner crypto.Signer) ([]byte, error) {
-	base, err := ca.TLSBundle(attrs)
+func (ca *CA) TLSBundleWithCrossSigner(ctx context.Context, attrs *types.KeyAttributes, xsigner crypto.Signer) ([]byte, error) {
+	base, err := ca.TLSBundle(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -127,8 +128,8 @@ func (ca *CA) TLSBundleWithCrossSigner(attrs *types.KeyAttributes, xsigner crypt
 // TLSConfig.
 //
 // Thread-safe: Yes
-func (ca *CA) TLSConfigWithXSigner(attrs *types.KeyAttributes, xsigner crypto.Signer) (*tls.Config, error) {
-	cfg, err := ca.TLSConfig(attrs)
+func (ca *CA) TLSConfigWithXSigner(ctx context.Context, attrs *types.KeyAttributes, xsigner crypto.Signer) (*tls.Config, error) {
+	cfg, err := ca.TLSConfig(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}

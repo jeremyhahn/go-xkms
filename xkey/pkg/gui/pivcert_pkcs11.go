@@ -21,13 +21,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// newPKCS11PIVCertStorage creates a PKCS#11-backed PIV certificate storage.
-// This stores certificates directly on the PKCS#11 token, compliant with
-// NIST SP 800-73-5.
-func newPKCS11PIVCertStorage(config *xkms.PIVPKCS11StorageConfig) (xkms.PIVCertificateStorage, error) {
-	return xkms.NewPIVPKCS11Backend(config)
-}
-
 // newPKCS11PIVCertStorageFromConnection creates a PKCS#11 PIV cert storage
 // that reuses the already-initialized context and session from the PKCS#11
 // module manager. This avoids CKR_CRYPTOKI_ALREADY_INITIALIZED errors and

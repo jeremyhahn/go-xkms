@@ -14,6 +14,7 @@
 package mocks
 
 import (
+	"context"
 	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
@@ -71,7 +72,7 @@ func NewExtendedMockBackend() *ExtendedMockBackend {
 }
 
 // GenerateSymmetricKey generates a new symmetric key.
-func (m *ExtendedMockBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (m *ExtendedMockBackend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -111,7 +112,7 @@ func (m *ExtendedMockBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (
 }
 
 // GetSymmetricKey retrieves an existing symmetric key.
-func (m *ExtendedMockBackend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (m *ExtendedMockBackend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -135,7 +136,7 @@ func (m *ExtendedMockBackend) GetSymmetricKey(attrs *types.KeyAttributes) (types
 }
 
 // SymmetricEncrypter returns a SymmetricEncrypter for the key.
-func (m *ExtendedMockBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (m *ExtendedMockBackend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -157,7 +158,7 @@ func (m *ExtendedMockBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (ty
 }
 
 // GetImportParameters retrieves import parameters for a key.
-func (m *ExtendedMockBackend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (m *ExtendedMockBackend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -181,7 +182,7 @@ func (m *ExtendedMockBackend) GetImportParameters(attrs *types.KeyAttributes, al
 }
 
 // WrapKey wraps key material for secure transport.
-func (m *ExtendedMockBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (m *ExtendedMockBackend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -200,7 +201,7 @@ func (m *ExtendedMockBackend) WrapKey(keyMaterial []byte, params *backend.Import
 }
 
 // UnwrapKey unwraps key material.
-func (m *ExtendedMockBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (m *ExtendedMockBackend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -215,7 +216,7 @@ func (m *ExtendedMockBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, par
 }
 
 // ImportKey imports externally generated key material.
-func (m *ExtendedMockBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (m *ExtendedMockBackend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -232,7 +233,7 @@ func (m *ExtendedMockBackend) ImportKey(attrs *types.KeyAttributes, wrapped *bac
 }
 
 // ExportKey exports a key in wrapped form.
-func (m *ExtendedMockBackend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (m *ExtendedMockBackend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -261,7 +262,7 @@ func (m *ExtendedMockBackend) ExportKey(attrs *types.KeyAttributes, algorithm ba
 
 // ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
 // This method provides direct access to the plaintext key bytes without wrapping.
-func (m *ExtendedMockBackend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (m *ExtendedMockBackend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

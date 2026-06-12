@@ -97,19 +97,19 @@ func runPINStatus(cmd *cobra.Command, args []string) error {
 		return writeJSON(out, info)
 	}
 
-	fmt.Fprintln(out, "PIN Status:")
-	fmt.Fprintf(out, "  Initialized:      %s\n", boolToYesNo(info.Initialized))
-	fmt.Fprintf(out, "  SO PIN set:       %s\n", boolToYesNo(info.SOPINSet))
-	fmt.Fprintf(out, "  User PIN set:     %s\n", boolToYesNo(info.UserPINSet))
-	fmt.Fprintf(out, "  Strategy:         %s\n", info.Strategy)
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Lockout Status:")
-	fmt.Fprintf(out, "  Failed attempts:  %d / %d\n", info.FailedAttempts, info.MaxAttempts)
-	fmt.Fprintf(out, "  Locked:           %s\n", boolToYesNo(info.IsLocked))
+	_, _ = fmt.Fprintln(out, "PIN Status:")
+	_, _ = fmt.Fprintf(out, "  Initialized:      %s\n", boolToYesNo(info.Initialized))
+	_, _ = fmt.Fprintf(out, "  SO PIN set:       %s\n", boolToYesNo(info.SOPINSet))
+	_, _ = fmt.Fprintf(out, "  User PIN set:     %s\n", boolToYesNo(info.UserPINSet))
+	_, _ = fmt.Fprintf(out, "  Strategy:         %s\n", info.Strategy)
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Lockout Status:")
+	_, _ = fmt.Fprintf(out, "  Failed attempts:  %d / %d\n", info.FailedAttempts, info.MaxAttempts)
+	_, _ = fmt.Fprintf(out, "  Locked:           %s\n", boolToYesNo(info.IsLocked))
 
 	if info.IsLocked && info.RecoverySeconds > 0 {
 		duration := time.Duration(info.RecoverySeconds) * time.Second
-		fmt.Fprintf(out, "  Recovery in:      %s\n", duration.String())
+		_, _ = fmt.Fprintf(out, "  Recovery in:      %s\n", duration.String())
 	}
 
 	return nil

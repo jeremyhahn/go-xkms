@@ -14,6 +14,7 @@
 package mocks
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -102,7 +103,7 @@ func (m *MockBackend) Capabilities() types.Capabilities {
 }
 
 // GenerateKey generates a new key.
-func (m *MockBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *MockBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -144,7 +145,7 @@ func (m *MockBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey
 }
 
 // GetKey retrieves a key.
-func (m *MockBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *MockBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -166,7 +167,7 @@ func (m *MockBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, err
 }
 
 // DeleteKey removes a key.
-func (m *MockBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (m *MockBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -188,7 +189,7 @@ func (m *MockBackend) DeleteKey(attrs *types.KeyAttributes) error {
 }
 
 // ListKeys returns all keys.
-func (m *MockBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (m *MockBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -215,7 +216,7 @@ func (m *MockBackend) ListKeys() ([]*types.KeyAttributes, error) {
 }
 
 // Signer returns a crypto.Signer for the key.
-func (m *MockBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *MockBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -242,7 +243,7 @@ func (m *MockBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) 
 }
 
 // Decrypter returns a crypto.Decrypter for the key.
-func (m *MockBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *MockBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -332,7 +333,7 @@ func KeyAlgorithm(key crypto.PrivateKey) x509.PublicKeyAlgorithm {
 }
 
 // RotateKey rotates/updates a key identified by attrs.
-func (m *MockBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (m *MockBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	m.mu.Lock()
 	m.RotateKeyCalls = append(m.RotateKeyCalls, attrs.CN)
 	m.mu.Unlock()

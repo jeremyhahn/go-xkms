@@ -15,8 +15,6 @@ package grpc
 
 import (
 	"context"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"math/big"
@@ -24,6 +22,7 @@ import (
 	"sync"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -46,7 +45,10 @@ var (
 	caInstance   any
 )
 
-// SetCA configures the Certificate Authority for the gRPC service.
+// SetCA configures the CA servicer for the gRPC service. The composition
+// root passes the *xkms.XKMSService, which exposes the transport-shaped CA
+// methods (GetCACertificate, SignCSR, IssueCertificate, etc.) that the
+// handlers in this file and service_ca_tcg.go delegate to.
 // This must be called before any CA RPCs can be used.
 func SetCA(ca any) {
 	caInstanceMu.Lock()
@@ -70,42 +72,39 @@ func getCAInstance() any {
 
 // Local duck-typed interfaces for CA operations.
 // These break the import cycle: pkg/ca imports pkg/xkms, so this package
-// cannot import pkg/ca. Instead, we define minimal interfaces using only
-// stdlib types. The concrete ca.CA type satisfies these via duck typing.
+// cannot name the CA servicer's concrete type for these operations. The
+// interfaces mirror the transport-shaped CA methods on *xkms.XKMSService,
+// which the composition root wires via SetCA. This is the same delegation
+// contract used by the REST and QUIC transports.
 
 // grpcCAMethodCert retrieves the CA certificate.
 type grpcCAMethodCert interface {
-	CACertificate() (*x509.Certificate, error)
+	GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error)
 }
 
-// grpcCAMethodSignCSR signs a CSR using raw parameters.
+// grpcCAMethodSignCSR signs a certificate signing request.
 type grpcCAMethodSignCSR interface {
-	SignCSRRaw(csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error)
+	SignCSR(ctx context.Context, req *transport.SignCSRRequest) (*transport.SignCSRResponse, error)
 }
 
-// grpcCAMethodIssue issues a certificate using raw parameters.
+// grpcCAMethodIssue issues a certificate.
 type grpcCAMethodIssue interface {
-	IssueCertificateRaw(
-		commonName, organization string,
-		sans []string,
-		validityDays int,
-		profile, algorithm string,
-	) (certPEM, chainPEM, keyPEM []byte, serialHex string, err error)
+	IssueCertificate(ctx context.Context, req *transport.IssueCertificateRequest) (*transport.IssueCertificateResponse, error)
 }
 
 // grpcCAMethodRevoke revokes a certificate by serial number.
 type grpcCAMethodRevoke interface {
-	Revoke(serial *big.Int, reason int) error
+	RevokeCertificate(ctx context.Context, req *transport.RevokeCertificateRequest) (*transport.RevokeCertificateResponse, error)
 }
 
 // grpcCAMethodCRL generates a certificate revocation list.
 type grpcCAMethodCRL interface {
-	GenerateCRL() ([]byte, error)
+	GenerateCRL(ctx context.Context, req *transport.GenerateCRLRequest) (*transport.GenerateCRLResponse, error)
 }
 
 // grpcCAMethodIsRevoked checks if a certificate serial number is revoked.
 type grpcCAMethodIsRevoked interface {
-	IsRevoked(serial *big.Int) (bool, error)
+	IsRevoked(ctx context.Context, req *transport.IsRevokedRequest) (*transport.IsRevokedResponse, error)
 }
 
 // GetCACertificate retrieves the CA certificate with metadata.
@@ -124,24 +123,19 @@ func (s *Service) GetCACertificate(ctx context.Context, req *pb.GetCACertificate
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	cert, err := certGetter.CACertificate()
+	resp, err := certGetter.GetCACertificate(ctx, &transport.GetCACertificateRequest{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get CA certificate: %v", err)
 	}
 
-	certPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: cert.Raw,
-	})
-
 	return &pb.GetCACertificateResponse{
-		CertificatePem: certPEM,
-		Subject:        cert.Subject.String(),
-		Issuer:         cert.Issuer.String(),
-		SerialNumber:   cert.SerialNumber.Text(16),
-		NotBefore:      cert.NotBefore.UTC().Format("2006-01-02T15:04:05Z"),
-		NotAfter:       cert.NotAfter.UTC().Format("2006-01-02T15:04:05Z"),
-		IsCa:           cert.IsCA,
+		CertificatePem: resp.CertificatePEM,
+		Subject:        resp.Subject,
+		Issuer:         resp.Issuer,
+		SerialNumber:   resp.SerialNumber,
+		NotBefore:      resp.NotBefore,
+		NotAfter:       resp.NotAfter,
+		IsCa:           resp.IsCA,
 	}, nil
 }
 
@@ -165,31 +159,19 @@ func (s *Service) SignCSR(ctx context.Context, req *pb.SignCSRRequest) (*pb.Sign
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	cert, err := signer.SignCSRRaw(req.GetCsrPem(), req.GetProfile(), int(req.GetValidityDays()))
+	resp, err := signer.SignCSR(ctx, &transport.SignCSRRequest{
+		CSRPEM:       req.GetCsrPem(),
+		Profile:      req.GetProfile(),
+		ValidityDays: int(req.GetValidityDays()),
+	})
 	if err != nil {
 		return nil, wrapWriteError(err, codes.Internal, "failed to sign CSR: %v", err)
 	}
 
-	certPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: cert.Raw,
-	})
-
-	// Attempt to get the CA certificate for the chain.
-	var chainPEM []byte
-	if certGetter, ok := ca.(grpcCAMethodCert); ok {
-		if caCert, caErr := certGetter.CACertificate(); caErr == nil {
-			chainPEM = pem.EncodeToMemory(&pem.Block{
-				Type:  "CERTIFICATE",
-				Bytes: caCert.Raw,
-			})
-		}
-	}
-
 	return &pb.SignCSRResponse{
-		CertificatePem: certPEM,
-		ChainPem:       chainPEM,
-		SerialNumber:   cert.SerialNumber.Text(16),
+		CertificatePem: resp.CertificatePEM,
+		ChainPem:       resp.ChainPEM,
+		SerialNumber:   resp.SerialNumber,
 	}, nil
 }
 
@@ -213,23 +195,23 @@ func (s *Service) IssueCertificate(ctx context.Context, req *pb.IssueCertificate
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	certPEM, chainPEM, keyPEM, serialHex, err := issuer.IssueCertificateRaw(
-		req.GetCommonName(),
-		req.GetOrganization(),
-		req.GetSans(),
-		int(req.GetValidityDays()),
-		req.GetProfile(),
-		req.GetAlgorithm(),
-	)
+	resp, err := issuer.IssueCertificate(ctx, &transport.IssueCertificateRequest{
+		CommonName:   req.GetCommonName(),
+		Organization: req.GetOrganization(),
+		SANs:         req.GetSans(),
+		ValidityDays: int(req.GetValidityDays()),
+		Profile:      req.GetProfile(),
+		Algorithm:    req.GetAlgorithm(),
+	})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to issue certificate: %v", err)
 	}
 
 	return &pb.IssueCertificateResponse{
-		CertificatePem: certPEM,
-		ChainPem:       chainPEM,
-		PrivateKeyPem:  keyPEM,
-		SerialNumber:   serialHex,
+		CertificatePem: resp.CertificatePEM,
+		ChainPem:       resp.ChainPEM,
+		PrivateKeyPem:  resp.PrivateKeyPEM,
+		SerialNumber:   resp.SerialNumber,
 	}, nil
 }
 
@@ -253,18 +235,21 @@ func (s *Service) RevokeCertificate(ctx context.Context, req *pb.RevokeCertifica
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	serial, err := parseCASerialHex(req.GetSerialNumber())
-	if err != nil {
+	if _, err := parseCASerialHex(req.GetSerialNumber()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 
-	if err := revoker.Revoke(serial, int(req.GetReason())); err != nil {
+	resp, err := revoker.RevokeCertificate(ctx, &transport.RevokeCertificateRequest{
+		SerialNumber: req.GetSerialNumber(),
+		Reason:       int(req.GetReason()),
+	})
+	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to revoke certificate: %v", err)
 	}
 
 	return &pb.RevokeCertificateResponse{
-		Success: true,
-		Message: fmt.Sprintf("certificate %s revoked", req.GetSerialNumber()),
+		Success: resp.Success,
+		Message: resp.Message,
 	}, nil
 }
 
@@ -284,18 +269,13 @@ func (s *Service) GenerateCRL(ctx context.Context, req *pb.GenerateCRLRequest) (
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	crlDER, err := generator.GenerateCRL()
+	resp, err := generator.GenerateCRL(ctx, &transport.GenerateCRLRequest{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to generate CRL: %v", err)
 	}
 
-	crlPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "X509 CRL",
-		Bytes: crlDER,
-	})
-
 	return &pb.GenerateCRLResponse{
-		CrlPem: crlPEM,
+		CrlPem: resp.CRLPEM,
 	}, nil
 }
 
@@ -319,26 +299,21 @@ func (s *Service) IsRevoked(ctx context.Context, req *pb.IsRevokedRequest) (*pb.
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	serial, err := parseCASerialHex(req.GetSerialNumber())
-	if err != nil {
+	if _, err := parseCASerialHex(req.GetSerialNumber()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 
-	revoked, err := checker.IsRevoked(serial)
+	resp, err := checker.IsRevoked(ctx, &transport.IsRevokedRequest{
+		SerialNumber: req.GetSerialNumber(),
+	})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to check revocation status: %v", err)
 	}
 
-	resp := &pb.IsRevokedResponse{
-		Revoked: revoked,
-	}
-	if revoked {
-		resp.Message = "certificate is revoked"
-	} else {
-		resp.Message = "certificate is not revoked"
-	}
-
-	return resp, nil
+	return &pb.IsRevokedResponse{
+		Revoked: resp.Revoked,
+		Message: resp.Message,
+	}, nil
 }
 
 // parseCASerialHex parses a hex serial number string, stripping optional 0x/0X prefix.

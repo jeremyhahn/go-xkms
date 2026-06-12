@@ -14,6 +14,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -33,16 +34,16 @@ import (
 //
 // Example:
 //
-//	key, err := backend.GetKeyByID("my-key")
-//	key, err := backend.GetKeyByID("pkcs11:signing:ecdsa-p256:my-key")
-func (c *compositeBackend) GetKeyByID(keyID string) (crypto.PrivateKey, error) {
+//	key, err := backend.GetKeyByID(ctx, "my-key")
+//	key, err := backend.GetKeyByID(ctx, "pkcs11:signing:ecdsa-p256:my-key")
+func (c *compositeBackend) GetKeyByID(ctx context.Context, keyID string) (crypto.PrivateKey, error) {
 	attrs, err := c.parseAndValidateKeyID(keyID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Retrieve the key from the key provider
-	key, err := c.backend.GetKey(attrs)
+	key, err := c.backend.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "retrieve", KeyID: keyID, Err: err}
 	}
@@ -56,17 +57,17 @@ func (c *compositeBackend) GetKeyByID(keyID string) (crypto.PrivateKey, error) {
 //
 // Example:
 //
-//	signer, err := backend.GetSignerByID("my-key")
-//	signer, err := backend.GetSignerByID("tpm2:attestation:rsa:attestation-key")
+//	signer, err := backend.GetSignerByID(ctx, "my-key")
+//	signer, err := backend.GetSignerByID(ctx, "tpm2:attestation:rsa:attestation-key")
 //	signature, _ := signer.Sign(rand.Reader, digest, crypto.SHA256)
-func (c *compositeBackend) GetSignerByID(keyID string) (crypto.Signer, error) {
+func (c *compositeBackend) GetSignerByID(ctx context.Context, keyID string) (crypto.Signer, error) {
 	attrs, err := c.parseAndValidateKeyID(keyID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get signer from key provider
-	signer, err := c.backend.Signer(attrs)
+	signer, err := c.backend.Signer(ctx, attrs)
 	if err != nil {
 		return nil, &ErrCryptoOperation{Operation: "signer", KeyID: keyID, Err: err}
 	}
@@ -79,17 +80,17 @@ func (c *compositeBackend) GetSignerByID(keyID string) (crypto.Signer, error) {
 //
 // Example:
 //
-//	decrypter, err := backend.GetDecrypterByID("my-key")
-//	decrypter, err := backend.GetDecrypterByID("awskms:encryption:rsa:rsa-key")
+//	decrypter, err := backend.GetDecrypterByID(ctx, "my-key")
+//	decrypter, err := backend.GetDecrypterByID(ctx, "awskms:encryption:rsa:rsa-key")
 //	plaintext, _ := decrypter.Decrypt(rand.Reader, ciphertext, opts)
-func (c *compositeBackend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
+func (c *compositeBackend) GetDecrypterByID(ctx context.Context, keyID string) (crypto.Decrypter, error) {
 	attrs, err := c.parseAndValidateKeyID(keyID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get decrypter from key provider
-	decrypter, err := c.backend.Decrypter(attrs)
+	decrypter, err := c.backend.Decrypter(ctx, attrs)
 	if err != nil {
 		return nil, &ErrCryptoOperation{Operation: "decrypter", KeyID: keyID, Err: err}
 	}

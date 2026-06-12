@@ -33,7 +33,7 @@ func TestGetCertificate_Success(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	cert := createTestCert(t, "cert-key", key)
-	err = software.SaveCert("cert-key", cert)
+	err = software.SaveCert(context.Background(), "cert-key", cert)
 	require.NoError(t, err)
 
 	resp, err := svc.GetCertificate(context.Background(), "software", "cert-key")
@@ -110,13 +110,13 @@ func TestDeleteCertificate_Success(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	cert := createTestCert(t, "del-cert", key)
-	err = software.SaveCert("del-cert", cert)
+	err = software.SaveCert(context.Background(), "del-cert", cert)
 	require.NoError(t, err)
 
 	err = svc.DeleteCertificate(context.Background(), "software", "del-cert")
 	require.NoError(t, err)
 
-	_, err = software.GetCert("del-cert")
+	_, err = software.GetCert(context.Background(), "del-cert")
 	require.Error(t, err)
 }
 
@@ -139,7 +139,7 @@ func TestServicerCertificateExists_True(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	cert := createTestCert(t, "exists-cert", key)
-	err = software.SaveCert("exists-cert", cert)
+	err = software.SaveCert(context.Background(), "exists-cert", cert)
 	require.NoError(t, err)
 
 	exists, err := svc.CertificateExists(context.Background(), "software", "exists-cert")
@@ -168,8 +168,8 @@ func TestListCertificates_Success(t *testing.T) {
 	require.NoError(t, err)
 	cert1 := createTestCert(t, "list-cert-1", key)
 	cert2 := createTestCert(t, "list-cert-2", key)
-	require.NoError(t, software.SaveCert("list-cert-1", cert1))
-	require.NoError(t, software.SaveCert("list-cert-2", cert2))
+	require.NoError(t, software.SaveCert(context.Background(), "list-cert-1", cert1))
+	require.NoError(t, software.SaveCert(context.Background(), "list-cert-2", cert2))
 
 	resp, err := svc.ListCertificates(context.Background(), "software")
 	require.NoError(t, err)
@@ -233,7 +233,7 @@ func TestGetTLSCertificate_Success(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	cert := createTestCert(t, "tls-cert", key)
-	require.NoError(t, software.SaveCert("tls-cert", cert))
+	require.NoError(t, software.SaveCert(context.Background(), "tls-cert", cert))
 
 	resp, err := svc.GetTLSCertificate(context.Background(), "software", "tls-cert")
 	require.NoError(t, err)

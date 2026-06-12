@@ -58,4 +58,28 @@ var (
 	// ErrNilExecutor is returned when a nil Executor is provided to
 	// NewManager.
 	ErrNilExecutor = errors.New("luks: executor must not be nil")
+
+	// ErrTPMNoTransport is returned when no TPMOpener could be resolved —
+	// the host has no /dev/tpmrm0 and no simulator was injected.
+	ErrTPMNoTransport = errors.New("luks: no tpm transport available")
+
+	// ErrTPMPolicyFailed is returned when the PCR policy digest could not
+	// be computed. This is typically a bug in the requested PCR selection.
+	ErrTPMPolicyFailed = errors.New("luks: tpm pcr policy digest failed")
+
+	// ErrTPMSealFailed is returned when the underlying TPM2_Create seal
+	// command fails.
+	ErrTPMSealFailed = errors.New("luks: tpm seal failed")
+
+	// ErrTPMUnsealFailed is returned when the TPM2_Unseal command fails
+	// (most commonly because current PCR state does not match the policy).
+	ErrTPMUnsealFailed = errors.New("luks: tpm unseal failed")
+
+	// ErrTPMInvalidHandle is returned when the requested persistent handle
+	// string could not be parsed as a uint32.
+	ErrTPMInvalidHandle = errors.New("luks: invalid tpm handle")
+
+	// ErrTPMInvalidToken is returned when the TPM LUKS token JSON could not
+	// be parsed.
+	ErrTPMInvalidToken = errors.New("luks: invalid tpm token payload")
 )

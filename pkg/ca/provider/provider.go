@@ -21,6 +21,7 @@
 package provider
 
 import (
+	"context"
 	"crypto/x509"
 	"math/big"
 )
@@ -39,7 +40,7 @@ type CA interface {
 
 	// SignCSRRaw signs a CSR using primitive parameter types.
 	// If profile and validityDays are both zero-values, CA defaults are used.
-	SignCSRRaw(csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error)
+	SignCSRRaw(ctx context.Context, csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error)
 
 	// SignCSRWithSPIFFE signs a CSR and, when trustDomain and tenantID are
 	// both non-empty, synthesizes a tenant-scoped SPIFFE URI SAN of the form
@@ -47,12 +48,13 @@ type CA interface {
 	// certificate. kind defaults to "user" and name defaults to the subject
 	// CommonName when empty. When trustDomain or tenantID is empty this
 	// behaves exactly like SignCSRRaw.
-	SignCSRWithSPIFFE(csrPEM []byte, profile string, validityDays int, trustDomain, tenantID, kind, name string) (*x509.Certificate, error)
+	SignCSRWithSPIFFE(ctx context.Context, csrPEM []byte, profile string, validityDays int, trustDomain, tenantID, kind, name string) (*x509.Certificate, error)
 
 	// IssueCertificateRaw issues a certificate using primitive parameter types.
 	// sans entries use prefix notation: "DNS:example.com", "IP:1.2.3.4".
 	// Returns certificate PEM, chain PEM, private key PEM, and hex serial.
 	IssueCertificateRaw(
+		ctx context.Context,
 		commonName, organization string,
 		sans []string,
 		validityDays int,
@@ -60,10 +62,10 @@ type CA interface {
 	) (certPEM, chainPEM, keyPEM []byte, serialHex string, err error)
 
 	// Revoke marks a certificate as revoked by serial number and reason code.
-	Revoke(serial *big.Int, reason int) error
+	Revoke(ctx context.Context, serial *big.Int, reason int) error
 
 	// GenerateCRL generates a Certificate Revocation List in DER format.
-	GenerateCRL() ([]byte, error)
+	GenerateCRL(ctx context.Context) ([]byte, error)
 
 	// IsRevoked checks whether a certificate serial number is revoked.
 	IsRevoked(serial *big.Int) (bool, error)
@@ -85,20 +87,20 @@ type TCGCA interface {
 
 	// IssueEKCertificateRaw issues an Endorsement Key certificate.
 	// ekPubDER is DER-encoded public key bytes.
-	IssueEKCertificateRaw(commonName, organization string, ekPubDER []byte) (certDER []byte, err error)
+	IssueEKCertificateRaw(ctx context.Context, commonName, organization string, ekPubDER []byte) (certDER []byte, err error)
 
 	// IssueAKCertificateRaw issues an Attestation Key certificate.
 	// pubDER is DER-encoded public key bytes.
-	IssueAKCertificateRaw(commonName, organization string, pubDER []byte) (certDER []byte, err error)
+	IssueAKCertificateRaw(ctx context.Context, commonName, organization string, pubDER []byte) (certDER []byte, err error)
 
 	// SignTCGCSRIDevIDRaw signs a packed TCG-CSR-IDEVID.
 	// packedCSR is the binary-marshalled TCG_CSR_IDEVID bytes.
 	// Returns IAK cert DER and IDevID cert DER.
-	SignTCGCSRIDevIDRaw(commonName, organization string, packedCSR []byte) (iakDER, idevidDER []byte, err error)
+	SignTCGCSRIDevIDRaw(ctx context.Context, commonName, organization string, packedCSR []byte) (iakDER, idevidDER []byte, err error)
 
 	// EnrollDeviceRaw performs TCG device enrollment.
 	// packedCSR is the binary-packed TCG_CSR_IDEVID bytes.
-	EnrollDeviceRaw(commonName, organization string, packedCSR []byte) (
+	EnrollDeviceRaw(ctx context.Context, commonName, organization string, packedCSR []byte) (
 		iakDER, idevidDER, credBlob, encSecret, plainSecret []byte, err error,
 	)
 }

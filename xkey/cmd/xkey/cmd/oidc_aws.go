@@ -345,7 +345,8 @@ func handleAWSCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- s
 	if errParam := query.Get("error"); errParam != "" {
 		errDesc := query.Get("error_description")
 		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(fmt.Sprintf("<html><body><h1>AWS Authentication Failed</h1><p>%s: %s</p></body></html>", errParam, errDesc)))
+		_, _ = fmt.Fprintf(w, "<html><body><h1>AWS Authentication Failed</h1><p>%s: %s</p></body></html>", errParam, errDesc)
+
 		errChan <- fmt.Errorf("%s: %s", errParam, errDesc)
 		return
 	}
@@ -479,7 +480,7 @@ func runAWSAutoRefreshWithWriter(client *aws.Client, refreshToken, region, profi
 		logWriter = os.Stdout
 	}
 	log := func(format string, args ...interface{}) {
-		fmt.Fprintf(logWriter, format, args...)
+		_, _ = fmt.Fprintf(logWriter, format, args...)
 	}
 
 	// Set up signal handling
@@ -658,7 +659,7 @@ func startAWSBackgroundRefresh(region, profile, credentialsFile, output, execCmd
 	// Build command to run ourselves with --background-worker flag (skips login)
 	executable, err := os.Executable()
 	if err != nil {
-		logFileHandle.Close()
+		_ = logFileHandle.Close()
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
@@ -686,22 +687,22 @@ func startAWSBackgroundRefresh(region, profile, credentialsFile, output, execCmd
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
-		logFileHandle.Close()
+		_ = logFileHandle.Close()
 		return fmt.Errorf("failed to start background process: %w", err)
 	}
 
 	// Write PID file
 	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0600); err != nil {
-		cmd.Process.Kill()
-		logFileHandle.Close()
+		_ = cmd.Process.Kill()
+		_ = logFileHandle.Close()
 		return fmt.Errorf("failed to write PID file: %w", err)
 	}
 
 	// Don't wait for the process - let it run in background
 	go func() {
-		cmd.Wait()
-		logFileHandle.Close()
-		os.Remove(pidFile)
+		_ = cmd.Wait()
+		_ = logFileHandle.Close()
+		_ = os.Remove(pidFile)
 	}()
 
 	stopName := providerName
@@ -767,7 +768,7 @@ func runAWSBackgroundWorker(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to open log file: %w", err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		logWriter = f
 	}
 
@@ -777,14 +778,14 @@ func runAWSBackgroundWorker(cmd *cobra.Command, args []string) error {
 		displayName = fmt.Sprintf("aws-%s", region)
 	}
 
-	fmt.Fprintf(logWriter, "[%s] Background refresh started for '%s'\n", time.Now().Format("2006-01-02 15:04:05"), displayName)
-	fmt.Fprintf(logWriter, "  Region: %s\n", region)
-	fmt.Fprintf(logWriter, "  Profile: %s\n", profile)
-	fmt.Fprintf(logWriter, "  Refresh interval: %d seconds\n", autoRefresh)
+	_, _ = fmt.Fprintf(logWriter, "[%s] Background refresh started for '%s'\n", time.Now().Format("2006-01-02 15:04:05"), displayName)
+	_, _ = fmt.Fprintf(logWriter, "  Region: %s\n", region)
+	_, _ = fmt.Fprintf(logWriter, "  Profile: %s\n", profile)
+	_, _ = fmt.Fprintf(logWriter, "  Refresh interval: %d seconds\n", autoRefresh)
 	if execCmd != "" {
-		fmt.Fprintf(logWriter, "  Exec command: %s\n", execCmd)
+		_, _ = fmt.Fprintf(logWriter, "  Exec command: %s\n", execCmd)
 	}
-	fmt.Fprintf(logWriter, "\n")
+	_, _ = fmt.Fprintf(logWriter, "\n")
 
 	return runAWSAutoRefreshWithWriter(client, session.RefreshToken, region, profile, credentialsFile, output, execCmd, sessionStore, providerName, time.Duration(autoRefresh)*time.Second, logWriter)
 }

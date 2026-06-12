@@ -57,7 +57,7 @@ func newMockKeyStore(name string) *mockKeyStore {
 	}
 }
 
-func (m *mockKeyStore) GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyStore) GenerateRSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ func (m *mockKeyStore) GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKe
 	return key, nil
 }
 
-func (m *mockKeyStore) GenerateECDSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyStore) GenerateECDSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func (m *mockKeyStore) GenerateECDSA(attrs *types.KeyAttributes) (crypto.Private
 	return key, nil
 }
 
-func (m *mockKeyStore) GenerateEd25519(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyStore) GenerateEd25519(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func (m *mockKeyStore) GenerateEd25519(attrs *types.KeyAttributes) (crypto.Priva
 	return priv, nil
 }
 
-func (m *mockKeyStore) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyStore) GetKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	key, ok := m.keys[attrs.CN]
 	if !ok {
 		return nil, errors.New("key not found")
@@ -95,7 +95,7 @@ func (m *mockKeyStore) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 	return key, nil
 }
 
-func (m *mockKeyStore) DeleteKey(attrs *types.KeyAttributes) error {
+func (m *mockKeyStore) DeleteKey(_ context.Context, attrs *types.KeyAttributes) error {
 	if _, ok := m.keys[attrs.CN]; !ok {
 		return errors.New("key not found")
 	}
@@ -104,7 +104,7 @@ func (m *mockKeyStore) DeleteKey(attrs *types.KeyAttributes) error {
 	return nil
 }
 
-func (m *mockKeyStore) ListKeys() ([]*types.KeyAttributes, error) {
+func (m *mockKeyStore) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
 	if m.listKeysErr != nil {
 		return nil, m.listKeysErr
 	}
@@ -119,12 +119,12 @@ func (m *mockKeyStore) ListKeys() ([]*types.KeyAttributes, error) {
 	return attrs, nil
 }
 
-func (m *mockKeyStore) RotateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyStore) RotateKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockKeyStore) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
-	key, err := m.GetKey(attrs)
+func (m *mockKeyStore) Signer(_ context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	key, err := m.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -134,8 +134,8 @@ func (m *mockKeyStore) Signer(attrs *types.KeyAttributes) (crypto.Signer, error)
 	return nil, errors.New("key does not implement crypto.Signer")
 }
 
-func (m *mockKeyStore) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
-	key, err := m.GetKey(attrs)
+func (m *mockKeyStore) Decrypter(_ context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+	key, err := m.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -145,12 +145,12 @@ func (m *mockKeyStore) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, 
 	return nil, errors.New("key does not implement crypto.Decrypter")
 }
 
-func (m *mockKeyStore) SaveCert(keyID string, cert *x509.Certificate) error {
+func (m *mockKeyStore) SaveCert(_ context.Context, keyID string, cert *x509.Certificate) error {
 	m.certs[keyID] = cert
 	return nil
 }
 
-func (m *mockKeyStore) GetCert(keyID string) (*x509.Certificate, error) {
+func (m *mockKeyStore) GetCert(_ context.Context, keyID string) (*x509.Certificate, error) {
 	cert, ok := m.certs[keyID]
 	if !ok {
 		return nil, errors.New("certificate not found")
@@ -158,7 +158,7 @@ func (m *mockKeyStore) GetCert(keyID string) (*x509.Certificate, error) {
 	return cert, nil
 }
 
-func (m *mockKeyStore) DeleteCert(keyID string) error {
+func (m *mockKeyStore) DeleteCert(_ context.Context, keyID string) error {
 	if _, ok := m.certs[keyID]; !ok {
 		return errors.New("certificate not found")
 	}
@@ -166,15 +166,15 @@ func (m *mockKeyStore) DeleteCert(keyID string) error {
 	return nil
 }
 
-func (m *mockKeyStore) SaveCertChain(keyID string, chain []*x509.Certificate) error {
+func (m *mockKeyStore) SaveCertChain(_ context.Context, keyID string, chain []*x509.Certificate) error {
 	return errors.New("not implemented")
 }
 
-func (m *mockKeyStore) GetCertChain(keyID string) ([]*x509.Certificate, error) {
+func (m *mockKeyStore) GetCertChain(_ context.Context, keyID string) ([]*x509.Certificate, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockKeyStore) ListCerts() ([]string, error) {
+func (m *mockKeyStore) ListCerts(_ context.Context) ([]string, error) {
 	certIDs := make([]string, 0, len(m.certs))
 	for id := range m.certs {
 		certIDs = append(certIDs, id)
@@ -182,37 +182,37 @@ func (m *mockKeyStore) ListCerts() ([]string, error) {
 	return certIDs, nil
 }
 
-func (m *mockKeyStore) CertExists(keyID string) (bool, error) {
+func (m *mockKeyStore) CertExists(_ context.Context, keyID string) (bool, error) {
 	_, ok := m.certs[keyID]
 	return ok, nil
 }
 
-func (m *mockKeyStore) GetTLSCertificate(keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
+func (m *mockKeyStore) GetTLSCertificate(_ context.Context, keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
 	return tls.Certificate{}, errors.New("not implemented")
 }
 
-func (m *mockKeyStore) GetKeyByID(keyID string) (crypto.PrivateKey, error) {
+func (m *mockKeyStore) GetKeyByID(_ context.Context, keyID string) (crypto.PrivateKey, error) {
 	attrs, err := ParseKeyIDToAttributes(keyID)
 	if err != nil {
 		return nil, err
 	}
-	return m.GetKey(attrs)
+	return m.GetKey(context.Background(), attrs)
 }
 
-func (m *mockKeyStore) GetSignerByID(keyID string) (crypto.Signer, error) {
+func (m *mockKeyStore) GetSignerByID(_ context.Context, keyID string) (crypto.Signer, error) {
 	attrs, err := ParseKeyIDToAttributes(keyID)
 	if err != nil {
 		return nil, err
 	}
-	return m.Signer(attrs)
+	return m.Signer(context.Background(), attrs)
 }
 
-func (m *mockKeyStore) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
+func (m *mockKeyStore) GetDecrypterByID(_ context.Context, keyID string) (crypto.Decrypter, error) {
 	attrs, err := ParseKeyIDToAttributes(keyID)
 	if err != nil {
 		return nil, err
 	}
-	return m.Decrypter(attrs)
+	return m.Decrypter(context.Background(), attrs)
 }
 
 func (m *mockKeyStore) KeyProvider() types.KeyProvider {
@@ -587,11 +587,11 @@ func TestKeyByID_WithBackendPrefix(t *testing.T) {
 
 	// Generate a key in software
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	expectedKey, err := software.GenerateRSA(attrs)
+	expectedKey, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Retrieve using 4-part format: backend:::keyname
-	key, err := KeyByID("software:::test-key")
+	key, err := KeyByID(context.Background(), "software:::test-key")
 	assert.NoError(t, err)
 	assert.Equal(t, expectedKey, key)
 }
@@ -601,11 +601,11 @@ func TestKeyByID_WithoutBackendPrefix(t *testing.T) {
 
 	// Generate a key in default backend
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	expectedKey, err := software.GenerateRSA(attrs)
+	expectedKey, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Retrieve using shorthand (just keyname, uses default backend)
-	key, err := KeyByID("test-key")
+	key, err := KeyByID(context.Background(), "test-key")
 	assert.NoError(t, err)
 	assert.Equal(t, expectedKey, key)
 }
@@ -614,7 +614,7 @@ func TestKeyByID_InvalidBackend(t *testing.T) {
 	setupService(t)
 
 	// Use 4-part format with invalid backend
-	_, err := KeyByID("nonexistent:::test-key")
+	_, err := KeyByID(context.Background(), "nonexistent:::test-key")
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidBackendType)
 }
@@ -623,14 +623,14 @@ func TestKeyByID_KeyNotFound(t *testing.T) {
 	setupService(t)
 
 	// Use 4-part format
-	_, err := KeyByID("software:::nonexistent-key")
+	_, err := KeyByID(context.Background(), "software:::nonexistent-key")
 	assert.Error(t, err)
 }
 
 func TestKeyByID_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := KeyByID("test-key")
+	_, err := KeyByID(context.Background(), "test-key")
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
@@ -641,10 +641,10 @@ func TestSigner_Success(t *testing.T) {
 	software, _ := setupService(t)
 
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := SignerByID("software:::test-key")
+	signer, err := SignerByID(context.Background(), "software:::test-key")
 	assert.NoError(t, err)
 	assert.NotNil(t, signer)
 }
@@ -655,10 +655,10 @@ func TestDecrypter_Success(t *testing.T) {
 	software, _ := setupService(t)
 
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
-	decrypter, err := DecrypterByID("software:::test-key")
+	decrypter, err := DecrypterByID(context.Background(), "software:::test-key")
 	assert.NoError(t, err)
 	assert.NotNil(t, decrypter)
 }
@@ -669,14 +669,14 @@ func TestDeleteKey_WithBackendPrefix(t *testing.T) {
 	software, _ := setupService(t)
 
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
-	err = DeleteKeyByID("software:::test-key")
+	err = DeleteKeyByID(context.Background(), "software:::test-key")
 	assert.NoError(t, err)
 
 	// Verify key is deleted
-	_, err = software.GetKey(attrs)
+	_, err = software.GetKey(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -684,14 +684,14 @@ func TestDeleteKey_WithoutBackendPrefix(t *testing.T) {
 	software, _ := setupService(t)
 
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
-	err = DeleteKeyByID("test-key")
+	err = DeleteKeyByID(context.Background(), "test-key")
 	assert.NoError(t, err)
 
 	// Verify key is deleted
-	_, err = software.GetKey(attrs)
+	_, err = software.GetKey(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -701,12 +701,12 @@ func TestListKeys_AllBackends(t *testing.T) {
 	software, pkcs11 := setupService(t)
 
 	// Create keys in both backends
-	_, err := software.GenerateRSA(&types.KeyAttributes{CN: "key1"})
+	_, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "key1"})
 	require.NoError(t, err)
-	_, err = pkcs11.GenerateRSA(&types.KeyAttributes{CN: "key2"})
+	_, err = pkcs11.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "key2"})
 	require.NoError(t, err)
 
-	keys, err := ListKeys()
+	keys, err := ListKeys(context.Background())
 	assert.NoError(t, err)
 	assert.Len(t, keys, 2)
 }
@@ -715,12 +715,12 @@ func TestListKeys_SpecificBackend(t *testing.T) {
 	software, pkcs11 := setupService(t)
 
 	// Create keys in both backends
-	_, err := software.GenerateRSA(&types.KeyAttributes{CN: "key1"})
+	_, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "key1"})
 	require.NoError(t, err)
-	_, err = pkcs11.GenerateRSA(&types.KeyAttributes{CN: "key2"})
+	_, err = pkcs11.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "key2"})
 	require.NoError(t, err)
 
-	keys, err := ListKeys("software")
+	keys, err := ListKeys(context.Background(), "software")
 	assert.NoError(t, err)
 	assert.Len(t, keys, 1)
 	assert.Equal(t, "key1", keys[0].CN)
@@ -729,7 +729,7 @@ func TestListKeys_SpecificBackend(t *testing.T) {
 func TestListKeys_NonexistentBackend(t *testing.T) {
 	setupService(t)
 
-	_, err := ListKeys("nonexistent")
+	_, err := ListKeys(context.Background(), "nonexistent")
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrBackendNotFound)
 }
@@ -741,11 +741,11 @@ func TestListKeys_ContinueOnError(t *testing.T) {
 	software.listKeysErr = errors.New("backend error")
 
 	// Create a key in pkcs11
-	_, err := pkcs11.GenerateRSA(&types.KeyAttributes{CN: "key2"})
+	_, err := pkcs11.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "key2"})
 	require.NoError(t, err)
 
 	// Should still return keys from pkcs11
-	keys, err := ListKeys()
+	keys, err := ListKeys(context.Background())
 	assert.NoError(t, err)
 	assert.Len(t, keys, 1)
 	assert.Equal(t, "key2", keys[0].CN)
@@ -757,15 +757,15 @@ func TestSaveCertificate_Success(t *testing.T) {
 	software, _ := setupService(t)
 
 	// Generate a key and create a cert
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "test-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "test-key"})
 	require.NoError(t, err)
 	cert := createTestCert(t, "test-key", key.(crypto.Signer))
 
-	err = SaveCertificateByID("test-key", cert)
+	err = SaveCertificateByID(context.Background(), "test-key", cert)
 	assert.NoError(t, err)
 
 	// Verify cert was saved
-	retrievedCert, err := software.GetCert("test-key")
+	retrievedCert, err := software.GetCert(context.Background(), "test-key")
 	assert.NoError(t, err)
 	assert.Equal(t, cert, retrievedCert)
 }
@@ -774,15 +774,15 @@ func TestCertificate_Success(t *testing.T) {
 	software, _ := setupService(t)
 
 	// Generate a key and create a cert
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "test-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "test-key"})
 	require.NoError(t, err)
 	cert := createTestCert(t, "test-key", key.(crypto.Signer))
 
-	err = software.SaveCert("test-key", cert)
+	err = software.SaveCert(context.Background(), "test-key", cert)
 	require.NoError(t, err)
 
 	// Retrieve via service
-	retrievedCert, err := CertificateByID("test-key")
+	retrievedCert, err := CertificateByID(context.Background(), "test-key")
 	assert.NoError(t, err)
 	assert.Equal(t, cert, retrievedCert)
 }
@@ -793,19 +793,19 @@ func TestDeleteCertificate_WithBackendPrefix(t *testing.T) {
 	software, _ := setupService(t)
 
 	// Generate a key and create a cert
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "test-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "test-key"})
 	require.NoError(t, err)
 	cert := createTestCert(t, "test-key", key.(crypto.Signer))
 
 	// Save and delete using consistent key ID format
-	err = SaveCertificateByID("software:::test-key", cert)
+	err = SaveCertificateByID(context.Background(), "software:::test-key", cert)
 	require.NoError(t, err)
 
-	err = DeleteCertificateByID("software:::test-key")
+	err = DeleteCertificateByID(context.Background(), "software:::test-key")
 	assert.NoError(t, err)
 
 	// Verify cert is deleted - use same key ID format
-	_, err = CertificateByID("software:::test-key")
+	_, err = CertificateByID(context.Background(), "software:::test-key")
 	assert.Error(t, err)
 }
 
@@ -813,18 +813,18 @@ func TestDeleteCertificate_WithoutBackendPrefix(t *testing.T) {
 	software, _ := setupService(t)
 
 	// Generate a key and create a cert
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "test-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "test-key"})
 	require.NoError(t, err)
 	cert := createTestCert(t, "test-key", key.(crypto.Signer))
 
-	err = software.SaveCert("test-key", cert)
+	err = software.SaveCert(context.Background(), "test-key", cert)
 	require.NoError(t, err)
 
-	err = DeleteCertificateByID("test-key")
+	err = DeleteCertificateByID(context.Background(), "test-key")
 	assert.NoError(t, err)
 
 	// Verify cert is deleted
-	_, err = software.GetCert("test-key")
+	_, err = software.GetCert(context.Background(), "test-key")
 	assert.Error(t, err)
 }
 
@@ -834,19 +834,19 @@ func TestListCertificates_AllBackends(t *testing.T) {
 	software, pkcs11 := setupService(t)
 
 	// Create certs in both backends
-	key1, err := software.GenerateRSA(&types.KeyAttributes{CN: "cert1"})
+	key1, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "cert1"})
 	require.NoError(t, err)
 	cert1 := createTestCert(t, "cert1", key1.(crypto.Signer))
-	err = software.SaveCert("cert1", cert1)
+	err = software.SaveCert(context.Background(), "cert1", cert1)
 	require.NoError(t, err)
 
-	key2, err := pkcs11.GenerateRSA(&types.KeyAttributes{CN: "cert2"})
+	key2, err := pkcs11.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "cert2"})
 	require.NoError(t, err)
 	cert2 := createTestCert(t, "cert2", key2.(crypto.Signer))
-	err = pkcs11.SaveCert("cert2", cert2)
+	err = pkcs11.SaveCert(context.Background(), "cert2", cert2)
 	require.NoError(t, err)
 
-	certs, err := ListCertificates()
+	certs, err := ListCertificates(context.Background())
 	assert.NoError(t, err)
 	assert.Len(t, certs, 2)
 	assert.Contains(t, certs, "cert1")
@@ -857,19 +857,19 @@ func TestListCertificates_SpecificBackend(t *testing.T) {
 	software, pkcs11 := setupService(t)
 
 	// Create certs in both backends
-	key1, err := software.GenerateRSA(&types.KeyAttributes{CN: "cert1"})
+	key1, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "cert1"})
 	require.NoError(t, err)
 	cert1 := createTestCert(t, "cert1", key1.(crypto.Signer))
-	err = software.SaveCert("cert1", cert1)
+	err = software.SaveCert(context.Background(), "cert1", cert1)
 	require.NoError(t, err)
 
-	key2, err := pkcs11.GenerateRSA(&types.KeyAttributes{CN: "cert2"})
+	key2, err := pkcs11.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "cert2"})
 	require.NoError(t, err)
 	cert2 := createTestCert(t, "cert2", key2.(crypto.Signer))
-	err = pkcs11.SaveCert("cert2", cert2)
+	err = pkcs11.SaveCert(context.Background(), "cert2", cert2)
 	require.NoError(t, err)
 
-	certs, err := ListCertificates("software")
+	certs, err := ListCertificates(context.Background(), "software")
 	assert.NoError(t, err)
 	assert.Len(t, certs, 1)
 	assert.Contains(t, certs, "cert1")
@@ -878,7 +878,7 @@ func TestListCertificates_SpecificBackend(t *testing.T) {
 func TestListCertificates_NonexistentBackend(t *testing.T) {
 	setupService(t)
 
-	_, err := ListCertificates("nonexistent")
+	_, err := ListCertificates(context.Background(), "nonexistent")
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrBackendNotFound)
 }
@@ -886,7 +886,7 @@ func TestListCertificates_NonexistentBackend(t *testing.T) {
 func TestListCertificates_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := ListCertificates()
+	_, err := ListCertificates(context.Background())
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
@@ -986,21 +986,25 @@ func (m *mockSealerBackend) Type() types.BackendType { return m.backendType }
 func (m *mockSealerBackend) Capabilities() types.Capabilities {
 	return types.Capabilities{}
 }
-func (m *mockSealerBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockSealerBackend) GenerateKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockSealerBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockSealerBackend) GetKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockSealerBackend) DeleteKey(attrs *types.KeyAttributes) error { return nil }
-func (m *mockSealerBackend) ListKeys() ([]*types.KeyAttributes, error)  { return nil, nil }
-func (m *mockSealerBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (m *mockSealerBackend) DeleteKey(_ context.Context, attrs *types.KeyAttributes) error {
+	return nil
+}
+func (m *mockSealerBackend) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
+	return nil, nil
+}
+func (m *mockSealerBackend) RotateKey(_ context.Context, attrs *types.KeyAttributes) error {
 	return errors.New("not implemented")
 }
-func (m *mockSealerBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockSealerBackend) Signer(_ context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockSealerBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockSealerBackend) Decrypter(_ context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, errors.New("not implemented")
 }
 func (m *mockSealerBackend) Close() error { return nil }
@@ -1277,24 +1281,24 @@ func newMockExtendedBackend(backendType types.BackendType) *mockExtendedBackend 
 // Backend interface
 func (m *mockExtendedBackend) Type() types.BackendType          { return m.backendType }
 func (m *mockExtendedBackend) Capabilities() types.Capabilities { return m.capabilities }
-func (m *mockExtendedBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockExtendedBackend) GenerateKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("use GenerateRSA or GenerateECDSA")
 }
-func (m *mockExtendedBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockExtendedBackend) GetKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	key, ok := m.keys[attrs.CN]
 	if !ok {
 		return nil, backend.ErrKeyNotFound
 	}
 	return key, nil
 }
-func (m *mockExtendedBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (m *mockExtendedBackend) DeleteKey(_ context.Context, attrs *types.KeyAttributes) error {
 	if _, ok := m.keys[attrs.CN]; !ok {
 		return backend.ErrKeyNotFound
 	}
 	delete(m.keys, attrs.CN)
 	return nil
 }
-func (m *mockExtendedBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (m *mockExtendedBackend) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
 	attrs := make([]*types.KeyAttributes, 0, len(m.keys)+len(m.symKeys))
 	for cn := range m.keys {
 		attrs = append(attrs, &types.KeyAttributes{CN: cn})
@@ -1305,10 +1309,10 @@ func (m *mockExtendedBackend) ListKeys() ([]*types.KeyAttributes, error) {
 	}
 	return attrs, nil
 }
-func (m *mockExtendedBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (m *mockExtendedBackend) RotateKey(_ context.Context, attrs *types.KeyAttributes) error {
 	return errors.New("not implemented")
 }
-func (m *mockExtendedBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockExtendedBackend) Signer(_ context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	key, ok := m.keys[attrs.CN]
 	if !ok {
 		return nil, backend.ErrKeyNotFound
@@ -1318,7 +1322,7 @@ func (m *mockExtendedBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer,
 	}
 	return nil, errors.New("key does not implement crypto.Signer")
 }
-func (m *mockExtendedBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockExtendedBackend) Decrypter(_ context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	key, ok := m.keys[attrs.CN]
 	if !ok {
 		return nil, backend.ErrKeyNotFound
@@ -1350,7 +1354,7 @@ func (m *mockExtendedBackend) generateECDSA(attrs *types.KeyAttributes) (crypto.
 }
 
 // SymmetricBackend interface
-func (m *mockExtendedBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (m *mockExtendedBackend) GenerateSymmetricKey(_ context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	key := &mockSymmetricKey{
 		id:        attrs.CN,
 		algorithm: attrs.KeyAlgorithm,
@@ -1364,7 +1368,7 @@ func (m *mockExtendedBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (
 	return key, nil
 }
 
-func (m *mockExtendedBackend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (m *mockExtendedBackend) GetSymmetricKey(_ context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	key, ok := m.symKeys[attrs.CN]
 	if !ok {
 		return nil, backend.ErrKeyNotFound
@@ -1372,7 +1376,7 @@ func (m *mockExtendedBackend) GetSymmetricKey(attrs *types.KeyAttributes) (types
 	return key, nil
 }
 
-func (m *mockExtendedBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (m *mockExtendedBackend) SymmetricEncrypter(_ context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	key, ok := m.symKeys[attrs.CN]
 	if !ok {
 		return nil, backend.ErrKeyNotFound
@@ -1381,7 +1385,7 @@ func (m *mockExtendedBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (ty
 }
 
 // ImportExportBackend interface
-func (m *mockExtendedBackend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (m *mockExtendedBackend) GetImportParameters(_ context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	// Generate a wrapping key for import
 	wrappingKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	return &backend.ImportParameters{
@@ -1391,7 +1395,7 @@ func (m *mockExtendedBackend) GetImportParameters(attrs *types.KeyAttributes, al
 	}, nil
 }
 
-func (m *mockExtendedBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (m *mockExtendedBackend) WrapKey(_ context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	// Simple mock wrapping - just return the key material with a prefix
 	return &backend.WrappedKeyMaterial{
 		WrappedKey:  append([]byte("wrapped:"), keyMaterial...),
@@ -1400,7 +1404,7 @@ func (m *mockExtendedBackend) WrapKey(keyMaterial []byte, params *backend.Import
 	}, nil
 }
 
-func (m *mockExtendedBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (m *mockExtendedBackend) UnwrapKey(_ context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	// Simple mock unwrapping - just remove the prefix
 	if len(wrapped.WrappedKey) > 8 {
 		return wrapped.WrappedKey[8:], nil
@@ -1408,13 +1412,13 @@ func (m *mockExtendedBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, par
 	return nil, errors.New("invalid wrapped key")
 }
 
-func (m *mockExtendedBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (m *mockExtendedBackend) ImportKey(_ context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	// Mock import - mark key as imported
 	m.keys[attrs.CN] = &mockImportedKey{id: attrs.CN}
 	return nil
 }
 
-func (m *mockExtendedBackend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (m *mockExtendedBackend) ExportKey(_ context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	_, ok := m.keys[attrs.CN]
 	if !ok {
 		return nil, backend.ErrKeyNotFound
@@ -1425,7 +1429,7 @@ func (m *mockExtendedBackend) ExportKey(attrs *types.KeyAttributes, algorithm ba
 	}, nil
 }
 
-func (m *mockExtendedBackend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (m *mockExtendedBackend) ExportKeyMaterial(_ context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	// Return mock key material for symmetric keys
 	key, ok := m.symKeys[attrs.CN]
 	if !ok {
@@ -1500,31 +1504,31 @@ func newMockExtendedKeyStore(name string, backendType types.BackendType) *mockEx
 }
 
 // Backend interface implementation
-func (m *mockExtendedKeyStore) GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockExtendedKeyStore) GenerateRSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return m.backendImpl.generateRSA(attrs)
 }
 
-func (m *mockExtendedKeyStore) GenerateECDSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockExtendedKeyStore) GenerateECDSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return m.backendImpl.generateECDSA(attrs)
 }
 
-func (m *mockExtendedKeyStore) GenerateEd25519(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockExtendedKeyStore) GenerateEd25519(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockExtendedKeyStore) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return m.backendImpl.GetKey(attrs)
+func (m *mockExtendedKeyStore) GetKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return m.backendImpl.GetKey(context.Background(), attrs)
 }
 
-func (m *mockExtendedKeyStore) DeleteKey(attrs *types.KeyAttributes) error {
-	return m.backendImpl.DeleteKey(attrs)
+func (m *mockExtendedKeyStore) DeleteKey(_ context.Context, attrs *types.KeyAttributes) error {
+	return m.backendImpl.DeleteKey(context.Background(), attrs)
 }
 
-func (m *mockExtendedKeyStore) ListKeys() ([]*types.KeyAttributes, error) {
-	return m.backendImpl.ListKeys()
+func (m *mockExtendedKeyStore) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
+	return m.backendImpl.ListKeys(context.Background())
 }
 
-func (m *mockExtendedKeyStore) RotateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockExtendedKeyStore) RotateKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if m.rotateKeyError != nil {
 		return nil, m.rotateKeyError
 	}
@@ -1537,20 +1541,20 @@ func (m *mockExtendedKeyStore) RotateKey(attrs *types.KeyAttributes) (crypto.Pri
 	return m.backendImpl.generateRSA(attrs)
 }
 
-func (m *mockExtendedKeyStore) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
-	return m.backendImpl.Signer(attrs)
+func (m *mockExtendedKeyStore) Signer(_ context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	return m.backendImpl.Signer(context.Background(), attrs)
 }
 
-func (m *mockExtendedKeyStore) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
-	return m.backendImpl.Decrypter(attrs)
+func (m *mockExtendedKeyStore) Decrypter(_ context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+	return m.backendImpl.Decrypter(context.Background(), attrs)
 }
 
-func (m *mockExtendedKeyStore) SaveCert(keyID string, cert *x509.Certificate) error {
+func (m *mockExtendedKeyStore) SaveCert(_ context.Context, keyID string, cert *x509.Certificate) error {
 	m.certs[keyID] = cert
 	return nil
 }
 
-func (m *mockExtendedKeyStore) GetCert(keyID string) (*x509.Certificate, error) {
+func (m *mockExtendedKeyStore) GetCert(_ context.Context, keyID string) (*x509.Certificate, error) {
 	cert, ok := m.certs[keyID]
 	if !ok {
 		return nil, errors.New("certificate not found")
@@ -1558,17 +1562,17 @@ func (m *mockExtendedKeyStore) GetCert(keyID string) (*x509.Certificate, error) 
 	return cert, nil
 }
 
-func (m *mockExtendedKeyStore) DeleteCert(keyID string) error {
+func (m *mockExtendedKeyStore) DeleteCert(_ context.Context, keyID string) error {
 	delete(m.certs, keyID)
 	return nil
 }
 
-func (m *mockExtendedKeyStore) SaveCertChain(keyID string, chain []*x509.Certificate) error {
+func (m *mockExtendedKeyStore) SaveCertChain(_ context.Context, keyID string, chain []*x509.Certificate) error {
 	m.certChains[keyID] = chain
 	return nil
 }
 
-func (m *mockExtendedKeyStore) GetCertChain(keyID string) ([]*x509.Certificate, error) {
+func (m *mockExtendedKeyStore) GetCertChain(_ context.Context, keyID string) ([]*x509.Certificate, error) {
 	chain, ok := m.certChains[keyID]
 	if !ok {
 		return nil, errors.New("certificate chain not found")
@@ -1576,7 +1580,7 @@ func (m *mockExtendedKeyStore) GetCertChain(keyID string) ([]*x509.Certificate, 
 	return chain, nil
 }
 
-func (m *mockExtendedKeyStore) ListCerts() ([]string, error) {
+func (m *mockExtendedKeyStore) ListCerts(_ context.Context) ([]string, error) {
 	ids := make([]string, 0, len(m.certs))
 	for id := range m.certs {
 		ids = append(ids, id)
@@ -1584,12 +1588,12 @@ func (m *mockExtendedKeyStore) ListCerts() ([]string, error) {
 	return ids, nil
 }
 
-func (m *mockExtendedKeyStore) CertExists(keyID string) (bool, error) {
+func (m *mockExtendedKeyStore) CertExists(_ context.Context, keyID string) (bool, error) {
 	_, ok := m.certs[keyID]
 	return ok, nil
 }
 
-func (m *mockExtendedKeyStore) GetTLSCertificate(keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
+func (m *mockExtendedKeyStore) GetTLSCertificate(_ context.Context, keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
 	tlsCert, ok := m.tlsCerts[keyID]
 	if !ok {
 		return tls.Certificate{}, errors.New("TLS certificate not found")
@@ -1597,16 +1601,16 @@ func (m *mockExtendedKeyStore) GetTLSCertificate(keyID string, attrs *types.KeyA
 	return tlsCert, nil
 }
 
-func (m *mockExtendedKeyStore) GetKeyByID(keyID string) (crypto.PrivateKey, error) {
-	return m.GetKey(&types.KeyAttributes{CN: keyID})
+func (m *mockExtendedKeyStore) GetKeyByID(_ context.Context, keyID string) (crypto.PrivateKey, error) {
+	return m.GetKey(context.Background(), &types.KeyAttributes{CN: keyID})
 }
 
-func (m *mockExtendedKeyStore) GetSignerByID(keyID string) (crypto.Signer, error) {
-	return m.Signer(&types.KeyAttributes{CN: keyID})
+func (m *mockExtendedKeyStore) GetSignerByID(_ context.Context, keyID string) (crypto.Signer, error) {
+	return m.Signer(context.Background(), &types.KeyAttributes{CN: keyID})
 }
 
-func (m *mockExtendedKeyStore) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
-	return m.Decrypter(&types.KeyAttributes{CN: keyID})
+func (m *mockExtendedKeyStore) GetDecrypterByID(_ context.Context, keyID string) (crypto.Decrypter, error) {
+	return m.Decrypter(context.Background(), &types.KeyAttributes{CN: keyID})
 }
 
 func (m *mockExtendedKeyStore) KeyProvider() types.KeyProvider {
@@ -1731,7 +1735,7 @@ func TestGenerateKeyWithBackend_RSA(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	key, err := GenerateKeyWithBackend("software", attrs)
+	key, err := GenerateKeyWithBackend(context.Background(), "software", attrs)
 	assert.NoError(t, err)
 	assert.NotNil(t, key)
 
@@ -1747,7 +1751,7 @@ func TestGenerateKeyWithBackend_ECDSA(t *testing.T) {
 		KeyAlgorithm: x509.ECDSA,
 	}
 
-	key, err := GenerateKeyWithBackend("pkcs11", attrs)
+	key, err := GenerateKeyWithBackend(context.Background(), "pkcs11", attrs)
 	assert.NoError(t, err)
 	assert.NotNil(t, key)
 
@@ -1763,7 +1767,7 @@ func TestGenerateKeyWithBackend_InvalidBackend(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	_, err := GenerateKeyWithBackend("nonexistent", attrs)
+	_, err := GenerateKeyWithBackend(context.Background(), "nonexistent", attrs)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrBackendNotFound)
 }
@@ -1776,7 +1780,7 @@ func TestGenerateKeyWithBackend_UnsupportedAlgorithm(t *testing.T) {
 		KeyAlgorithm: x509.DSA, // Unsupported
 	}
 
-	_, err := GenerateKeyWithBackend("software", attrs)
+	_, err := GenerateKeyWithBackend(context.Background(), "software", attrs)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported key algorithm")
 }
@@ -1790,11 +1794,11 @@ func TestRotateKey_Success(t *testing.T) {
 
 	// Generate initial key
 	attrs := &types.KeyAttributes{CN: "rotate-test-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Rotate the key
-	newKey, err := RotateKey("software:::rotate-test-key")
+	newKey, err := RotateKey(context.Background(), "software:::rotate-test-key")
 	assert.NoError(t, err)
 	assert.NotNil(t, newKey)
 }
@@ -1804,11 +1808,11 @@ func TestRotateKey_WithoutBackendPrefix(t *testing.T) {
 
 	// Generate initial key
 	attrs := &types.KeyAttributes{CN: "rotate-test-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Rotate the key (uses default backend)
-	newKey, err := RotateKey("rotate-test-key")
+	newKey, err := RotateKey(context.Background(), "rotate-test-key")
 	assert.NoError(t, err)
 	assert.NotNil(t, newKey)
 }
@@ -1816,7 +1820,7 @@ func TestRotateKey_WithoutBackendPrefix(t *testing.T) {
 func TestRotateKey_KeyNotFound(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := RotateKey("nonexistent-key")
+	_, err := RotateKey(context.Background(), "nonexistent-key")
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -1830,12 +1834,12 @@ func TestSign_Success(t *testing.T) {
 
 	// Generate a key
 	attrs := &types.KeyAttributes{CN: "sign-test-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Sign some data
 	data := []byte("test data to sign")
-	signature, err := Sign("software:::sign-test-key", data, nil)
+	signature, err := Sign(context.Background(), "software:::sign-test-key", data, nil)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, signature)
 }
@@ -1845,13 +1849,13 @@ func TestSign_WithOptions(t *testing.T) {
 
 	// Generate a key
 	attrs := &types.KeyAttributes{CN: "sign-test-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Sign with SHA-512
 	data := []byte("test data to sign")
 	opts := &SignOptions{Hash: crypto.SHA512}
-	signature, err := Sign("software:::sign-test-key", data, opts)
+	signature, err := Sign(context.Background(), "software:::sign-test-key", data, opts)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, signature)
 }
@@ -1859,7 +1863,7 @@ func TestSign_WithOptions(t *testing.T) {
 func TestSign_KeyNotFound(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := Sign("nonexistent-key", []byte("data"), nil)
+	_, err := Sign(context.Background(), "nonexistent-key", []byte("data"), nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -1869,7 +1873,7 @@ func TestVerify_Success(t *testing.T) {
 
 	// Generate an ECDSA key for easier verification
 	attrs := &types.KeyAttributes{CN: "verify-test-key"}
-	key, err := software.GenerateECDSA(attrs)
+	key, err := software.GenerateECDSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	ecdsaKey := key.(*ecdsa.PrivateKey)
@@ -1884,14 +1888,14 @@ func TestVerify_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify via service
-	err = Verify("software:::verify-test-key", data, signature, &types.VerifyOpts{Hash: crypto.SHA256})
+	err = Verify(context.Background(), "software:::verify-test-key", data, signature, &types.VerifyOpts{Hash: crypto.SHA256})
 	assert.NoError(t, err)
 }
 
 func TestVerify_KeyNotFound(t *testing.T) {
 	setupExtendedService(t)
 
-	err := Verify("nonexistent-key", []byte("data"), []byte("sig"), nil)
+	err := Verify(context.Background(), "nonexistent-key", []byte("data"), []byte("sig"), nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -1905,12 +1909,12 @@ func TestEncrypt_Success(t *testing.T) {
 
 	// Generate a symmetric key
 	attrs := &types.KeyAttributes{CN: "encrypt-test-key"}
-	_, err := software.backendImpl.GenerateSymmetricKey(attrs)
+	_, err := software.backendImpl.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Encrypt some data
 	plaintext := []byte("secret data")
-	encrypted, err := Encrypt("software:::encrypt-test-key", plaintext, nil)
+	encrypted, err := Encrypt(context.Background(), "software:::encrypt-test-key", plaintext, nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, encrypted)
 	assert.NotEqual(t, plaintext, encrypted.Ciphertext)
@@ -1921,15 +1925,15 @@ func TestDecrypt_Success(t *testing.T) {
 
 	// Generate a symmetric key
 	attrs := &types.KeyAttributes{CN: "decrypt-test-key"}
-	_, err := software.backendImpl.GenerateSymmetricKey(attrs)
+	_, err := software.backendImpl.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Encrypt then decrypt
 	originalData := []byte("secret data")
-	encrypted, err := Encrypt("software:::decrypt-test-key", originalData, nil)
+	encrypted, err := Encrypt(context.Background(), "software:::decrypt-test-key", originalData, nil)
 	require.NoError(t, err)
 
-	decrypted, err := Decrypt("software:::decrypt-test-key", encrypted, nil)
+	decrypted, err := Decrypt(context.Background(), "software:::decrypt-test-key", encrypted, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, originalData, decrypted)
 }
@@ -1937,7 +1941,7 @@ func TestDecrypt_Success(t *testing.T) {
 func TestEncrypt_KeyNotFound(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := Encrypt("nonexistent-key", []byte("data"), nil)
+	_, err := Encrypt(context.Background(), "nonexistent-key", []byte("data"), nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -1950,14 +1954,14 @@ func TestSaveCertificateChain_Success(t *testing.T) {
 	software, _ := setupExtendedService(t)
 
 	// Generate a key and certificate
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "cert-chain-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "cert-chain-key"})
 	require.NoError(t, err)
 
 	cert := createTestCert(t, "cert-chain-key", key.(crypto.Signer))
 	chain := []*x509.Certificate{cert}
 
 	// Save the chain using the full key ID
-	err = SaveCertificateChainByID("software:::cert-chain-key", chain)
+	err = SaveCertificateChainByID(context.Background(), "software:::cert-chain-key", chain)
 	assert.NoError(t, err)
 
 	// Verify it was saved - check using full key ID since that's what the service passes
@@ -1970,7 +1974,7 @@ func TestCertificateChain_Success(t *testing.T) {
 	software, _ := setupExtendedService(t)
 
 	// Generate a key and certificate
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "cert-chain-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "cert-chain-key"})
 	require.NoError(t, err)
 
 	cert := createTestCert(t, "cert-chain-key", key.(crypto.Signer))
@@ -1978,7 +1982,7 @@ func TestCertificateChain_Success(t *testing.T) {
 	software.certChains["software:::cert-chain-key"] = []*x509.Certificate{cert}
 
 	// Retrieve the chain
-	chain, err := CertificateChainByID("software:::cert-chain-key")
+	chain, err := CertificateChainByID(context.Background(), "software:::cert-chain-key")
 	assert.NoError(t, err)
 	assert.Len(t, chain, 1)
 	assert.Equal(t, cert, chain[0])
@@ -1987,7 +1991,7 @@ func TestCertificateChain_Success(t *testing.T) {
 func TestCertificateChain_NotFound(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := CertificateChainByID("nonexistent-key")
+	_, err := CertificateChainByID(context.Background(), "nonexistent-key")
 	assert.Error(t, err)
 }
 
@@ -1999,14 +2003,14 @@ func TestCertificateExists_True(t *testing.T) {
 	software, _ := setupExtendedService(t)
 
 	// Generate a key and certificate
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "exists-test-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "exists-test-key"})
 	require.NoError(t, err)
 
 	cert := createTestCert(t, "exists-test-key", key.(crypto.Signer))
 	// Store using full key ID since that's what the service will check
 	software.certs["software:::exists-test-key"] = cert
 
-	exists, err := CertificateExistsByID("software:::exists-test-key")
+	exists, err := CertificateExistsByID(context.Background(), "software:::exists-test-key")
 	assert.NoError(t, err)
 	assert.True(t, exists)
 }
@@ -2014,7 +2018,7 @@ func TestCertificateExists_True(t *testing.T) {
 func TestCertificateExists_False(t *testing.T) {
 	setupExtendedService(t)
 
-	exists, err := CertificateExistsByID("nonexistent-key")
+	exists, err := CertificateExistsByID(context.Background(), "nonexistent-key")
 	assert.NoError(t, err)
 	assert.False(t, exists)
 }
@@ -2027,7 +2031,7 @@ func TestTLSCertificateByID_Success(t *testing.T) {
 	software, _ := setupExtendedService(t)
 
 	// Setup TLS certificate in mock
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "tls-test-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "tls-test-key"})
 	require.NoError(t, err)
 
 	cert := createTestCert(t, "tls-test-key", key.(crypto.Signer))
@@ -2040,7 +2044,7 @@ func TestTLSCertificateByID_Success(t *testing.T) {
 	software.tlsCerts["software:::tls-test-key"] = tlsCert
 
 	// Retrieve via service
-	result, err := TLSCertificateByID("software:::tls-test-key")
+	result, err := TLSCertificateByID(context.Background(), "software:::tls-test-key")
 	assert.NoError(t, err)
 	assert.NotNil(t, result.PrivateKey)
 	assert.Equal(t, cert, result.Leaf)
@@ -2049,7 +2053,7 @@ func TestTLSCertificateByID_Success(t *testing.T) {
 func TestTLSCertificateByID_NotFound(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := TLSCertificateByID("nonexistent-key")
+	_, err := TLSCertificateByID(context.Background(), "nonexistent-key")
 	assert.Error(t, err)
 }
 
@@ -2061,7 +2065,7 @@ func TestGetImportParameters_Success(t *testing.T) {
 	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "import-test-key"}
-	params, err := GetImportParameters("software", attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := GetImportParameters(context.Background(), "software", attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.NoError(t, err)
 	assert.NotNil(t, params)
 	assert.NotNil(t, params.WrappingPublicKey)
@@ -2072,7 +2076,7 @@ func TestGetImportParameters_InvalidBackend(t *testing.T) {
 	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "import-test-key"}
-	_, err := GetImportParameters("nonexistent", attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err := GetImportParameters(context.Background(), "nonexistent", attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrBackendNotFound)
 }
@@ -2085,7 +2089,7 @@ func TestWrapKey_Success(t *testing.T) {
 		ImportToken: []byte("test-token"),
 	}
 
-	wrapped, err := WrapKey("software", []byte("key-material"), params)
+	wrapped, err := WrapKey(context.Background(), "software", []byte("key-material"), params)
 	assert.NoError(t, err)
 	assert.NotNil(t, wrapped)
 	assert.NotEmpty(t, wrapped.WrappedKey)
@@ -2104,7 +2108,7 @@ func TestUnwrapKey_Success(t *testing.T) {
 		Algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	unwrapped, err := UnwrapKey("software", wrapped, params)
+	unwrapped, err := UnwrapKey(context.Background(), "software", wrapped, params)
 	assert.NoError(t, err)
 	assert.Equal(t, []byte("secret-key"), unwrapped)
 }
@@ -2118,7 +2122,7 @@ func TestImportKey_Success(t *testing.T) {
 		Algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	err := ImportKey("software", attrs, wrapped)
+	err := ImportKey(context.Background(), "software", attrs, wrapped)
 	assert.NoError(t, err)
 
 	// Verify key was imported
@@ -2131,11 +2135,11 @@ func TestExportKey_Success(t *testing.T) {
 
 	// Generate a key to export
 	attrs := &types.KeyAttributes{CN: "export-test-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Export the key
-	wrapped, err := ExportKey("software:::export-test-key", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	wrapped, err := ExportKey(context.Background(), "software:::export-test-key", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.NoError(t, err)
 	assert.NotNil(t, wrapped)
 	assert.NotEmpty(t, wrapped.WrappedKey)
@@ -2144,7 +2148,7 @@ func TestExportKey_Success(t *testing.T) {
 func TestExportKey_KeyNotFound(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := ExportKey("nonexistent-key", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err := ExportKey(context.Background(), "nonexistent-key", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -2158,11 +2162,11 @@ func TestCopyKey_Success(t *testing.T) {
 
 	// Generate source key
 	attrs := &types.KeyAttributes{CN: "copy-source-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Copy to pkcs11
-	err = CopyKey("software:::copy-source-key", "pkcs11", nil)
+	err = CopyKey(context.Background(), "software:::copy-source-key", "pkcs11", nil)
 	assert.NoError(t, err)
 
 	// Verify key exists in pkcs11
@@ -2173,7 +2177,7 @@ func TestCopyKey_Success(t *testing.T) {
 func TestCopyKey_SourceNotFound(t *testing.T) {
 	setupExtendedService(t)
 
-	err := CopyKey("nonexistent-key", "pkcs11", nil)
+	err := CopyKey(context.Background(), "nonexistent-key", "pkcs11", nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -2183,10 +2187,10 @@ func TestCopyKey_InvalidDestBackend(t *testing.T) {
 
 	// Generate source key
 	attrs := &types.KeyAttributes{CN: "copy-source-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
-	err = CopyKey("software:::copy-source-key", "nonexistent", nil)
+	err = CopyKey(context.Background(), "software:::copy-source-key", "nonexistent", nil)
 	assert.Error(t, err)
 }
 
@@ -2198,7 +2202,7 @@ func TestGenerateSymmetricKey_Success(t *testing.T) {
 	software, _ := setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "sym-key-test"}
-	symKey, err := GenerateSymmetricKey("software", attrs)
+	symKey, err := GenerateSymmetricKey(context.Background(), "software", attrs)
 	assert.NoError(t, err)
 	assert.NotNil(t, symKey)
 	assert.Equal(t, "AES-256-GCM", symKey.Algorithm())
@@ -2213,7 +2217,7 @@ func TestGenerateSymmetricKey_InvalidBackend(t *testing.T) {
 	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "sym-key-test"}
-	_, err := GenerateSymmetricKey("nonexistent", attrs)
+	_, err := GenerateSymmetricKey(context.Background(), "nonexistent", attrs)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrBackendNotFound)
 }
@@ -2223,11 +2227,11 @@ func TestGetSymmetricKey_Success(t *testing.T) {
 
 	// Generate a key first
 	attrs := &types.KeyAttributes{CN: "get-sym-key-test"}
-	_, err := software.backendImpl.GenerateSymmetricKey(attrs)
+	_, err := software.backendImpl.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get it via service
-	symKey, err := GetSymmetricKey("software:::get-sym-key-test")
+	symKey, err := GetSymmetricKey(context.Background(), "software:::get-sym-key-test")
 	assert.NoError(t, err)
 	assert.NotNil(t, symKey)
 	assert.Equal(t, "AES-256-GCM", symKey.Algorithm())
@@ -2236,7 +2240,7 @@ func TestGetSymmetricKey_Success(t *testing.T) {
 func TestGetSymmetricKey_NotFound(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := GetSymmetricKey("nonexistent-key")
+	_, err := GetSymmetricKey(context.Background(), "nonexistent-key")
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -2262,76 +2266,76 @@ func TestInputValidation_InvalidKeyReference(t *testing.T) {
 	setupExtendedService(t)
 
 	// Test various functions with invalid key references
-	_, err := RotateKey("")
+	_, err := RotateKey(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key ID")
 
-	_, err = Sign("", []byte("data"), nil)
+	_, err = Sign(context.Background(), "", []byte("data"), nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key ID")
 
 	// Test SignerByID with invalid key ID
-	_, err = SignerByID("")
+	_, err = SignerByID(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key ID")
 
 	// Test DecrypterByID with invalid key ID
-	_, err = DecrypterByID("")
+	_, err = DecrypterByID(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key ID")
 
 	// Test SaveCertificateByID with invalid key reference
-	err = SaveCertificateByID("", nil)
+	err = SaveCertificateByID(context.Background(), "", nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key")
 
 	// Test CertificateByID with invalid key reference
-	_, err = CertificateByID("")
+	_, err = CertificateByID(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key")
 
 	// Test DeleteCertificateByID with invalid key reference
-	err = DeleteCertificateByID("")
+	err = DeleteCertificateByID(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key")
 
 	// Test KeyByID with invalid key reference
-	_, err = KeyByID("")
+	_, err = KeyByID(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key")
 
 	// Test SaveCertificateChainByID with invalid key reference
-	err = SaveCertificateChainByID("", nil)
+	err = SaveCertificateChainByID(context.Background(), "", nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key")
 
 	// Test CertificateChainByID with invalid key reference
-	_, err = CertificateChainByID("")
+	_, err = CertificateChainByID(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key")
 
 	// Test CertificateExistsByID with invalid key reference
-	_, err = CertificateExistsByID("")
+	_, err = CertificateExistsByID(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key")
 
 	// Test WrapKey with invalid backend name
-	_, err = WrapKey("", nil, nil)
+	_, err = WrapKey(context.Background(), "", nil, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid backend name")
 
 	// Test UnwrapKey with invalid backend name
-	_, err = UnwrapKey("", nil, nil)
+	_, err = UnwrapKey(context.Background(), "", nil, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid backend name")
 
 	// Test ImportKey with invalid backend name
-	err = ImportKey("", nil, nil)
+	err = ImportKey(context.Background(), "", nil, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid backend name")
 
 	// Test DeleteKeyByID with invalid key ID
-	err = DeleteKeyByID("")
+	err = DeleteKeyByID(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key ID")
 }
@@ -2351,7 +2355,7 @@ func TestGenerateKey_RSA(t *testing.T) {
 		},
 	}
 
-	key, err := GenerateKey(attrs)
+	key, err := GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, key)
 
@@ -2370,7 +2374,7 @@ func TestGenerateKey_ECDSA(t *testing.T) {
 		},
 	}
 
-	key, err := GenerateKey(attrs)
+	key, err := GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, key)
 
@@ -2387,7 +2391,7 @@ func TestGenerateKey_Ed25519(t *testing.T) {
 	}
 
 	// The mock returns not implemented error for Ed25519
-	_, err := GenerateKey(attrs)
+	_, err := GenerateKey(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -2399,7 +2403,7 @@ func TestGenerateKey_UnsupportedAlgorithm(t *testing.T) {
 		KeyAlgorithm: x509.PublicKeyAlgorithm(999), // Unknown algorithm
 	}
 
-	_, err := GenerateKey(attrs)
+	_, err := GenerateKey(context.Background(), attrs)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported key algorithm")
 }
@@ -2412,7 +2416,7 @@ func TestGenerateKey_NotInitialized(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	_, err := GenerateKey(attrs)
+	_, err := GenerateKey(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -2432,11 +2436,11 @@ func TestKey_Success(t *testing.T) {
 		},
 	}
 
-	_, err := GenerateKey(attrs)
+	_, err := GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Now retrieve it
-	key, err := Key(attrs)
+	key, err := Key(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, key)
 
@@ -2454,7 +2458,7 @@ func TestKey_NotFound(t *testing.T) {
 		CN: "non-existent-key",
 	}
 
-	_, err := Key(attrs)
+	_, err := Key(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -2465,7 +2469,7 @@ func TestKey_NotInitialized(t *testing.T) {
 		CN: "test-key",
 	}
 
-	_, err := Key(attrs)
+	_, err := Key(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -2476,7 +2480,7 @@ func TestKey_NotInitialized(t *testing.T) {
 func TestVerify_InvalidKeyReference(t *testing.T) {
 	setupExtendedService(t)
 
-	err := Verify("", []byte("data"), []byte("sig"), nil)
+	err := Verify(context.Background(), "", []byte("data"), []byte("sig"), nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key ID")
 }
@@ -2486,7 +2490,7 @@ func TestVerify_WithNilOpts(t *testing.T) {
 
 	// Generate an ECDSA key
 	attrs := &types.KeyAttributes{CN: "verify-nil-opts-key"}
-	key, err := software.GenerateECDSA(attrs)
+	key, err := software.GenerateECDSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	ecdsaKey := key.(*ecdsa.PrivateKey)
@@ -2501,7 +2505,7 @@ func TestVerify_WithNilOpts(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify with nil opts (should use default SHA256)
-	err = Verify("software:::verify-nil-opts-key", data, signature, nil)
+	err = Verify(context.Background(), "software:::verify-nil-opts-key", data, signature, nil)
 	assert.NoError(t, err)
 }
 
@@ -2510,7 +2514,7 @@ func TestVerify_WithZeroHash(t *testing.T) {
 
 	// Generate an ECDSA key
 	attrs := &types.KeyAttributes{CN: "verify-zero-hash-key"}
-	key, err := software.GenerateECDSA(attrs)
+	key, err := software.GenerateECDSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	ecdsaKey := key.(*ecdsa.PrivateKey)
@@ -2525,14 +2529,14 @@ func TestVerify_WithZeroHash(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify with zero Hash (should use default SHA256)
-	err = Verify("software:::verify-zero-hash-key", data, signature, &types.VerifyOpts{Hash: 0})
+	err = Verify(context.Background(), "software:::verify-zero-hash-key", data, signature, &types.VerifyOpts{Hash: 0})
 	assert.NoError(t, err)
 }
 
 func TestEncrypt_InvalidKeyReference(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := Encrypt("", []byte("data"), nil)
+	_, err := Encrypt(context.Background(), "", []byte("data"), nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key ID")
 }
@@ -2540,7 +2544,7 @@ func TestEncrypt_InvalidKeyReference(t *testing.T) {
 func TestDecrypt_InvalidKeyReference(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := Decrypt("", nil, nil)
+	_, err := Decrypt(context.Background(), "", nil, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key ID")
 }
@@ -2548,7 +2552,7 @@ func TestDecrypt_InvalidKeyReference(t *testing.T) {
 func TestDecrypt_KeyNotFound(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := Decrypt("nonexistent-key", nil, nil)
+	_, err := Decrypt(context.Background(), "nonexistent-key", nil, nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
@@ -2558,11 +2562,11 @@ func TestSign_WithNilOpts(t *testing.T) {
 
 	// Generate an ECDSA key
 	attrs := &types.KeyAttributes{CN: "sign-nil-opts-key"}
-	_, err := software.GenerateECDSA(attrs)
+	_, err := software.GenerateECDSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	data := []byte("test data")
-	signature, err := Sign("software:::sign-nil-opts-key", data, nil)
+	signature, err := Sign(context.Background(), "software:::sign-nil-opts-key", data, nil)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, signature)
 }
@@ -2572,11 +2576,11 @@ func TestSign_WithZeroHash(t *testing.T) {
 
 	// Generate an ECDSA key
 	attrs := &types.KeyAttributes{CN: "sign-zero-hash-key"}
-	_, err := software.GenerateECDSA(attrs)
+	_, err := software.GenerateECDSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	data := []byte("test data")
-	signature, err := Sign("software:::sign-zero-hash-key", data, &SignOptions{Hash: 0})
+	signature, err := Sign(context.Background(), "software:::sign-zero-hash-key", data, &SignOptions{Hash: 0})
 	assert.NoError(t, err)
 	assert.NotEmpty(t, signature)
 }
@@ -2584,7 +2588,7 @@ func TestSign_WithZeroHash(t *testing.T) {
 func TestCopyKey_InvalidSourceKeyRef(t *testing.T) {
 	setupExtendedService(t)
 
-	err := CopyKey("", "pkcs11", nil)
+	err := CopyKey(context.Background(), "", "pkcs11", nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key ID")
 }
@@ -2592,7 +2596,7 @@ func TestCopyKey_InvalidSourceKeyRef(t *testing.T) {
 func TestGetImportParameters_InvalidBackendName(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := GetImportParameters("", nil, "")
+	_, err := GetImportParameters(context.Background(), "", nil, "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid backend name")
 }
@@ -2600,7 +2604,7 @@ func TestGetImportParameters_InvalidBackendName(t *testing.T) {
 func TestGenerateSymmetricKey_InvalidBackendName(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := GenerateSymmetricKey("", nil)
+	_, err := GenerateSymmetricKey(context.Background(), "", nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid backend name")
 }
@@ -2608,7 +2612,7 @@ func TestGenerateSymmetricKey_InvalidBackendName(t *testing.T) {
 func TestGetSymmetricKey_InvalidKeyRef(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := GetSymmetricKey("")
+	_, err := GetSymmetricKey(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key ID")
 }
@@ -2616,7 +2620,7 @@ func TestGetSymmetricKey_InvalidKeyRef(t *testing.T) {
 func TestExportKey_InvalidKeyRef(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := ExportKey("", "")
+	_, err := ExportKey(context.Background(), "", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key ID")
 }
@@ -2683,11 +2687,11 @@ func TestSigner_PrimaryAPI_Success(t *testing.T) {
 
 	// Generate a key
 	attrs := &types.KeyAttributes{CN: "signer-test-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get signer using primary API (attrs-based)
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	assert.NoError(t, err)
 	assert.NotNil(t, signer)
 
@@ -2706,7 +2710,7 @@ func TestSigner_PrimaryAPI_KeyNotFound(t *testing.T) {
 	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
-	_, err := Signer(attrs)
+	_, err := Signer(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -2715,11 +2719,11 @@ func TestDecrypter_PrimaryAPI_Success(t *testing.T) {
 
 	// Generate an RSA key
 	attrs := &types.KeyAttributes{CN: "decrypter-test-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get decrypter using primary API (attrs-based)
-	decrypter, err := Decrypter(attrs)
+	decrypter, err := Decrypter(context.Background(), attrs)
 	assert.NoError(t, err)
 	assert.NotNil(t, decrypter)
 }
@@ -2728,7 +2732,7 @@ func TestDecrypter_PrimaryAPI_KeyNotFound(t *testing.T) {
 	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
-	_, err := Decrypter(attrs)
+	_, err := Decrypter(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -2737,15 +2741,15 @@ func TestDeleteKey_PrimaryAPI_Success(t *testing.T) {
 
 	// Generate a key
 	attrs := &types.KeyAttributes{CN: "delete-test-key"}
-	_, err := software.GenerateRSA(attrs)
+	_, err := software.GenerateRSA(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Delete using primary API (attrs-based)
-	err = DeleteKey(attrs)
+	err = DeleteKey(context.Background(), attrs)
 	assert.NoError(t, err)
 
 	// Verify key is deleted
-	_, err = software.GetKey(attrs)
+	_, err = software.GetKey(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -2753,7 +2757,7 @@ func TestDeleteKey_PrimaryAPI_KeyNotFound(t *testing.T) {
 	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
-	err := DeleteKey(attrs)
+	err := DeleteKey(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -2761,17 +2765,17 @@ func TestCertificate_PrimaryAPI_Success(t *testing.T) {
 	software, _ := setupExtendedService(t)
 
 	// Generate a key and cert
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "cert-test-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "cert-test-key"})
 	require.NoError(t, err)
 	cert := createTestCert(t, "cert-test-key", key.(crypto.Signer))
 
 	// Save the cert
-	err = software.SaveCert("cert-test-key", cert)
+	err = software.SaveCert(context.Background(), "cert-test-key", cert)
 	require.NoError(t, err)
 
 	// Retrieve using primary API (attrs-based)
 	attrs := &types.KeyAttributes{CN: "cert-test-key"}
-	retrievedCert, err := Certificate(attrs)
+	retrievedCert, err := Certificate(context.Background(), attrs)
 	assert.NoError(t, err)
 	assert.Equal(t, cert, retrievedCert)
 }
@@ -2780,7 +2784,7 @@ func TestCertificate_PrimaryAPI_NotFound(t *testing.T) {
 	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "nonexistent-cert"}
-	_, err := Certificate(attrs)
+	_, err := Certificate(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -2788,17 +2792,17 @@ func TestSaveCertificate_PrimaryAPI_Success(t *testing.T) {
 	software, _ := setupExtendedService(t)
 
 	// Generate a key and cert
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "save-cert-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "save-cert-key"})
 	require.NoError(t, err)
 	cert := createTestCert(t, "save-cert-key", key.(crypto.Signer))
 
 	// Save using primary API (attrs-based)
 	attrs := &types.KeyAttributes{CN: "save-cert-key"}
-	err = SaveCertificate(attrs, cert)
+	err = SaveCertificate(context.Background(), attrs, cert)
 	assert.NoError(t, err)
 
 	// Verify it was saved
-	retrievedCert, err := software.GetCert("save-cert-key")
+	retrievedCert, err := software.GetCert(context.Background(), "save-cert-key")
 	assert.NoError(t, err)
 	assert.Equal(t, cert, retrievedCert)
 }
@@ -2807,21 +2811,21 @@ func TestDeleteCertificate_PrimaryAPI_Success(t *testing.T) {
 	software, _ := setupExtendedService(t)
 
 	// Generate a key and cert
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "del-cert-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "del-cert-key"})
 	require.NoError(t, err)
 	cert := createTestCert(t, "del-cert-key", key.(crypto.Signer))
 
 	// Save the cert
-	err = software.SaveCert("del-cert-key", cert)
+	err = software.SaveCert(context.Background(), "del-cert-key", cert)
 	require.NoError(t, err)
 
 	// Delete using primary API (attrs-based)
 	attrs := &types.KeyAttributes{CN: "del-cert-key"}
-	err = DeleteCertificate(attrs)
+	err = DeleteCertificate(context.Background(), attrs)
 	assert.NoError(t, err)
 
 	// Verify it was deleted
-	_, err = software.GetCert("del-cert-key")
+	_, err = software.GetCert(context.Background(), "del-cert-key")
 	assert.Error(t, err)
 }
 
@@ -2829,14 +2833,14 @@ func TestCertificateChain_Success_PrimaryAPI(t *testing.T) {
 	software, _ := setupExtendedService(t)
 
 	// Generate a key and cert
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "chain-test-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "chain-test-key"})
 	require.NoError(t, err)
 	cert := createTestCert(t, "chain-test-key", key.(crypto.Signer))
 	software.certChains["chain-test-key"] = []*x509.Certificate{cert}
 
 	// Retrieve using primary API (attrs-based)
 	attrs := &types.KeyAttributes{CN: "chain-test-key"}
-	chain, err := CertificateChain(attrs)
+	chain, err := CertificateChain(context.Background(), attrs)
 	assert.NoError(t, err)
 	assert.Len(t, chain, 1)
 	assert.Equal(t, cert, chain[0])
@@ -2846,14 +2850,14 @@ func TestSaveCertificateChain_Success_PrimaryAPI(t *testing.T) {
 	software, _ := setupExtendedService(t)
 
 	// Generate a key and cert
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "save-chain-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "save-chain-key"})
 	require.NoError(t, err)
 	cert := createTestCert(t, "save-chain-key", key.(crypto.Signer))
 	chain := []*x509.Certificate{cert}
 
 	// Save using primary API (attrs-based)
 	attrs := &types.KeyAttributes{CN: "save-chain-key"}
-	err = SaveCertificateChain(attrs, chain)
+	err = SaveCertificateChain(context.Background(), attrs, chain)
 	assert.NoError(t, err)
 
 	// Verify it was saved
@@ -2866,14 +2870,14 @@ func TestCertificateExists_Success_PrimaryAPI(t *testing.T) {
 	software, _ := setupExtendedService(t)
 
 	// Generate a key and cert
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "exists-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "exists-key"})
 	require.NoError(t, err)
 	cert := createTestCert(t, "exists-key", key.(crypto.Signer))
 	software.certs["exists-key"] = cert
 
 	// Check using primary API (attrs-based)
 	attrs := &types.KeyAttributes{CN: "exists-key"}
-	exists, err := CertificateExists(attrs)
+	exists, err := CertificateExists(context.Background(), attrs)
 	assert.NoError(t, err)
 	assert.True(t, exists)
 }
@@ -2882,7 +2886,7 @@ func TestCertificateExists_False_PrimaryAPI(t *testing.T) {
 	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
-	exists, err := CertificateExists(attrs)
+	exists, err := CertificateExists(context.Background(), attrs)
 	assert.NoError(t, err)
 	assert.False(t, exists)
 }
@@ -2891,7 +2895,7 @@ func TestTLSCertificate_Success_PrimaryAPI(t *testing.T) {
 	software, _ := setupExtendedService(t)
 
 	// Setup TLS certificate in mock
-	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "tls-key"})
+	key, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{CN: "tls-key"})
 	require.NoError(t, err)
 	cert := createTestCert(t, "tls-key", key.(crypto.Signer))
 	tlsCert := tls.Certificate{
@@ -2903,7 +2907,7 @@ func TestTLSCertificate_Success_PrimaryAPI(t *testing.T) {
 
 	// Retrieve using primary API (attrs-based)
 	attrs := &types.KeyAttributes{CN: "tls-key"}
-	result, err := TLSCertificate(attrs)
+	result, err := TLSCertificate(context.Background(), attrs)
 	assert.NoError(t, err)
 	assert.NotNil(t, result.PrivateKey)
 	assert.Equal(t, cert, result.Leaf)
@@ -2913,7 +2917,7 @@ func TestTLSCertificate_NotFound_PrimaryAPI(t *testing.T) {
 	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
-	_, err := TLSCertificate(attrs)
+	_, err := TLSCertificate(context.Background(), attrs)
 	assert.Error(t, err)
 }
 
@@ -2984,7 +2988,7 @@ func TestBackendFor_InvalidStoreType(t *testing.T) {
 func TestTLSCertificateByID_InvalidKeyRef(t *testing.T) {
 	setupExtendedService(t)
 
-	_, err := TLSCertificateByID("")
+	_, err := TLSCertificateByID(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key")
 }
@@ -3353,61 +3357,61 @@ func TestErrBackendLookup_EmptyName(t *testing.T) {
 
 func TestSigner_InvalidTenantAccess(t *testing.T) {
 	setupService(t)
-	_, err := Signer(&types.KeyAttributes{CN: "key", TenantID: "../evil"})
+	_, err := Signer(context.Background(), &types.KeyAttributes{CN: "key", TenantID: "../evil"})
 	require.Error(t, err)
 }
 
 func TestDecrypter_InvalidTenantAccess(t *testing.T) {
 	setupService(t)
-	_, err := Decrypter(&types.KeyAttributes{CN: "key", TenantID: "../evil"})
+	_, err := Decrypter(context.Background(), &types.KeyAttributes{CN: "key", TenantID: "../evil"})
 	require.Error(t, err)
 }
 
 func TestDeleteKey_InvalidTenantAccess(t *testing.T) {
 	setupService(t)
-	err := DeleteKey(&types.KeyAttributes{CN: "key", TenantID: "../evil"})
+	err := DeleteKey(context.Background(), &types.KeyAttributes{CN: "key", TenantID: "../evil"})
 	require.Error(t, err)
 }
 
 func TestCertificate_InvalidTenantAccess(t *testing.T) {
 	setupService(t)
-	_, err := Certificate(&types.KeyAttributes{CN: "key", TenantID: "../evil"})
+	_, err := Certificate(context.Background(), &types.KeyAttributes{CN: "key", TenantID: "../evil"})
 	require.Error(t, err)
 }
 
 func TestSaveCertificate_InvalidTenantAccess(t *testing.T) {
 	setupService(t)
-	err := SaveCertificate(&types.KeyAttributes{CN: "key", TenantID: "../evil"}, nil)
+	err := SaveCertificate(context.Background(), &types.KeyAttributes{CN: "key", TenantID: "../evil"}, nil)
 	require.Error(t, err)
 }
 
 func TestDeleteCertificate_InvalidTenantAccess(t *testing.T) {
 	setupService(t)
-	err := DeleteCertificate(&types.KeyAttributes{CN: "key", TenantID: "../evil"})
+	err := DeleteCertificate(context.Background(), &types.KeyAttributes{CN: "key", TenantID: "../evil"})
 	require.Error(t, err)
 }
 
 func TestCertificateChain_InvalidTenantAccess(t *testing.T) {
 	setupService(t)
-	_, err := CertificateChain(&types.KeyAttributes{CN: "key", TenantID: "../evil"})
+	_, err := CertificateChain(context.Background(), &types.KeyAttributes{CN: "key", TenantID: "../evil"})
 	require.Error(t, err)
 }
 
 func TestSaveCertificateChain_InvalidTenantAccess(t *testing.T) {
 	setupService(t)
-	err := SaveCertificateChain(&types.KeyAttributes{CN: "key", TenantID: "../evil"}, nil)
+	err := SaveCertificateChain(context.Background(), &types.KeyAttributes{CN: "key", TenantID: "../evil"}, nil)
 	require.Error(t, err)
 }
 
 func TestCertificateExists_InvalidTenantAccess(t *testing.T) {
 	setupService(t)
-	_, err := CertificateExists(&types.KeyAttributes{CN: "key", TenantID: "../evil"})
+	_, err := CertificateExists(context.Background(), &types.KeyAttributes{CN: "key", TenantID: "../evil"})
 	require.Error(t, err)
 }
 
 func TestTLSCertificate_InvalidTenantAccess(t *testing.T) {
 	setupService(t)
-	_, err := TLSCertificate(&types.KeyAttributes{CN: "key", TenantID: "../evil"})
+	_, err := TLSCertificate(context.Background(), &types.KeyAttributes{CN: "key", TenantID: "../evil"})
 	require.Error(t, err)
 }
 
@@ -3415,37 +3419,37 @@ func TestTLSCertificate_InvalidTenantAccess(t *testing.T) {
 
 func TestSignerByID_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	_, err := SignerByID("")
+	_, err := SignerByID(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestDecrypterByID_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	_, err := DecrypterByID("")
+	_, err := DecrypterByID(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestDeleteKeyByID_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	err := DeleteKeyByID("")
+	err := DeleteKeyByID(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestSaveCertificateByID_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	err := SaveCertificateByID("", nil)
+	err := SaveCertificateByID(context.Background(), "", nil)
 	require.Error(t, err)
 }
 
 func TestCertificateByID_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	_, err := CertificateByID("")
+	_, err := CertificateByID(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestDeleteCertificateByID_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	err := DeleteCertificateByID("")
+	err := DeleteCertificateByID(context.Background(), "")
 	require.Error(t, err)
 }
 
@@ -3453,7 +3457,7 @@ func TestDeleteCertificateByID_EmptyKeyID(t *testing.T) {
 
 func TestGenerateKeyWithBackend_InvalidTenantAccess(t *testing.T) {
 	setupService(t)
-	_, err := GenerateKeyWithBackend("software", &types.KeyAttributes{
+	_, err := GenerateKeyWithBackend(context.Background(), "software", &types.KeyAttributes{
 		CN:       "key",
 		TenantID: "../evil",
 	})
@@ -3462,19 +3466,19 @@ func TestGenerateKeyWithBackend_InvalidTenantAccess(t *testing.T) {
 
 func TestRotateKey_EmptyKeyID_Validation(t *testing.T) {
 	setupService(t)
-	_, err := RotateKey("")
+	_, err := RotateKey(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestSign_PackageFunc_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	_, err := Sign("", []byte("data"), nil)
+	_, err := Sign(context.Background(), "", []byte("data"), nil)
 	require.Error(t, err)
 }
 
 func TestVerify_PackageFunc_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	err := Verify("", []byte("data"), []byte("sig"), nil)
+	err := Verify(context.Background(), "", []byte("data"), []byte("sig"), nil)
 	require.Error(t, err)
 }
 
@@ -3494,37 +3498,37 @@ func TestUnsealWithBackend_InvalidBackendName(t *testing.T) {
 
 func TestSaveCertificateChainByID_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	err := SaveCertificateChainByID("", nil)
+	err := SaveCertificateChainByID(context.Background(), "", nil)
 	require.Error(t, err)
 }
 
 func TestCertificateChainByID_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	_, err := CertificateChainByID("")
+	_, err := CertificateChainByID(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestCertificateExistsByID_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	_, err := CertificateExistsByID("")
+	_, err := CertificateExistsByID(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestTLSCertificateByID_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	_, err := TLSCertificateByID("")
+	_, err := TLSCertificateByID(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestGetSymmetricKey_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	_, err := GetSymmetricKey("")
+	_, err := GetSymmetricKey(context.Background(), "")
 	require.Error(t, err)
 }
 
 func TestGenerateSymmetricKey_InvalidTenantAccess(t *testing.T) {
 	setupService(t)
-	_, err := GenerateSymmetricKey("software", &types.KeyAttributes{
+	_, err := GenerateSymmetricKey(context.Background(), "software", &types.KeyAttributes{
 		CN:       "key",
 		TenantID: "../evil",
 	})
@@ -3537,61 +3541,61 @@ func TestGenerateSymmetricKey_InvalidTenantAccess(t *testing.T) {
 
 func TestSigner_InvalidStoreType(t *testing.T) {
 	setupService(t)
-	_, err := Signer(&types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	_, err := Signer(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
 	require.Error(t, err)
 }
 
 func TestDecrypter_InvalidStoreType(t *testing.T) {
 	setupService(t)
-	_, err := Decrypter(&types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	_, err := Decrypter(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
 	require.Error(t, err)
 }
 
 func TestDeleteKey_InvalidStoreType(t *testing.T) {
 	setupService(t)
-	err := DeleteKey(&types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	err := DeleteKey(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
 	require.Error(t, err)
 }
 
 func TestCertificate_InvalidStoreType(t *testing.T) {
 	setupService(t)
-	_, err := Certificate(&types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	_, err := Certificate(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
 	require.Error(t, err)
 }
 
 func TestSaveCertificate_InvalidStoreType(t *testing.T) {
 	setupService(t)
-	err := SaveCertificate(&types.KeyAttributes{CN: "key", StoreType: "nonexistent"}, nil)
+	err := SaveCertificate(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"}, nil)
 	require.Error(t, err)
 }
 
 func TestDeleteCertificate_InvalidStoreType(t *testing.T) {
 	setupService(t)
-	err := DeleteCertificate(&types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	err := DeleteCertificate(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
 	require.Error(t, err)
 }
 
 func TestCertificateChain_InvalidStoreType(t *testing.T) {
 	setupService(t)
-	_, err := CertificateChain(&types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	_, err := CertificateChain(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
 	require.Error(t, err)
 }
 
 func TestSaveCertificateChain_InvalidStoreType(t *testing.T) {
 	setupService(t)
-	err := SaveCertificateChain(&types.KeyAttributes{CN: "key", StoreType: "nonexistent"}, nil)
+	err := SaveCertificateChain(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"}, nil)
 	require.Error(t, err)
 }
 
 func TestCertificateExists_InvalidStoreType(t *testing.T) {
 	setupService(t)
-	_, err := CertificateExists(&types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	_, err := CertificateExists(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
 	require.Error(t, err)
 }
 
 func TestTLSCertificate_InvalidStoreType(t *testing.T) {
 	setupService(t)
-	_, err := TLSCertificate(&types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	_, err := TLSCertificate(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
 	require.Error(t, err)
 }
 
@@ -3600,126 +3604,126 @@ func TestTLSCertificate_InvalidStoreType(t *testing.T) {
 
 func TestSignerByID_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	_, err := SignerByID("nonexistent:::some-key")
+	_, err := SignerByID(context.Background(), "nonexistent:::some-key")
 	require.Error(t, err)
 }
 
 func TestDecrypterByID_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	_, err := DecrypterByID("nonexistent:::some-key")
+	_, err := DecrypterByID(context.Background(), "nonexistent:::some-key")
 	require.Error(t, err)
 }
 
 func TestDeleteKeyByID_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	err := DeleteKeyByID("nonexistent:::some-key")
+	err := DeleteKeyByID(context.Background(), "nonexistent:::some-key")
 	require.Error(t, err)
 }
 
 func TestSaveCertificateByID_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	err := SaveCertificateByID("nonexistent:::some-key", nil)
+	err := SaveCertificateByID(context.Background(), "nonexistent:::some-key", nil)
 	require.Error(t, err)
 }
 
 func TestCertificateByID_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	_, err := CertificateByID("nonexistent:::some-key")
+	_, err := CertificateByID(context.Background(), "nonexistent:::some-key")
 	require.Error(t, err)
 }
 
 func TestDeleteCertificateByID_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	err := DeleteCertificateByID("nonexistent:::some-key")
+	err := DeleteCertificateByID(context.Background(), "nonexistent:::some-key")
 	require.Error(t, err)
 }
 
 func TestRotateKey_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	_, err := RotateKey("nonexistent:::some-key")
+	_, err := RotateKey(context.Background(), "nonexistent:::some-key")
 	require.Error(t, err)
 }
 
 func TestSaveCertificateChainByID_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	err := SaveCertificateChainByID("nonexistent:::some-key", nil)
+	err := SaveCertificateChainByID(context.Background(), "nonexistent:::some-key", nil)
 	require.Error(t, err)
 }
 
 func TestCertificateChainByID_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	_, err := CertificateChainByID("nonexistent:::some-key")
+	_, err := CertificateChainByID(context.Background(), "nonexistent:::some-key")
 	require.Error(t, err)
 }
 
 func TestCertificateExistsByID_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	_, err := CertificateExistsByID("nonexistent:::some-key")
+	_, err := CertificateExistsByID(context.Background(), "nonexistent:::some-key")
 	require.Error(t, err)
 }
 
 func TestTLSCertificateByID_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	_, err := TLSCertificateByID("nonexistent:::some-key")
+	_, err := TLSCertificateByID(context.Background(), "nonexistent:::some-key")
 	require.Error(t, err)
 }
 
 func TestSign_PackageFunc_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	_, err := Sign("nonexistent:::some-key", []byte("data"), nil)
+	_, err := Sign(context.Background(), "nonexistent:::some-key", []byte("data"), nil)
 	require.Error(t, err)
 }
 
 func TestVerify_PackageFunc_NonexistentBackend(t *testing.T) {
 	setupService(t)
-	err := Verify("nonexistent:::some-key", []byte("data"), []byte("sig"), nil)
+	err := Verify(context.Background(), "nonexistent:::some-key", []byte("data"), []byte("sig"), nil)
 	require.Error(t, err)
 }
 
 func TestEncrypt_PackageFunc_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	_, err := Encrypt("", []byte("data"), nil)
+	_, err := Encrypt(context.Background(), "", []byte("data"), nil)
 	require.Error(t, err)
 }
 
 func TestDecrypt_PackageFunc_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	_, err := Decrypt("", nil, nil)
+	_, err := Decrypt(context.Background(), "", nil, nil)
 	require.Error(t, err)
 }
 
 func TestGetImportParameters_PackageFunc_InvalidBackend(t *testing.T) {
 	setupService(t)
-	_, err := GetImportParameters("../evil", nil, "")
+	_, err := GetImportParameters(context.Background(), "../evil", nil, "")
 	require.Error(t, err)
 }
 
 func TestWrapKey_InvalidBackend(t *testing.T) {
 	setupService(t)
-	_, err := WrapKey("../evil", nil, nil)
+	_, err := WrapKey(context.Background(), "../evil", nil, nil)
 	require.Error(t, err)
 }
 
 func TestUnwrapKey_InvalidBackend(t *testing.T) {
 	setupService(t)
-	_, err := UnwrapKey("../evil", nil, nil)
+	_, err := UnwrapKey(context.Background(), "../evil", nil, nil)
 	require.Error(t, err)
 }
 
 func TestImportKey_InvalidBackend(t *testing.T) {
 	setupService(t)
-	err := ImportKey("../evil", nil, nil)
+	err := ImportKey(context.Background(), "../evil", nil, nil)
 	require.Error(t, err)
 }
 
 func TestExportKey_PackageFunc_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	_, err := ExportKey("", "")
+	_, err := ExportKey(context.Background(), "", "")
 	require.Error(t, err)
 }
 
 func TestCopyKey_EmptyKeyID(t *testing.T) {
 	setupService(t)
-	err := CopyKey("", "", nil)
+	err := CopyKey(context.Background(), "", "", nil)
 	require.Error(t, err)
 }

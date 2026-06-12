@@ -16,6 +16,7 @@
 package pkcs11
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -321,7 +322,7 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 
 // GenerateSymmetricKey generates a new AES symmetric key on the HSM.
 // The key material never leaves the hardware security module.
-func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -367,7 +368,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 }
 
 // GetSymmetricKey retrieves an existing symmetric key from the HSM.
-func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -404,9 +405,9 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 
 // SymmetricEncrypter returns a SymmetricEncrypter for the specified key.
 // This allows encryption/decryption operations without exposing key material.
-func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	// Get the symmetric key to ensure it exists and get the handle
-	key, err := b.GetSymmetricKey(attrs)
+	key, err := b.GetSymmetricKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}

@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto/elliptic"
 	"crypto/x509"
 	"fmt"
@@ -73,7 +74,7 @@ func main() {
 		},
 	}
 
-	_, err = ks.GenerateRSA(rsaAttrs)
+	_, err = ks.GenerateRSA(context.Background(), rsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate RSA key: %v", err)
 	}
@@ -81,7 +82,7 @@ func main() {
 
 	// Example 2: Retrieve the stored RSA key
 	fmt.Println("2. Retrieving stored RSA key...")
-	retrievedRSA, err := ks.GetKey(rsaAttrs)
+	retrievedRSA, err := ks.GetKey(context.Background(), rsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to retrieve RSA key: %v", err)
 	}
@@ -99,7 +100,7 @@ func main() {
 		},
 	}
 
-	_, err = ks.GenerateECDSA(ecdsaAttrs)
+	_, err = ks.GenerateECDSA(context.Background(), ecdsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate ECDSA key: %v", err)
 	}
@@ -107,7 +108,7 @@ func main() {
 
 	// Example 4: Retrieve the stored ECDSA key
 	fmt.Println("4. Retrieving stored ECDSA key...")
-	retrievedECDSA, err := ks.GetKey(ecdsaAttrs)
+	retrievedECDSA, err := ks.GetKey(context.Background(), ecdsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to retrieve ECDSA key: %v", err)
 	}
@@ -122,7 +123,7 @@ func main() {
 		KeyAlgorithm: x509.Ed25519,
 	}
 
-	_, err = ks.GenerateEd25519(ed25519Attrs)
+	_, err = ks.GenerateEd25519(context.Background(), ed25519Attrs)
 	if err != nil {
 		log.Fatalf("Failed to generate Ed25519 key: %v", err)
 	}
@@ -130,7 +131,7 @@ func main() {
 
 	// Example 6: Retrieve the stored Ed25519 key
 	fmt.Println("6. Retrieving stored Ed25519 key...")
-	retrievedEd25519, err := ks.GetKey(ed25519Attrs)
+	retrievedEd25519, err := ks.GetKey(context.Background(), ed25519Attrs)
 	if err != nil {
 		log.Fatalf("Failed to retrieve Ed25519 key: %v", err)
 	}
@@ -138,7 +139,7 @@ func main() {
 
 	// Example 7: List all stored keys
 	fmt.Println("7. Listing all stored keys...")
-	keys, err := ks.ListKeys()
+	keys, err := ks.ListKeys(context.Background())
 	if err != nil {
 		log.Fatalf("Failed to list keys: %v", err)
 	}
@@ -151,7 +152,7 @@ func main() {
 
 	// Example 8: Delete a key
 	fmt.Println("8. Deleting ECDSA key...")
-	err = ks.DeleteKey(ecdsaAttrs)
+	err = ks.DeleteKey(context.Background(), ecdsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to delete ECDSA key: %v", err)
 	}
@@ -159,7 +160,7 @@ func main() {
 
 	// Example 9: Verify deletion
 	fmt.Println("9. Verifying deletion...")
-	keys, err = ks.ListKeys()
+	keys, err = ks.ListKeys(context.Background())
 	if err != nil {
 		log.Fatalf("Failed to list keys: %v", err)
 	}

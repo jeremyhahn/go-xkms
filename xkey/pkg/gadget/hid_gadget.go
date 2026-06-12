@@ -19,15 +19,11 @@ import (
 	"log/slog"
 	"os"
 	"sync/atomic"
-	"time"
 )
 
 const (
 	// hidReportSize is the standard HID report size for FIDO2 CTAP-HID.
 	hidReportSize = 64
-
-	// hidReadTimeout is the polling timeout for context-aware reads.
-	hidReadTimeout = 200 * time.Millisecond
 
 	// defaultHIDGadgetPath is the default HID gadget device path.
 	defaultHIDGadgetPath = "/dev/hidg0"

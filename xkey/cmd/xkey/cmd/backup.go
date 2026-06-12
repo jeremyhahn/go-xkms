@@ -169,14 +169,14 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 	var key []byte
 	if password != "" {
 		key = deriveKey(password)
-		fmt.Fprintln(cmd.OutOrStdout(), "Using password-derived encryption key.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Using password-derived encryption key.")
 	} else {
 		var err error
 		key, err = generateRandomKey()
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrBackupCreateFailed, err)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Generated encryption key (save this):\n  %s\n\n", hex.EncodeToString(key))
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generated encryption key (save this):\n  %s\n\n", hex.EncodeToString(key))
 	}
 
 	// Build a placeholder manifest for now
@@ -197,10 +197,10 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrBackupCreateFailed, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Backup created: %s\n", output)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Device:     %s\n", manifest.DeviceName)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Created:    %s\n", manifest.CreatedAt.Format(time.RFC3339))
-	fmt.Fprintf(cmd.OutOrStdout(), "  Key length: %d bytes\n", len(key))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Backup created: %s\n", output)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Device:     %s\n", manifest.DeviceName)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Created:    %s\n", manifest.CreatedAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Key length: %d bytes\n", len(key))
 
 	return nil
 }
@@ -236,15 +236,15 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrBackupDecryptFailed, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Restoring from: %s\n", filePath)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Device:       %s\n", manifest.DeviceName)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Created:      %s\n", manifest.CreatedAt.Format(time.RFC3339))
-	fmt.Fprintf(cmd.OutOrStdout(), "  Trust certs:  %d\n", manifest.TrustCerts)
-	fmt.Fprintf(cmd.OutOrStdout(), "  OATH:         %d\n", manifest.OATHAccounts)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Passwords:    %d\n", manifest.Passwords)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Key length:   %d bytes\n", len(key))
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Restore completed successfully.")
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Restoring from: %s\n", filePath)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Device:       %s\n", manifest.DeviceName)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Created:      %s\n", manifest.CreatedAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Trust certs:  %d\n", manifest.TrustCerts)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  OATH:         %d\n", manifest.OATHAccounts)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Passwords:    %d\n", manifest.Passwords)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Key length:   %d bytes\n", len(key))
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Restore completed successfully.")
 
 	return nil
 }
@@ -259,7 +259,7 @@ func runBackupList(cmd *cobra.Command, args []string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Fprintln(cmd.OutOrStdout(), "No backups found.")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No backups found.")
 			return nil
 		}
 		return fmt.Errorf("%w: %v", ErrBackupCreateFailed, err)
@@ -273,20 +273,20 @@ func runBackupList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(backups) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No backups found.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No backups found.")
 		return nil
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Backups (%d):\n\n", len(backups))
-	fmt.Fprintf(cmd.OutOrStdout(), "  %-40s  %-20s  %s\n", "FILE", "DATE", "SIZE")
-	fmt.Fprintf(cmd.OutOrStdout(), "  %-40s  %-20s  %s\n", "----", "----", "----")
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Backups (%d):\n\n", len(backups))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-40s  %-20s  %s\n", "FILE", "DATE", "SIZE")
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-40s  %-20s  %s\n", "----", "----", "----")
 
 	for _, e := range backups {
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "  %-40s  %-20s  %s\n",
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-40s  %-20s  %s\n",
 			e.Name(),
 			info.ModTime().Format("2006-01-02 15:04:05"),
 			formatSize(info.Size()),
@@ -326,14 +326,14 @@ func runBackupContents(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrBackupDecryptFailed, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Backup Contents: %s\n\n", filepath.Base(filePath))
-	fmt.Fprintf(cmd.OutOrStdout(), "  Version:      %d\n", manifest.Version)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Device:       %s\n", manifest.DeviceName)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Created:      %s\n", manifest.CreatedAt.Format(time.RFC3339))
-	fmt.Fprintf(cmd.OutOrStdout(), "  Trust certs:  %d\n", manifest.TrustCerts)
-	fmt.Fprintf(cmd.OutOrStdout(), "  OATH:         %d\n", manifest.OATHAccounts)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Passwords:    %d\n", manifest.Passwords)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Key length:   %d bytes\n", len(key))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Backup Contents: %s\n\n", filepath.Base(filePath))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Version:      %d\n", manifest.Version)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Device:       %s\n", manifest.DeviceName)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Created:      %s\n", manifest.CreatedAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Trust certs:  %d\n", manifest.TrustCerts)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  OATH:         %d\n", manifest.OATHAccounts)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Passwords:    %d\n", manifest.Passwords)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Key length:   %d bytes\n", len(key))
 
 	return nil
 }

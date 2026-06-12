@@ -15,6 +15,7 @@ package webauthn
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -224,16 +225,17 @@ func (s *qrdbCredentialStore) Save(ctx context.Context, cred *Credential) error 
 	if err != nil {
 		return WrapError("encode credential", err)
 	}
-	if err := s.b.kv.Put(ctx, credKey(string(cred.ID)), blob); err != nil {
+	credSeg := credIDToString(cred.ID)
+	if err := s.b.kv.Put(ctx, credKey(credSeg), blob); err != nil {
 		return WrapError("persist credential", err)
 	}
 	ids, _ := s.b.listUserCredIDs(ctx, id)
 	for _, existing := range ids {
-		if existing == string(cred.ID) {
+		if existing == credSeg {
 			return nil
 		}
 	}
-	ids = append(ids, string(cred.ID))
+	ids = append(ids, credSeg)
 	idsBlob, err := json.Marshal(ids)
 	if err != nil {
 		return WrapError("encode cred index", err)
@@ -256,7 +258,11 @@ func (s *qrdbCredentialStore) GetByUserID(ctx context.Context, userID []byte) ([
 	}
 	creds := make([]*Credential, 0, len(ids))
 	for _, cid := range ids {
-		c, err := s.GetByCredentialID(ctx, []byte(cid))
+		rawID, decErr := credIDFromString(cid)
+		if decErr != nil {
+			return nil, decErr
+		}
+		c, err := s.GetByCredentialID(ctx, rawID)
 		if err != nil {
 			if errors.Is(err, ErrCredentialNotFound) {
 				continue
@@ -270,7 +276,7 @@ func (s *qrdbCredentialStore) GetByUserID(ctx context.Context, userID []byte) ([
 
 // GetByCredentialID retrieves a credential by its id.
 func (s *qrdbCredentialStore) GetByCredentialID(ctx context.Context, credID []byte) (*Credential, error) {
-	blob, err := s.b.kv.Get(ctx, credKey(string(credID)))
+	blob, err := s.b.kv.Get(ctx, credKey(credIDToString(credID)))
 	if err != nil {
 		return nil, mapNotFoundCred(err)
 	}
@@ -296,7 +302,7 @@ func (s *qrdbCredentialStore) Update(ctx context.Context, cred *Credential) erro
 	if err != nil {
 		return WrapError("encode credential", err)
 	}
-	return s.b.kv.Put(ctx, credKey(string(cred.ID)), blob)
+	return s.b.kv.Put(ctx, credKey(credIDToString(cred.ID)), blob)
 }
 
 // Delete removes a credential record (and detaches it from the user
@@ -305,7 +311,7 @@ func (s *qrdbCredentialStore) Delete(ctx context.Context, credID []byte) error {
 	s.b.mu.Lock()
 	defer s.b.mu.Unlock()
 
-	idStr := string(credID)
+	idStr := credIDToString(credID)
 	cred, err := s.GetByCredentialID(ctx, credID)
 	if err != nil {
 		if errors.Is(err, ErrCredentialNotFound) {
@@ -410,6 +416,34 @@ func (b *qrdbBackend) listUserCredIDs(ctx context.Context, userID uint64) ([]str
 		return nil, WrapError("decode cred index", err)
 	}
 	return ids, nil
+}
+
+// credIDToString renders a raw WebAuthn credential id (arbitrary
+// authenticator-assigned bytes) as its canonical persistence form: a
+// base64url-without-padding string. This is the single lossless encoding
+// used for BOTH the credential KV key segment and the per-user credential
+// index entries.
+//
+// The raw credential id is NOT valid UTF-8 in the general case, so it must
+// never be embedded directly in a Go string that is later JSON-marshalled:
+// encoding/json replaces every invalid UTF-8 byte with U+FFFD, which
+// silently corrupts the id and detaches the credential from its user index
+// (the credential persists, but BeginLogin reports ErrNoCredentials).
+// base64url keeps the round-trip exact and produces an ASCII-safe KV key.
+func credIDToString(credID []byte) string {
+	return base64.RawURLEncoding.EncodeToString(credID)
+}
+
+// credIDFromString reverses credIDToString, recovering the raw credential
+// id bytes from the canonical base64url segment. A malformed segment (one
+// that was never produced by credIDToString) surfaces a typed decode error
+// rather than a silent mismatch.
+func credIDFromString(s string) ([]byte, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return nil, WrapError("decode credential id segment", err)
+	}
+	return raw, nil
 }
 
 func credKey(credID string) string {

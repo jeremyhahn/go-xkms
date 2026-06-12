@@ -696,7 +696,7 @@ func (b *Backend) Type() types.BackendType {
 
 // GenerateKey generates a new private key with the given attributes.
 // For Azure Key Vault, this creates a new key and stores metadata.
-func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
 		return nil, fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
 	}
@@ -719,12 +719,11 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 
 // GetKey retrieves an existing private key by its attributes.
 // For Azure Key Vault, this verifies the key exists and returns a reference.
-func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
 		return nil, fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
 	}
 
-	ctx := context.Background()
 	if err := b.initClient(ctx); err != nil {
 		return nil, err
 	}
@@ -756,7 +755,7 @@ func (b *Backend) GetSignerByID(keyID string) (crypto.Signer, error) {
 		KeyType:   backend.KEY_TYPE_SIGNING,
 		StoreType: backend.STORE_AZUREKV,
 	}
-	key, err := b.GetKey(attrs)
+	key, err := b.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -774,7 +773,7 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 		KeyType:   backend.KEY_TYPE_ENCRYPTION,
 		StoreType: backend.STORE_AZUREKV,
 	}
-	key, err := b.GetKey(attrs)
+	key, err := b.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -786,13 +785,12 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 }
 
 // DeleteKey removes a key identified by its attributes.
-func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	return b.Delete(attrs)
 }
 
 // ListKeys returns attributes for all keys managed by this backend.
-func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
-	ctx := context.Background()
+func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	if err := b.initClient(ctx); err != nil {
 		return nil, err
 	}
@@ -857,12 +855,11 @@ type azurekvDecrypter struct {
 }
 
 // Signer returns a crypto.Signer for the key identified by attrs.
-func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	if attrs == nil {
 		return nil, fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
 	}
 
-	ctx := context.Background()
 	if err := b.initClient(ctx); err != nil {
 		return nil, err
 	}
@@ -887,7 +884,7 @@ func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
 }
 
 // Decrypter returns a crypto.Decrypter for the key identified by attrs.
-func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	if attrs == nil {
 		return nil, fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
 	}
@@ -897,7 +894,6 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 		return nil, fmt.Errorf("%w: only RSA keys support decryption", backend.ErrInvalidAlgorithm)
 	}
 
-	ctx := context.Background()
 	if err := b.initClient(ctx); err != nil {
 		return nil, err
 	}
@@ -923,12 +919,11 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 
 // RotateKey rotates/updates a key identified by attrs.
 // For Azure Key Vault, this uses the RotateKey API to create a new key version.
-func (b *Backend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil {
 		return fmt.Errorf("attributes cannot be nil")
 	}
 
-	ctx := context.Background()
 	if err := b.initClient(ctx); err != nil {
 		return err
 	}

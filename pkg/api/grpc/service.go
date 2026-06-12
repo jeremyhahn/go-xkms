@@ -91,12 +91,14 @@ type Service struct {
 	pb.UnimplementedKeystoreServiceServer
 	authorizer  *auth.Authorizer
 	auditLogger audit.Logger
+	xkmsService *xkms.XKMSService
 }
 
 // NewService creates a new gRPC service.
-// The service uses the global xkms service for backend management.
+// xkmsService is the initialized XKMSService instance to delegate operations to.
+// A nil xkmsService causes service-layer handlers to return codes.Unavailable.
 // If authorizer or auditLogger are nil, no-op implementations are used.
-func NewService(authorizer *auth.Authorizer, auditLogger audit.Logger) *Service {
+func NewService(authorizer *auth.Authorizer, auditLogger audit.Logger, xkmsService *xkms.XKMSService) *Service {
 	if authorizer == nil {
 		// A nil authorizer disables authorization (allow all), matching the
 		// behavior of an Authorizer constructed with a nil RBAC client.
@@ -108,6 +110,7 @@ func NewService(authorizer *auth.Authorizer, auditLogger audit.Logger) *Service 
 	return &Service{
 		authorizer:  authorizer,
 		auditLogger: auditLogger,
+		xkmsService: xkmsService,
 	}
 }
 
@@ -183,11 +186,11 @@ func (s *Service) ListBackends(ctx context.Context, req *pb.ListBackendsRequest)
 		return nil, err
 	}
 
-	backendNames := xkms.Backends()
+	backendNames := s.backendNames()
 
 	backends := make([]*pb.BackendInfo, 0, len(backendNames))
 	for _, name := range backendNames {
-		ks, err := xkms.GetBackend(name)
+		ks, err := s.lookupBackend(name)
 		if err != nil {
 			continue // Skip backends that can't be retrieved
 		}
@@ -222,7 +225,7 @@ func (s *Service) GetBackendInfo(ctx context.Context, req *pb.GetBackendInfoRequ
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Name)
+	ks, err := s.lookupBackend(req.Name)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -261,7 +264,7 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 	}
 
 	// Get keystore
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -301,7 +304,7 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: keySize,
 		}
-		privKey, err = ks.GenerateRSA(attrs)
+		privKey, err = ks.GenerateRSA(ctx, attrs)
 
 	case types.AlgorithmECDSA.Equals(algorithm):
 		curve := req.Curve
@@ -316,11 +319,11 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 		attrs.ECCAttributes = &types.ECCAttributes{
 			Curve: parsedCurve,
 		}
-		privKey, err = ks.GenerateECDSA(attrs)
+		privKey, err = ks.GenerateECDSA(ctx, attrs)
 
 	case types.AlgorithmEd25519.Equals(algorithm):
 		attrs.KeyAlgorithm = x509.Ed25519
-		privKey, err = ks.GenerateEd25519(attrs)
+		privKey, err = ks.GenerateEd25519(ctx, attrs)
 
 	case types.AlgorithmSymmetric.Equals(algorithm):
 		// Handle symmetric key generation
@@ -349,7 +352,7 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 		attrs.SymmetricAlgorithm = types.SymmetricAlgorithm(symAlgorithm)
 		attrs.KeyType = types.KeyTypeSecret // Symmetric keys use KeyTypeSecret
 
-		_, err = symBackend.GenerateSymmetricKey(attrs)
+		_, err = symBackend.GenerateSymmetricKey(ctx, attrs)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to generate symmetric key: %v", err)
 		}
@@ -395,12 +398,12 @@ func (s *Service) ListKeys(ctx context.Context, req *pb.ListKeysRequest) (*pb.Li
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
-	attrs, err := ks.ListKeys()
+	attrs, err := ks.ListKeys(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
 	}
@@ -450,13 +453,13 @@ func (s *Service) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetKey
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
 	// List all keys and find the matching one
-	attrs, err := ks.ListKeys()
+	attrs, err := ks.ListKeys(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
 	}
@@ -482,7 +485,7 @@ func (s *Service) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetKey
 			// Extract public key PEM for asymmetric signing keys
 			var publicKeyPem string
 			if attr.KeyType == types.KeyTypeSigning {
-				signer, err := ks.Signer(attr)
+				signer, err := ks.Signer(ctx, attr)
 				if err == nil {
 					pubKey := signer.Public()
 					pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
@@ -519,19 +522,19 @@ func (s *Service) Sign(ctx context.Context, req *pb.SignRequest) (*pb.SignRespon
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
 	// Find key attributes
-	attrs, err := s.findKeyAttributes(ks, req.KeyId)
+	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
 
 	// Get signer
-	signer, err := ks.Signer(attrs)
+	signer, err := ks.Signer(ctx, attrs)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get signer: %v", err)
 	}
@@ -589,19 +592,19 @@ func (s *Service) Verify(ctx context.Context, req *pb.VerifyRequest) (*pb.Verify
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
 	// Find key attributes
-	attrs, err := s.findKeyAttributes(ks, req.KeyId)
+	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
 
 	// Get the key
-	privKey, err := ks.GetKey(attrs)
+	privKey, err := ks.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get key: %v", err)
 	}
@@ -683,19 +686,19 @@ func (s *Service) DeleteKey(ctx context.Context, req *pb.DeleteKeyRequest) (*pb.
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
 	// Find key attributes
-	attrs, err := s.findKeyAttributes(ks, req.KeyId)
+	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
 
 	// Delete the key
-	err = ks.DeleteKey(attrs)
+	err = ks.DeleteKey(ctx, attrs)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to delete key: %v", err)
 	}
@@ -719,19 +722,19 @@ func (s *Service) RotateKey(ctx context.Context, req *pb.RotateKeyRequest) (*pb.
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
 	// Find key attributes
-	attrs, err := s.findKeyAttributes(ks, req.KeyId)
+	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
 
 	// Rotate the key
-	newKey, err := ks.RotateKey(attrs)
+	newKey, err := ks.RotateKey(ctx, attrs)
 	if err != nil {
 		return nil, wrapWriteError(err, codes.Internal, "failed to rotate key: %v", err)
 	}
@@ -767,13 +770,13 @@ func (s *Service) Encrypt(ctx context.Context, req *pb.EncryptRequest) (*pb.Encr
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
 	// Find key attributes
-	attrs, err := s.findKeyAttributes(ks, req.KeyId)
+	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
@@ -786,7 +789,7 @@ func (s *Service) Encrypt(ctx context.Context, req *pb.EncryptRequest) (*pb.Encr
 	}
 
 	// Get symmetric encrypter
-	encrypter, err := symmetricBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symmetricBackend.SymmetricEncrypter(ctx, attrs)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get symmetric encrypter: %v", err)
 	}
@@ -821,13 +824,13 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 		return nil, status.Error(codes.InvalidArgument, "ciphertext is required")
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
 	// Find key attributes
-	attrs, err := s.findKeyAttributes(ks, req.KeyId)
+	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
@@ -846,7 +849,7 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 			return nil, err
 		}
 
-		encrypter, err := symBackend.SymmetricEncrypter(attrs)
+		encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to get symmetric encrypter: %v", err)
 		}
@@ -867,7 +870,7 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 		}
 	} else {
 		// Asymmetric decryption path
-		decrypter, err := ks.Decrypter(attrs)
+		decrypter, err := ks.Decrypter(ctx, attrs)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to get decrypter: %v", err)
 		}
@@ -903,18 +906,18 @@ func (s *Service) SaveCert(ctx context.Context, req *pb.SaveCertRequest) (*pb.Sa
 	}
 
 	// Get any backend's keystore for cert operations (they all share the same cert storage)
-	backends := xkms.Backends()
+	backends := s.backendNames()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := xkms.GetBackend(backends[0])
+	ks, err := s.lookupBackend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
 
 	// Save the certificate
-	err = ks.SaveCert(req.KeyId, cert)
+	err = ks.SaveCert(ctx, req.KeyId, cert)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to save certificate: %v", err)
 	}
@@ -936,18 +939,18 @@ func (s *Service) GetCert(ctx context.Context, req *pb.GetCertRequest) (*pb.GetC
 	}
 
 	// Get any backend's keystore for cert operations
-	backends := xkms.Backends()
+	backends := s.backendNames()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := xkms.GetBackend(backends[0])
+	ks, err := s.lookupBackend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
 
 	// Get the certificate
-	cert, err := ks.GetCert(req.KeyId)
+	cert, err := ks.GetCert(ctx, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "certificate not found: %v", err)
 	}
@@ -971,18 +974,18 @@ func (s *Service) DeleteCert(ctx context.Context, req *pb.DeleteCertRequest) (*p
 	}
 
 	// Get any backend's keystore for cert operations
-	backends := xkms.Backends()
+	backends := s.backendNames()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := xkms.GetBackend(backends[0])
+	ks, err := s.lookupBackend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
 
 	// Delete the certificate
-	err = ks.DeleteCert(req.KeyId)
+	err = ks.DeleteCert(ctx, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to delete certificate: %v", err)
 	}
@@ -1000,18 +1003,18 @@ func (s *Service) ListCerts(ctx context.Context, req *pb.ListCertsRequest) (*pb.
 	}
 
 	// Get any backend's keystore for cert operations
-	backends := xkms.Backends()
+	backends := s.backendNames()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := xkms.GetBackend(backends[0])
+	ks, err := s.lookupBackend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
 
 	// List certificates
-	keyIDs, err := ks.ListCerts()
+	keyIDs, err := ks.ListCerts(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list certificates: %v", err)
 	}
@@ -1033,18 +1036,18 @@ func (s *Service) CertExists(ctx context.Context, req *pb.CertExistsRequest) (*p
 	}
 
 	// Get any backend's keystore for cert operations
-	backends := xkms.Backends()
+	backends := s.backendNames()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := xkms.GetBackend(backends[0])
+	ks, err := s.lookupBackend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
 
 	// Check if certificate exists
-	exists, err := ks.CertExists(req.KeyId)
+	exists, err := ks.CertExists(ctx, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to check certificate existence: %v", err)
 	}
@@ -1078,18 +1081,18 @@ func (s *Service) SaveCertChain(ctx context.Context, req *pb.SaveCertChainReques
 	}
 
 	// Get any backend's keystore for cert operations
-	backends := xkms.Backends()
+	backends := s.backendNames()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := xkms.GetBackend(backends[0])
+	ks, err := s.lookupBackend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
 
 	// Save the certificate chain
-	err = ks.SaveCertChain(req.KeyId, chain)
+	err = ks.SaveCertChain(ctx, req.KeyId, chain)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to save certificate chain: %v", err)
 	}
@@ -1111,18 +1114,18 @@ func (s *Service) GetCertChain(ctx context.Context, req *pb.GetCertChainRequest)
 	}
 
 	// Get any backend's keystore for cert operations
-	backends := xkms.Backends()
+	backends := s.backendNames()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := xkms.GetBackend(backends[0])
+	ks, err := s.lookupBackend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
 
 	// Get the certificate chain
-	chain, err := ks.GetCertChain(req.KeyId)
+	chain, err := ks.GetCertChain(ctx, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "certificate chain not found: %v", err)
 	}
@@ -1151,19 +1154,19 @@ func (s *Service) GetTLSCertificate(ctx context.Context, req *pb.GetTLSCertifica
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
 	// Find key attributes
-	attrs, err := s.findKeyAttributes(ks, req.KeyId)
+	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
 
 	// Get the TLS certificate
-	tlsCert, err := ks.GetTLSCertificate(req.KeyId, attrs)
+	tlsCert, err := ks.GetTLSCertificate(ctx, req.KeyId, attrs)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get TLS certificate: %v", err)
 	}
@@ -1221,7 +1224,7 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -1289,7 +1292,7 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 	wrappingAlg := backend.WrappingAlgorithm(req.WrappingAlgorithm)
 
 	// Get import parameters from backend
-	params, err := importExportBackend.GetImportParameters(attrs, wrappingAlg)
+	params, err := importExportBackend.GetImportParameters(ctx, attrs, wrappingAlg)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get import parameters: %v", err)
 	}
@@ -1346,14 +1349,14 @@ func (s *Service) WrapKey(ctx context.Context, req *pb.WrapKeyRequest) (*pb.Wrap
 
 	// Get any backend to perform the wrapping operation
 	// Wrapping is typically done client-side, so we can use any backend that implements the interface
-	backends := xkms.Backends()
+	backends := s.backendNames()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
 	var wrapped *backend.WrappedKeyMaterial
 	for _, backendName := range backends {
-		ks, err := xkms.GetBackend(backendName)
+		ks, err := s.lookupBackend(backendName)
 		if err != nil {
 			continue
 		}
@@ -1361,7 +1364,7 @@ func (s *Service) WrapKey(ctx context.Context, req *pb.WrapKeyRequest) (*pb.Wrap
 		backendImpl := ks.KeyProvider()
 		importExportBackend, ok := backendImpl.(backend.ImportExportBackend)
 		if ok {
-			wrapped, err = importExportBackend.WrapKey(req.KeyMaterial, params)
+			wrapped, err = importExportBackend.WrapKey(ctx, req.KeyMaterial, params)
 			if err == nil {
 				break
 			}
@@ -1419,14 +1422,14 @@ func (s *Service) UnwrapKey(ctx context.Context, req *pb.UnwrapKeyRequest) (*pb.
 	}
 
 	// Get any backend to perform the unwrapping operation
-	backends := xkms.Backends()
+	backends := s.backendNames()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
 	var keyMaterial []byte
 	for _, backendName := range backends {
-		ks, err := xkms.GetBackend(backendName)
+		ks, err := s.lookupBackend(backendName)
 		if err != nil {
 			continue
 		}
@@ -1434,7 +1437,7 @@ func (s *Service) UnwrapKey(ctx context.Context, req *pb.UnwrapKeyRequest) (*pb.
 		backendImpl := ks.KeyProvider()
 		importExportBackend, ok := backendImpl.(backend.ImportExportBackend)
 		if ok {
-			keyMaterial, err = importExportBackend.UnwrapKey(wrapped, params)
+			keyMaterial, err = importExportBackend.UnwrapKey(ctx, wrapped, params)
 			if err == nil {
 				break
 			}
@@ -1472,7 +1475,7 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -1549,7 +1552,7 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 	}
 
 	// Import the key
-	err = importExportBackend.ImportKey(attrs, wrapped)
+	err = importExportBackend.ImportKey(ctx, attrs, wrapped)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to import key: %v", err)
 	}
@@ -1577,7 +1580,7 @@ func (s *Service) ExportKey(ctx context.Context, req *pb.ExportKeyRequest) (*pb.
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -1590,7 +1593,7 @@ func (s *Service) ExportKey(ctx context.Context, req *pb.ExportKeyRequest) (*pb.
 	}
 
 	// Find key attributes
-	attrs, err := s.findKeyAttributes(ks, req.KeyId)
+	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
@@ -1599,7 +1602,7 @@ func (s *Service) ExportKey(ctx context.Context, req *pb.ExportKeyRequest) (*pb.
 	wrappingAlg := backend.WrappingAlgorithm(req.WrappingAlgorithm)
 
 	// Export the key
-	wrapped, err := importExportBackend.ExportKey(attrs, wrappingAlg)
+	wrapped, err := importExportBackend.ExportKey(ctx, attrs, wrappingAlg)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to export key: %v", err)
 	}
@@ -1632,7 +1635,7 @@ func (s *Service) ExportKeyMaterial(ctx context.Context, req *pb.ExportKeyMateri
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -1645,13 +1648,13 @@ func (s *Service) ExportKeyMaterial(ctx context.Context, req *pb.ExportKeyMateri
 	}
 
 	// Find key attributes
-	attrs, err := s.findKeyAttributes(ks, req.KeyId)
+	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
 
 	// Export the raw key material
-	keyMaterial, err := importExportBackend.ExportKeyMaterial(attrs)
+	keyMaterial, err := importExportBackend.ExportKeyMaterial(ctx, attrs)
 	if err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "failed to export key material: %v", err)
 	}
@@ -1701,7 +1704,7 @@ func (s *Service) WrapKeyByID(ctx context.Context, req *pb.WrapKeyByIDRequest) (
 	}
 
 	// Get the target key's keystore
-	targetKs, err := xkms.GetBackend(req.TargetKeyBackend)
+	targetKs, err := s.lookupBackend(req.TargetKeyBackend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "target key backend not found: %v", err)
 	}
@@ -1714,20 +1717,20 @@ func (s *Service) WrapKeyByID(ctx context.Context, req *pb.WrapKeyByIDRequest) (
 	}
 
 	// Find target key attributes
-	targetAttrs, err := s.findKeyAttributes(targetKs, req.TargetKeyId)
+	targetAttrs, err := s.findKeyAttributes(ctx, targetKs, req.TargetKeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "target key not found: %v", err)
 	}
 
 	// Export the target key's raw material
 	// This only works for symmetric keys with Exportable=true
-	keyMaterial, err := targetImportExport.ExportKeyMaterial(targetAttrs)
+	keyMaterial, err := targetImportExport.ExportKeyMaterial(ctx, targetAttrs)
 	if err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "failed to export target key material: %v", err)
 	}
 
 	// Get the wrapping key's keystore
-	wrappingKs, err := xkms.GetBackend(req.WrappingKeyBackend)
+	wrappingKs, err := s.lookupBackend(req.WrappingKeyBackend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "wrapping key backend not found: %v", err)
 	}
@@ -1740,7 +1743,7 @@ func (s *Service) WrapKeyByID(ctx context.Context, req *pb.WrapKeyByIDRequest) (
 	}
 
 	// Find wrapping key attributes
-	wrappingAttrs, err := s.findKeyAttributes(wrappingKs, req.WrappingKeyId)
+	wrappingAttrs, err := s.findKeyAttributes(ctx, wrappingKs, req.WrappingKeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "wrapping key not found: %v", err)
 	}
@@ -1750,13 +1753,13 @@ func (s *Service) WrapKeyByID(ctx context.Context, req *pb.WrapKeyByIDRequest) (
 
 	// Get import parameters from the wrapping key's backend
 	// This provides the wrapping public key that will be used
-	params, err := wrappingImportExport.GetImportParameters(wrappingAttrs, wrappingAlg)
+	params, err := wrappingImportExport.GetImportParameters(ctx, wrappingAttrs, wrappingAlg)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get import parameters: %v", err)
 	}
 
 	// Wrap the target key material using the wrapping key
-	wrapped, err := wrappingImportExport.WrapKey(keyMaterial, params)
+	wrapped, err := wrappingImportExport.WrapKey(ctx, keyMaterial, params)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to wrap key: %v", err)
 	}
@@ -1803,7 +1806,7 @@ func (s *Service) UnwrapKeyByID(ctx context.Context, req *pb.UnwrapKeyByIDReques
 	}
 
 	// Get the unwrapping key's keystore
-	unwrappingKs, err := xkms.GetBackend(req.UnwrappingKeyBackend)
+	unwrappingKs, err := s.lookupBackend(req.UnwrappingKeyBackend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "unwrapping key backend not found: %v", err)
 	}
@@ -1816,7 +1819,7 @@ func (s *Service) UnwrapKeyByID(ctx context.Context, req *pb.UnwrapKeyByIDReques
 	}
 
 	// Find unwrapping key attributes
-	unwrappingAttrs, err := s.findKeyAttributes(unwrappingKs, req.UnwrappingKeyId)
+	unwrappingAttrs, err := s.findKeyAttributes(ctx, unwrappingKs, req.UnwrappingKeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "unwrapping key not found: %v", err)
 	}
@@ -1825,7 +1828,7 @@ func (s *Service) UnwrapKeyByID(ctx context.Context, req *pb.UnwrapKeyByIDReques
 	wrappingAlg := backend.WrappingAlgorithm(req.Algorithm)
 
 	// Get import parameters to match the wrapping operation
-	params, err := unwrappingImportExport.GetImportParameters(unwrappingAttrs, wrappingAlg)
+	params, err := unwrappingImportExport.GetImportParameters(ctx, unwrappingAttrs, wrappingAlg)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get import parameters: %v", err)
 	}
@@ -1837,13 +1840,13 @@ func (s *Service) UnwrapKeyByID(ctx context.Context, req *pb.UnwrapKeyByIDReques
 	}
 
 	// Unwrap the key material
-	keyMaterial, err := unwrappingImportExport.UnwrapKey(wrapped, params)
+	keyMaterial, err := unwrappingImportExport.UnwrapKey(ctx, wrapped, params)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to unwrap key: %v", err)
 	}
 
 	// Get the target key's backend for importing
-	targetKs, err := xkms.GetBackend(req.TargetKeyBackend)
+	targetKs, err := s.lookupBackend(req.TargetKeyBackend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "target key backend not found: %v", err)
 	}
@@ -1928,7 +1931,7 @@ func (s *Service) UnwrapKeyByID(ctx context.Context, req *pb.UnwrapKeyByIDReques
 	}
 
 	// Import the key into the target backend
-	err = targetImportExport.ImportKey(targetAttrs, importWrapped)
+	err = targetImportExport.ImportKey(ctx, targetAttrs, importWrapped)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to import unwrapped key: %v", err)
 	}
@@ -1964,13 +1967,13 @@ func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.Copy
 	}
 
 	// Get source keystore
-	sourceKs, err := xkms.GetBackend(req.SourceBackend)
+	sourceKs, err := s.lookupBackend(req.SourceBackend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "source backend not found: %v", err)
 	}
 
 	// Get destination keystore
-	destKs, err := xkms.GetBackend(req.DestBackend)
+	destKs, err := s.lookupBackend(req.DestBackend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "destination backend not found: %v", err)
 	}
@@ -1990,7 +1993,7 @@ func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.Copy
 	}
 
 	// Find source key attributes
-	sourceAttrs, err := s.findKeyAttributes(sourceKs, req.SourceKeyId)
+	sourceAttrs, err := s.findKeyAttributes(ctx, sourceKs, req.SourceKeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "source key not found: %v", err)
 	}
@@ -1999,7 +2002,7 @@ func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.Copy
 	wrappingAlg := backend.WrappingAlgorithm(req.WrappingAlgorithm)
 
 	// Step 1: Export the key from source backend
-	wrapped, err := sourceImportExport.ExportKey(sourceAttrs, wrappingAlg)
+	wrapped, err := sourceImportExport.ExportKey(ctx, sourceAttrs, wrappingAlg)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to export key from source backend: %v", err)
 	}
@@ -2020,7 +2023,7 @@ func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.Copy
 	destAttrs.CN = req.DestKeyId
 
 	// Step 3: Import the key into destination backend
-	err = destImportExport.ImportKey(destAttrs, wrapped)
+	err = destImportExport.ImportKey(ctx, destAttrs, wrapped)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to import key into destination backend: %v", err)
 	}
@@ -2048,19 +2051,19 @@ func (s *Service) EncryptAsym(ctx context.Context, req *pb.EncryptAsymRequest) (
 		return nil, err
 	}
 
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
 	// Find the key
-	attrs, err := s.findKeyAttributes(ks, req.KeyId)
+	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
 
 	// Get the key to extract public key
-	key, err := ks.GetKey(attrs)
+	key, err := ks.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get key: %v", err)
 	}
@@ -2074,8 +2077,11 @@ func (s *Service) EncryptAsym(ctx context.Context, req *pb.EncryptAsymRequest) (
 		return nil, status.Error(codes.InvalidArgument, "key does not support public key extraction")
 	}
 
-	// Determine hash algorithm for OAEP
-	hashFunc := parseHashAlgorithmForOAEP(req.Hash)
+	// Determine hash algorithm for OAEP (SHA-1 is rejected).
+	hashFunc, hashErr := parseHashAlgorithmForOAEP(req.Hash)
+	if hashErr != nil {
+		return nil, hashErr
+	}
 
 	// Encrypt based on key type - only RSA supports asymmetric encryption
 	rsaPub, ok := publicKey.(*rsa.PublicKey)
@@ -2099,20 +2105,22 @@ func (s *Service) EncryptAsym(ctx context.Context, req *pb.EncryptAsymRequest) (
 	}, nil
 }
 
-// parseHashAlgorithmForOAEP parses hash algorithm string for OAEP encryption
-func parseHashAlgorithmForOAEP(hash string) crypto.Hash {
-	hashAlg := strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(hash, "SHA-"), "sha-"))
+// parseHashAlgorithmForOAEP parses hash algorithm string for OAEP encryption.
+// SHA-1 is explicitly rejected; SHA-256 is the minimum acceptable hash.
+// Returns (hash, error) so callers can propagate the rejection.
+func parseHashAlgorithmForOAEP(hash string) (crypto.Hash, error) {
+	hashAlg := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(hash, "-", "")))
 	switch hashAlg {
 	case "256", "sha256", "":
-		return crypto.SHA256
+		return crypto.SHA256, nil
 	case "384", "sha384":
-		return crypto.SHA384
+		return crypto.SHA384, nil
 	case "512", "sha512":
-		return crypto.SHA512
+		return crypto.SHA512, nil
 	case "1", "sha1":
-		return crypto.SHA1
+		return 0, status.Error(codes.InvalidArgument, "RSA-OAEP hash must be SHA-256 or stronger; SHA-1 is rejected")
 	default:
-		return crypto.SHA256 // default to SHA256
+		return crypto.SHA256, nil // default to SHA-256 for unknown values
 	}
 }
 
@@ -2138,13 +2146,13 @@ func (s *Service) Seal(ctx context.Context, req *pb.SealRequest) (*pb.SealRespon
 	// If key ID is provided, look up the key to get its actual attributes
 	if req.KeyId != "" {
 		// Get the backend to look up the key
-		ks, err := xkms.GetBackend(req.Backend)
+		ks, err := s.lookupBackend(req.Backend)
 		if err != nil {
 			return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 		}
 
 		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys()
+		keyAttrs, err := ks.ListKeys(ctx)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
 		}
@@ -2165,7 +2173,7 @@ func (s *Service) Seal(ctx context.Context, req *pb.SealRequest) (*pb.SealRespon
 	}
 
 	// Call xkms service
-	sealed, err := xkms.SealWithBackend(ctx, req.Backend, req.Data, opts)
+	sealed, err := s.sealWithBackend(ctx, req.Backend, req.Data, opts)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to seal data: %v", err)
 	}
@@ -2200,7 +2208,7 @@ func (s *Service) Unseal(ctx context.Context, req *pb.UnsealRequest) (*pb.Unseal
 	}
 
 	// Get backend to determine backend type for sealed data
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -2221,7 +2229,7 @@ func (s *Service) Unseal(ctx context.Context, req *pb.UnsealRequest) (*pb.Unseal
 	// If key ID is provided, look up the key to get its actual attributes
 	if req.KeyId != "" {
 		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys()
+		keyAttrs, err := ks.ListKeys(ctx)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
 		}
@@ -2243,7 +2251,7 @@ func (s *Service) Unseal(ctx context.Context, req *pb.UnsealRequest) (*pb.Unseal
 	}
 
 	// Call xkms service
-	plaintext, err := xkms.UnsealWithBackend(ctx, req.Backend, sealed, opts)
+	plaintext, err := s.unsealWithBackend(ctx, req.Backend, sealed, opts)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to unseal data: %v", err)
 	}
@@ -2264,9 +2272,9 @@ func (s *Service) CanSeal(ctx context.Context, req *pb.CanSealRequest) (*pb.CanS
 	// If backend is specified, check that specific backend
 	// Otherwise check the default backend
 	if req.Backend != "" {
-		canSeal = xkms.CanSeal(req.Backend)
+		canSeal = s.canSeal(req.Backend)
 	} else {
-		canSeal = xkms.CanSeal()
+		canSeal = s.canSeal()
 	}
 
 	return &pb.CanSealResponse{
@@ -2288,7 +2296,7 @@ func (s *Service) AttestKey(ctx context.Context, req *pb.AttestKeyRequest) (*pb.
 	}
 
 	// Get the backend
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -2300,7 +2308,7 @@ func (s *Service) AttestKey(ctx context.Context, req *pb.AttestKeyRequest) (*pb.
 	}
 
 	// Find the key attributes by CN
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
 	}
@@ -2317,7 +2325,7 @@ func (s *Service) AttestKey(ctx context.Context, req *pb.AttestKeyRequest) (*pb.
 	}
 
 	// Call AttestKey on the backend
-	result, err := ab.AttestKey(targetAttr, req.Nonce)
+	result, err := ab.AttestKey(ctx, targetAttr, req.Nonce)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attestation failed: %v", err)
 	}
@@ -2468,7 +2476,7 @@ func (s *Service) DeriveKeyECDH(ctx context.Context, req *pb.DeriveKeyECDHReques
 	}
 
 	// Get the backend
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -2481,7 +2489,7 @@ func (s *Service) DeriveKeyECDH(ctx context.Context, req *pb.DeriveKeyECDHReques
 	}
 
 	// Find key attributes
-	attrs, err := s.findKeyAttributes(ks, req.KeyId)
+	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
@@ -2518,8 +2526,8 @@ func (s *Service) DeriveKeyECDH(ctx context.Context, req *pb.DeriveKeyECDHReques
 
 // Helper functions
 
-func (s *Service) findKeyAttributes(ks xkms.Backend, keyID string) (*types.KeyAttributes, error) {
-	attrs, err := ks.ListKeys()
+func (s *Service) findKeyAttributes(ctx context.Context, ks xkms.Backend, keyID string) (*types.KeyAttributes, error) {
+	attrs, err := ks.ListKeys(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -2687,4 +2695,49 @@ func encodePrivateKeyToPEM(privKey crypto.PrivateKey) (string, error) {
 		Bytes: keyBytes,
 	}
 	return string(pem.EncodeToMemory(pemBlock)), nil
+}
+
+// lookupBackend retrieves a backend by name, delegating to s.xkmsService when
+// available. Returns xkms.ErrNotInitialized when the service is not set.
+func (s *Service) lookupBackend(name string) (xkms.Backend, error) {
+	if s.xkmsService == nil {
+		return nil, xkms.ErrNotInitialized
+	}
+	return s.xkmsService.LookupBackend(name)
+}
+
+// backendNames returns the list of all configured backend names. Returns nil
+// when the service is not set.
+func (s *Service) backendNames() []string {
+	if s.xkmsService == nil {
+		return nil
+	}
+	return s.xkmsService.BackendNames()
+}
+
+// sealWithBackend delegates to s.xkmsService.SealWithBackend.
+// Returns xkms.ErrNotInitialized when the service is not set.
+func (s *Service) sealWithBackend(ctx context.Context, backendName string, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	if s.xkmsService == nil {
+		return nil, xkms.ErrNotInitialized
+	}
+	return s.xkmsService.SealWithBackend(ctx, backendName, data, opts)
+}
+
+// unsealWithBackend delegates to s.xkmsService.UnsealWithBackend.
+// Returns xkms.ErrNotInitialized when the service is not set.
+func (s *Service) unsealWithBackend(ctx context.Context, backendName string, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	if s.xkmsService == nil {
+		return nil, xkms.ErrNotInitialized
+	}
+	return s.xkmsService.UnsealWithBackend(ctx, backendName, sealed, opts)
+}
+
+// canSeal returns whether the named backend (or default when no name is given)
+// supports sealing. Returns false when the service is not set.
+func (s *Service) canSeal(backendName ...string) bool {
+	if s.xkmsService == nil {
+		return false
+	}
+	return s.xkmsService.CanSealDirect(backendName...)
 }

@@ -64,11 +64,13 @@ func (f *TenantPlatformStoreFactory) RemoveTenant(tenantID string) {
 
 // NewTenantPlatformStore creates a PlatformStore scoped to a specific tenant.
 // The tenant's barrier provides automatic namespace isolation so that all
-// secrets are stored under the tenant's encrypted key space.
+// secrets are stored under the tenant's encrypted key space. The barrier is
+// wrapped in a BarrierBackend so it satisfies storage.Backend, including the
+// atomic PutIfAbsent primitive.
 func NewTenantPlatformStore(registry *BarrierRegistry, tenantID string, logger *slog.Logger) (*SealedPlatformStore, error) {
 	tenantBarrier, err := registry.GetTenant(tenantID)
 	if err != nil {
 		return nil, err
 	}
-	return NewPlatformStore(tenantBarrier.Barrier(), logger)
+	return NewPlatformStore(NewBarrierBackend(tenantBarrier.Barrier()), logger)
 }

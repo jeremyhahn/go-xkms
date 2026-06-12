@@ -58,7 +58,7 @@ func (m *mockSealerKeyProvider) Capabilities() types.Capabilities {
 	return types.Capabilities{Sealing: true}
 }
 
-func (m *mockSealerKeyProvider) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockSealerKeyProvider) GenerateKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if m.generateErr != nil {
 		return nil, m.generateErr
 	}
@@ -70,7 +70,7 @@ func (m *mockSealerKeyProvider) GenerateKey(attrs *types.KeyAttributes) (crypto.
 	return key, nil
 }
 
-func (m *mockSealerKeyProvider) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockSealerKeyProvider) GetKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	key, ok := m.keys[attrs.CN]
 	if !ok {
 		return nil, &ErrMockKeyNotFound{KeyID: attrs.CN}
@@ -78,23 +78,23 @@ func (m *mockSealerKeyProvider) GetKey(attrs *types.KeyAttributes) (crypto.Priva
 	return key, nil
 }
 
-func (m *mockSealerKeyProvider) DeleteKey(_ *types.KeyAttributes) error {
+func (m *mockSealerKeyProvider) DeleteKey(_ context.Context, _ *types.KeyAttributes) error {
 	return errors.New("not implemented")
 }
 
-func (m *mockSealerKeyProvider) ListKeys() ([]*types.KeyAttributes, error) {
+func (m *mockSealerKeyProvider) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockSealerKeyProvider) Signer(_ *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockSealerKeyProvider) Signer(_ context.Context, _ *types.KeyAttributes) (crypto.Signer, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockSealerKeyProvider) Decrypter(_ *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockSealerKeyProvider) Decrypter(_ context.Context, _ *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockSealerKeyProvider) RotateKey(_ *types.KeyAttributes) error {
+func (m *mockSealerKeyProvider) RotateKey(_ context.Context, _ *types.KeyAttributes) error {
 	return errors.New("not implemented")
 }
 
@@ -951,7 +951,7 @@ func TestSeal_SoftwareBackend_AutoGeneratesKey(t *testing.T) {
 	assert.Equal(t, types.StoreSoftware, sealer.lastSealOpts.KeyAttributes.StoreType)
 
 	// Verify the sealing key was persisted in the mock key provider.
-	_, keyErr := sealer.GetKey(&types.KeyAttributes{CN: expectedCN})
+	_, keyErr := sealer.GetKey(context.Background(), &types.KeyAttributes{CN: expectedCN})
 	assert.NoError(t, keyErr)
 }
 
@@ -1015,7 +1015,7 @@ func TestSeal_WithExplicitKeyID_SkipsAutoGenerate(t *testing.T) {
 	assert.Equal(t, "my-explicit-key", sealer.lastSealOpts.KeyAttributes.CN)
 
 	// Verify no auto-generated key was created.
-	_, keyErr := sealer.GetKey(&types.KeyAttributes{CN: "xkms-sealing-key-software"})
+	_, keyErr := sealer.GetKey(context.Background(), &types.KeyAttributes{CN: "xkms-sealing-key-software"})
 	assert.Error(t, keyErr)
 }
 
@@ -1128,13 +1128,13 @@ func TestEnsureSealingKey_KeyAlreadyExists(t *testing.T) {
 	attrs := defaultSealingKeyAttributes(types.BackendTypeSoftware)
 
 	// Pre-populate the key.
-	_, err := provider.GenerateKey(attrs)
+	_, err := provider.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	keyCountBefore := len(provider.keys)
 
 	// ensureSealingKey should succeed without generating a new key.
-	err = ensureSealingKey(provider, attrs)
+	err = ensureSealingKey(context.Background(), provider, attrs)
 	require.NoError(t, err)
 	assert.Equal(t, keyCountBefore, len(provider.keys))
 }
@@ -1143,11 +1143,11 @@ func TestEnsureSealingKey_GeneratesNewKey(t *testing.T) {
 	provider := newMockSealerKeyProvider(types.BackendTypeSoftware)
 	attrs := defaultSealingKeyAttributes(types.BackendTypeSoftware)
 
-	err := ensureSealingKey(provider, attrs)
+	err := ensureSealingKey(context.Background(), provider, attrs)
 	require.NoError(t, err)
 
 	// Verify the key was generated.
-	_, keyErr := provider.GetKey(attrs)
+	_, keyErr := provider.GetKey(context.Background(), attrs)
 	assert.NoError(t, keyErr)
 }
 
@@ -1156,7 +1156,7 @@ func TestEnsureSealingKey_GenerateFailure(t *testing.T) {
 	provider.generateErr = errors.New("hardware not available")
 	attrs := defaultSealingKeyAttributes(types.BackendTypeSoftware)
 
-	err := ensureSealingKey(provider, attrs)
+	err := ensureSealingKey(context.Background(), provider, attrs)
 	require.Error(t, err)
 
 	var sealErr *ErrSealOperation

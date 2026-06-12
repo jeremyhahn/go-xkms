@@ -50,19 +50,40 @@ certificates. Firefox-family browsers get a policies.json overlay.
 By default, the first detected Chrome or Firefox browser is used.
 Use --browser to specify a particular browser binary.
 
+Extension import (Chrome, isolated mode only):
+  --include-extensions imports the user-installed extensions from the
+  system default Chrome profile into the isolated profile so browser-
+  automation extensions (e.g. Claude in Chrome) are available. Use
+  --extension <id> (repeatable) to import only specific extension IDs;
+  by default all user-installed extensions are imported. --source-profile
+  overrides the source profile (default ~/.config/google-chrome/Default).
+
 Examples:
   xkey browser launch https://example.com
   xkey browser launch --browser /usr/bin/firefox https://internal.corp.local
-  xkey browser launch --browser /usr/bin/brave-browser https://myapp.local`,
+  xkey browser launch --browser /usr/bin/brave-browser https://myapp.local
+  xkey browser launch --include-extensions https://app.local
+  xkey browser launch --include-extensions --extension <id> https://app.local`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runBrowserLaunch,
 }
 
-var browserBinary string
+var (
+	browserBinary     string
+	browserInclExts   bool
+	browserExtIDs     []string
+	browserSrcProfile string
+)
 
 func init() {
 	browserLaunchCmd.Flags().StringVar(&browserBinary, "browser", "",
 		"absolute path to browser binary (default: auto-detect first available)")
+	browserLaunchCmd.Flags().BoolVar(&browserInclExts, "include-extensions", false,
+		"import user-installed extensions from the system default Chrome profile (Chrome isolated mode only)")
+	browserLaunchCmd.Flags().StringArrayVar(&browserExtIDs, "extension", nil,
+		"restrict --include-extensions to the given extension ID (repeatable; default: all)")
+	browserLaunchCmd.Flags().StringVar(&browserSrcProfile, "source-profile", "",
+		"source Chrome profile dir to import extensions from (default: ~/.config/google-chrome/Default)")
 	browserCmd.AddCommand(browserLaunchCmd)
 	RootCmd.AddCommand(browserCmd)
 }
@@ -92,7 +113,7 @@ func runBrowserLaunch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: failed to open trust store at %s: %w",
 			ErrBrowserLaunchFailed, trustStorePath, err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Create services.
 	trustSvc := services.NewTrustService(store)
@@ -115,17 +136,30 @@ func runBrowserLaunch(cmd *cobra.Command, args []string) error {
 			return ErrBrowserNoBrowsers
 		}
 		browserPath = browsers[0].Path
-		fmt.Fprintf(cmd.OutOrStdout(), "Auto-detected: %s (%s)\n",
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Auto-detected: %s (%s)\n",
 			browsers[0].Name, browserPath)
 	}
 
-	// Launch the browser with trust store certificates injected.
-	result, err := secureSvc.LaunchBrowser(browserPath, url)
+	// Launch the browser with trust store certificates injected. The
+	// extension-import flags only take effect for Chrome in isolated mode;
+	// the service returns a sentinel error for any other combination.
+	result, err := secureSvc.LaunchBrowserWithOptions(browserPath, url, services.LaunchOptions{
+		IncludeExtensions: browserInclExts,
+		ExtensionIDs:      browserExtIDs,
+		SourceProfile:     browserSrcProfile,
+	})
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrBrowserLaunchFailed, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Launched %s (%s mode, %d certificates)\n",
+	if result.ExtensionsImported > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"Launched %s (%s mode, %d certificates, %d extensions)\n",
+			result.Family, result.Mode, result.CertCount, result.ExtensionsImported)
+		return nil
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Launched %s (%s mode, %d certificates)\n",
 		result.Family, result.Mode, result.CertCount)
 	return nil
 }

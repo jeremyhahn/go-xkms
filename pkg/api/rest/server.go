@@ -47,6 +47,7 @@ type Server struct {
 	logger          *slog.Logger
 	rateLimiter     *ratelimit.Limiter
 	barrierRegistry *seal.BarrierRegistry
+	xkmsService     *xkms.XKMSService
 	webauthnHandler *webauthnhttp.Handler
 	webauthnStores  *WebAuthnStores
 	rbacMiddleware  *RBACMiddleware
@@ -177,6 +178,11 @@ type Config struct {
 	// CA is the optional CA instance for certificate authority operations.
 	// Stored as any to break import cycles. Must implement caServicer methods.
 	CA any
+
+	// XKMSService is the injected XKMS service; replaces the package singleton
+	// lookup. When set, all handler methods that previously called xkms.Get()
+	// will use this service directly.
+	XKMSService *xkms.XKMSService
 }
 
 // NewServer creates a new REST API server.
@@ -218,8 +224,13 @@ func NewServer(cfg *Config) (*Server, error) {
 		log = slog.Default()
 	}
 
-	// Create handler context (uses xkms service)
+	// Create handler context and wire the injected XKMS service.
 	handlers := NewHandlerContext(cfg.Version)
+
+	// Wire the injected XKMS service so handlers do not use the global singleton.
+	if cfg.XKMSService != nil {
+		handlers.SetXKMSService(cfg.XKMSService)
+	}
 
 	// Set barrier on handler context if provided
 	if cfg.Barrier != nil {
@@ -240,6 +251,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		logger:          log,
 		rateLimiter:     cfg.RateLimiter,
 		barrierRegistry: cfg.BarrierRegistry,
+		xkmsService:     cfg.XKMSService,
 	}
 
 	// User management is served by the qrdb node's native user API; xkms no
@@ -326,24 +338,24 @@ func NewServer(cfg *Config) (*Server, error) {
 
 	// Set up custodian handlers when the embedded qrdb node is available.
 	if cfg.CustodianEnabled {
-		server.custodianHandlers = NewCustodianHandlers()
+		server.custodianHandlers = NewCustodianHandlers(cfg.XKMSService)
 		log.Info("Custodian handlers enabled")
 	}
 
 	// Cluster handlers are always available: the read-only cluster surface
 	// reports a single-node, non-clustered status when the node runs
 	// standalone, so callers (CLI, GUI, health probes) work uniformly.
-	server.clusterHandlers = NewClusterHandlers()
+	server.clusterHandlers = NewClusterHandlers(cfg.XKMSService)
 
 	// Set up share handlers when the embedded qrdb node is available.
 	if cfg.ShareEnabled {
-		server.shareHandlers = NewShareHandlers()
+		server.shareHandlers = NewShareHandlers(cfg.XKMSService)
 		log.Info("Share handlers enabled")
 	}
 
 	// Set up tenant handlers if barrier registry is configured
 	if cfg.BarrierRegistry != nil {
-		server.tenantHandlers = NewTenantHandlers(cfg.BarrierRegistry)
+		server.tenantHandlers = NewTenantHandlers(cfg.BarrierRegistry, cfg.XKMSService)
 		log.Info("Tenant handlers enabled")
 	}
 

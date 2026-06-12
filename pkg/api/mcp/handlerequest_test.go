@@ -417,13 +417,13 @@ func TestHandleListCertsWithPagination(t *testing.T) {
 		}
 		saveJSON, _ := json.Marshal(saveParams)
 		saveReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.saveCert", Params: saveJSON, ID: 1}
-		_, err = server.handleSaveCert(saveReq)
+		_, err = server.handleSaveCert(context.Background(), saveReq)
 		require.NoError(t, err)
 	}
 
 	t.Run("lists all certs without pagination", func(t *testing.T) {
 		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.listCerts", ID: 1}
-		result, err := server.handleListCerts(req)
+		result, err := server.handleListCerts(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListCertsResult)
@@ -435,7 +435,7 @@ func TestHandleListCertsWithPagination(t *testing.T) {
 		params := map[string]int{"page": 1, "page_size": 2}
 		paramsJSON, _ := json.Marshal(params)
 		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.listCerts", Params: paramsJSON, ID: 1}
-		result, err := server.handleListCerts(req)
+		result, err := server.handleListCerts(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListCertsResult)

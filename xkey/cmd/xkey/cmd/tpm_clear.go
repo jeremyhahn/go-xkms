@@ -166,7 +166,7 @@ func runForceTPMClear(cmd *cobra.Command) error {
 
 	if !clearCfg.yes {
 		cmd.Print("Press Enter to reboot...")
-		bufio.NewReader(os.Stdin).ReadBytes('\n')
+		_, _ = bufio.NewReader(os.Stdin).ReadBytes('\n')
 	}
 
 	// Initiate system reboot
@@ -188,7 +188,7 @@ func runStandardTPMClear(cmd *cobra.Command) error {
 		cmd.PrintErrf("Error: Failed to open TPM: %v\n", err)
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Get lockout auth
 	var lockoutAuth []byte

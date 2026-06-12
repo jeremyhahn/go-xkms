@@ -198,13 +198,13 @@ func TestValidateKeyReference(t *testing.T) {
 	}{
 		// Valid key IDs - 4-part format: backend:type:algo:keyname
 		{"simple key ID", "my-key", false},
-		{"full format", "pkcs8:signing:ecdsa-p256:my-key", false},
-		{"full format with dots in keyname", "pkcs8:signing:ecdsa-p256:app.prod.key", false},
-		{"full format with numbers", "pkcs8:signing:ecdsa-p256:key456", false},
-		{"full format rsa", "pkcs8:encryption:rsa:my-rsa-key", false},
-		{"full format ed25519", "pkcs8:signing:ed25519:my-ed-key", false},
+		{"full format", "software:signing:ecdsa-p256:my-key", false},
+		{"full format with dots in keyname", "software:signing:ecdsa-p256:app.prod.key", false},
+		{"full format with numbers", "software:signing:ecdsa-p256:key456", false},
+		{"full format rsa", "software:encryption:rsa:my-rsa-key", false},
+		{"full format ed25519", "software:signing:ed25519:my-ed-key", false},
 		{"minimal format empty components", ":::my-key", false},
-		{"backend only", "pkcs8:::my-key", false},
+		{"backend only", "software:::my-key", false},
 		{"type only", ":signing::my-key", false},
 		{"algo only", "::ecdsa-p256:my-key", false},
 
@@ -215,7 +215,7 @@ func TestValidateKeyReference(t *testing.T) {
 		{"xchacha20 shorthand", "software:encryption:xchacha20:stream-key", false},
 
 		// Valid Ed448 and key exchange algorithms
-		{"ed448", "pkcs8:signing:ed448:my-ed448-key", false},
+		{"ed448", "software:signing:ed448:my-ed448-key", false},
 		{"x25519", "software:encryption:x25519:my-kex-key", false},
 		{"x448", "software:encryption:x448:my-kex-key", false},
 

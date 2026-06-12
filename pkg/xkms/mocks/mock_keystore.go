@@ -114,7 +114,7 @@ func NewMockKeyStore() *MockKeyStore {
 }
 
 // GenerateRSA generates a new RSA key pair.
-func (m *MockKeyStore) GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *MockKeyStore) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -143,7 +143,7 @@ func (m *MockKeyStore) GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKe
 }
 
 // GenerateECDSA generates a new ECDSA key pair.
-func (m *MockKeyStore) GenerateECDSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *MockKeyStore) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -172,7 +172,7 @@ func (m *MockKeyStore) GenerateECDSA(attrs *types.KeyAttributes) (crypto.Private
 }
 
 // GenerateEd25519 generates a new Ed25519 key pair.
-func (m *MockKeyStore) GenerateEd25519(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *MockKeyStore) GenerateEd25519(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -196,7 +196,7 @@ func (m *MockKeyStore) GenerateEd25519(attrs *types.KeyAttributes) (crypto.Priva
 }
 
 // GetKey retrieves an existing private key by its attributes.
-func (m *MockKeyStore) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *MockKeyStore) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -218,7 +218,7 @@ func (m *MockKeyStore) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 }
 
 // DeleteKey removes a key identified by its attributes.
-func (m *MockKeyStore) DeleteKey(attrs *types.KeyAttributes) error {
+func (m *MockKeyStore) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -240,7 +240,7 @@ func (m *MockKeyStore) DeleteKey(attrs *types.KeyAttributes) error {
 }
 
 // ListKeys returns attributes for all keys managed by this xkms.
-func (m *MockKeyStore) ListKeys() ([]*types.KeyAttributes, error) {
+func (m *MockKeyStore) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -267,7 +267,7 @@ func (m *MockKeyStore) ListKeys() ([]*types.KeyAttributes, error) {
 }
 
 // RotateKey replaces an existing key with a newly generated key.
-func (m *MockKeyStore) RotateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *MockKeyStore) RotateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -294,7 +294,7 @@ func (m *MockKeyStore) RotateKey(attrs *types.KeyAttributes) (crypto.PrivateKey,
 }
 
 // Signer returns a crypto.Signer for the specified key.
-func (m *MockKeyStore) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *MockKeyStore) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -321,7 +321,7 @@ func (m *MockKeyStore) Signer(attrs *types.KeyAttributes) (crypto.Signer, error)
 }
 
 // Decrypter returns a crypto.Decrypter for the specified key.
-func (m *MockKeyStore) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *MockKeyStore) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -348,7 +348,7 @@ func (m *MockKeyStore) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, 
 }
 
 // SaveCert stores a certificate for the given key ID.
-func (m *MockKeyStore) SaveCert(keyID string, cert *x509.Certificate) error {
+func (m *MockKeyStore) SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -367,7 +367,7 @@ func (m *MockKeyStore) SaveCert(keyID string, cert *x509.Certificate) error {
 }
 
 // GetCert retrieves a certificate by key ID.
-func (m *MockKeyStore) GetCert(keyID string) (*x509.Certificate, error) {
+func (m *MockKeyStore) GetCert(ctx context.Context, keyID string) (*x509.Certificate, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -389,7 +389,7 @@ func (m *MockKeyStore) GetCert(keyID string) (*x509.Certificate, error) {
 }
 
 // DeleteCert removes a certificate by key ID.
-func (m *MockKeyStore) DeleteCert(keyID string) error {
+func (m *MockKeyStore) DeleteCert(ctx context.Context, keyID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -411,7 +411,7 @@ func (m *MockKeyStore) DeleteCert(keyID string) error {
 }
 
 // SaveCertChain stores a certificate chain for the given key ID.
-func (m *MockKeyStore) SaveCertChain(keyID string, chain []*x509.Certificate) error {
+func (m *MockKeyStore) SaveCertChain(ctx context.Context, keyID string, chain []*x509.Certificate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -430,7 +430,7 @@ func (m *MockKeyStore) SaveCertChain(keyID string, chain []*x509.Certificate) er
 }
 
 // GetCertChain retrieves a certificate chain by key ID.
-func (m *MockKeyStore) GetCertChain(keyID string) ([]*x509.Certificate, error) {
+func (m *MockKeyStore) GetCertChain(ctx context.Context, keyID string) ([]*x509.Certificate, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -452,7 +452,7 @@ func (m *MockKeyStore) GetCertChain(keyID string) ([]*x509.Certificate, error) {
 }
 
 // ListCerts returns all certificate IDs currently stored.
-func (m *MockKeyStore) ListCerts() ([]string, error) {
+func (m *MockKeyStore) ListCerts(ctx context.Context) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -474,7 +474,7 @@ func (m *MockKeyStore) ListCerts() ([]string, error) {
 }
 
 // CertExists checks if a certificate exists for the given key ID.
-func (m *MockKeyStore) CertExists(keyID string) (bool, error) {
+func (m *MockKeyStore) CertExists(ctx context.Context, keyID string) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -493,7 +493,7 @@ func (m *MockKeyStore) CertExists(keyID string) (bool, error) {
 }
 
 // GetTLSCertificate returns a complete tls.Certificate ready for use.
-func (m *MockKeyStore) GetTLSCertificate(keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
+func (m *MockKeyStore) GetTLSCertificate(ctx context.Context, keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -525,7 +525,7 @@ func (m *MockKeyStore) GetTLSCertificate(keyID string, attrs *types.KeyAttribute
 }
 
 // GetKeyByID retrieves a key using the unified Key ID format.
-func (m *MockKeyStore) GetKeyByID(keyID string) (crypto.PrivateKey, error) {
+func (m *MockKeyStore) GetKeyByID(ctx context.Context, keyID string) (crypto.PrivateKey, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -547,7 +547,7 @@ func (m *MockKeyStore) GetKeyByID(keyID string) (crypto.PrivateKey, error) {
 }
 
 // GetSignerByID retrieves a crypto.Signer using the unified Key ID format.
-func (m *MockKeyStore) GetSignerByID(keyID string) (crypto.Signer, error) {
+func (m *MockKeyStore) GetSignerByID(ctx context.Context, keyID string) (crypto.Signer, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -574,7 +574,7 @@ func (m *MockKeyStore) GetSignerByID(keyID string) (crypto.Signer, error) {
 }
 
 // GetDecrypterByID retrieves a crypto.Decrypter using the unified Key ID format.
-func (m *MockKeyStore) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
+func (m *MockKeyStore) GetDecrypterByID(ctx context.Context, keyID string) (crypto.Decrypter, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

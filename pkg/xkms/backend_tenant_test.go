@@ -93,99 +93,99 @@ func (r *recordingBackend) getLastKeyID() string {
 	return r.lastKeyID
 }
 
-func (r *recordingBackend) GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (r *recordingBackend) GenerateRSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	r.setAttrs(attrs)
 	return nil, r.generateRSAErr
 }
 
-func (r *recordingBackend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (r *recordingBackend) GenerateECDSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	r.setAttrs(attrs)
 	return nil, r.generateECDSAErr
 }
 
-func (r *recordingBackend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (r *recordingBackend) GenerateEd25519(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	r.setAttrs(attrs)
 	return nil, r.generateEd25519Err
 }
 
-func (r *recordingBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (r *recordingBackend) GetKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	r.setAttrs(attrs)
 	return nil, r.getKeyErr
 }
 
-func (r *recordingBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (r *recordingBackend) DeleteKey(_ context.Context, attrs *types.KeyAttributes) error {
 	r.setAttrs(attrs)
 	return r.deleteKeyErr
 }
 
-func (r *recordingBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (r *recordingBackend) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
 	return nil, nil
 }
 
-func (r *recordingBackend) RotateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (r *recordingBackend) RotateKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	r.setAttrs(attrs)
 	return nil, r.rotateKeyErr
 }
 
-func (r *recordingBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (r *recordingBackend) Signer(_ context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	r.setAttrs(attrs)
 	return nil, r.signerErr
 }
 
-func (r *recordingBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (r *recordingBackend) Decrypter(_ context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	r.setAttrs(attrs)
 	return nil, r.decrypterErr
 }
 
-func (r *recordingBackend) SaveCert(keyID string, cert *x509.Certificate) error {
+func (r *recordingBackend) SaveCert(_ context.Context, keyID string, cert *x509.Certificate) error {
 	r.setCertKeyID(keyID)
 	return r.saveCertErr
 }
 
-func (r *recordingBackend) GetCert(keyID string) (*x509.Certificate, error) {
+func (r *recordingBackend) GetCert(_ context.Context, keyID string) (*x509.Certificate, error) {
 	r.setCertKeyID(keyID)
 	return nil, r.getCertErr
 }
 
-func (r *recordingBackend) DeleteCert(keyID string) error {
+func (r *recordingBackend) DeleteCert(_ context.Context, keyID string) error {
 	r.setCertKeyID(keyID)
 	return r.deleteCertErr
 }
 
-func (r *recordingBackend) SaveCertChain(keyID string, chain []*x509.Certificate) error {
+func (r *recordingBackend) SaveCertChain(_ context.Context, keyID string, chain []*x509.Certificate) error {
 	r.setCertKeyID(keyID)
 	return r.saveCertChainErr
 }
 
-func (r *recordingBackend) GetCertChain(keyID string) ([]*x509.Certificate, error) {
+func (r *recordingBackend) GetCertChain(_ context.Context, keyID string) ([]*x509.Certificate, error) {
 	r.setCertKeyID(keyID)
 	return nil, r.getCertChainErr
 }
 
-func (r *recordingBackend) ListCerts() ([]string, error) {
+func (r *recordingBackend) ListCerts(_ context.Context) ([]string, error) {
 	return nil, nil
 }
 
-func (r *recordingBackend) CertExists(keyID string) (bool, error) {
+func (r *recordingBackend) CertExists(_ context.Context, keyID string) (bool, error) {
 	r.setCertKeyID(keyID)
 	return false, r.certExistsErr
 }
 
-func (r *recordingBackend) GetTLSCertificate(keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
+func (r *recordingBackend) GetTLSCertificate(_ context.Context, keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
 	r.setCertKeyID(keyID)
 	r.setAttrs(attrs)
 	return tls.Certificate{}, r.getTLSCertErr
 }
 
-func (r *recordingBackend) GetKeyByID(keyID string) (crypto.PrivateKey, error) {
+func (r *recordingBackend) GetKeyByID(_ context.Context, keyID string) (crypto.PrivateKey, error) {
 	return nil, nil
 }
 
-func (r *recordingBackend) GetSignerByID(keyID string) (crypto.Signer, error) {
+func (r *recordingBackend) GetSignerByID(_ context.Context, keyID string) (crypto.Signer, error) {
 	return nil, nil
 }
 
-func (r *recordingBackend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
+func (r *recordingBackend) GetDecrypterByID(_ context.Context, keyID string) (crypto.Decrypter, error) {
 	return nil, nil
 }
 
@@ -261,7 +261,7 @@ func TestTenantScopedBackend_GenerateRSA_SetsTenantID(t *testing.T) {
 	tsb := NewTenantScopedBackend(base, "tenant-a")
 
 	attrs := newBaseAttrs()
-	_, _ = tsb.GenerateRSA(attrs)
+	_, _ = tsb.GenerateRSA(context.Background(), attrs)
 
 	got := base.getLastAttrs()
 	require.NotNil(t, got)
@@ -275,7 +275,7 @@ func TestTenantScopedBackend_GenerateECDSA_SetsTenantID(t *testing.T) {
 	tsb := NewTenantScopedBackend(base, "tenant-b")
 
 	attrs := newBaseAttrs()
-	_, _ = tsb.GenerateECDSA(attrs)
+	_, _ = tsb.GenerateECDSA(context.Background(), attrs)
 
 	assert.Equal(t, "tenant-b", base.getLastAttrs().TenantID)
 	assert.Empty(t, attrs.TenantID)
@@ -286,7 +286,7 @@ func TestTenantScopedBackend_GenerateEd25519_SetsTenantID(t *testing.T) {
 	tsb := NewTenantScopedBackend(base, "tenant-c")
 
 	attrs := newBaseAttrs()
-	_, _ = tsb.GenerateEd25519(attrs)
+	_, _ = tsb.GenerateEd25519(context.Background(), attrs)
 
 	assert.Equal(t, "tenant-c", base.getLastAttrs().TenantID)
 	assert.Empty(t, attrs.TenantID)
@@ -297,7 +297,7 @@ func TestTenantScopedBackend_GetKey_SetsTenantID(t *testing.T) {
 	tsb := NewTenantScopedBackend(base, "t1")
 
 	attrs := newBaseAttrs()
-	_, _ = tsb.GetKey(attrs)
+	_, _ = tsb.GetKey(context.Background(), attrs)
 
 	assert.Equal(t, "t1", base.getLastAttrs().TenantID)
 	assert.Empty(t, attrs.TenantID)
@@ -308,7 +308,7 @@ func TestTenantScopedBackend_DeleteKey_SetsTenantID(t *testing.T) {
 	tsb := NewTenantScopedBackend(base, "t1")
 
 	attrs := newBaseAttrs()
-	_ = tsb.DeleteKey(attrs)
+	_ = tsb.DeleteKey(context.Background(), attrs)
 
 	assert.Equal(t, "t1", base.getLastAttrs().TenantID)
 }
@@ -318,7 +318,7 @@ func TestTenantScopedBackend_RotateKey_SetsTenantID(t *testing.T) {
 	tsb := NewTenantScopedBackend(base, "t1")
 
 	attrs := newBaseAttrs()
-	_, _ = tsb.RotateKey(attrs)
+	_, _ = tsb.RotateKey(context.Background(), attrs)
 
 	assert.Equal(t, "t1", base.getLastAttrs().TenantID)
 }
@@ -328,7 +328,7 @@ func TestTenantScopedBackend_Signer_SetsTenantID(t *testing.T) {
 	tsb := NewTenantScopedBackend(base, "t1")
 
 	attrs := newBaseAttrs()
-	_, _ = tsb.Signer(attrs)
+	_, _ = tsb.Signer(context.Background(), attrs)
 
 	assert.Equal(t, "t1", base.getLastAttrs().TenantID)
 }
@@ -338,7 +338,7 @@ func TestTenantScopedBackend_Decrypter_SetsTenantID(t *testing.T) {
 	tsb := NewTenantScopedBackend(base, "t1")
 
 	attrs := newBaseAttrs()
-	_, _ = tsb.Decrypter(attrs)
+	_, _ = tsb.Decrypter(context.Background(), attrs)
 
 	assert.Equal(t, "t1", base.getLastAttrs().TenantID)
 }
@@ -363,7 +363,7 @@ func TestTenantScopedBackend_SaveCert_PrefixesKeyID(t *testing.T) {
 	tsb := NewTenantScopedBackend(base, "acme")
 
 	cert := generateTestCertTenant(t)
-	_ = tsb.SaveCert("server.crt", cert)
+	_ = tsb.SaveCert(context.Background(), "server.crt", cert)
 
 	assert.Equal(t, "acme/server.crt", base.getLastKeyID())
 }
@@ -372,7 +372,7 @@ func TestTenantScopedBackend_GetCert_PrefixesKeyID(t *testing.T) {
 	base := &recordingBackend{}
 	tsb := NewTenantScopedBackend(base, "acme")
 
-	_, _ = tsb.GetCert("server.crt")
+	_, _ = tsb.GetCert(context.Background(), "server.crt")
 
 	assert.Equal(t, "acme/server.crt", base.getLastKeyID())
 }
@@ -381,7 +381,7 @@ func TestTenantScopedBackend_DeleteCert_PrefixesKeyID(t *testing.T) {
 	base := &recordingBackend{}
 	tsb := NewTenantScopedBackend(base, "acme")
 
-	_ = tsb.DeleteCert("server.crt")
+	_ = tsb.DeleteCert(context.Background(), "server.crt")
 
 	assert.Equal(t, "acme/server.crt", base.getLastKeyID())
 }
@@ -390,7 +390,7 @@ func TestTenantScopedBackend_SaveCertChain_PrefixesKeyID(t *testing.T) {
 	base := &recordingBackend{}
 	tsb := NewTenantScopedBackend(base, "acme")
 
-	_ = tsb.SaveCertChain("ca-chain", nil)
+	_ = tsb.SaveCertChain(context.Background(), "ca-chain", nil)
 
 	assert.Equal(t, "acme/ca-chain", base.getLastKeyID())
 }
@@ -399,7 +399,7 @@ func TestTenantScopedBackend_GetCertChain_PrefixesKeyID(t *testing.T) {
 	base := &recordingBackend{}
 	tsb := NewTenantScopedBackend(base, "acme")
 
-	_, _ = tsb.GetCertChain("ca-chain")
+	_, _ = tsb.GetCertChain(context.Background(), "ca-chain")
 
 	assert.Equal(t, "acme/ca-chain", base.getLastKeyID())
 }
@@ -408,7 +408,7 @@ func TestTenantScopedBackend_CertExists_PrefixesKeyID(t *testing.T) {
 	base := &recordingBackend{}
 	tsb := NewTenantScopedBackend(base, "acme")
 
-	_, _ = tsb.CertExists("server.crt")
+	_, _ = tsb.CertExists(context.Background(), "server.crt")
 
 	assert.Equal(t, "acme/server.crt", base.getLastKeyID())
 }
@@ -418,7 +418,7 @@ func TestTenantScopedBackend_GetTLSCertificate_PrefixesKeyIDAndSetsAttrs(t *test
 	tsb := NewTenantScopedBackend(base, "acme")
 
 	attrs := newBaseAttrs()
-	_, _ = tsb.GetTLSCertificate("server.crt", attrs)
+	_, _ = tsb.GetTLSCertificate(context.Background(), "server.crt", attrs)
 
 	assert.Equal(t, "acme/server.crt", base.getLastKeyID())
 	assert.Equal(t, "acme", base.getLastAttrs().TenantID)
@@ -432,7 +432,7 @@ func TestTenantScopedBackend_ListKeys_Passthrough(t *testing.T) {
 	base := &recordingBackend{}
 	tsb := NewTenantScopedBackend(base, "acme")
 
-	keys, err := tsb.ListKeys()
+	keys, err := tsb.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.Nil(t, keys)
 }
@@ -441,7 +441,7 @@ func TestTenantScopedBackend_ListCerts_Passthrough(t *testing.T) {
 	base := &recordingBackend{}
 	tsb := NewTenantScopedBackend(base, "acme")
 
-	certs, err := tsb.ListCerts()
+	certs, err := tsb.ListCerts(context.Background())
 	require.NoError(t, err)
 	assert.Nil(t, certs)
 }
@@ -469,49 +469,49 @@ func TestTenantScopedBackend_AllKeyOps_SetTenantID(t *testing.T) {
 			name: "GenerateRSA",
 			call: func(tsb *TenantScopedBackend, _ *recordingBackend) {
 				attrs := &types.KeyAttributes{CN: "k"}
-				_, _ = tsb.GenerateRSA(attrs)
+				_, _ = tsb.GenerateRSA(context.Background(), attrs)
 			},
 		},
 		{
 			name: "GenerateECDSA",
 			call: func(tsb *TenantScopedBackend, _ *recordingBackend) {
-				_, _ = tsb.GenerateECDSA(&types.KeyAttributes{CN: "k"})
+				_, _ = tsb.GenerateECDSA(context.Background(), &types.KeyAttributes{CN: "k"})
 			},
 		},
 		{
 			name: "GenerateEd25519",
 			call: func(tsb *TenantScopedBackend, _ *recordingBackend) {
-				_, _ = tsb.GenerateEd25519(&types.KeyAttributes{CN: "k"})
+				_, _ = tsb.GenerateEd25519(context.Background(), &types.KeyAttributes{CN: "k"})
 			},
 		},
 		{
 			name: "GetKey",
 			call: func(tsb *TenantScopedBackend, _ *recordingBackend) {
-				_, _ = tsb.GetKey(&types.KeyAttributes{CN: "k"})
+				_, _ = tsb.GetKey(context.Background(), &types.KeyAttributes{CN: "k"})
 			},
 		},
 		{
 			name: "DeleteKey",
 			call: func(tsb *TenantScopedBackend, _ *recordingBackend) {
-				_ = tsb.DeleteKey(&types.KeyAttributes{CN: "k"})
+				_ = tsb.DeleteKey(context.Background(), &types.KeyAttributes{CN: "k"})
 			},
 		},
 		{
 			name: "RotateKey",
 			call: func(tsb *TenantScopedBackend, _ *recordingBackend) {
-				_, _ = tsb.RotateKey(&types.KeyAttributes{CN: "k"})
+				_, _ = tsb.RotateKey(context.Background(), &types.KeyAttributes{CN: "k"})
 			},
 		},
 		{
 			name: "Signer",
 			call: func(tsb *TenantScopedBackend, _ *recordingBackend) {
-				_, _ = tsb.Signer(&types.KeyAttributes{CN: "k"})
+				_, _ = tsb.Signer(context.Background(), &types.KeyAttributes{CN: "k"})
 			},
 		},
 		{
 			name: "Decrypter",
 			call: func(tsb *TenantScopedBackend, _ *recordingBackend) {
-				_, _ = tsb.Decrypter(&types.KeyAttributes{CN: "k"})
+				_, _ = tsb.Decrypter(context.Background(), &types.KeyAttributes{CN: "k"})
 			},
 		},
 	}
@@ -543,27 +543,27 @@ func TestTenantScopedBackend_AllCertOps_PrefixKeyID(t *testing.T) {
 	}{
 		{
 			name: "SaveCert",
-			call: func(tsb *TenantScopedBackend) { _ = tsb.SaveCert(rawKeyID, nil) },
+			call: func(tsb *TenantScopedBackend) { _ = tsb.SaveCert(context.Background(), rawKeyID, nil) },
 		},
 		{
 			name: "GetCert",
-			call: func(tsb *TenantScopedBackend) { _, _ = tsb.GetCert(rawKeyID) },
+			call: func(tsb *TenantScopedBackend) { _, _ = tsb.GetCert(context.Background(), rawKeyID) },
 		},
 		{
 			name: "DeleteCert",
-			call: func(tsb *TenantScopedBackend) { _ = tsb.DeleteCert(rawKeyID) },
+			call: func(tsb *TenantScopedBackend) { _ = tsb.DeleteCert(context.Background(), rawKeyID) },
 		},
 		{
 			name: "SaveCertChain",
-			call: func(tsb *TenantScopedBackend) { _ = tsb.SaveCertChain(rawKeyID, nil) },
+			call: func(tsb *TenantScopedBackend) { _ = tsb.SaveCertChain(context.Background(), rawKeyID, nil) },
 		},
 		{
 			name: "GetCertChain",
-			call: func(tsb *TenantScopedBackend) { _, _ = tsb.GetCertChain(rawKeyID) },
+			call: func(tsb *TenantScopedBackend) { _, _ = tsb.GetCertChain(context.Background(), rawKeyID) },
 		},
 		{
 			name: "CertExists",
-			call: func(tsb *TenantScopedBackend) { _, _ = tsb.CertExists(rawKeyID) },
+			call: func(tsb *TenantScopedBackend) { _, _ = tsb.CertExists(context.Background(), rawKeyID) },
 		},
 	}
 
@@ -590,7 +590,7 @@ func TestTenantScopedBackend_ScopeAttrs_DoesNotMutateOriginal(t *testing.T) {
 	}
 
 	// Generate an EC key so scopeAttrs is invoked via GenerateECDSA.
-	_, _ = tsb.GenerateECDSA(original)
+	_, _ = tsb.GenerateECDSA(context.Background(), original)
 
 	// The original struct must still carry its pre-call TenantID.
 	assert.Equal(t, "original-tenant", original.TenantID)
@@ -634,7 +634,7 @@ func TestTenantScopedBackend_GenerateECDSA_RealKey(t *testing.T) {
 	software := newMockKeyStore("sw")
 	tsb := NewTenantScopedBackend(software, "tenant-real")
 
-	key, err := tsb.GenerateECDSA(&types.KeyAttributes{
+	key, err := tsb.GenerateECDSA(context.Background(), &types.KeyAttributes{
 		CN:           "real-key",
 		KeyAlgorithm: x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{
@@ -652,7 +652,7 @@ func TestTenantScopedBackend_GenerateRSA_RealKey(t *testing.T) {
 	software := newMockKeyStore("sw")
 	tsb := NewTenantScopedBackend(software, "tenant-rsa")
 
-	key, err := tsb.GenerateRSA(&types.KeyAttributes{
+	key, err := tsb.GenerateRSA(context.Background(), &types.KeyAttributes{
 		CN:           "rsa-key",
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
@@ -670,7 +670,7 @@ func TestTenantScopedBackend_GenerateEd25519_RealKey(t *testing.T) {
 	software := newMockKeyStore("sw")
 	tsb := NewTenantScopedBackend(software, "tenant-ed")
 
-	key, err := tsb.GenerateEd25519(&types.KeyAttributes{
+	key, err := tsb.GenerateEd25519(context.Background(), &types.KeyAttributes{
 		CN:           "ed-key",
 		KeyAlgorithm: x509.Ed25519,
 	})

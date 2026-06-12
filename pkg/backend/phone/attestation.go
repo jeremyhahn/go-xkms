@@ -80,7 +80,7 @@ func mapSecurityLevel(level string) string {
 //
 // When no attestation config is present, the raw result from the phone is returned
 // without verification (suitable for development/testing).
-func (b *Backend) AttestKey(attrs *types.KeyAttributes, nonce []byte) (interface{}, error) {
+func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, nonce []byte) (interface{}, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -93,7 +93,7 @@ func (b *Backend) AttestKey(attrs *types.KeyAttributes, nonce []byte) (interface
 		Nonce: nonce,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), b.config.RequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
 	resp, err := b.sendLocalRequest(ctx, phoneproto.MethodLocalAttestKey, params)

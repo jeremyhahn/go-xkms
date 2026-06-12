@@ -21,6 +21,7 @@
 package ca
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -99,7 +100,7 @@ func TestSignCSR_MultiTenantSigner(t *testing.T) {
 	extKey, extIssuer := makeExternalIssuer(t, "External Tenant CA")
 	csrPEM, _ := makeLeafCSR(t, "tenant-leaf.example.com")
 
-	cert, err := ca.SignCSR(csrPEM, &SignOptions{
+	cert, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{
 		Signer:     extKey,
 		IssuerCert: extIssuer,
 		Profile:    "",
@@ -126,7 +127,7 @@ func TestSignCSR_MultiTenantSignerWithoutIssuerCert(t *testing.T) {
 	extKey, _ := makeExternalIssuer(t, "External Tenant CA")
 	csrPEM, _ := makeLeafCSR(t, "tenant-leaf.example.com")
 
-	_, err := ca.SignCSR(csrPEM, &SignOptions{
+	_, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{
 		Signer:     extKey,
 		IssuerCert: nil,
 	})
@@ -141,7 +142,7 @@ func TestSignCSR_NativePathStillWorks(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM, _ := makeLeafCSR(t, "native-leaf.example.com")
 
-	cert, err := ca.SignCSR(csrPEM, nil)
+	cert, err := ca.SignCSR(context.Background(), csrPEM, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cert)
 	assert.Equal(t, "Test Root CA", cert.Issuer.CommonName,
@@ -158,13 +159,13 @@ func TestSignCSR_NativePathStillWorks(t *testing.T) {
 func TestRevokeCert_PersistsToObjectStore(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "persisted-revoke.example.com"},
 		Valid:   30,
 	})
 	require.NoError(t, err)
 
-	err = ca.RevokeCert(issued.Certificate, RevokeOptions{Reason: 1})
+	err = ca.RevokeCert(context.Background(), issued.Certificate, RevokeOptions{Reason: 1})
 	require.NoError(t, err)
 
 	// The record should be queryable via IsRevoked immediately.
@@ -177,7 +178,7 @@ func TestRevokeCert_PersistsToObjectStore(t *testing.T) {
 	ca.revocations = make(map[string]*RevocationInfo)
 	ca.revocationsMutex.Unlock()
 
-	err = ca.loadPersistedRevocations()
+	err = ca.loadPersistedRevocations(context.Background())
 	require.NoError(t, err, "loadPersistedRevocations must succeed")
 
 	revoked, err = ca.IsRevoked(issued.Certificate.SerialNumber)
@@ -194,13 +195,13 @@ func TestRevokeCert_NoObjectStore(t *testing.T) {
 	require.Nil(t, ca.objectStore,
 		"precondition: setupTestCA must not wire an objectStore")
 
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "no-store-revoke.example.com"},
 		Valid:   30,
 	})
 	require.NoError(t, err)
 
-	err = ca.RevokeCert(issued.Certificate, RevokeOptions{Reason: 0})
+	err = ca.RevokeCert(context.Background(), issued.Certificate, RevokeOptions{Reason: 0})
 	require.NoError(t, err,
 		"RevokeCert must succeed even without an object store")
 
@@ -215,14 +216,14 @@ func TestRevoke_PersistsToObjectStore(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 
 	serial := big.NewInt(12345)
-	err := ca.Revoke(serial, 4)
+	err := ca.Revoke(context.Background(), serial, 4)
 	require.NoError(t, err)
 
 	ca.revocationsMutex.Lock()
 	ca.revocations = make(map[string]*RevocationInfo)
 	ca.revocationsMutex.Unlock()
 
-	err = ca.loadPersistedRevocations()
+	err = ca.loadPersistedRevocations(context.Background())
 	require.NoError(t, err)
 
 	revoked, err := ca.IsRevoked(serial)
@@ -235,16 +236,16 @@ func TestRevoke_PersistsToObjectStore(t *testing.T) {
 func TestRevokeCert_DoubleRevokeWithPersistence(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "double-revoke.example.com"},
 		Valid:   30,
 	})
 	require.NoError(t, err)
 
-	err = ca.RevokeCert(issued.Certificate, RevokeOptions{Reason: 1})
+	err = ca.RevokeCert(context.Background(), issued.Certificate, RevokeOptions{Reason: 1})
 	require.NoError(t, err)
 
-	err = ca.RevokeCert(issued.Certificate, RevokeOptions{Reason: 1})
+	err = ca.RevokeCert(context.Background(), issued.Certificate, RevokeOptions{Reason: 1})
 	assert.ErrorIs(t, err, ErrAlreadyRevoked,
 		"second RevokeCert must return ErrAlreadyRevoked")
 }
@@ -286,7 +287,7 @@ func TestOCSPResponder_GoodStatus(t *testing.T) {
 	responder := NewOCSPResponder(ca, OCSPResponderConfig{})
 	require.NotNil(t, responder)
 
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "ocsp-good.example.com"},
 		Valid:   30,
 	})
@@ -298,7 +299,7 @@ func TestOCSPResponder_GoodStatus(t *testing.T) {
 	reqBytes, err := CreateOCSPRequest(issued.Certificate, rootCert, nil)
 	require.NoError(t, err)
 
-	respBytes, err := responder.HandleRequest(reqBytes)
+	respBytes, err := responder.HandleRequest(context.Background(), reqBytes)
 	require.NoError(t, err)
 	require.NotEmpty(t, respBytes)
 
@@ -312,13 +313,13 @@ func TestOCSPResponder_RevokedStatus(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	responder := NewOCSPResponder(ca, OCSPResponderConfig{})
 
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "ocsp-revoked.example.com"},
 		Valid:   30,
 	})
 	require.NoError(t, err)
 
-	err = ca.RevokeCert(issued.Certificate, RevokeOptions{Reason: 1})
+	err = ca.RevokeCert(context.Background(), issued.Certificate, RevokeOptions{Reason: 1})
 	require.NoError(t, err)
 
 	rootCert, err := ca.CACertificate()
@@ -327,7 +328,7 @@ func TestOCSPResponder_RevokedStatus(t *testing.T) {
 	reqBytes, err := CreateOCSPRequest(issued.Certificate, rootCert, nil)
 	require.NoError(t, err)
 
-	respBytes, err := responder.HandleRequest(reqBytes)
+	respBytes, err := responder.HandleRequest(context.Background(), reqBytes)
 	require.NoError(t, err)
 	resp, err := ocsp.ParseResponse(respBytes, nil)
 	require.NoError(t, err)
@@ -340,11 +341,11 @@ func TestOCSPResponder_InvalidRequest(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	responder := NewOCSPResponder(ca, OCSPResponderConfig{})
 
-	_, err := responder.HandleRequest(nil)
+	_, err := responder.HandleRequest(context.Background(), nil)
 	assert.ErrorIs(t, err, ErrOCSPInvalidRequest,
 		"nil request must return ErrOCSPInvalidRequest")
 
-	_, err = responder.HandleRequest([]byte{0x00, 0x01, 0x02})
+	_, err = responder.HandleRequest(context.Background(), []byte{0x00, 0x01, 0x02})
 	assert.ErrorIs(t, err, ErrOCSPRequestParseFailed,
 		"garbage request must return ErrOCSPRequestParseFailed")
 }
@@ -360,7 +361,7 @@ func TestOCSPResponder_ClearCache(t *testing.T) {
 	responder := NewOCSPResponder(ca, OCSPResponderConfig{})
 
 	// Populate the cache via a GOOD lookup.
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "ocsp-cache.example.com"},
 		Valid:   30,
 	})
@@ -369,7 +370,7 @@ func TestOCSPResponder_ClearCache(t *testing.T) {
 	require.NoError(t, err)
 	reqBytes, err := CreateOCSPRequest(issued.Certificate, rootCert, nil)
 	require.NoError(t, err)
-	_, err = responder.HandleRequest(reqBytes)
+	_, err = responder.HandleRequest(context.Background(), reqBytes)
 	require.NoError(t, err)
 
 	responder.cacheMu.RLock()
@@ -466,7 +467,7 @@ func TestVerifyTBSDeterminism_MalformedInput(t *testing.T) {
 // argument. This is the path every non cross-signing caller takes.
 func TestVerify_NoXSigner(t *testing.T) {
 	ca := setupTestCA(t)
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "verify-plain.example.com"},
 		Valid:   30,
 	})
@@ -483,7 +484,7 @@ func TestVerify_NoXSigner(t *testing.T) {
 // call site is exactly what Session 2.5 collapsed away.
 func TestVerify_ExplicitNilXSigner(t *testing.T) {
 	ca := setupTestCA(t)
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "verify-nil-xsigner.example.com"},
 		Valid:   30,
 	})
@@ -500,13 +501,13 @@ func TestVerify_ExplicitNilXSigner(t *testing.T) {
 // a revoked cert cannot be "rescued" by routing through the cross-sign path.
 func TestVerify_RevokedCertWithXSigner(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "verify-revoked.example.com"},
 		Valid:   30,
 	})
 	require.NoError(t, err)
 
-	err = ca.RevokeCert(issued.Certificate, RevokeOptions{Reason: 1})
+	err = ca.RevokeCert(context.Background(), issued.Certificate, RevokeOptions{Reason: 1})
 	require.NoError(t, err)
 
 	extKey, _ := makeExternalIssuer(t, "XSigner CA")

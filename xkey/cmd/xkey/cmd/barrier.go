@@ -116,69 +116,153 @@ func resolveBarrierDataDir() (string, error) {
 	return home.EnsureDataDir()
 }
 
+// strategyFlagToID maps the user-facing CLI strategy names to the canonical
+// seal StrategyIDs. The CLI exposes "software" for the passphrase-protected
+// Argon2id strategy to match the documented user experience.
+var strategyFlagToID = map[string]xkms.StrategyID{
+	"software": xkms.StrategyPassphrase,
+	"tpm2":     xkms.StrategyTPM2,
+	"pkcs11":   xkms.StrategyPKCS11,
+}
+
+// strategyIDToDisplay maps canonical seal StrategyIDs back to the
+// user-facing CLI names. IDs without an entry display as themselves.
+var strategyIDToDisplay = map[xkms.StrategyID]string{
+	xkms.StrategyPassphrase: "software",
+}
+
+// strategyDisplayName returns the user-facing name for a strategy ID.
+func strategyDisplayName(id xkms.StrategyID) string {
+	if name, ok := strategyIDToDisplay[id]; ok {
+		return name
+	}
+	return string(id)
+}
+
+// resolveBarrierStrategyID resolves the canonical strategy ID to use for the
+// barrier. Priority:
+//  1. The --strategy flag, mapped through strategyFlagToID.
+//  2. The strategy recorded in an existing sealed root key blob.
+//  3. Auto-detect: TPM 2.0 hardware when available, otherwise software.
+//
+// The hardware-first auto-detect matches the GUI's bestStrategy selection
+// and the documented preference order (tpm2, pkcs11, software).
+func resolveBarrierStrategyID(dataDir string) (xkms.StrategyID, error) {
+	if barrierStrategy != "" {
+		id, ok := strategyFlagToID[barrierStrategy]
+		if !ok {
+			return "", &BarrierError{
+				Operation: "validate_strategy",
+				Message:   fmt.Sprintf("unknown strategy %q, valid values: software, tpm2, pkcs11", barrierStrategy),
+			}
+		}
+		return id, nil
+	}
+
+	if barrierRootKeyExists(dataDir) {
+		id, err := readBarrierStrategy(dataDir)
+		if err != nil {
+			return "", &BarrierError{
+				Operation: "read_strategy",
+				Err:       err,
+			}
+		}
+		return id, nil
+	}
+
+	// Auto-detect: prefer hardware-backed sealing when a TPM is present.
+	if sealer, closer := probeTPMSealer(slog.Default(), dataDir); sealer != nil {
+		_ = closer.Close()
+		return xkms.StrategyTPM2, nil
+	}
+	return xkms.StrategyPassphrase, nil
+}
+
+// assembleBarrierStrategy constructs the sealing strategy for the given
+// canonical ID. When the strategy holds hardware resources (TPM), the
+// returned io.Closer releases them; it is nil for software strategies.
+func assembleBarrierStrategy(id xkms.StrategyID, dataDir string) (xkms.SealingStrategy, io.Closer, error) {
+	switch id {
+	case xkms.StrategyPassphrase:
+		return xkms.NewSoftwareSealStrategy(), nil, nil
+	case xkms.StrategyTPM2:
+		sealer, closer := probeTPMSealer(slog.Default(), dataDir)
+		if sealer == nil {
+			return nil, nil, &BarrierError{
+				Operation: "assemble_strategy",
+				Message:   "tpm2 strategy unavailable: no usable TPM 2.0 device",
+			}
+		}
+		return xkms.NewTPM2Strategy(sealer, nil), closer, nil
+	case xkms.StrategyPKCS11:
+		return nil, nil, &BarrierError{
+			Operation: "assemble_strategy",
+			Message:   "pkcs11 strategy requires an HSM module configuration, which the CLI barrier does not support",
+		}
+	default:
+		return nil, nil, &BarrierError{
+			Operation: "assemble_strategy",
+			Message:   fmt.Sprintf("unsupported strategy %q", id),
+		}
+	}
+}
+
 // createBarrier creates a Barrier instance from the resolved data directory
 // and strategy preference. The dataDir is used directly as the storage root,
 // matching the GUI and extension serve barrier layout.
-func createBarrier(dataDir string) (*xkms.Barrier, error) {
+//
+// The returned io.Closer releases hardware resources held by the assembled
+// strategy (e.g. the TPM transport) and may be nil for software strategies.
+// Callers must close it after closing the barrier.
+func createBarrier(dataDir string) (*xkms.Barrier, io.Closer, error) {
 	backend, err := xkms.NewFileStorageBackend(dataDir)
 	if err != nil {
-		return nil, &BarrierError{
+		return nil, nil, &BarrierError{
 			Operation: "create_storage",
 			Err:       err,
 		}
 	}
 
-	strategies := buildStrategies()
-	if len(strategies) == 0 {
-		return nil, &BarrierError{
-			Operation: "create_barrier",
-			Message:   "no sealing strategies available",
-		}
+	stratID, err := resolveBarrierStrategyID(dataDir)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	strategy, closer, err := assembleBarrierStrategy(stratID, dataDir)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	config := xkms.BarrierConfig{
-		RootKeyPath: defaultBarrierRootKeyPath,
-	}
-
-	// If a strategy preference was specified, set the preference order.
-	if barrierStrategy != "" {
-		stratID := xkms.StrategyID(barrierStrategy)
-		config.PreferenceOrder = []xkms.StrategyID{stratID}
+		RootKeyPath:     defaultBarrierRootKeyPath,
+		PreferenceOrder: []xkms.StrategyID{stratID},
 	}
 
 	barrier, err := xkms.NewBarrier(
 		slog.Default(),
 		backend,
 		config,
-		strategies...,
+		strategy,
 	)
 	if err != nil {
-		return nil, &BarrierError{
+		if closer != nil {
+			_ = closer.Close()
+		}
+		return nil, nil, &BarrierError{
 			Operation: "create_barrier",
 			Err:       err,
 		}
 	}
 
-	return barrier, nil
-}
-
-// buildStrategies returns all available sealing strategies.
-// Software strategy is always available as a fallback.
-func buildStrategies() []xkms.SealingStrategy {
-	strategies := make([]xkms.SealingStrategy, 0, 3)
-
-	// Software strategy is always available.
-	strategies = append(strategies, xkms.NewSoftwareSealStrategy())
-
-	return strategies
+	return barrier, closer, nil
 }
 
 // readBarrierPassword reads a password from terminal or piped stdin.
 func readBarrierPassword(out io.Writer, prompt string) (string, error) {
 	if term.IsTerminal(int(os.Stdin.Fd())) {
-		fmt.Fprint(out, prompt)
+		_, _ = fmt.Fprint(out, prompt)
 		password, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 		if err != nil {
 			return "", &BarrierError{Operation: "read_password", Err: err}
 		}
@@ -212,16 +296,16 @@ func readAndConfirmBarrierPassword(out io.Writer) (string, error) {
 // readBarrierPasswordFromTerminal reads password securely from terminal with
 // confirmation.
 func readBarrierPasswordFromTerminal(out io.Writer) (string, error) {
-	fmt.Fprint(out, "Enter password: ")
+	_, _ = fmt.Fprint(out, "Enter password: ")
 	password1, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	if err != nil {
 		return "", &BarrierError{Operation: "read_password", Err: err}
 	}
 
-	fmt.Fprint(out, "Confirm password: ")
+	_, _ = fmt.Fprint(out, "Confirm password: ")
 	password2, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	if err != nil {
 		return "", &BarrierError{Operation: "read_password", Err: err}
 	}

@@ -95,11 +95,11 @@ func BuildCCIDDescriptors() []byte {
 	buf.Grow(int(totalLength))
 
 	// FunctionFS v2 header.
-	binary.Write(&buf, binary.LittleEndian, functionFSMagicV2)
-	binary.Write(&buf, binary.LittleEndian, totalLength)
-	binary.Write(&buf, binary.LittleEndian, ffsFlagFSDescs|ffsFlagHSDescs)
-	binary.Write(&buf, binary.LittleEndian, descriptorsPerSpeed) // fs_count
-	binary.Write(&buf, binary.LittleEndian, descriptorsPerSpeed) // hs_count
+	_ = binary.Write(&buf, binary.LittleEndian, functionFSMagicV2)
+	_ = binary.Write(&buf, binary.LittleEndian, totalLength)
+	_ = binary.Write(&buf, binary.LittleEndian, ffsFlagFSDescs|ffsFlagHSDescs)
+	_ = binary.Write(&buf, binary.LittleEndian, descriptorsPerSpeed) // fs_count
+	_ = binary.Write(&buf, binary.LittleEndian, descriptorsPerSpeed) // hs_count
 
 	// Full-Speed descriptors followed by High-Speed descriptors.
 	buf.Write(fsDescs)
@@ -121,11 +121,11 @@ func BuildFunctionFSStrings() []byte {
 	var buf bytes.Buffer
 	buf.Grow(int(totalLength))
 
-	binary.Write(&buf, binary.LittleEndian, functionFSStringsMagic)
-	binary.Write(&buf, binary.LittleEndian, totalLength)
-	binary.Write(&buf, binary.LittleEndian, uint32(1)) // str_count
-	binary.Write(&buf, binary.LittleEndian, uint32(1)) // lang_count
-	binary.Write(&buf, binary.LittleEndian, langIDEnglishUS)
+	_ = binary.Write(&buf, binary.LittleEndian, functionFSStringsMagic)
+	_ = binary.Write(&buf, binary.LittleEndian, totalLength)
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(1)) // str_count
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(1)) // lang_count
+	_ = binary.Write(&buf, binary.LittleEndian, langIDEnglishUS)
 	buf.Write(str)
 
 	return buf.Bytes()

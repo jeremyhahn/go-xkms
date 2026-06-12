@@ -604,34 +604,29 @@ Total: 13 tests (7 main, 6 sub-tests), 0 failures
 
 ---
 
-## New Integration Tests Added (2025-11-17)
+## Test Locations
+
+### RFC Section Conformance Tests
+- `test/integration/rfc8555/` — self-contained per-section conformance tests
+  (`rfc8555_6_2_test.go` … `rfc8555_8_1_test.go`) covering request
+  authentication (6.2), media types (6.4/6.5/6.7), directory/account/order
+  resources (7.1–7.4), identifier authorization (7.5), and certificate
+  revocation (7.6/8.1).
 
 ### Challenge Validation Tests
-- `test/integration/rfc8555_challenge_validation_test.go`
-  - TestHTTP01ChallengeValidation
-  - TestDNS01ChallengeValidation
-  - TestChallengeResponse_InvalidToken
-  - TestChallengeStatusTransitions
-  - TestChallengeRetryAfterValidation
-  - TestMultipleChallengeTypes
+- `pkg/acme/server/handlers/challenge_test.go` — HTTP-01/DNS-01 challenge
+  handler validation, status transitions, and error responses.
+- `pkg/acme/policy/challenges_test.go` — challenge-type policy enforcement.
 
 ### Order Finalization Tests
-- `test/integration/rfc8555_finalize_integration_test.go`
-  - TestOrderFinalization_Success (includes certificate download)
-  - TestOrderFinalization_InvalidCSR
-  - TestOrderFinalization_OrderNotReady
-  - TestOrderFinalization_WrongAccount
+- `pkg/acme/server/handlers/order_finalize_test.go` — CSR submission,
+  signing, order-state validation, and account-ownership enforcement.
 
 ### Key Rollover Tests
-- `test/integration/rfc8555_key_change_integration_test.go`
-  - TestKeyRollover_Success
-  - TestKeyRollover_InvalidInnerSignature
-  - TestKeyRollover_OldKeyMismatch
-  - TestKeyRollover_DuplicateKey
-  - TestKeyRollover_AccountURLMismatch
-  - TestKeyRollover_MissingJWKInInnerHeader
-  - TestKeyRollover_URLMismatchBetweenInnerAndOuter
-  - TestKeyRollover_DeactivatedAccount
+- `pkg/acme/server/handlers/key_change_test.go` — full RFC 8555 §7.3.5
+  key-change coverage (36 tests): inner/outer JWS validation, old-key
+  mismatch, duplicate key, account URL mismatch, deactivated accounts,
+  and algorithm cross-over (RSA↔ECDSA).
 
 ---
 

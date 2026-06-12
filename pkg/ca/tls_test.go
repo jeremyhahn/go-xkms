@@ -6,6 +6,7 @@
 package ca
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -470,7 +471,7 @@ func setupTLSTestCA(t *testing.T) *CA {
 		CertStore: cs,
 	})
 	require.NoError(t, err)
-	require.NoError(t, caIface.Init())
+	require.NoError(t, caIface.Init(context.Background()))
 
 	concreteCA, ok := caIface.(*CA)
 	require.True(t, ok)
@@ -479,25 +480,25 @@ func setupTLSTestCA(t *testing.T) *CA {
 
 func TestCA_TLSCertificate_NotInitialized(t *testing.T) {
 	ca := &CA{} // not initialized
-	_, err := ca.TLSCertificate(&types.KeyAttributes{CN: "test"})
+	_, err := ca.TLSCertificate(context.Background(), &types.KeyAttributes{CN: "test"})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestCA_TLSCertificate_NilAttrs(t *testing.T) {
 	ca := setupTLSTestCA(t)
-	_, err := ca.TLSCertificate(nil)
+	_, err := ca.TLSCertificate(context.Background(), nil)
 	assert.ErrorIs(t, err, ErrInvalidTLSOptions)
 }
 
 func TestCA_TLSConfig_NotInitialized(t *testing.T) {
 	ca := &CA{}
-	_, err := ca.TLSConfig(&types.KeyAttributes{CN: "test"})
+	_, err := ca.TLSConfig(context.Background(), &types.KeyAttributes{CN: "test"})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestCA_TLSConfigWithOptions_NotInitialized(t *testing.T) {
 	ca := &CA{}
-	_, err := ca.TLSConfigWithOptions(&types.KeyAttributes{CN: "test"}, nil)
+	_, err := ca.TLSConfigWithOptions(context.Background(), &types.KeyAttributes{CN: "test"}, nil)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -507,25 +508,25 @@ func TestCA_TLSConfigWithOptions_InvalidOptions(t *testing.T) {
 		MinVersion: tls.VersionTLS13,
 		MaxVersion: tls.VersionTLS12,
 	}
-	_, err := ca.TLSConfigWithOptions(&types.KeyAttributes{CN: "test"}, opts)
+	_, err := ca.TLSConfigWithOptions(context.Background(), &types.KeyAttributes{CN: "test"}, opts)
 	assert.ErrorIs(t, err, ErrInvalidTLSOptions)
 }
 
 func TestCA_ServerTLSConfig_NotInitialized(t *testing.T) {
 	ca := &CA{}
-	_, err := ca.ServerTLSConfig(&types.KeyAttributes{CN: "test"}, false)
+	_, err := ca.ServerTLSConfig(context.Background(), &types.KeyAttributes{CN: "test"}, false)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestCA_ClientTLSConfig_NotInitialized(t *testing.T) {
 	ca := &CA{}
-	_, err := ca.ClientTLSConfig(&types.KeyAttributes{CN: "test"}, "example.com")
+	_, err := ca.ClientTLSConfig(context.Background(), &types.KeyAttributes{CN: "test"}, "example.com")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestCA_MutualTLSConfig_NotInitialized(t *testing.T) {
 	ca := &CA{}
-	_, err := ca.MutualTLSConfig(&types.KeyAttributes{CN: "test"})
+	_, err := ca.MutualTLSConfig(context.Background(), &types.KeyAttributes{CN: "test"})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -611,7 +612,7 @@ func TestCA_VerifyPeerCertificate_RevokedCert(t *testing.T) {
 	require.NoError(t, err)
 
 	// Revoke the serial.
-	err = ca.Revoke(serial, 1)
+	err = ca.Revoke(context.Background(), serial, 1)
 	require.NoError(t, err)
 
 	err = ca.VerifyPeerCertificate([][]byte{certDER}, nil)

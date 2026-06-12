@@ -361,7 +361,11 @@ func (s *DAOCredentialStore) LoadState() (*AuthenticatorState, error) {
 
 	var serializable SerializableState
 	if err := json.Unmarshal(data, &serializable); err != nil {
-		return nil, ErrDeserializationFailed
+		return nil, ErrIncompatibleState{
+			StorageKey: daoStateKey,
+			Size:       len(data),
+			Cause:      err,
+		}
 	}
 
 	return serializableToState(&serializable)

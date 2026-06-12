@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"errors"
 	"math/big"
 	"testing"
@@ -30,13 +31,13 @@ func TestRevocationPersistence_SurvivesReload(t *testing.T) {
 	serial := big.NewInt(424242)
 
 	ca1 := &CA{revocationStore: backend, revocations: make(map[string]*RevocationInfo)}
-	if err := ca1.recordRevocation(serial, 1, false); err != nil {
+	if err := ca1.recordRevocation(context.Background(), serial, 1, false); err != nil {
 		t.Fatalf("recordRevocation: %v", err)
 	}
 
 	// A fresh CA over the same backend models a restart.
 	ca2 := &CA{revocationStore: backend, revocations: make(map[string]*RevocationInfo)}
-	if err := ca2.loadPersistedRevocations(); err != nil {
+	if err := ca2.loadPersistedRevocations(context.Background()); err != nil {
 		t.Fatalf("loadPersistedRevocations: %v", err)
 	}
 	info, ok := ca2.revocations[serial.Text(10)]
@@ -53,13 +54,13 @@ func TestRevocationPersistence_SurvivesReload(t *testing.T) {
 // persisted.
 func TestRevocationPersistence_NoStoreInMemoryOnly(t *testing.T) {
 	ca := &CA{revocations: make(map[string]*RevocationInfo)}
-	if err := ca.recordRevocation(big.NewInt(7), 0, false); err != nil {
+	if err := ca.recordRevocation(context.Background(), big.NewInt(7), 0, false); err != nil {
 		t.Fatalf("recordRevocation without store: %v", err)
 	}
 	if _, ok := ca.revocations["7"]; !ok {
 		t.Fatal("expected in-memory revocation to be tracked")
 	}
-	blobs, err := ca.listRevocationBlobs()
+	blobs, err := ca.listRevocationBlobs(context.Background())
 	if err != nil {
 		t.Fatalf("listRevocationBlobs: %v", err)
 	}
@@ -72,10 +73,10 @@ func TestRevocationPersistence_NoStoreInMemoryOnly(t *testing.T) {
 // guard holds with a backing store.
 func TestRevocationPersistence_AlreadyRevoked(t *testing.T) {
 	ca := &CA{revocationStore: storage.NewMemory(), revocations: make(map[string]*RevocationInfo)}
-	if err := ca.recordRevocation(big.NewInt(1), 0, false); err != nil {
+	if err := ca.recordRevocation(context.Background(), big.NewInt(1), 0, false); err != nil {
 		t.Fatalf("first recordRevocation: %v", err)
 	}
-	if err := ca.recordRevocation(big.NewInt(1), 0, false); !errors.Is(err, ErrAlreadyRevoked) {
+	if err := ca.recordRevocation(context.Background(), big.NewInt(1), 0, false); !errors.Is(err, ErrAlreadyRevoked) {
 		t.Fatalf("second recordRevocation = %v, want ErrAlreadyRevoked", err)
 	}
 }

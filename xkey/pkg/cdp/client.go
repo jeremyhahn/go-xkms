@@ -29,14 +29,31 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// EventHandler is invoked for unsolicited CDP events (messages without an id).
+// The method is the fully-qualified CDP event name (e.g.
+// "WebAuthn.credentialAdded") and params is the raw JSON of the event's
+// params object. Handlers run on the read loop goroutine and must not block.
+type EventHandler func(method string, params json.RawMessage)
+
 // Client connects to Chrome's debugging WebSocket and controls the WebAuthn domain.
 type Client struct {
-	conn    *websocket.Conn
-	nextID  atomic.Int64
-	logger  *slog.Logger
-	mu      sync.Mutex
-	pending map[int64]chan rawResponse
-	done    chan struct{}
+	conn         *websocket.Conn
+	nextID       atomic.Int64
+	logger       *slog.Logger
+	mu           sync.Mutex
+	pending      map[int64]chan rawResponse
+	done         chan struct{}
+	eventMu      sync.RWMutex
+	eventHandler EventHandler
+}
+
+// OnEvent registers a handler for unsolicited CDP events. Passing nil clears
+// the handler. Only one handler may be registered at a time; the most recent
+// registration wins.
+func (c *Client) OnEvent(handler EventHandler) {
+	c.eventMu.Lock()
+	c.eventHandler = handler
+	c.eventMu.Unlock()
 }
 
 // rawResponse holds the CDP response payload or an error from the protocol.
@@ -58,16 +75,15 @@ type cdpRequest struct {
 	Params interface{} `json:"params,omitempty"`
 }
 
-// cdpResponse is the wire format for a CDP JSON-RPC-style response.
+// cdpResponse is the wire format for a CDP JSON-RPC-style response. It also
+// carries the method/params fields used by unsolicited CDP events, which have
+// no id.
 type cdpResponse struct {
 	ID     int64           `json:"id"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  *protocolError  `json:"error,omitempty"`
-}
-
-// versionResponse is the JSON returned by Chrome's /json/version endpoint.
-type versionResponse struct {
-	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+	Method string          `json:"method,omitempty"`
+	Params json.RawMessage `json:"params,omitempty"`
 }
 
 // pageTarget is a single entry from Chrome's /json endpoint listing open tabs.
@@ -163,7 +179,7 @@ func findPageTarget(baseURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrCDPVersionFetchFailed, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -196,7 +212,7 @@ func createBlankTarget(baseURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrCDPVersionFetchFailed, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -233,7 +249,14 @@ func (c *Client) readLoop() {
 			continue
 		}
 
-		// Only dispatch responses with an ID (skip events).
+		// Events have no id but carry a method name. Dispatch them to the
+		// registered event handler (if any) and continue.
+		if resp.ID == 0 && resp.Method != "" {
+			c.dispatchEvent(resp.Method, resp.Params)
+			continue
+		}
+
+		// Drop empty/keepalive messages with neither id nor payload.
 		if resp.ID == 0 && resp.Result == nil && resp.Error == nil {
 			continue
 		}
@@ -252,6 +275,20 @@ func (c *Client) readLoop() {
 			}
 		}
 	}
+}
+
+// dispatchEvent forwards an unsolicited CDP event to the registered handler.
+func (c *Client) dispatchEvent(method string, params json.RawMessage) {
+	c.eventMu.RLock()
+	handler := c.eventHandler
+	c.eventMu.RUnlock()
+
+	if handler == nil {
+		c.logger.Debug("CDP event dropped (no handler)", slog.String("method", method))
+		return
+	}
+
+	handler(method, params)
 }
 
 // send dispatches a CDP method call and waits for the corresponding response.
@@ -360,6 +397,31 @@ func (c *Client) AddCredential(ctx context.Context, authenticatorID string, cred
 		slog.String("rpId", cred.RpID))
 
 	return nil
+}
+
+// GetCredentials returns all credentials currently registered with the
+// specified virtual authenticator. This is used as a shutdown-time sweep to
+// complement event-driven capture.
+func (c *Client) GetCredentials(ctx context.Context, authenticatorID string) ([]Credential, error) {
+	type getParams struct {
+		AuthenticatorID string `json:"authenticatorId"`
+	}
+
+	result, err := c.send(ctx, "WebAuthn.getCredentials", &getParams{
+		AuthenticatorID: authenticatorID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrCDPGetCredentialsFailed, err)
+	}
+
+	var parsed struct {
+		Credentials []Credential `json:"credentials"`
+	}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrCDPResponseParseFailed, err)
+	}
+
+	return parsed.Credentials, nil
 }
 
 // RemoveVirtualAuthenticator removes a previously created virtual authenticator.

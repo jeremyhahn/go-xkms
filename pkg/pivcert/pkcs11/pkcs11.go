@@ -30,7 +30,9 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
@@ -99,11 +101,100 @@ func CKAIDToPIVSlot(id byte) (pivcert.PIVSlot, bool) {
 	return slot, ok
 }
 
+// moduleRef tracks process-wide use of a PKCS#11 library so that concurrent
+// storages created via New share a single C_Initialize and only the last
+// Close finalizes the library. PKCS#11 does not reference-count
+// C_Initialize/C_Finalize itself, so finalizing while another storage holds
+// sessions would invalidate them.
+type moduleRef struct {
+	ctx  *p11.Ctx
+	refs int
+	// ownsInit records whether this package performed C_Initialize. When
+	// another consumer initialized the library first
+	// (CKR_CRYPTOKI_ALREADY_INITIALIZED), the registry never finalizes it.
+	ownsInit bool
+}
+
+var (
+	modulesMu sync.Mutex
+	modules   = make(map[string]*moduleRef)
+)
+
+// acquireModule loads and initializes the PKCS#11 library at libPath,
+// reusing the existing process-wide context when one is already attached.
+func acquireModule(libPath string) (*moduleRef, error) {
+	modulesMu.Lock()
+	defer modulesMu.Unlock()
+
+	if ref, ok := modules[libPath]; ok {
+		ref.refs++
+		return ref, nil
+	}
+
+	ctx := p11.New(libPath)
+	if ctx == nil {
+		return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11,
+			fmt.Errorf("pkcs11: failed to load library: %s", libPath))
+	}
+
+	ownsInit := true
+	if err := ctx.Initialize(); err != nil {
+		if !isPKCS11Error(err, p11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+			ctx.Destroy()
+			return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11,
+				fmt.Errorf("pkcs11: Initialize: %w", err))
+		}
+		ownsInit = false
+	}
+
+	ref := &moduleRef{ctx: ctx, refs: 1, ownsInit: ownsInit}
+	modules[libPath] = ref
+	return ref, nil
+}
+
+// releaseModule drops one reference to the library at libPath, finalizing
+// and unloading it when the last reference is released.
+func releaseModule(libPath string) error {
+	modulesMu.Lock()
+	defer modulesMu.Unlock()
+
+	ref, ok := modules[libPath]
+	if !ok {
+		return nil
+	}
+	ref.refs--
+	if ref.refs > 0 {
+		return nil
+	}
+	delete(modules, libPath)
+
+	var err error
+	if ref.ownsInit {
+		if ferr := ref.ctx.Finalize(); ferr != nil {
+			err = pivcert.NewStorageTypeError("Close", pivcert.StorageTypePKCS11,
+				fmt.Errorf("pkcs11: Finalize: %w", ferr))
+		}
+	}
+	ref.ctx.Destroy()
+	return err
+}
+
 // PKCS11CertStorage implements PIVCertificateStorage by delegating to
 // hardware.PKCS11CertStorage with PIV slot-to-CKA_ID byte mapping.
+//
+// When created via New, the storage holds a reference on the process-wide
+// module registry and releases it (closing the session pool, and finalizing
+// the library on last release) in Close. When created via NewFromPool,
+// NewFromSession, or NewFromSessionWithSO, the caller retains ownership of
+// the context/session and Close releases only the storage itself.
 type PKCS11CertStorage struct {
-	hw     hardware.HardwareCertStorage
-	closed bool
+	hw hardware.HardwareCertStorage
+	// pool is non-nil only when New created it; Close drains it.
+	pool *standalonePool
+	// libPath is non-empty only when New acquired a module reference;
+	// Close releases it via releaseModule.
+	libPath string
+	closed  bool
 }
 
 // New creates a new PKCS#11-backed PIV certificate storage.
@@ -117,32 +208,30 @@ func New(config *pivcert.PKCS11StorageConfig) (*PKCS11CertStorage, error) {
 		return nil, err
 	}
 
-	ctx := p11.New(config.LibraryPath)
-	if ctx == nil {
-		return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11,
-			fmt.Errorf("pkcs11: failed to load library: %s", config.LibraryPath))
+	ref, err := acquireModule(config.LibraryPath)
+	if err != nil {
+		return nil, err
 	}
+	ctx := ref.ctx
 
-	if err := ctx.Initialize(); err != nil {
-		if !isPKCS11Error(err, p11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
-			ctx.Destroy()
-			return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11,
-				fmt.Errorf("pkcs11: Initialize: %w", err))
+	// teardown releases this call's module reference on error paths,
+	// finalizing the library when this was the last reference.
+	teardown := func() {
+		if rerr := releaseModule(config.LibraryPath); rerr != nil {
+			slog.Warn("pivcert: pkcs11 module release failed", "error", rerr)
 		}
 	}
 
 	slotID, err := resolveSlot(ctx, config)
 	if err != nil {
-		ctx.Finalize()
-		ctx.Destroy()
+		teardown()
 		return nil, err
 	}
 
 	// Create a session pool with a small size (cert ops are infrequent)
 	pool, err := newSessionPool(ctx, slotID, config.PIN, 2)
 	if err != nil {
-		ctx.Finalize()
-		ctx.Destroy()
+		teardown()
 		return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11,
 			fmt.Errorf("pkcs11: session pool: %w", err))
 	}
@@ -155,12 +244,11 @@ func New(config *pivcert.PKCS11StorageConfig) (*PKCS11CertStorage, error) {
 	}
 	if err != nil {
 		pool.Close()
-		ctx.Finalize()
-		ctx.Destroy()
+		teardown()
 		return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11, err)
 	}
 
-	return &PKCS11CertStorage{hw: hw}, nil
+	return &PKCS11CertStorage{hw: hw, pool: pool, libPath: config.LibraryPath}, nil
 }
 
 // NewFromPool creates a PKCS#11 PIV certificate storage that reuses an existing
@@ -371,12 +459,26 @@ func (s *PKCS11CertStorage) Export(slot pivcert.PIVSlot, format pivcert.CertForm
 }
 
 // Close releases resources. After Close, all methods return ErrStorageClosed.
+// When the storage was created via New, Close also drains the session pool
+// and releases its module reference (finalizing the PKCS#11 library when the
+// last reference is released); storages created from an external pool or
+// session leave the caller-owned context untouched.
 func (s *PKCS11CertStorage) Close() error {
 	if s.closed {
 		return pivcert.NewStorageTypeError("Close", pivcert.StorageTypePKCS11, pivcert.ErrStorageClosed)
 	}
 	s.closed = true
-	return s.hw.Close()
+
+	err := s.hw.Close()
+	if s.pool != nil {
+		s.pool.Close()
+	}
+	if s.libPath != "" {
+		if rerr := releaseModule(s.libPath); rerr != nil && err == nil {
+			err = rerr
+		}
+	}
+	return err
 }
 
 // Type returns the storage type identifier.

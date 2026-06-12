@@ -461,7 +461,7 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 		if err != nil {
 			t.log.Error("failed to discover services", "address", address, "error", err, "attempt", attempt)
 			if attempt == maxRetries {
-				device.Disconnect()
+				_ = device.Disconnect()
 				return ErrServiceNotFound
 			}
 			time.Sleep(retryDelay)
@@ -501,7 +501,7 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 			"expected", XKeyServiceUUID.String(),
 			"maxRetries", maxRetries,
 			"hint", "Try: 1) Restart xKey app on phone, 2) Toggle Bluetooth off/on, 3) Run 'bluetoothctl remove "+address+"' to clear cache")
-		device.Disconnect()
+		_ = device.Disconnect()
 		return ErrServiceNotFound
 	}
 
@@ -515,7 +515,7 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 	})
 	if err != nil {
 		t.log.Error("failed to discover characteristics", "address", address, "error", err)
-		device.Disconnect()
+		_ = device.Disconnect()
 		return ErrCharacteristicNotFound
 	}
 
@@ -541,7 +541,7 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 		t.log.Error("missing required characteristics",
 			"hasControl", controlChar.UUID() != (bluetooth.UUID{}),
 			"hasResponse", responseChar.UUID() != (bluetooth.UUID{}))
-		device.Disconnect()
+		_ = device.Disconnect()
 		return ErrCharacteristicNotFound
 	}
 
@@ -559,7 +559,7 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 		t.handleResponseNotification(data)
 	}); err != nil {
 		t.log.Error("failed to enable response notifications", "error", err)
-		device.Disconnect()
+		_ = device.Disconnect()
 		return ErrCharacteristicNotFound
 	}
 
@@ -586,7 +586,7 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 	// Check context cancellation
 	select {
 	case <-ctx.Done():
-		t.disconnectLocked(false)
+		_ = t.disconnectLocked(false)
 		return ErrTimeout
 	default:
 	}
@@ -928,7 +928,7 @@ func (t *BLETransport) Close() error {
 		return nil // Already closed
 	}
 
-	t.Disconnect()
+	_ = t.Disconnect()
 
 	if t.responseChan != nil {
 		close(t.responseChan)

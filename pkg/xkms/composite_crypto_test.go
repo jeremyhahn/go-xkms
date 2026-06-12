@@ -14,6 +14,7 @@
 package xkms_test
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -46,7 +47,7 @@ func TestCompositeKeyStore_Signer(t *testing.T) {
 						KeySize: 2048,
 					},
 				}
-				_, _ = (*ks).GenerateRSA(attrs)
+				_, _ = (*ks).GenerateRSA(context.Background(), attrs)
 			},
 			attrs: &types.KeyAttributes{
 				CN:           "test-signer",
@@ -89,7 +90,7 @@ func TestCompositeKeyStore_Signer(t *testing.T) {
 			// Reset call tracking
 			mockBackend.SignerCalls = nil
 
-			signer, err := ks.Signer(tt.attrs)
+			signer, err := ks.Signer(context.Background(), tt.attrs)
 
 			if tt.expectError {
 				if err == nil {
@@ -133,7 +134,7 @@ func TestCompositeKeyStore_Decrypter(t *testing.T) {
 						KeySize: 2048,
 					},
 				}
-				_, _ = (*ks).GenerateRSA(attrs)
+				_, _ = (*ks).GenerateRSA(context.Background(), attrs)
 			},
 			attrs: &types.KeyAttributes{
 				CN:           "test-decrypter",
@@ -176,7 +177,7 @@ func TestCompositeKeyStore_Decrypter(t *testing.T) {
 			// Reset call tracking
 			mockBackend.DecrypterCalls = nil
 
-			decrypter, err := ks.Decrypter(tt.attrs)
+			decrypter, err := ks.Decrypter(context.Background(), tt.attrs)
 
 			if tt.expectError {
 				if err == nil {
@@ -221,11 +222,11 @@ func TestCompositeKeyStore_GetTLSCertificate(t *testing.T) {
 						KeySize: 2048,
 					},
 				}
-				_, _ = (*ks).GenerateRSA(attrs)
+				_, _ = (*ks).GenerateRSA(context.Background(), attrs)
 				cert := generateTestCert("test-tls")
-				_ = (*ks).SaveCert("test-tls", cert)
+				_ = (*ks).SaveCert(context.Background(), "test-tls", cert)
 				chain := []*x509.Certificate{cert, generateTestCert("intermediate")}
-				_ = (*ks).SaveCertChain("test-tls", chain)
+				_ = (*ks).SaveCertChain(context.Background(), "test-tls", chain)
 			},
 			keyID: "test-tls",
 			attrs: &types.KeyAttributes{
@@ -248,9 +249,9 @@ func TestCompositeKeyStore_GetTLSCertificate(t *testing.T) {
 						KeySize: 2048,
 					},
 				}
-				_, _ = (*ks).GenerateRSA(attrs)
+				_, _ = (*ks).GenerateRSA(context.Background(), attrs)
 				cert := generateTestCert("test-tls-no-chain")
-				_ = (*ks).SaveCert("test-tls-no-chain", cert)
+				_ = (*ks).SaveCert(context.Background(), "test-tls-no-chain", cert)
 			},
 			keyID: "test-tls-no-chain",
 			attrs: &types.KeyAttributes{
@@ -265,7 +266,7 @@ func TestCompositeKeyStore_GetTLSCertificate(t *testing.T) {
 			name: "missing key",
 			setupKeyStore: func(ks *xkms.Backend) {
 				cert := generateTestCert("test-missing-key")
-				_ = (*ks).SaveCert("test-missing-key", cert)
+				_ = (*ks).SaveCert(context.Background(), "test-missing-key", cert)
 			},
 			keyID: "test-missing-key",
 			attrs: &types.KeyAttributes{
@@ -288,7 +289,7 @@ func TestCompositeKeyStore_GetTLSCertificate(t *testing.T) {
 						KeySize: 2048,
 					},
 				}
-				_, _ = (*ks).GenerateRSA(attrs)
+				_, _ = (*ks).GenerateRSA(context.Background(), attrs)
 			},
 			keyID: "test-missing-cert",
 			attrs: &types.KeyAttributes{
@@ -334,9 +335,9 @@ func TestCompositeKeyStore_GetTLSCertificate(t *testing.T) {
 						KeySize: 2048,
 					},
 				}
-				_, _ = (*ks).GenerateRSA(attrs)
+				_, _ = (*ks).GenerateRSA(context.Background(), attrs)
 				cert := generateTestCert("test-tls-chain-error")
-				_ = (*ks).SaveCert("test-tls-chain-error", cert)
+				_ = (*ks).SaveCert(context.Background(), "test-tls-chain-error", cert)
 				// Note: We don't save a cert chain, so GetCertChain will return error
 				// This tests the error path (line 84) that falls back to just the leaf cert
 			},
@@ -358,7 +359,7 @@ func TestCompositeKeyStore_GetTLSCertificate(t *testing.T) {
 
 			tt.setupKeyStore(&ks)
 
-			tlsCert, err := ks.GetTLSCertificate(tt.keyID, tt.attrs)
+			tlsCert, err := ks.GetTLSCertificate(context.Background(), tt.keyID, tt.attrs)
 
 			if tt.expectError {
 				if err == nil {
@@ -436,7 +437,7 @@ func TestCompositeKeyStore_GetTLSCertificate_EmptyChain(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	tlsCert, err := ks.GetTLSCertificate("test-empty-list", attrs)
+	tlsCert, err := ks.GetTLSCertificate(context.Background(), "test-empty-list", attrs)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

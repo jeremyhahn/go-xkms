@@ -31,27 +31,29 @@ var (
 // ClusterHandlers serves the read-only cluster REST endpoints. Cluster state is
 // owned by the embedded go-qrdb node; the handlers delegate to the unified
 // XKMSService servicer, which reads leadership and membership from the node's
-// cluster client. The handlers hold no local state.
+// cluster client.
 //
 // Membership mutation (add/remove replica) is intentionally not served here: it
 // requires a Raft replica-mutation API that is not yet surfaced through the
 // xkms SDK.
-type ClusterHandlers struct{}
+type ClusterHandlers struct {
+	xkmsService *xkms.XKMSService
+}
 
-// NewClusterHandlers creates a new ClusterHandlers.
-func NewClusterHandlers() *ClusterHandlers {
-	return &ClusterHandlers{}
+// NewClusterHandlers creates a new ClusterHandlers with the provided XKMS service.
+func NewClusterHandlers(svc *xkms.XKMSService) *ClusterHandlers {
+	return &ClusterHandlers{xkmsService: svc}
 }
 
 // StatusHandler handles GET /api/v1/cluster/status requests.
 // It returns the Raft leadership status for the configured shard. A standalone
 // (non-clustered) node reports a single-node, non-clustered status.
 func (h *ClusterHandlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrClusterNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	status, err := svc.ClusterStatus(r.Context())
 	if err != nil {
@@ -74,11 +76,11 @@ func (h *ClusterHandlers) StatusHandler(w http.ResponseWriter, r *http.Request) 
 // It returns the Raft replicas for the configured shard. A standalone node
 // returns an empty membership set.
 func (h *ClusterHandlers) MembersHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrClusterNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	members, err := svc.ClusterMembers(r.Context())
 	if err != nil {

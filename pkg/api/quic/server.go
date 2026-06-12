@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/quic-go/quic-go/http3"
 )
@@ -49,6 +50,7 @@ type Server struct {
 	addr            string
 	version         string
 	keystore        xkms.Backend // Default keystore for backward compatibility
+	xkmsService     *xkms.XKMSService
 	tlsConfig       *tls.Config
 	authenticator   auth.Authenticator
 	authorizer      *auth.Authorizer
@@ -80,12 +82,15 @@ type Config struct {
 	PINManager      qrdbsdk.PINBackend
 	PasswordStore   staticpw.Store
 	PasswordManager *staticpw.TenantPasswordStoreManager
+	// XKMSService is the injected XKMS service; replaces the package singleton lookup.
+	XKMSService *xkms.XKMSService
 }
 
-// NewServer creates a new QUIC/HTTP3 server
-// The server uses the global xkms service for backend management
+// NewServer creates a new QUIC/HTTP3 server.
+// config.XKMSService must be non-nil; the server does not fall back to the
+// package-level singleton.
 func NewServer(config *Config) (*Server, error) {
-	if !xkms.IsInitialized() {
+	if config.XKMSService == nil {
 		return nil, fmt.Errorf("xkms service must be initialized before creating QUIC server")
 	}
 
@@ -134,6 +139,7 @@ func NewServer(config *Config) (*Server, error) {
 	s := &Server{
 		addr:            config.Addr,
 		version:         config.Version,
+		xkmsService:     config.XKMSService,
 		tlsConfig:       tlsConfig,
 		authenticator:   authenticator,
 		authorizer:      authorizer,
@@ -148,8 +154,8 @@ func NewServer(config *Config) (*Server, error) {
 		cancel:          cancel,
 	}
 
-	// Set default keystore from default backend for backward compatibility
-	keystore, err := xkms.DefaultBackend()
+	// Set default keystore from injected service.
+	keystore, err := config.XKMSService.LookupDefaultBackend()
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to get default keystore: %w", err)
@@ -175,6 +181,51 @@ func NewServer(config *Config) (*Server, error) {
 	s.handler = handler
 
 	return s, nil
+}
+
+// lookupBackend returns the named backend from the injected service.
+// Returns xkms.ErrNotInitialized when the service is nil.
+func (s *Server) lookupBackend(name string) (xkms.Backend, error) {
+	if s.xkmsService == nil {
+		return nil, xkms.ErrNotInitialized
+	}
+	return s.xkmsService.LookupBackend(name)
+}
+
+// backendNames returns the list of registered backend names.
+// Returns nil when the service is nil.
+func (s *Server) backendNames() []string {
+	if s.xkmsService == nil {
+		return nil
+	}
+	return s.xkmsService.BackendNames()
+}
+
+// sealWithBackend seals data using the named backend via the injected service.
+// Returns xkms.ErrNotInitialized when the service is nil.
+func (s *Server) sealWithBackend(ctx context.Context, backendName string, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	if s.xkmsService == nil {
+		return nil, xkms.ErrNotInitialized
+	}
+	return s.xkmsService.SealWithBackend(ctx, backendName, data, opts)
+}
+
+// unsealWithBackend unseals data using the named backend via the injected service.
+// Returns xkms.ErrNotInitialized when the service is nil.
+func (s *Server) unsealWithBackend(ctx context.Context, backendName string, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	if s.xkmsService == nil {
+		return nil, xkms.ErrNotInitialized
+	}
+	return s.xkmsService.UnsealWithBackend(ctx, backendName, sealed, opts)
+}
+
+// canSeal reports whether any (or the named) backend supports direct sealing.
+// Returns false when the service is nil.
+func (s *Server) canSeal(backendName ...string) bool {
+	if s.xkmsService == nil {
+		return false
+	}
+	return s.xkmsService.CanSealDirect(backendName...)
 }
 
 // setupRoutes configures the HTTP routes

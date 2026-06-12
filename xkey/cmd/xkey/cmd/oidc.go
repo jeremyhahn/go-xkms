@@ -1188,7 +1188,8 @@ func handleOIDCCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- 
 	if errParam := query.Get("error"); errParam != "" {
 		errDesc := query.Get("error_description")
 		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(fmt.Sprintf("<html><body><h1>Authentication Failed</h1><p>%s: %s</p></body></html>", errParam, errDesc)))
+		_, _ = fmt.Fprintf(w, "<html><body><h1>Authentication Failed</h1><p>%s: %s</p></body></html>", errParam, errDesc)
+
 		errChan <- fmt.Errorf("%s: %s", errParam, errDesc)
 		return
 	}
@@ -1460,7 +1461,7 @@ func runAutoRefresh(tokenEndpoint, clientID, tokenStorePath, execCmd, providerNa
 		logWriter = os.Stdout
 	}
 	log := func(format string, args ...interface{}) {
-		fmt.Fprintf(logWriter, format, args...)
+		_, _ = fmt.Fprintf(logWriter, format, args...)
 	}
 
 	// Set up signal handling for graceful shutdown
@@ -1701,7 +1702,7 @@ func startBackgroundRefresh(providerName, tokenEndpoint, clientID, tokenStorePat
 	// Build command to run ourselves with special --background-worker flag
 	executable, err := os.Executable()
 	if err != nil {
-		logFileHandle.Close()
+		_ = logFileHandle.Close()
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
@@ -1725,22 +1726,22 @@ func startBackgroundRefresh(providerName, tokenEndpoint, clientID, tokenStorePat
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
-		logFileHandle.Close()
+		_ = logFileHandle.Close()
 		return fmt.Errorf("failed to start background process: %w", err)
 	}
 
 	// Write PID file
 	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0600); err != nil {
-		cmd.Process.Kill()
-		logFileHandle.Close()
+		_ = cmd.Process.Kill()
+		_ = logFileHandle.Close()
 		return fmt.Errorf("failed to write PID file: %w", err)
 	}
 
 	// Don't wait for the process - let it run in background
 	go func() {
-		cmd.Wait()
-		logFileHandle.Close()
-		os.Remove(pidFile) // Clean up PID file when process exits
+		_ = cmd.Wait()
+		_ = logFileHandle.Close()
+		_ = os.Remove(pidFile) // Clean up PID file when process exits
 	}()
 
 	fmt.Printf("Background refresh started for '%s'\n", providerName)
@@ -1769,17 +1770,17 @@ func runBackgroundWorker(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to open log file: %w", err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		logWriter = f
 	}
 
-	fmt.Fprintf(logWriter, "[%s] Background refresh started for '%s'\n", time.Now().Format("2006-01-02 15:04:05"), providerName)
-	fmt.Fprintf(logWriter, "  Token endpoint: %s\n", tokenEndpoint)
-	fmt.Fprintf(logWriter, "  Refresh interval: %d seconds\n", autoRefresh)
+	_, _ = fmt.Fprintf(logWriter, "[%s] Background refresh started for '%s'\n", time.Now().Format("2006-01-02 15:04:05"), providerName)
+	_, _ = fmt.Fprintf(logWriter, "  Token endpoint: %s\n", tokenEndpoint)
+	_, _ = fmt.Fprintf(logWriter, "  Refresh interval: %d seconds\n", autoRefresh)
 	if execCmd != "" {
-		fmt.Fprintf(logWriter, "  Exec command: %s\n", execCmd)
+		_, _ = fmt.Fprintf(logWriter, "  Exec command: %s\n", execCmd)
 	}
-	fmt.Fprintf(logWriter, "\n")
+	_, _ = fmt.Fprintf(logWriter, "\n")
 
 	return runAutoRefresh(tokenEndpoint, clientID, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, logWriter)
 }
@@ -1833,7 +1834,7 @@ func runOIDCStatus(cmd *cobra.Command, args []string) error {
 		pid, isRunning := isProcessRunning(pidFile)
 		if !isRunning {
 			// Clean up stale PID file
-			os.Remove(pidFile)
+			_ = os.Remove(pidFile)
 			continue
 		}
 
@@ -1966,7 +1967,7 @@ func runOIDCStop(cmd *cobra.Command, args []string) error {
 func stopProcess(pidFile, providerName string) error {
 	pid, running := isProcessRunning(pidFile)
 	if !running {
-		os.Remove(pidFile) // Clean up stale file
+		_ = os.Remove(pidFile) // Clean up stale file
 		return fmt.Errorf("no running process for '%s'", providerName)
 	}
 
@@ -1983,7 +1984,7 @@ func stopProcess(pidFile, providerName string) error {
 	time.Sleep(100 * time.Millisecond)
 
 	// Remove PID file
-	os.Remove(pidFile)
+	_ = os.Remove(pidFile)
 
 	fmt.Printf("Stopped background refresh for '%s' (PID %d)\n", providerName, pid)
 	return nil

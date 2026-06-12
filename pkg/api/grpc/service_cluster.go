@@ -21,7 +21,6 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // ==================== Cluster Operations ====================
@@ -38,8 +37,8 @@ func (s *Service) GetClusterStatus(ctx context.Context, _ *emptypb.Empty) (*pb.C
 		return nil, err
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 
@@ -63,8 +62,8 @@ func (s *Service) ListClusterMembers(ctx context.Context, _ *emptypb.Empty) (*pb
 		return nil, err
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 

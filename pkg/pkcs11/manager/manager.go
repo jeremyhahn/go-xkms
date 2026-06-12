@@ -14,6 +14,7 @@
 package manager
 
 import (
+	"context"
 	"crypto"
 	"log/slog"
 
@@ -30,7 +31,7 @@ type Backend interface {
 	Capabilities() types.Capabilities
 
 	// GenerateKey generates a new key with the given attributes.
-	GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error)
+	GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error)
 
 	// Get retrieves key material.
 	Get(attrs *types.KeyAttributes, extension types.FSExtension) ([]byte, error)
@@ -39,7 +40,7 @@ type Backend interface {
 	Delete(attrs *types.KeyAttributes) error
 
 	// Signer returns a crypto.Signer for the given key.
-	Signer(attrs *types.KeyAttributes) (crypto.Signer, error)
+	Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error)
 
 	// Close releases backend resources.
 	Close() error

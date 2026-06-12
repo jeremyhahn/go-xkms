@@ -14,6 +14,7 @@
 package symmetric
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/x509"
 	"fmt"
@@ -60,7 +61,7 @@ func TestGetImportParameters(t *testing.T) {
 	}
 
 	// Test with RSA-OAEP SHA-256
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 	assert.NotNil(t, params)
 	assert.NotNil(t, params.WrappingPublicKey)
@@ -70,7 +71,7 @@ func TestGetImportParameters(t *testing.T) {
 	assert.Equal(t, "AES_256", params.KeySpec)
 
 	// Test with RSA-AES hybrid
-	params2, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+	params2, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 	require.NoError(t, err)
 	assert.NotNil(t, params2)
 	assert.NotEqual(t, string(params.ImportToken), string(params2.ImportToken))
@@ -82,7 +83,7 @@ func TestGetImportParameters(t *testing.T) {
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES128GCM,
 	}
-	params128, err := b.GetImportParameters(attrs128, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params128, err := b.GetImportParameters(context.Background(), attrs128, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 	assert.Equal(t, "AES_128", params128.KeySpec)
 
@@ -93,7 +94,7 @@ func TestGetImportParameters(t *testing.T) {
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES192GCM,
 	}
-	params192, err := b.GetImportParameters(attrs192, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params192, err := b.GetImportParameters(context.Background(), attrs192, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 	assert.Equal(t, "AES_192", params192.KeySpec)
 }
@@ -111,18 +112,18 @@ func TestGetImportParametersErrors(t *testing.T) {
 	}
 
 	// Test with nil attributes
-	_, err := b.GetImportParameters(nil, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err := b.GetImportParameters(context.Background(), nil, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be nil")
 
 	// Test with unsupported algorithm
-	_, err = b.GetImportParameters(attrs, "UNSUPPORTED_ALGORITHM")
+	_, err = b.GetImportParameters(context.Background(), attrs, "UNSUPPORTED_ALGORITHM")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid algorithm")
 
 	// Test with closed backend
 	_ = b.Close()
-	_, err = b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
 
@@ -144,10 +145,10 @@ func TestWrapKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test with RSA-OAEP SHA-256
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
-	wrapped, err := b.WrapKey(keyMaterial, params)
+	wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
 	require.NoError(t, err)
 	assert.NotNil(t, wrapped)
 	assert.NotEmpty(t, wrapped.WrappedKey)
@@ -155,10 +156,10 @@ func TestWrapKey(t *testing.T) {
 	assert.Equal(t, params.ImportToken, wrapped.ImportToken)
 
 	// Test with RSA-AES hybrid
-	params2, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+	params2, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 	require.NoError(t, err)
 
-	wrapped2, err := b.WrapKey(keyMaterial, params2)
+	wrapped2, err := b.WrapKey(context.Background(), keyMaterial, params2)
 	require.NoError(t, err)
 	assert.NotNil(t, wrapped2)
 	assert.NotEmpty(t, wrapped2.WrappedKey)
@@ -177,28 +178,28 @@ func TestWrapKeyErrors(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
 	// Test with nil key material
-	_, err = b.WrapKey(nil, params)
+	_, err = b.WrapKey(context.Background(), nil, params)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be nil or empty")
 
 	// Test with empty key material
-	_, err = b.WrapKey([]byte{}, params)
+	_, err = b.WrapKey(context.Background(), []byte{}, params)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be nil or empty")
 
 	// Test with invalid key size
 	invalidKey := make([]byte, 15) // Invalid size
-	_, err = b.WrapKey(invalidKey, params)
+	_, err = b.WrapKey(context.Background(), invalidKey, params)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid symmetric key size")
 
 	// Test with nil parameters
 	validKey := make([]byte, 32)
-	_, err = b.WrapKey(validKey, nil)
+	_, err = b.WrapKey(context.Background(), validKey, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be nil")
 }
@@ -221,24 +222,24 @@ func TestUnwrapKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test with RSA-OAEP SHA-256
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
-	wrapped, err := b.WrapKey(keyMaterial, params)
+	wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
 	require.NoError(t, err)
 
-	unwrapped, err := b.UnwrapKey(wrapped, params)
+	unwrapped, err := b.UnwrapKey(context.Background(), wrapped, params)
 	require.NoError(t, err)
 	assert.Equal(t, keyMaterial, unwrapped)
 
 	// Test with RSA-AES hybrid
-	params2, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+	params2, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 	require.NoError(t, err)
 
-	wrapped2, err := b.WrapKey(keyMaterial, params2)
+	wrapped2, err := b.WrapKey(context.Background(), keyMaterial, params2)
 	require.NoError(t, err)
 
-	unwrapped2, err := b.UnwrapKey(wrapped2, params2)
+	unwrapped2, err := b.UnwrapKey(context.Background(), wrapped2, params2)
 	require.NoError(t, err)
 	assert.Equal(t, keyMaterial, unwrapped2)
 }
@@ -255,23 +256,23 @@ func TestUnwrapKeyErrors(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
 	keyMaterial := make([]byte, 32)
 	_, err = rand.Read(keyMaterial)
 	require.NoError(t, err)
 
-	wrapped, err := b.WrapKey(keyMaterial, params)
+	wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
 	require.NoError(t, err)
 
 	// Test with nil wrapped material
-	_, err = b.UnwrapKey(nil, params)
+	_, err = b.UnwrapKey(context.Background(), nil, params)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be nil")
 
 	// Test with nil parameters
-	_, err = b.UnwrapKey(wrapped, nil)
+	_, err = b.UnwrapKey(context.Background(), wrapped, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be nil")
 
@@ -281,7 +282,7 @@ func TestUnwrapKeyErrors(t *testing.T) {
 		Algorithm:   wrapped.Algorithm,
 		ImportToken: nil,
 	}
-	_, err = b.UnwrapKey(wrappedNoToken, params)
+	_, err = b.UnwrapKey(context.Background(), wrappedNoToken, params)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be nil or empty")
 
@@ -291,7 +292,7 @@ func TestUnwrapKeyErrors(t *testing.T) {
 		Algorithm:   wrapped.Algorithm,
 		ImportToken: []byte("invalid-token"),
 	}
-	_, err = b.UnwrapKey(wrappedBadToken, params)
+	_, err = b.UnwrapKey(context.Background(), wrappedBadToken, params)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid or expired")
 }
@@ -326,18 +327,18 @@ func TestImportKey(t *testing.T) {
 			require.NoError(t, err)
 
 			// Get import parameters and wrap the key
-			params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+			params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 			require.NoError(t, err)
 
-			wrapped, err := b.WrapKey(keyMaterial, params)
+			wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
 			require.NoError(t, err)
 
 			// Import the key
-			err = b.ImportKey(attrs, wrapped)
+			err = b.ImportKey(context.Background(), attrs, wrapped)
 			require.NoError(t, err)
 
 			// Verify the key was imported by retrieving it
-			importedKey, err := b.GetSymmetricKey(attrs)
+			importedKey, err := b.GetSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err)
 			assert.NotNil(t, importedKey)
 			assert.Equal(t, tc.keySize, importedKey.KeySize())
@@ -348,7 +349,7 @@ func TestImportKey(t *testing.T) {
 			assert.Equal(t, keyMaterial, rawImported)
 
 			// Verify the wrapping key was cleaned up
-			_, err = b.UnwrapKey(wrapped, params)
+			_, err = b.UnwrapKey(context.Background(), wrapped, params)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "invalid or expired")
 		})
@@ -371,14 +372,14 @@ func TestImportKeyErrors(t *testing.T) {
 	_, err := rand.Read(keyMaterial)
 	require.NoError(t, err)
 
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
-	wrapped, err := b.WrapKey(keyMaterial, params)
+	wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
 	require.NoError(t, err)
 
 	// Test with nil attributes
-	err = b.ImportKey(nil, wrapped)
+	err = b.ImportKey(context.Background(), nil, wrapped)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be nil")
 
@@ -392,21 +393,21 @@ func TestImportKeyErrors(t *testing.T) {
 			KeySize: 2048,
 		},
 	}
-	err = b.ImportKey(asymAttrs, wrapped)
+	err = b.ImportKey(context.Background(), asymAttrs, wrapped)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid algorithm")
 
 	// Import the key successfully
-	err = b.ImportKey(attrs, wrapped)
+	err = b.ImportKey(context.Background(), attrs, wrapped)
 	require.NoError(t, err)
 
 	// Test importing duplicate key
-	params2, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params2, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
-	wrapped2, err := b.WrapKey(keyMaterial, params2)
+	wrapped2, err := b.WrapKey(context.Background(), keyMaterial, params2)
 	require.NoError(t, err)
 
-	err = b.ImportKey(attrs, wrapped2)
+	err = b.ImportKey(context.Background(), attrs, wrapped2)
 	assert.ErrorIs(t, err, backend.ErrKeyAlreadyExists)
 
 	// Test with size mismatch
@@ -416,13 +417,13 @@ func TestImportKeyErrors(t *testing.T) {
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES128GCM,
 	}
-	params128, err := b.GetImportParameters(attrs128, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params128, err := b.GetImportParameters(context.Background(), attrs128, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 	// Wrap 256-bit key but try to import as 128-bit
-	wrapped128, err := b.WrapKey(keyMaterial, params128)
+	wrapped128, err := b.WrapKey(context.Background(), keyMaterial, params128)
 	require.NoError(t, err)
 
-	err = b.ImportKey(attrs128, wrapped128)
+	err = b.ImportKey(context.Background(), attrs128, wrapped128)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "does not match expected size")
 }
@@ -441,7 +442,7 @@ func TestExportKey(t *testing.T) {
 	}
 
 	// Generate a key to export
-	key, err := b.GenerateSymmetricKey(attrs)
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get the raw key material for comparison
@@ -449,7 +450,7 @@ func TestExportKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Export the key
-	wrapped, err := b.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	wrapped, err := b.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 	assert.NotNil(t, wrapped)
 	assert.NotEmpty(t, wrapped.WrappedKey)
@@ -461,7 +462,7 @@ func TestExportKey(t *testing.T) {
 		ImportToken: wrapped.ImportToken,
 		Algorithm:   wrapped.Algorithm,
 	}
-	unwrapped, err := b.UnwrapKey(wrapped, params)
+	unwrapped, err := b.UnwrapKey(context.Background(), wrapped, params)
 	require.NoError(t, err)
 	assert.Equal(t, originalKey, unwrapped)
 }
@@ -480,16 +481,16 @@ func TestExportKeyErrors(t *testing.T) {
 	}
 
 	// Test with nil attributes
-	_, err := b.ExportKey(nil, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err := b.ExportKey(context.Background(), nil, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrInvalidAttributes)
 
 	// Test with non-existent key
-	_, err = b.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = b.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 
 	// Generate a key
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Test with asymmetric attributes
@@ -503,13 +504,13 @@ func TestExportKeyErrors(t *testing.T) {
 			KeySize: 2048,
 		},
 	}
-	_, err = b.ExportKey(asymAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = b.ExportKey(context.Background(), asymAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid algorithm")
 
 	// Test with closed backend
 	_ = b.Close()
-	_, err = b.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = b.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
 
@@ -531,7 +532,7 @@ func TestImportExportRoundTrip(t *testing.T) {
 	}
 
 	// Generate key in source backend
-	sourceKey, err := sourceBackend.GenerateSymmetricKey(attrs)
+	sourceKey, err := sourceBackend.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get original key material
@@ -539,19 +540,19 @@ func TestImportExportRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	// Proper workflow: destination gets import parameters first
-	destParams, err := destBackend.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+	destParams, err := destBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 	require.NoError(t, err)
 
 	// Wrap the key using destination's public key
-	wrapped, err := sourceBackend.WrapKey(originalKey, destParams)
+	wrapped, err := sourceBackend.WrapKey(context.Background(), originalKey, destParams)
 	require.NoError(t, err)
 
 	// Import into destination
-	err = destBackend.ImportKey(attrs, wrapped)
+	err = destBackend.ImportKey(context.Background(), attrs, wrapped)
 	require.NoError(t, err)
 
 	// Retrieve from destination
-	destKey, err := destBackend.GetSymmetricKey(attrs)
+	destKey, err := destBackend.GetSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify key material matches
@@ -562,13 +563,13 @@ func TestImportExportRoundTrip(t *testing.T) {
 	// Test encryption/decryption with imported key
 	plaintext := []byte("test data for encryption")
 
-	sourceEncrypter, err := sourceBackend.SymmetricEncrypter(attrs)
+	sourceEncrypter, err := sourceBackend.SymmetricEncrypter(context.Background(), attrs)
 	require.NoError(t, err)
 
 	encrypted, err := sourceEncrypter.Encrypt(plaintext, nil)
 	require.NoError(t, err)
 
-	destEncrypter, err := destBackend.SymmetricEncrypter(attrs)
+	destEncrypter, err := destBackend.SymmetricEncrypter(context.Background(), attrs)
 	require.NoError(t, err)
 
 	decrypted, err := destEncrypter.Decrypt(encrypted, nil)
@@ -593,14 +594,14 @@ func TestImportExportWithPassword(t *testing.T) {
 	}
 
 	// Generate password-protected key
-	key, err := b.GenerateSymmetricKey(attrs)
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	originalKey, err := key.Raw()
 	require.NoError(t, err)
 
 	// Export the key
-	wrapped, err := b.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	wrapped, err := b.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
 	// Unwrap to verify
@@ -608,7 +609,7 @@ func TestImportExportWithPassword(t *testing.T) {
 		ImportToken: wrapped.ImportToken,
 		Algorithm:   wrapped.Algorithm,
 	}
-	unwrapped, err := b.UnwrapKey(wrapped, params)
+	unwrapped, err := b.UnwrapKey(context.Background(), wrapped, params)
 	require.NoError(t, err)
 	assert.Equal(t, originalKey, unwrapped)
 }
@@ -645,7 +646,7 @@ func TestGetImportParameters_AllWrappingAlgorithms(t *testing.T) {
 
 	for _, algo := range algorithms {
 		t.Run(string(algo), func(t *testing.T) {
-			params, err := b.GetImportParameters(attrs, algo)
+			params, err := b.GetImportParameters(context.Background(), attrs, algo)
 			require.NoError(t, err)
 			assert.NotNil(t, params)
 			assert.NotNil(t, params.WrappingPublicKey)
@@ -666,7 +667,7 @@ func TestWrapKey_AllKeySizes(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
 	// Test AES-128
@@ -674,7 +675,7 @@ func TestWrapKey_AllKeySizes(t *testing.T) {
 	_, err = rand.Read(key128)
 	require.NoError(t, err)
 
-	wrapped128, err := b.WrapKey(key128, params)
+	wrapped128, err := b.WrapKey(context.Background(), key128, params)
 	require.NoError(t, err)
 	assert.NotNil(t, wrapped128)
 
@@ -683,7 +684,7 @@ func TestWrapKey_AllKeySizes(t *testing.T) {
 	_, err = rand.Read(key192)
 	require.NoError(t, err)
 
-	wrapped192, err := b.WrapKey(key192, params)
+	wrapped192, err := b.WrapKey(context.Background(), key192, params)
 	require.NoError(t, err)
 	assert.NotNil(t, wrapped192)
 
@@ -692,7 +693,7 @@ func TestWrapKey_AllKeySizes(t *testing.T) {
 	_, err = rand.Read(key256)
 	require.NoError(t, err)
 
-	wrapped256, err := b.WrapKey(key256, params)
+	wrapped256, err := b.WrapKey(context.Background(), key256, params)
 	require.NoError(t, err)
 	assert.NotNil(t, wrapped256)
 }
@@ -709,7 +710,7 @@ func TestWrapKey_InvalidKeySizes(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
 	invalidSizes := []int{8, 15, 17, 31, 33, 64}
@@ -720,7 +721,7 @@ func TestWrapKey_InvalidKeySizes(t *testing.T) {
 			_, err := rand.Read(invalidKey)
 			require.NoError(t, err)
 
-			_, err = b.WrapKey(invalidKey, params)
+			_, err = b.WrapKey(context.Background(), invalidKey, params)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "invalid symmetric key size")
 		})
@@ -739,20 +740,20 @@ func TestUnwrapKey_InvalidAlgorithm(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
 	keyMaterial := make([]byte, 32)
 	_, err = rand.Read(keyMaterial)
 	require.NoError(t, err)
 
-	wrapped, err := b.WrapKey(keyMaterial, params)
+	wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
 	require.NoError(t, err)
 
 	// Change algorithm to unsupported
 	wrapped.Algorithm = "UNSUPPORTED_ALGORITHM"
 
-	_, err = b.UnwrapKey(wrapped, params)
+	_, err = b.UnwrapKey(context.Background(), wrapped, params)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid algorithm")
 }
@@ -769,7 +770,7 @@ func TestUnwrapKey_InvalidKeySize(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
 	// Create wrapped material that will unwrap to invalid size
@@ -781,7 +782,7 @@ func TestUnwrapKey_InvalidKeySize(t *testing.T) {
 	}
 
 	// This should fail either at unwrap or at validation
-	_, err = b.UnwrapKey(wrapped, params)
+	_, err = b.UnwrapKey(context.Background(), wrapped, params)
 	assert.Error(t, err)
 }
 
@@ -800,7 +801,7 @@ func TestWrapKey_NonRSAPublicKey(t *testing.T) {
 		Algorithm:         backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	_, err = b.WrapKey(keyMaterial, params)
+	_, err = b.WrapKey(context.Background(), keyMaterial, params)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "must be RSA")
 }
@@ -817,7 +818,7 @@ func TestWrapKey_UnsupportedAlgorithm(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
 	keyMaterial := make([]byte, 32)
@@ -827,7 +828,7 @@ func TestWrapKey_UnsupportedAlgorithm(t *testing.T) {
 	// Change to unsupported algorithm
 	params.Algorithm = "UNSUPPORTED_ALGORITHM"
 
-	_, err = b.WrapKey(keyMaterial, params)
+	_, err = b.WrapKey(context.Background(), keyMaterial, params)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid algorithm")
 }
@@ -848,15 +849,15 @@ func TestImportKey_ClosedBackend(t *testing.T) {
 	_, err := rand.Read(keyMaterial)
 	require.NoError(t, err)
 
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
-	wrapped, err := b.WrapKey(keyMaterial, params)
+	wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
 	require.NoError(t, err)
 
 	_ = b.Close()
 
-	err = b.ImportKey(attrs, wrapped)
+	err = b.ImportKey(context.Background(), attrs, wrapped)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
 
@@ -876,10 +877,10 @@ func TestImportKey_InvalidAttributes(t *testing.T) {
 	_, err := rand.Read(keyMaterial)
 	require.NoError(t, err)
 
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
-	wrapped, err := b.WrapKey(keyMaterial, params)
+	wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
 	require.NoError(t, err)
 
 	// Test with invalid asymmetric attributes
@@ -893,7 +894,7 @@ func TestImportKey_InvalidAttributes(t *testing.T) {
 		},
 	}
 
-	err = b.ImportKey(invalidAttrs, wrapped)
+	err = b.ImportKey(context.Background(), invalidAttrs, wrapped)
 	assert.Error(t, err)
 }
 
@@ -909,12 +910,12 @@ func TestExportKey_ClosedBackend(t *testing.T) {
 		Exportable:         true,
 	}
 
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	_ = b.Close()
 
-	_, err = b.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = b.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
 
@@ -932,10 +933,10 @@ func TestExportKey_NonExportable(t *testing.T) {
 	}
 
 	// Generate the key
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Try to export - should fail
-	_, err = b.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = b.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.ErrorIs(t, err, backend.ErrKeyNotExportable)
 }

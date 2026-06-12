@@ -30,6 +30,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -88,7 +89,7 @@ func basicChaCha20Example(symBackend types.SymmetricKeyProvider) {
 
 	// Generate a new ChaCha20-Poly1305 key
 	// Note: No AESAttributes needed - ChaCha20 always uses 256-bit keys
-	key, err := symBackend.GenerateSymmetricKey(attrs)
+	key, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		log.Fatalf("Failed to generate ChaCha20 key: %v", err)
 	}
@@ -98,7 +99,7 @@ func basicChaCha20Example(symBackend types.SymmetricKeyProvider) {
 	fmt.Printf("Key size: %d bits\n", key.KeySize())
 
 	// Create an encrypter for the key
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		log.Fatalf("Failed to create encrypter: %v", err)
 	}
@@ -137,7 +138,7 @@ func xChaCha20Example(symBackend types.SymmetricKeyProvider) {
 	}
 
 	// Generate a new XChaCha20-Poly1305 key
-	key, err := symBackend.GenerateSymmetricKey(attrs)
+	key, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		log.Fatalf("Failed to generate XChaCha20 key: %v", err)
 	}
@@ -147,7 +148,7 @@ func xChaCha20Example(symBackend types.SymmetricKeyProvider) {
 	fmt.Printf("Key size: %d bits\n", key.KeySize())
 
 	// Create an encrypter for the key
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		log.Fatalf("Failed to create encrypter: %v", err)
 	}
@@ -185,12 +186,12 @@ func chacha20WithAADExample(symBackend types.SymmetricKeyProvider) {
 	}
 
 	// Generate key
-	_, err := symBackend.GenerateSymmetricKey(attrs)
+	_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		log.Fatalf("Failed to generate key: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		log.Fatalf("Failed to create encrypter: %v", err)
 	}
@@ -249,12 +250,12 @@ func chacha20TamperingExample(symBackend types.SymmetricKeyProvider) {
 	}
 
 	// Generate key
-	_, err := symBackend.GenerateSymmetricKey(attrs)
+	_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		log.Fatalf("Failed to generate key: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		log.Fatalf("Failed to create encrypter: %v", err)
 	}

@@ -117,11 +117,18 @@ openssl x509 -req \
 
 echo "Server certificate generated: ${CERT_DIR}/server.crt"
 
+# Build the full chain (leaf + CA) for the server to present. DANE-TA
+# (TLSA usage=2) verification per RFC 7671 Section 5.2.2 requires the trust
+# anchor certificate to be present in the TLS-presented chain, so the server
+# must serve fullchain.crt rather than the bare leaf.
+cat "${CERT_DIR}/server.crt" "${CERT_DIR}/ca.crt" > "${CERT_DIR}/fullchain.crt"
+echo "Full chain generated: ${CERT_DIR}/fullchain.crt"
+
 # Clean up temporary files
 rm -f "${CERT_DIR}/server.csr" "${CERT_DIR}/server.cnf" "${CERT_DIR}/server_ext.cnf" "${CERT_DIR}/ca.srl"
 
 # Set file permissions
-chmod 644 "${CERT_DIR}/ca.crt" "${CERT_DIR}/server.crt"
+chmod 644 "${CERT_DIR}/ca.crt" "${CERT_DIR}/server.crt" "${CERT_DIR}/fullchain.crt"
 chmod 600 "${CERT_DIR}/ca.key" "${CERT_DIR}/server.key"
 
 # ---------------------------------------------------------------------------
@@ -237,7 +244,9 @@ logging:
 
 tls:
   enabled: true
-  cert_file: ${CERT_DIR}/server.crt
+  # fullchain.crt (leaf + CA) so DANE-TA clients can match the trust anchor
+  # in the presented chain (RFC 7671 Section 5.2.2).
+  cert_file: ${CERT_DIR}/fullchain.crt
   key_file: ${CERT_DIR}/server.key
   ca_file: ${CERT_DIR}/ca.crt
 

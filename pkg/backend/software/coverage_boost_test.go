@@ -14,6 +14,7 @@
 package software
 
 import (
+	"context"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -49,10 +50,10 @@ func TestExportKey_InvalidWrappingAlgorithm(t *testing.T) {
 	attrs := createRSAAttrs("export-invalid-algo", 2048)
 	attrs.Exportable = true
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	_, err = be.ExportKey(attrs, backend.WrappingAlgorithm("INVALID-ALGO"))
+	_, err = be.ExportKey(context.Background(), attrs, backend.WrappingAlgorithm("INVALID-ALGO"))
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrInvalidAlgorithm)
 }
@@ -74,7 +75,7 @@ func TestListKeys_EmptyBackend(t *testing.T) {
 	be := createFullTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, keys)
 }
@@ -86,19 +87,19 @@ func TestImportKey_InvalidPKCS8Material(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	wrapAttrs := createRSAAttrs("wrap-key", 2048)
-	_, err := be.GenerateKey(wrapAttrs)
+	_, err := be.GenerateKey(context.Background(), wrapAttrs)
 	require.NoError(t, err)
 
-	params, err := be.GetImportParameters(wrapAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := be.GetImportParameters(context.Background(), wrapAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
 
-	wrapped, err := be.WrapKey([]byte("not-valid-pkcs8"), params)
+	wrapped, err := be.WrapKey(context.Background(), []byte("not-valid-pkcs8"), params)
 	require.NoError(t, err)
 
 	importAttrs := &types.KeyAttributes{
 		CN:        "imported-key",
 		StoreType: backend.STORE_SW,
 	}
-	err = be.ImportKey(importAttrs, wrapped)
+	err = be.ImportKey(context.Background(), importAttrs, wrapped)
 	assert.Error(t, err)
 }

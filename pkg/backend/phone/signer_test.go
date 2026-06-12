@@ -181,7 +181,7 @@ func TestPhoneSigner_ImplementsCryptoSigner(t *testing.T) {
 	attrs := ecdsaP256Attrs("test-key")
 
 	// Verify GenerateKey returns something that implements crypto.Signer.
-	privKey, err := b.GetKey(attrs)
+	privKey, err := b.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

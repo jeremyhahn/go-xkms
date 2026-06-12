@@ -45,8 +45,8 @@ func (s *Service) PasswordAdd(ctx context.Context, req *pb.PasswordAddRequest) (
 		return nil, err
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 
@@ -86,8 +86,8 @@ func (s *Service) PasswordGet(ctx context.Context, req *pb.PasswordGetRequest) (
 		return nil, err
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 
@@ -114,8 +114,8 @@ func (s *Service) PasswordList(ctx context.Context, req *pb.PasswordListRequest)
 		return nil, err
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 
@@ -153,8 +153,8 @@ func (s *Service) PasswordUpdate(ctx context.Context, req *pb.PasswordUpdateRequ
 		return nil, err
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 
@@ -208,8 +208,8 @@ func (s *Service) PasswordDelete(ctx context.Context, req *pb.PasswordDeleteRequ
 		return nil, err
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 
@@ -237,8 +237,8 @@ func (s *Service) PasswordStoreUnlock(ctx context.Context, req *pb.PasswordStore
 		return nil, err
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 
@@ -276,8 +276,8 @@ func (s *Service) PasswordStoreLock(ctx context.Context, req *pb.PasswordStoreLo
 		return nil, err
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 
@@ -311,8 +311,8 @@ func (s *Service) PasswordStoreStatus(ctx context.Context, req *pb.PasswordStore
 		return nil, err
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 
@@ -340,8 +340,8 @@ func (s *Service) PasswordGenerate(ctx context.Context, req *pb.PasswordGenerate
 		return nil, err
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 

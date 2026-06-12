@@ -84,7 +84,7 @@ func TestGCPKMSMock(t *testing.T) {
 			},
 		}
 
-		signer, err := b.GenerateRSA(attrs)
+		signer, err := b.GenerateRSA(context.Background(), attrs)
 		require.NoError(t, err, "Failed to generate RSA key")
 		require.NotNil(t, signer, "Signer should not be nil")
 
@@ -115,7 +115,7 @@ func TestGCPKMSMock(t *testing.T) {
 			},
 		}
 
-		signer, err := b.GenerateECDSA(attrs)
+		signer, err := b.GenerateECDSA(context.Background(), attrs)
 		require.NoError(t, err, "Failed to generate ECDSA key")
 		require.NotNil(t, signer, "Signer should not be nil")
 
@@ -146,7 +146,7 @@ func TestGCPKMSMock(t *testing.T) {
 			},
 		}
 
-		_, err := b.GenerateRSA(attrs)
+		_, err := b.GenerateRSA(context.Background(), attrs)
 		require.NoError(t, err, "Failed to generate key")
 
 		// Sign a message
@@ -182,13 +182,13 @@ func TestGCPKMSMock(t *testing.T) {
 			},
 		}
 
-		_, err := b.GenerateRSA(attrs)
+		_, err := b.GenerateRSA(context.Background(), attrs)
 		if err != nil {
 			t.Fatal("RSA key creation not supported")
 		}
 		defer b.Delete(attrs)
 
-		signer, err := b.Signer(attrs)
+		signer, err := b.Signer(context.Background(), attrs)
 		require.NoError(t, err, "Failed to get Signer")
 
 		message := []byte("GCP KMS RSA-PSS test")
@@ -228,7 +228,7 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			signer, err := b.GenerateRSA(attrs)
+			signer, err := b.GenerateRSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to create RSA 2048 key")
 			require.NotNil(t, signer, "Signer should not be nil")
 
@@ -251,7 +251,7 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			signer, err := b.GenerateRSA(attrs)
+			signer, err := b.GenerateRSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to create RSA 3072 key")
 			require.NotNil(t, signer, "Signer should not be nil")
 
@@ -274,7 +274,7 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			signer, err := b.GenerateRSA(attrs)
+			signer, err := b.GenerateRSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to create RSA 4096 key")
 			require.NotNil(t, signer, "Signer should not be nil")
 
@@ -297,7 +297,7 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			signer, err := b.GenerateECDSA(attrs)
+			signer, err := b.GenerateECDSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to create ECDSA P-256 key")
 			require.NotNil(t, signer, "Signer should not be nil")
 
@@ -320,7 +320,7 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			signer, err := b.GenerateECDSA(attrs)
+			signer, err := b.GenerateECDSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to create ECDSA P-384 key")
 			require.NotNil(t, signer, "Signer should not be nil")
 
@@ -344,7 +344,7 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Note: GCP KMS does not support P-521 (but mock may succeed)
-			_, err := b.GenerateECDSA(attrs)
+			_, err := b.GenerateECDSA(context.Background(), attrs)
 			if useMock && err == nil {
 				t.Log("⚠ Mock client doesn't validate P-521 support (expected mock limitation)")
 			} else if err != nil {
@@ -363,7 +363,7 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Note: GCP KMS does not support Ed25519
-			_, err := b.GenerateKey(attrs)
+			_, err := b.GenerateKey(context.Background(), attrs)
 			require.Error(t, err, "GCP KMS should not support Ed25519")
 			t.Logf("✓ Ed25519 correctly not supported by GCP KMS: %v", err)
 		})
@@ -389,7 +389,7 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Create key first
-			signer, err := b.GenerateRSA(attrs)
+			signer, err := b.GenerateRSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 			require.NotNil(t, signer, "Signer should not be nil")
 
@@ -456,7 +456,7 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Create key
-			signer, err := b.GenerateRSA(attrs)
+			signer, err := b.GenerateRSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 			require.NotNil(t, signer, "Signer should not be nil")
 
@@ -525,14 +525,14 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			_, err := b.GenerateRSA(attrs1)
+			_, err := b.GenerateRSA(context.Background(), attrs1)
 			require.NoError(t, err, "Failed to create first test key")
 
-			_, err = b.GenerateECDSA(attrs2)
+			_, err = b.GenerateECDSA(context.Background(), attrs2)
 			require.NoError(t, err, "Failed to create second test key")
 
 			// List keys
-			keys, err := b.ListKeys()
+			keys, err := b.ListKeys(context.Background())
 			require.NoError(t, err, "Failed to list keys")
 			if useMock {
 				// Mock client may return nil or empty list
@@ -563,11 +563,11 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Create key
-			_, err := b.GenerateRSA(attrs)
+			_, err := b.GenerateRSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to create key")
 
 			// Rotate key
-			err = b.RotateKey(attrs)
+			err = b.RotateKey(context.Background(), attrs)
 			if useMock && err == nil {
 				t.Logf("✓ Successfully rotated key (mock)")
 			} else if err != nil {
@@ -599,11 +599,11 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Create key
-			_, err := b.GenerateRSA(attrs)
+			_, err := b.GenerateRSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to create key")
 
 			// Get Signer
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get Signer")
 			require.NotNil(t, signer, "Signer should not be nil")
 
@@ -642,14 +642,14 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Create encryption key
-			_, err := b.GenerateRSA(attrs)
+			_, err := b.GenerateRSA(context.Background(), attrs)
 			if err != nil {
 				t.Logf("⚠ Encryption keys not supported: %v", err)
 				return
 			}
 
 			// Get Decrypter
-			decrypter, err := b.Decrypter(attrs)
+			decrypter, err := b.Decrypter(context.Background(), attrs)
 			if err != nil {
 				t.Logf("⚠ Decrypter not supported: %v", err)
 				_ = b.Delete(attrs)
@@ -884,7 +884,7 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Generate symmetric key
-			symmetricKey, err := symBackend.GenerateSymmetricKey(attrs)
+			symmetricKey, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate AES-256-GCM key")
 			require.NotNil(t, symmetricKey, "Symmetric key should not be nil")
 			assert.Equal(t, string(types.SymmetricAES256GCM), symmetricKey.Algorithm())
@@ -892,7 +892,7 @@ func TestGCPKMSMock(t *testing.T) {
 			t.Logf("✓ Generated AES-256-GCM symmetric key")
 
 			// Get encrypter
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get symmetric encrypter")
 			require.NotNil(t, encrypter, "Encrypter should not be nil")
 			t.Logf("✓ Retrieved symmetric encrypter")
@@ -932,11 +932,11 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Generate key
-			_, err := symBackend.GenerateSymmetricKey(attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Get encrypter
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get encrypter")
 
 			// Test data with AAD (Additional Authenticated Data)
@@ -995,11 +995,11 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Generate key
-			_, err := symBackend.GenerateSymmetricKey(attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Get encrypter
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get encrypter")
 
 			// Encrypt same plaintext multiple times
@@ -1058,11 +1058,11 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Generate key
-			_, err := symBackend.GenerateSymmetricKey(attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Get encrypter
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get encrypter")
 
 			// Encrypt data - GCP KMS will validate checksums internally
@@ -1099,11 +1099,11 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Generate key
-			_, err := symBackend.GenerateSymmetricKey(attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Get encrypter
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get encrypter")
 
 			// Test 1: Empty plaintext
@@ -1191,7 +1191,7 @@ func TestGCPKMSMock(t *testing.T) {
 					StoreType:          backend.STORE_GCPKMS,
 				}
 
-				_, err := symBackend.GenerateSymmetricKey(attrs)
+				_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 				assert.Error(t, err, "Should reject AES-128 (GCP KMS only supports AES-256)")
 				t.Logf("✓ Correctly rejected unsupported key size: %v", err)
 			})
@@ -1205,7 +1205,7 @@ func TestGCPKMSMock(t *testing.T) {
 					StoreType:          backend.STORE_GCPKMS,
 				}
 
-				_, err := symBackend.GetSymmetricKey(attrs)
+				_, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 				if useMock {
 					t.Log("⚠ Mock client may not properly validate key existence")
 				} else {
@@ -1223,7 +1223,7 @@ func TestGCPKMSMock(t *testing.T) {
 					StoreType:          backend.STORE_GCPKMS,
 				}
 
-				_, err := symBackend.SymmetricEncrypter(attrs)
+				_, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 				if useMock {
 					t.Log("⚠ Mock client may not properly validate key existence")
 				} else {
@@ -1242,11 +1242,11 @@ func TestGCPKMSMock(t *testing.T) {
 				}
 
 				// Generate key
-				_, err := symBackend.GenerateSymmetricKey(attrs)
+				_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 				require.NoError(t, err)
 
 				// Get encrypter
-				encrypter, err := symBackend.SymmetricEncrypter(attrs)
+				encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 				require.NoError(t, err)
 
 				// Create corrupted ciphertext
@@ -1279,11 +1279,11 @@ func TestGCPKMSMock(t *testing.T) {
 				}
 
 				// Generate key first time
-				_, err := symBackend.GenerateSymmetricKey(attrs)
+				_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 				require.NoError(t, err, "First key generation should succeed")
 
 				// Try to generate same key again
-				_, err = symBackend.GenerateSymmetricKey(attrs)
+				_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 				if useMock {
 					t.Log("⚠ Mock client may allow duplicate key generation")
 				} else {
@@ -1306,20 +1306,20 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Step 1: Generate key
-			symmetricKey, err := symBackend.GenerateSymmetricKey(attrs)
+			symmetricKey, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 			require.NotNil(t, symmetricKey)
 			t.Logf("✓ Step 1: Generated key")
 
 			// Step 2: Retrieve key
-			retrievedKey, err := symBackend.GetSymmetricKey(attrs)
+			retrievedKey, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "Failed to retrieve key")
 			assert.Equal(t, symmetricKey.Algorithm(), retrievedKey.Algorithm())
 			assert.Equal(t, symmetricKey.KeySize(), retrievedKey.KeySize())
 			t.Logf("✓ Step 2: Retrieved key successfully")
 
 			// Step 3: Use key for encryption/decryption
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get encrypter")
 
 			plaintext := []byte("lifecycle test data for GCP KMS")
@@ -1337,7 +1337,7 @@ func TestGCPKMSMock(t *testing.T) {
 			t.Logf("✓ Step 4: Deleted key")
 
 			// Step 5: Verify key is gone
-			_, err = symBackend.GetSymmetricKey(attrs)
+			_, err = symBackend.GetSymmetricKey(context.Background(), attrs)
 			if useMock {
 				t.Log("⚠ Mock client may not properly validate deleted keys")
 			} else {
@@ -1346,7 +1346,7 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Step 6: Verify operations fail on deleted key
-			_, err = symBackend.SymmetricEncrypter(attrs)
+			_, err = symBackend.SymmetricEncrypter(context.Background(), attrs)
 			if useMock {
 				t.Log("⚠ Mock client may not properly validate deleted keys")
 			} else {
@@ -1380,7 +1380,7 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			_, err := b.GenerateRSA(attrs)
+			_, err := b.GenerateRSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Sign and verify with SHA256
@@ -1413,7 +1413,7 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			_, err := b.GenerateRSA(attrs)
+			_, err := b.GenerateRSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Sign and verify with SHA384
@@ -1446,7 +1446,7 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			_, err := b.GenerateRSA(attrs)
+			_, err := b.GenerateRSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Sign and verify with SHA512
@@ -1479,7 +1479,7 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			_, err := b.GenerateECDSA(attrs)
+			_, err := b.GenerateECDSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Sign and verify with SHA256
@@ -1512,7 +1512,7 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			_, err := b.GenerateECDSA(attrs)
+			_, err := b.GenerateECDSA(context.Background(), attrs)
 			require.NoError(t, err, "Failed to generate key")
 
 			// Sign and verify with SHA384
@@ -1545,7 +1545,7 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			_, err := b.GenerateECDSA(attrs)
+			_, err := b.GenerateECDSA(context.Background(), attrs)
 			// GCP KMS may not support P-521
 			if err != nil {
 				t.Logf("✓ ECDSA P-521 correctly not supported by GCP KMS: %v", err)
@@ -1578,7 +1578,7 @@ func TestGCPKMSMock(t *testing.T) {
 				StoreType:    backend.STORE_GCPKMS,
 			}
 
-			_, err := b.GenerateKey(attrs)
+			_, err := b.GenerateKey(context.Background(), attrs)
 			// GCP KMS doesn't support Ed25519
 			if err != nil {
 				t.Logf("✓ Ed25519 correctly not supported by GCP KMS: %v", err)

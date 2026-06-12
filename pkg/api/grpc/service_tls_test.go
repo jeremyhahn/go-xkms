@@ -64,7 +64,11 @@ func setupTLSTest(t *testing.T) *Service {
 		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
-	return NewService(nil, nil)
+	svc, err := xkms.Get()
+	if err != nil {
+		t.Fatalf("Failed to get xkms service: %v", err)
+	}
+	return NewService(nil, nil, svc)
 }
 
 // TestGetTLSCertificateWithFullSetup tests GetTLSCertificate with proper key and cert setup
@@ -148,7 +152,7 @@ func TestFindKeyAttributes(t *testing.T) {
 			t.Fatalf("Failed to get backend: %v", err)
 		}
 
-		attrs, err := service.findKeyAttributes(ks, "find-attrs-key")
+		attrs, err := service.findKeyAttributes(context.Background(), ks, "find-attrs-key")
 		if err != nil {
 			t.Fatalf("findKeyAttributes failed: %v", err)
 		}
@@ -164,7 +168,7 @@ func TestFindKeyAttributes(t *testing.T) {
 			t.Fatalf("Failed to get backend: %v", err)
 		}
 
-		_, err = service.findKeyAttributes(ks, "nonexistent-key")
+		_, err = service.findKeyAttributes(context.Background(), ks, "nonexistent-key")
 		if err == nil {
 			t.Error("Expected error for nonexistent key")
 		}

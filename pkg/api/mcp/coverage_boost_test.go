@@ -14,6 +14,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -71,7 +72,7 @@ func TestHandleCopyKey_ValidationErrors(t *testing.T) {
 				Params:  paramsBytes,
 			}
 
-			_, err = server.handleCopyKey(req)
+			_, err = server.handleCopyKey(context.Background(), req)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), tc.expectedMsg)
 		})
@@ -91,7 +92,7 @@ func TestHandleCopyKey_InvalidParams(t *testing.T) {
 		Params:  json.RawMessage(`{invalid`),
 	}
 
-	_, err := server.handleCopyKey(req)
+	_, err := server.handleCopyKey(context.Background(), req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid params")
 }
@@ -119,7 +120,7 @@ func TestHandleCopyKey_NonExistentSourceBackend(t *testing.T) {
 		Params:  paramsBytes,
 	}
 
-	_, err = server.handleCopyKey(req)
+	_, err = server.handleCopyKey(context.Background(), req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "source backend not found")
 }
@@ -147,7 +148,7 @@ func TestHandleCopyKey_NonExistentDestBackend(t *testing.T) {
 		Params:  paramsBytes,
 	}
 
-	_, err = server.handleCopyKey(req)
+	_, err = server.handleCopyKey(context.Background(), req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "destination backend not found")
 }

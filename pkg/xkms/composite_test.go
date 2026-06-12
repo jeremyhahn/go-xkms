@@ -14,6 +14,7 @@
 package xkms_test
 
 import (
+	"context"
 	"crypto/x509"
 	"testing"
 
@@ -227,23 +228,23 @@ func TestCompositeKeyStore_InterfaceCompliance(t *testing.T) {
 	}
 
 	// These will fail but we're just checking the interface
-	_, _ = ks.GenerateRSA(attrs)
-	_, _ = ks.GenerateECDSA(attrs)
-	_, _ = ks.GenerateEd25519(attrs)
-	_, _ = ks.GetKey(attrs)
-	_ = ks.DeleteKey(attrs)
-	_, _ = ks.ListKeys()
-	_, _ = ks.RotateKey(attrs)
-	_, _ = ks.Signer(attrs)
-	_, _ = ks.Decrypter(attrs)
-	_ = ks.SaveCert("test", nil)
-	_, _ = ks.GetCert("test")
-	_ = ks.DeleteCert("test")
-	_ = ks.SaveCertChain("test", nil)
-	_, _ = ks.GetCertChain("test")
-	_, _ = ks.ListCerts()
-	_, _ = ks.CertExists("test")
-	_, _ = ks.GetTLSCertificate("test", attrs)
+	_, _ = ks.GenerateRSA(context.Background(), attrs)
+	_, _ = ks.GenerateECDSA(context.Background(), attrs)
+	_, _ = ks.GenerateEd25519(context.Background(), attrs)
+	_, _ = ks.GetKey(context.Background(), attrs)
+	_ = ks.DeleteKey(context.Background(), attrs)
+	_, _ = ks.ListKeys(context.Background())
+	_, _ = ks.RotateKey(context.Background(), attrs)
+	_, _ = ks.Signer(context.Background(), attrs)
+	_, _ = ks.Decrypter(context.Background(), attrs)
+	_ = ks.SaveCert(context.Background(), "test", nil)
+	_, _ = ks.GetCert(context.Background(), "test")
+	_ = ks.DeleteCert(context.Background(), "test")
+	_ = ks.SaveCertChain(context.Background(), "test", nil)
+	_, _ = ks.GetCertChain(context.Background(), "test")
+	_, _ = ks.ListCerts(context.Background())
+	_, _ = ks.CertExists(context.Background(), "test")
+	_, _ = ks.GetTLSCertificate(context.Background(), "test", attrs)
 	_ = ks.KeyProvider()
 	_ = ks.CertStorage()
 	_ = ks.Close()

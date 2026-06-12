@@ -340,15 +340,18 @@ func curveForAlgorithm(alg int) elliptic.Curve {
 func encodeCOSEKey(key *ecdsa.PrivateKey, alg int) []byte {
 	// Simplified COSE key encoding for testing
 	// Real implementation would use proper CBOR encoding
-	x := key.PublicKey.X.Bytes()
-	y := key.PublicKey.Y.Bytes()
-
-	// Pad to correct size
 	size := (key.Curve.Params().BitSize + 7) / 8
-	xPadded := make([]byte, size)
-	yPadded := make([]byte, size)
-	copy(xPadded[size-len(x):], x)
-	copy(yPadded[size-len(y):], y)
+
+	// Derive the uncompressed public point (0x04 || X || Y) via crypto/ecdh
+	// to avoid the deprecated big.Int coordinate accessors.
+	ecdhPub, err := key.PublicKey.ECDH()
+	if err != nil {
+		return nil
+	}
+	point := ecdhPub.Bytes() // 0x04 || X(size) || Y(size)
+
+	xPadded := point[1 : 1+size]
+	yPadded := point[1+size : 1+2*size]
 
 	// Simple format: [alg(1)][x(size)][y(size)]
 	result := make([]byte, 1+size*2)

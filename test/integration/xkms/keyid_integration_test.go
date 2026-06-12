@@ -17,6 +17,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 	"crypto/elliptic"
 	"crypto/x509"
@@ -208,7 +209,7 @@ func TestKeyID_BackendMismatch(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := ks.GenerateRSA(attrs)
+	_, err := ks.GenerateRSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
@@ -221,7 +222,7 @@ func TestKeyID_BackendMismatch(t *testing.T) {
 	}
 
 	for _, keyID := range wrongBackends {
-		_, err := ks.GetKeyByID(keyID)
+		_, err := ks.GetKeyByID(context.Background(), keyID)
 		if err == nil {
 			t.Errorf("Expected error for wrong backend Key ID: %s", keyID)
 		}
@@ -275,8 +276,8 @@ func TestKeyID_AllAlgorithms(t *testing.T) {
 // TestKeyID_AllBackends tests all supported backends
 func TestKeyID_AllBackends(t *testing.T) {
 	backends := []string{
-		"pkcs8", "symmetric", "software", "pkcs11", "tpm2",
-		"awskms", "gcpkms", "azurekv", "vault",
+		"software", "pkcs11", "tpm2", "awskms", "gcpkms",
+		"azurekv", "vault", "quantum", "threshold", "frost",
 	}
 
 	for _, backend := range backends {
@@ -317,7 +318,7 @@ func TestKeyID_GetKeyByID_AllAlgorithms(t *testing.T) {
 					},
 					Hash: crypto.SHA256,
 				}
-				_, err := ks.GenerateRSA(attrs)
+				_, err := ks.GenerateRSA(context.Background(), attrs)
 				return attrs, err
 			},
 			keyID: "software:signing:rsa:test-rsa-keyid",
@@ -335,7 +336,7 @@ func TestKeyID_GetKeyByID_AllAlgorithms(t *testing.T) {
 					},
 					Hash: crypto.SHA256,
 				}
-				_, err := ks.GenerateECDSA(attrs)
+				_, err := ks.GenerateECDSA(context.Background(), attrs)
 				return attrs, err
 			},
 			keyID: "software:signing:ecdsa-p256:test-ecdsa-p256-keyid",
@@ -353,7 +354,7 @@ func TestKeyID_GetKeyByID_AllAlgorithms(t *testing.T) {
 					},
 					Hash: crypto.SHA256,
 				}
-				_, err := ks.GenerateECDSA(attrs)
+				_, err := ks.GenerateECDSA(context.Background(), attrs)
 				return attrs, err
 			},
 			keyID: "software:signing:ecdsa-p384:test-ecdsa-p384-keyid",
@@ -367,7 +368,7 @@ func TestKeyID_GetKeyByID_AllAlgorithms(t *testing.T) {
 					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.Ed25519,
 				}
-				_, err := ks.GenerateEd25519(attrs)
+				_, err := ks.GenerateEd25519(context.Background(), attrs)
 				return attrs, err
 			},
 			keyID: "software:signing:ed25519:test-ed25519-keyid",
@@ -383,7 +384,7 @@ func TestKeyID_GetKeyByID_AllAlgorithms(t *testing.T) {
 			}
 
 			// Retrieve by Key ID
-			key, err := ks.GetKeyByID(tt.keyID)
+			key, err := ks.GetKeyByID(context.Background(), tt.keyID)
 			if err != nil {
 				t.Fatalf("Failed to get key by ID: %v", err)
 			}
@@ -393,7 +394,7 @@ func TestKeyID_GetKeyByID_AllAlgorithms(t *testing.T) {
 			}
 
 			// Verify it matches the original
-			originalKey, err := ks.GetKey(attrs)
+			originalKey, err := ks.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get original key: %v", err)
 			}
@@ -436,7 +437,7 @@ func TestKeyID_InvalidFormats(t *testing.T) {
 
 	for _, keyID := range invalidKeyIDs {
 		t.Run(keyID, func(t *testing.T) {
-			_, err := ks.GetKeyByID(keyID)
+			_, err := ks.GetKeyByID(context.Background(), keyID)
 			if err == nil {
 				t.Errorf("Expected error for invalid Key ID: %s", keyID)
 			}

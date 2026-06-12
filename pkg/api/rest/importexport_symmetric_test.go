@@ -180,7 +180,7 @@ func (m *mockImportExportSymmetricBackend) Capabilities() types.Capabilities {
 	}
 }
 
-func (m *mockImportExportSymmetricBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockImportExportSymmetricBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -212,7 +212,7 @@ func (m *mockImportExportSymmetricBackend) GenerateKey(attrs *types.KeyAttribute
 	return key, nil
 }
 
-func (m *mockImportExportSymmetricBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockImportExportSymmetricBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -223,7 +223,7 @@ func (m *mockImportExportSymmetricBackend) GetKey(attrs *types.KeyAttributes) (c
 	return key, nil
 }
 
-func (m *mockImportExportSymmetricBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (m *mockImportExportSymmetricBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -238,7 +238,7 @@ func (m *mockImportExportSymmetricBackend) DeleteKey(attrs *types.KeyAttributes)
 	return nil
 }
 
-func (m *mockImportExportSymmetricBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (m *mockImportExportSymmetricBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -262,7 +262,7 @@ func (m *mockImportExportSymmetricBackend) ListKeys() ([]*types.KeyAttributes, e
 	return attrs, nil
 }
 
-func (m *mockImportExportSymmetricBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockImportExportSymmetricBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -278,7 +278,7 @@ func (m *mockImportExportSymmetricBackend) Signer(attrs *types.KeyAttributes) (c
 	return signer, nil
 }
 
-func (m *mockImportExportSymmetricBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockImportExportSymmetricBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -294,7 +294,7 @@ func (m *mockImportExportSymmetricBackend) Decrypter(attrs *types.KeyAttributes)
 	return decrypter, nil
 }
 
-func (m *mockImportExportSymmetricBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (m *mockImportExportSymmetricBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	return nil
 }
 
@@ -303,7 +303,7 @@ func (m *mockImportExportSymmetricBackend) Close() error {
 }
 
 // ImportExportBackend interface implementation
-func (m *mockImportExportSymmetricBackend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (m *mockImportExportSymmetricBackend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	if m.GetImportParametersFunc != nil {
 		return m.GetImportParametersFunc(attrs, algorithm)
 	}
@@ -318,7 +318,7 @@ func (m *mockImportExportSymmetricBackend) GetImportParameters(attrs *types.KeyA
 	}, nil
 }
 
-func (m *mockImportExportSymmetricBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (m *mockImportExportSymmetricBackend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if m.WrapKeyFunc != nil {
 		return m.WrapKeyFunc(keyMaterial, params)
 	}
@@ -341,7 +341,7 @@ func (m *mockImportExportSymmetricBackend) WrapKey(keyMaterial []byte, params *b
 	}, nil
 }
 
-func (m *mockImportExportSymmetricBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (m *mockImportExportSymmetricBackend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if m.UnwrapKeyFunc != nil {
 		return m.UnwrapKeyFunc(wrapped, params)
 	}
@@ -355,7 +355,7 @@ func (m *mockImportExportSymmetricBackend) UnwrapKey(wrapped *backend.WrappedKey
 	return unwrapped, nil
 }
 
-func (m *mockImportExportSymmetricBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (m *mockImportExportSymmetricBackend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	if m.ImportKeyFunc != nil {
 		return m.ImportKeyFunc(attrs, wrapped)
 	}
@@ -378,7 +378,7 @@ func (m *mockImportExportSymmetricBackend) ImportKey(attrs *types.KeyAttributes,
 	return nil
 }
 
-func (m *mockImportExportSymmetricBackend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (m *mockImportExportSymmetricBackend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if m.ExportKeyFunc != nil {
 		return m.ExportKeyFunc(attrs, algorithm)
 	}
@@ -402,7 +402,7 @@ func (m *mockImportExportSymmetricBackend) ExportKey(attrs *types.KeyAttributes,
 }
 
 // ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
-func (m *mockImportExportSymmetricBackend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (m *mockImportExportSymmetricBackend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -415,7 +415,7 @@ func (m *mockImportExportSymmetricBackend) ExportKeyMaterial(attrs *types.KeyAtt
 }
 
 // SymmetricBackend interface implementation
-func (m *mockImportExportSymmetricBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (m *mockImportExportSymmetricBackend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if m.GenerateSymmetricKeyFunc != nil {
 		return m.GenerateSymmetricKeyFunc(attrs)
 	}
@@ -448,7 +448,7 @@ func (m *mockImportExportSymmetricBackend) GenerateSymmetricKey(attrs *types.Key
 	return key, nil
 }
 
-func (m *mockImportExportSymmetricBackend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (m *mockImportExportSymmetricBackend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if m.GetSymmetricKeyFunc != nil {
 		return m.GetSymmetricKeyFunc(attrs)
 	}
@@ -463,7 +463,7 @@ func (m *mockImportExportSymmetricBackend) GetSymmetricKey(attrs *types.KeyAttri
 	return key, nil
 }
 
-func (m *mockImportExportSymmetricBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (m *mockImportExportSymmetricBackend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	if m.SymmetricEncrypterFunc != nil {
 		return m.SymmetricEncrypterFunc(attrs)
 	}
@@ -524,86 +524,86 @@ func (m *mockKeyStoreWithImportExport) CertStorage() certstore.CertificateStorag
 	return nil
 }
 
-func (m *mockKeyStoreWithImportExport) GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyStoreWithImportExport) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	attrs.KeyAlgorithm = x509.RSA
-	return m.backend.GenerateKey(attrs)
+	return m.backend.GenerateKey(ctx, attrs)
 }
 
-func (m *mockKeyStoreWithImportExport) GenerateECDSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyStoreWithImportExport) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	attrs.KeyAlgorithm = x509.ECDSA
-	return m.backend.GenerateKey(attrs)
+	return m.backend.GenerateKey(ctx, attrs)
 }
 
-func (m *mockKeyStoreWithImportExport) GenerateEd25519(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyStoreWithImportExport) GenerateEd25519(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, fmt.Errorf("ed25519 not supported")
 }
 
-func (m *mockKeyStoreWithImportExport) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return m.backend.GetKey(attrs)
+func (m *mockKeyStoreWithImportExport) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return m.backend.GetKey(ctx, attrs)
 }
 
-func (m *mockKeyStoreWithImportExport) DeleteKey(attrs *types.KeyAttributes) error {
-	return m.backend.DeleteKey(attrs)
+func (m *mockKeyStoreWithImportExport) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
+	return m.backend.DeleteKey(ctx, attrs)
 }
 
-func (m *mockKeyStoreWithImportExport) ListKeys() ([]*types.KeyAttributes, error) {
-	return m.backend.ListKeys()
+func (m *mockKeyStoreWithImportExport) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
+	return m.backend.ListKeys(ctx)
 }
 
-func (m *mockKeyStoreWithImportExport) RotateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return m.backend.GenerateKey(attrs)
+func (m *mockKeyStoreWithImportExport) RotateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return m.backend.GenerateKey(ctx, attrs)
 }
 
-func (m *mockKeyStoreWithImportExport) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
-	return m.backend.Signer(attrs)
+func (m *mockKeyStoreWithImportExport) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	return m.backend.Signer(ctx, attrs)
 }
 
-func (m *mockKeyStoreWithImportExport) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
-	return m.backend.Decrypter(attrs)
+func (m *mockKeyStoreWithImportExport) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+	return m.backend.Decrypter(ctx, attrs)
 }
 
-func (m *mockKeyStoreWithImportExport) SaveCert(keyID string, cert *x509.Certificate) error {
+func (m *mockKeyStoreWithImportExport) SaveCert(_ context.Context, keyID string, cert *x509.Certificate) error {
 	return nil
 }
 
-func (m *mockKeyStoreWithImportExport) GetCert(keyID string) (*x509.Certificate, error) {
+func (m *mockKeyStoreWithImportExport) GetCert(_ context.Context, keyID string) (*x509.Certificate, error) {
 	return nil, fmt.Errorf("cert not found")
 }
 
-func (m *mockKeyStoreWithImportExport) DeleteCert(keyID string) error {
+func (m *mockKeyStoreWithImportExport) DeleteCert(_ context.Context, keyID string) error {
 	return nil
 }
 
-func (m *mockKeyStoreWithImportExport) ListCerts() ([]string, error) {
+func (m *mockKeyStoreWithImportExport) ListCerts(_ context.Context) ([]string, error) {
 	return nil, nil
 }
 
-func (m *mockKeyStoreWithImportExport) CertExists(keyID string) (bool, error) {
+func (m *mockKeyStoreWithImportExport) CertExists(_ context.Context, keyID string) (bool, error) {
 	return false, nil
 }
 
-func (m *mockKeyStoreWithImportExport) SaveCertChain(keyID string, chain []*x509.Certificate) error {
+func (m *mockKeyStoreWithImportExport) SaveCertChain(_ context.Context, keyID string, chain []*x509.Certificate) error {
 	return nil
 }
 
-func (m *mockKeyStoreWithImportExport) GetCertChain(keyID string) ([]*x509.Certificate, error) {
+func (m *mockKeyStoreWithImportExport) GetCertChain(_ context.Context, keyID string) ([]*x509.Certificate, error) {
 	return nil, nil
 }
 
-func (m *mockKeyStoreWithImportExport) GetTLSCertificate(keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
+func (m *mockKeyStoreWithImportExport) GetTLSCertificate(ctx context.Context, keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
 	return tls.Certificate{}, fmt.Errorf("not implemented")
 }
 
-func (m *mockKeyStoreWithImportExport) GetKeyByID(keyID string) (crypto.PrivateKey, error) {
-	return m.backend.GetKey(&types.KeyAttributes{CN: keyID})
+func (m *mockKeyStoreWithImportExport) GetKeyByID(ctx context.Context, keyID string) (crypto.PrivateKey, error) {
+	return m.backend.GetKey(ctx, &types.KeyAttributes{CN: keyID})
 }
 
-func (m *mockKeyStoreWithImportExport) GetSignerByID(keyID string) (crypto.Signer, error) {
-	return m.backend.Signer(&types.KeyAttributes{CN: keyID})
+func (m *mockKeyStoreWithImportExport) GetSignerByID(ctx context.Context, keyID string) (crypto.Signer, error) {
+	return m.backend.Signer(ctx, &types.KeyAttributes{CN: keyID})
 }
 
-func (m *mockKeyStoreWithImportExport) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
-	return m.backend.Decrypter(&types.KeyAttributes{CN: keyID})
+func (m *mockKeyStoreWithImportExport) GetDecrypterByID(ctx context.Context, keyID string) (crypto.Decrypter, error) {
+	return m.backend.Decrypter(ctx, &types.KeyAttributes{CN: keyID})
 }
 
 func (m *mockKeyStoreWithImportExport) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {

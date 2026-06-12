@@ -117,50 +117,6 @@ func newClipboardServiceWithFakeXclip(t *testing.T) *ClipboardService {
 // Helper: create a fake elevation tool script
 // ---------------------------------------------------------------------------
 
-// createFakeElevationTool creates a shell script that simulates pkexec or
-// sudo with a specific exit code and optional stdout output.
-func createFakeElevationTool(t *testing.T, name string, exitCode int, stdout string) string {
-	t.Helper()
-	binDir := filepath.Join(t.TempDir(), "bin-"+name)
-	require.NoError(t, os.MkdirAll(binDir, 0755))
-
-	script := `#!/bin/sh
-`
-	if stdout != "" {
-		script += `printf '%s' '` + stdout + `'
-`
-	}
-	script += `exit ` + intToStrHelper(exitCode) + `
-`
-
-	scriptPath := filepath.Join(binDir, name)
-	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0755))
-	return binDir
-}
-
-// intToStrHelper converts an int to string for shell script generation.
-func intToStrHelper(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	buf := make([]byte, 0, 4)
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	for n > 0 {
-		buf = append(buf, byte('0'+n%10))
-		n /= 10
-	}
-	if neg {
-		buf = append(buf, '-')
-	}
-	for i, j := 0, len(buf)-1; i < j; i, j = i+1, j-1 {
-		buf[i], buf[j] = buf[j], buf[i]
-	}
-	return string(buf)
-}
-
 // ---------------------------------------------------------------------------
 // Clipboard: CopyWithClear with a working tool (covers L93-99)
 // ---------------------------------------------------------------------------

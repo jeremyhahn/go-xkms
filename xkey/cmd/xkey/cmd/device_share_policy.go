@@ -133,18 +133,18 @@ func runSharePolicyList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(policies) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No sharing policies configured.")
-		fmt.Fprintln(cmd.OutOrStdout())
-		fmt.Fprintln(cmd.OutOrStdout(), "Use 'xkey device share-policy set <backend> <key-id> --allow' to create one.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No sharing policies configured.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout())
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Use 'xkey device share-policy set <backend> <key-id> --allow' to create one.")
 		return nil
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Sharing Policies (%d):\n\n", len(policies))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Sharing Policies (%d):\n\n", len(policies))
 
 	// Table header
-	fmt.Fprintf(cmd.OutOrStdout(), "  %-12s %-20s %-8s %-8s %-8s %-10s %s\n",
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-12s %-20s %-8s %-8s %-8s %-10s %s\n",
 		"BACKEND", "KEY ID", "ALLOW", "PUBLIC", "SYMM", "PRIVATE", "DEVICES")
-	fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", strings.Repeat("-", 80))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", strings.Repeat("-", 80))
 
 	for _, p := range policies {
 		devicesStr := "(any)"
@@ -152,7 +152,7 @@ func runSharePolicyList(cmd *cobra.Command, args []string) error {
 			devicesStr = fmt.Sprintf("%d device(s)", len(p.AllowedDevices))
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "  %-12s %-20s %-8v %-8v %-8v %-10v %s\n",
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-12s %-20s %-8v %-8v %-8v %-10v %s\n",
 			p.Backend,
 			truncatePolicyKeyID(p.KeyID),
 			p.AllowShare,
@@ -163,7 +163,7 @@ func runSharePolicyList(cmd *cobra.Command, args []string) error {
 		)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	return nil
 }
 
@@ -197,16 +197,16 @@ func runSharePolicySet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrSharePolicySetFailed, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Sharing policy set for %s/%s:\n", backend, keyID)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Allow Sharing:     %v\n", allow)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Share Public Key:  %v\n", sharePublic)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Share Symmetric:   %v\n", shareSymmetric)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Share Private:     %v\n", sharePrivate)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Sharing policy set for %s/%s:\n", backend, keyID)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Allow Sharing:     %v\n", allow)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Share Public Key:  %v\n", sharePublic)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Share Symmetric:   %v\n", shareSymmetric)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Share Private:     %v\n", sharePrivate)
 
 	if len(devices) > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Allowed Devices:   %s\n", strings.Join(devices, ", "))
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Allowed Devices:   %s\n", strings.Join(devices, ", "))
 	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Allowed Devices:   (any paired device)\n")
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Allowed Devices:   (any paired device)\n")
 	}
 
 	return nil
@@ -229,7 +229,7 @@ func runSharePolicyRemove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrSharePolicyRemoveFailed, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Sharing policy removed for %s/%s.\n", backend, keyID)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Sharing policy removed for %s/%s.\n", backend, keyID)
 	return nil
 }
 

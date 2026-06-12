@@ -168,7 +168,7 @@ COPY --from=go-truststrap --chown=testuser:testuser . /go-truststrap
 # Makefile GOWORK_CONTENT). GOWORK is exported for all subsequent go commands.
 ENV GOWORK=/tmp/go.work
 RUN cat > /tmp/go.work <<'EOF'
-go 1.26.3
+go 1.26.4
 
 use (
 	/workspace

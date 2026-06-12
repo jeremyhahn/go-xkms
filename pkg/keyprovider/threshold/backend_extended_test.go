@@ -39,7 +39,7 @@ func TestThresholdBackend_GetKey(t *testing.T) {
 	}
 
 	// GetKey should return ErrNotImplemented (requires distributed coordination)
-	_, err = backend.GetKey(attrs)
+	_, err = backend.GetKey(context.Background(), attrs)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrNotImplemented)
 }
@@ -61,7 +61,7 @@ func TestThresholdBackend_GetKey_BackendClosed(t *testing.T) {
 		KeyAlgorithm: x509.Ed25519,
 	}
 
-	_, err = backend.GetKey(attrs)
+	_, err = backend.GetKey(context.Background(), attrs)
 	assert.ErrorIs(t, err, ErrBackendClosed)
 }
 
@@ -84,7 +84,7 @@ func TestThresholdBackend_Decrypter(t *testing.T) {
 	}
 
 	// Decrypter should return ErrNotImplemented
-	_, err = backend.Decrypter(attrs)
+	_, err = backend.Decrypter(context.Background(), attrs)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrNotImplemented)
 }
@@ -106,7 +106,7 @@ func TestThresholdBackend_Decrypter_BackendClosed(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	_, err = backend.Decrypter(attrs)
+	_, err = backend.Decrypter(context.Background(), attrs)
 	assert.ErrorIs(t, err, ErrBackendClosed)
 }
 
@@ -129,7 +129,7 @@ func TestThresholdBackend_RotateKey(t *testing.T) {
 	}
 
 	// RotateKey should return ErrNotImplemented
-	err = backend.RotateKey(attrs)
+	err = backend.RotateKey(context.Background(), attrs)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrNotImplemented)
 }
@@ -151,7 +151,7 @@ func TestThresholdBackend_RotateKey_BackendClosed(t *testing.T) {
 		KeyAlgorithm: x509.Ed25519,
 	}
 
-	err = backend.RotateKey(attrs)
+	err = backend.RotateKey(context.Background(), attrs)
 	assert.ErrorIs(t, err, ErrBackendClosed)
 }
 
@@ -214,7 +214,7 @@ func TestThresholdBackend_Signer_BackendClosed(t *testing.T) {
 		KeyAlgorithm: x509.Ed25519,
 	}
 
-	_, err = backend.Signer(attrs)
+	_, err = backend.Signer(context.Background(), attrs)
 	assert.ErrorIs(t, err, ErrBackendClosed)
 }
 
@@ -235,7 +235,7 @@ func TestThresholdBackend_DeleteKey_BackendClosed(t *testing.T) {
 		KeyAlgorithm: x509.Ed25519,
 	}
 
-	err = backend.DeleteKey(attrs)
+	err = backend.DeleteKey(context.Background(), attrs)
 	assert.ErrorIs(t, err, ErrBackendClosed)
 }
 
@@ -278,7 +278,7 @@ func TestThresholdBackend_GenerateRSAKey_NoAttributes(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "RSA attributes required")
 }
@@ -305,7 +305,7 @@ func TestThresholdBackend_GenerateRSAKey_SmallKeySize(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "at least 2048 bits")
 }
@@ -334,7 +334,7 @@ func TestThresholdBackend_GenerateECDSAKey_NoAttributes(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ECC attributes required")
 }
@@ -361,7 +361,7 @@ func TestThresholdBackend_GenerateECDSAKey_NoCurve(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "curve is required")
 }
@@ -389,7 +389,7 @@ func TestThresholdBackend_GenerateKey_UnsupportedAlgorithm(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key type")
 }
@@ -413,7 +413,7 @@ func TestThresholdBackend_loadAnyShare_NoThresholdAttributes(t *testing.T) {
 		ThresholdAttributes: nil, // No threshold attributes
 	}
 
-	_, err = backend.loadAnyShare(attrs)
+	_, err = backend.loadAnyShare(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "threshold attributes required")
 }
@@ -437,7 +437,7 @@ func TestThresholdBackend_loadAnyShare_NoValidShares(t *testing.T) {
 	}
 
 	// Don't generate any key, so no shares exist
-	_, err = backend.loadAnyShare(attrs)
+	_, err = backend.loadAnyShare(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no valid shares found")
 }
@@ -460,7 +460,7 @@ func TestThresholdBackend_GenerateKey_InvalidThresholdAttributes(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid threshold attributes")
 }
@@ -493,11 +493,11 @@ func TestThresholdBackend_Signer_LoadAnyShare(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get signer - should use loadAnyShare since LocalShareID = 0
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 }
@@ -521,7 +521,7 @@ func TestThresholdSigner_Public_InsufficientShares(t *testing.T) {
 	}
 
 	// Generate key first
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Delete enough shares so we only have 2 (need 4)
@@ -536,7 +536,7 @@ func TestThresholdSigner_Public_InsufficientShares(t *testing.T) {
 	}
 
 	// Get signer with one of the remaining shares
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Public() should return nil when reconstruction fails (only 2 shares, need 4)
@@ -609,14 +609,14 @@ func TestThresholdBackend_ListKeys_CorruptedMetadata(t *testing.T) {
 		StoreType:    types.StoreThreshold,
 		KeyAlgorithm: x509.Ed25519,
 	}
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Add corrupted metadata entry
 	_ = keyStorage.Put(context.Background(), "threshold/metadata/corrupted-key", []byte("invalid json"))
 
 	// ListKeys should skip the corrupted entry and return the valid one
-	keys, err := backend.ListKeys()
+	keys, err := backend.ListKeys(context.Background())
 	require.NoError(t, err)
 	// Should have at least 1 valid key (the corrupted one is skipped)
 	assert.GreaterOrEqual(t, len(keys), 1)
@@ -646,7 +646,7 @@ func TestThresholdBackend_loadShare_CorruptedJSON(t *testing.T) {
 	_ = keyStorage.Put(context.Background(), shareKey, []byte("corrupted json"))
 
 	// Try to load the corrupted share
-	_, err = backend.loadShare(attrs, 1)
+	_, err = backend.loadShare(context.Background(), attrs, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to unmarshal share")
 }
@@ -670,7 +670,7 @@ func TestThresholdBackend_loadAnyShare_CorruptedShares(t *testing.T) {
 	}
 
 	// Generate key first
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Corrupt first two shares
@@ -679,7 +679,7 @@ func TestThresholdBackend_loadAnyShare_CorruptedShares(t *testing.T) {
 	_ = keyStorage.Put(context.Background(), "threshold/shares/"+keyID+"/share-2", []byte("bad"))
 
 	// loadAnyShare should skip corrupted ones and find share-3
-	share, err := backend.loadAnyShare(attrs)
+	share, err := backend.loadAnyShare(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, share)
 	assert.Equal(t, 3, share.Index)
@@ -704,16 +704,16 @@ func TestThresholdBackend_loadShare_CacheHit(t *testing.T) {
 	}
 
 	// Generate key - this caches the local share
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Load the cached share (LocalShareID is 1 by default)
-	share1, err := backend.loadShare(attrs, config.LocalShareID)
+	share1, err := backend.loadShare(context.Background(), attrs, config.LocalShareID)
 	require.NoError(t, err)
 	require.NotNil(t, share1)
 
 	// Load again - should hit cache
-	share2, err := backend.loadShare(attrs, config.LocalShareID)
+	share2, err := backend.loadShare(context.Background(), attrs, config.LocalShareID)
 	require.NoError(t, err)
 	require.NotNil(t, share2)
 
@@ -758,10 +758,10 @@ func TestThresholdSigner_Public_RSAKey(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Test Public() with RSA key type
@@ -840,10 +840,10 @@ func TestThresholdSigner_Public_ECDSAKey(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Test Public() with ECDSA key type
@@ -869,10 +869,10 @@ func TestThresholdSigner_Public_Ed25519Key(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Test Public() with Ed25519 key type
@@ -901,10 +901,10 @@ func TestThresholdSigner_Sign_ECDSAKey(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Test Sign() with ECDSA key type
@@ -935,10 +935,10 @@ func TestThresholdSigner_Sign_RSAKey(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Test Sign() with RSA key type (RSA requires proper hash)
@@ -968,7 +968,7 @@ func TestThresholdBackend_splitAndStoreKey_Ed25519(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify shares were stored
@@ -998,10 +998,10 @@ func TestThresholdSigner_unmarshalPrivateKey_Ed25519(t *testing.T) {
 	}
 
 	// Generate and retrieve
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 }
@@ -1029,7 +1029,7 @@ func TestThresholdBackend_marshalPrivateKey_ECDSA(t *testing.T) {
 	}
 
 	// Generate key - this exercises the ECDSA marshal path in splitAndStoreKey
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 }
 
@@ -1056,10 +1056,10 @@ func TestThresholdSigner_unmarshalPrivateKey_RSA(t *testing.T) {
 	}
 
 	// Generate and retrieve key
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify we can get the public key (requires unmarshal)
@@ -1090,10 +1090,10 @@ func TestThresholdSigner_unmarshalPrivateKey_ECDSA(t *testing.T) {
 	}
 
 	// Generate and retrieve key
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify we can get the public key (requires unmarshal)
@@ -1120,7 +1120,7 @@ func TestThresholdBackend_ListKeys_UnreadableEntry(t *testing.T) {
 			Total:     3,
 		},
 	}
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Add an entry that cannot be unmarshaled
@@ -1128,7 +1128,7 @@ func TestThresholdBackend_ListKeys_UnreadableEntry(t *testing.T) {
 	require.NoError(t, err)
 
 	// ListKeys should return valid keys and skip invalid ones
-	keys, err := backend.ListKeys()
+	keys, err := backend.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(keys), 1)
 }
@@ -1153,7 +1153,7 @@ func TestThresholdBackend_Signer_LoadShareFallback(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Delete the local share (share-1) from cache and storage
@@ -1165,7 +1165,7 @@ func TestThresholdBackend_Signer_LoadShareFallback(t *testing.T) {
 	_ = keyStorage.Delete(context.Background(), shareKey)
 
 	// Get signer - local share doesn't exist, so it should fallback to loadAnyShare
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 }
@@ -1190,7 +1190,7 @@ func TestThresholdSigner_Sign_InsufficientShares(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Delete shares to leave only 2 (need 4)
@@ -1201,7 +1201,7 @@ func TestThresholdSigner_Sign_InsufficientShares(t *testing.T) {
 	}
 
 	// Get signer with remaining share
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Sign should fail due to insufficient shares
@@ -1238,7 +1238,7 @@ func TestThresholdBackend_loadShare_InvalidShare(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try to load invalid share - should fail validation
-	_, err = backend.loadShare(attrs, 1)
+	_, err = backend.loadShare(context.Background(), attrs, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid share")
 }
@@ -1263,11 +1263,11 @@ func TestThresholdSigner_reconstructKey_SkipsCorruptedShares(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get signer before corrupting shares
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Corrupt one share - reconstructKey should skip it and use others

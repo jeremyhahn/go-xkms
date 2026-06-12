@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -70,7 +71,7 @@ func makeSelfSignedCert(t *testing.T, cn string) (*x509.Certificate, *ecdsa.Priv
 
 func TestSigner_ReturnsSigner(t *testing.T) {
 	ca := setupTestCA(t)
-	signer, err := ca.Signer()
+	signer, err := ca.Signer(context.Background())
 	require.NoError(t, err)
 	assert.NotNil(t, signer)
 	assert.NotNil(t, signer.Public())
@@ -78,32 +79,32 @@ func TestSigner_ReturnsSigner(t *testing.T) {
 
 func TestSigner_NotInitialized(t *testing.T) {
 	ca := setupUninitializedCA(t)
-	_, err := ca.Signer()
+	_, err := ca.Signer(context.Background())
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestPrivateKey_NilAttributes(t *testing.T) {
 	ca := setupTestCA(t)
-	_, err := ca.PrivateKey(nil)
+	_, err := ca.PrivateKey(context.Background(), nil)
 	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
 func TestPubKey_NilAttributes(t *testing.T) {
 	ca := setupTestCA(t)
-	_, err := ca.PubKey(nil)
+	_, err := ca.PubKey(context.Background(), nil)
 	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
 func TestSignedBlob_ProducesSignature(t *testing.T) {
 	ca := setupTestCA(t)
-	sig, err := ca.SignedBlob([]byte("payload"))
+	sig, err := ca.SignedBlob(context.Background(), []byte("payload"))
 	require.NoError(t, err)
 	assert.NotEmpty(t, sig)
 }
 
 func TestSignedBlob_NotInitialized(t *testing.T) {
 	ca := setupUninitializedCA(t)
-	_, err := ca.SignedBlob([]byte("payload"))
+	_, err := ca.SignedBlob(context.Background(), []byte("payload"))
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -113,56 +114,56 @@ func TestSignedBlob_NotInitialized(t *testing.T) {
 
 func TestIssued_FindsRootCertificate(t *testing.T) {
 	ca := setupTestCA(t)
-	ok, err := ca.Issued("Test Root CA")
+	ok, err := ca.Issued(context.Background(), "Test Root CA")
 	require.NoError(t, err)
 	assert.True(t, ok)
 }
 
 func TestIssued_EmptyCN(t *testing.T) {
 	ca := setupTestCA(t)
-	_, err := ca.Issued("")
+	_, err := ca.Issued(context.Background(), "")
 	assert.ErrorIs(t, err, ErrInvalidCertificate)
 }
 
 func TestExists_MatchesAlgorithm(t *testing.T) {
 	ca := setupTestCA(t)
-	ok, err := ca.Exists("Test Root CA", x509.ECDSA)
+	ok, err := ca.Exists(context.Background(), "Test Root CA", x509.ECDSA)
 	require.NoError(t, err)
 	assert.True(t, ok)
 }
 
 func TestExists_WrongAlgorithm(t *testing.T) {
 	ca := setupTestCA(t)
-	ok, err := ca.Exists("Test Root CA", x509.RSA)
+	ok, err := ca.Exists(context.Background(), "Test Root CA", x509.RSA)
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
 
 func TestCertificate_FromCache(t *testing.T) {
 	ca := setupTestCA(t)
-	cert, err := ca.Certificate(&types.KeyAttributes{CN: "Test Root CA"})
+	cert, err := ca.Certificate(context.Background(), &types.KeyAttributes{CN: "Test Root CA"})
 	require.NoError(t, err)
 	assert.Equal(t, "Test Root CA", cert.Subject.CommonName)
 }
 
 func TestCertificate_NotFound(t *testing.T) {
 	ca := setupTestCA(t)
-	_, err := ca.Certificate(&types.KeyAttributes{CN: "missing"})
+	_, err := ca.Certificate(context.Background(), &types.KeyAttributes{CN: "missing"})
 	assert.ErrorIs(t, err, ErrCertificateNotFound)
 }
 
 func TestCertificatePEM_Roundtrip(t *testing.T) {
 	ca := setupTestCA(t)
-	out, err := ca.CertificatePEM("Test Root CA")
+	out, err := ca.CertificatePEM(context.Background(), "Test Root CA")
 	require.NoError(t, err)
 	assert.Contains(t, string(out), "BEGIN CERTIFICATE")
 }
 
 func TestPEM_IsAliasForCertificatePEM(t *testing.T) {
 	ca := setupTestCA(t)
-	viaPEM, err := ca.PEM(&types.KeyAttributes{CN: "Test Root CA"})
+	viaPEM, err := ca.PEM(context.Background(), &types.KeyAttributes{CN: "Test Root CA"})
 	require.NoError(t, err)
-	viaCertPEM, err := ca.CertificatePEM("Test Root CA")
+	viaCertPEM, err := ca.CertificatePEM(context.Background(), "Test Root CA")
 	require.NoError(t, err)
 	assert.Equal(t, viaCertPEM, viaPEM)
 }
@@ -170,31 +171,31 @@ func TestPEM_IsAliasForCertificatePEM(t *testing.T) {
 func TestImportCertificate_RoundTrip(t *testing.T) {
 	ca := setupTestCA(t)
 	cert, _ := makeSelfSignedCert(t, "imported.example.com")
-	require.NoError(t, ca.ImportCertificate(cert))
+	require.NoError(t, ca.ImportCertificate(context.Background(), cert))
 
-	retrieved, err := ca.Certificate(&types.KeyAttributes{CN: "imported.example.com"})
+	retrieved, err := ca.Certificate(context.Background(), &types.KeyAttributes{CN: "imported.example.com"})
 	require.NoError(t, err)
 	assert.Equal(t, cert.Raw, retrieved.Raw)
 }
 
 func TestImportCertificate_NilRejected(t *testing.T) {
 	ca := setupTestCA(t)
-	err := ca.ImportCertificate(nil)
+	err := ca.ImportCertificate(context.Background(), nil)
 	assert.ErrorIs(t, err, ErrInvalidCertificate)
 }
 
 func TestImportCertificatePEM_Roundtrip(t *testing.T) {
 	ca := setupTestCA(t)
 	cert, _ := makeSelfSignedCert(t, "pem-import.example.com")
-	pemBytes, err := ca.CertificatePEM("Test Root CA")
+	pemBytes, err := ca.CertificatePEM(context.Background(), "Test Root CA")
 	require.NoError(t, err)
 	_ = pemBytes
-	err = ca.ImportCertificatePEM("", nil)
+	err = ca.ImportCertificatePEM(context.Background(), "", nil)
 	assert.ErrorIs(t, err, ErrInvalidCertificate)
 
 	// Happy path using a real PEM.
 	realPEM := encodeCertAsPEM(t, cert)
-	require.NoError(t, ca.ImportCertificatePEM("pem-import.example.com", realPEM))
+	require.NoError(t, ca.ImportCertificatePEM(context.Background(), "pem-import.example.com", realPEM))
 }
 
 func encodeCertAsPEM(t *testing.T, cert *x509.Certificate) []byte {
@@ -333,26 +334,26 @@ func TestCrossSignedPEM_NotFound(t *testing.T) {
 
 func TestImportAttestation_RequiresObjectStore(t *testing.T) {
 	ca := setupTestCA(t)
-	err := ca.ImportAttestation(&types.KeyAttributes{CN: "ak"}, AttestBlobQuote, []byte("x"))
+	err := ca.ImportAttestation(context.Background(), &types.KeyAttributes{CN: "ak"}, AttestBlobQuote, []byte("x"))
 	assert.ErrorIs(t, err, ErrObjectStoreRequired)
 }
 
 func TestImportAttestation_BadType(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	err := ca.ImportAttestation(&types.KeyAttributes{CN: "ak"}, "bogus", []byte("x"))
+	err := ca.ImportAttestation(context.Background(), &types.KeyAttributes{CN: "ak"}, "bogus", []byte("x"))
 	assert.ErrorIs(t, err, ErrInvalidAttestationBlobType)
 }
 
 func TestImportAttestation_Roundtrip(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	data := []byte("quoted-data")
-	require.NoError(t, ca.ImportAttestationQuote(&types.KeyAttributes{CN: "ak"}, data))
+	require.NoError(t, ca.ImportAttestationQuote(context.Background(), &types.KeyAttributes{CN: "ak"}, data))
 	require.NoError(t, ca.VerifyAttestationQuote(&types.KeyAttributes{CN: "ak"}, data))
 }
 
 func TestImportAttestation_VerifyTamperedFails(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	require.NoError(t, ca.ImportAttestationQuote(&types.KeyAttributes{CN: "ak"}, []byte("original")))
+	require.NoError(t, ca.ImportAttestationQuote(context.Background(), &types.KeyAttributes{CN: "ak"}, []byte("original")))
 	err := ca.VerifyAttestationQuote(&types.KeyAttributes{CN: "ak"}, []byte("tampered"))
 	assert.ErrorIs(t, err, ErrInvalidSignature)
 }
@@ -360,7 +361,7 @@ func TestImportAttestation_VerifyTamperedFails(t *testing.T) {
 func TestImportAttestationKeyCertificate_Happy(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	cert, _ := makeSelfSignedCert(t, "ak-cert")
-	require.NoError(t, ca.ImportAttestationKeyCertificate(&types.KeyAttributes{CN: "ak-cert"}, cert.Raw))
+	require.NoError(t, ca.ImportAttestationKeyCertificate(context.Background(), &types.KeyAttributes{CN: "ak-cert"}, cert.Raw))
 }
 
 // =============================================================================
@@ -369,7 +370,7 @@ func TestImportAttestationKeyCertificate_Happy(t *testing.T) {
 
 func TestTLSBundle_NilAttrs(t *testing.T) {
 	ca := setupTestCA(t)
-	_, err := ca.TLSBundle(nil)
+	_, err := ca.TLSBundle(context.Background(), nil)
 	assert.ErrorIs(t, err, ErrInvalidTLSOptions)
 }
 
@@ -377,7 +378,7 @@ func TestTLSConfigWithXSigner_NilAttrs(t *testing.T) {
 	// With attrs=nil, TLSConfigWithXSigner should surface the same
 	// validation error as TLSConfig.
 	ca := setupTestCA(t)
-	_, err := ca.TLSConfigWithXSigner(nil, nil)
+	_, err := ca.TLSConfigWithXSigner(context.Background(), nil, nil)
 	assert.ErrorIs(t, err, ErrInvalidTLSOptions)
 }
 
@@ -436,14 +437,14 @@ func TestCAKeyAttributes_WrongStoreType(t *testing.T) {
 
 func TestCASigner_MatchingAlgorithm(t *testing.T) {
 	ca := setupTestCA(t)
-	signer, err := ca.CASigner(types.StoreSoftware, x509.ECDSA)
+	signer, err := ca.CASigner(context.Background(), types.StoreSoftware, x509.ECDSA)
 	require.NoError(t, err)
 	assert.NotNil(t, signer)
 }
 
 func TestCASigner_MismatchedAlgorithm(t *testing.T) {
 	ca := setupTestCA(t)
-	_, err := ca.CASigner(types.StoreSoftware, x509.RSA)
+	_, err := ca.CASigner(context.Background(), types.StoreSoftware, x509.RSA)
 	assert.ErrorIs(t, err, ErrInvalidKeyAlgorithm)
 }
 
@@ -473,19 +474,19 @@ func TestCABundleFiltered_NoMatch(t *testing.T) {
 
 func TestRevokeCert_NilRejected(t *testing.T) {
 	ca := setupTestCA(t)
-	err := ca.RevokeCert(nil, RevokeOptions{})
+	err := ca.RevokeCert(context.Background(), nil, RevokeOptions{})
 	assert.ErrorIs(t, err, ErrInvalidCertificate)
 }
 
 func TestRevokeCert_DeleteKeys(t *testing.T) {
 	ca := setupTestCA(t)
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "revoke-me.example.com"},
 		Valid:   30,
 	})
 	require.NoError(t, err)
 
-	err = ca.RevokeCert(issued.Certificate, RevokeOptions{
+	err = ca.RevokeCert(context.Background(), issued.Certificate, RevokeOptions{
 		Reason:     ReasonKeyCompromise,
 		DeleteKeys: true,
 	})
@@ -498,14 +499,14 @@ func TestRevokeCert_DeleteKeys(t *testing.T) {
 
 func TestRevokeCert_AlreadyRevoked(t *testing.T) {
 	ca := setupTestCA(t)
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "duplicate-revoke.example.com"},
 		Valid:   30,
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, ca.RevokeCert(issued.Certificate, RevokeOptions{}))
-	err = ca.RevokeCert(issued.Certificate, RevokeOptions{})
+	require.NoError(t, ca.RevokeCert(context.Background(), issued.Certificate, RevokeOptions{}))
+	err = ca.RevokeCert(context.Background(), issued.Certificate, RevokeOptions{})
 	assert.ErrorIs(t, err, ErrAlreadyRevoked)
 }
 
@@ -516,7 +517,7 @@ func TestRevokeCert_AlreadyRevoked(t *testing.T) {
 func TestImportIssuingCAs_NoAIA(t *testing.T) {
 	ca := setupTestCA(t)
 	cert, _ := makeSelfSignedCert(t, "no-aia.example.com")
-	assert.NoError(t, ca.ImportIssuingCAs(cert))
+	assert.NoError(t, ca.ImportIssuingCAs(context.Background(), cert))
 }
 
 func TestImportDistributionCRLs_NoCRLDPs(t *testing.T) {
@@ -550,7 +551,7 @@ func TestVerifyTCG_CSR_IDevIDBytes_WithoutTPM(t *testing.T) {
 // are preserved here so regressions show up immediately.
 func TestVerify_NilXSigner(t *testing.T) {
 	ca := setupTestCA(t)
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "verify-xsigner.example.com"},
 		Valid:   30,
 	})
@@ -572,7 +573,7 @@ func TestVerify_NilCertWithXSigner(t *testing.T) {
 // happy path.
 func TestTrustedRootCertPoolWithXSigner_NoSigner(t *testing.T) {
 	ca := setupTestCA(t)
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "root-pool-xsigner.example.com"},
 		Valid:   30,
 	})
@@ -584,7 +585,7 @@ func TestTrustedRootCertPoolWithXSigner_NoSigner(t *testing.T) {
 
 func TestTrustedIntermediateCertPoolWithXSigner_NoSigner(t *testing.T) {
 	ca := setupTestCA(t)
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject: Subject{CommonName: "intermediate-pool-xsigner.example.com"},
 		Valid:   30,
 	})

@@ -84,12 +84,9 @@ func (t *BLETransport) ScanAll(ctx context.Context) ([]ScanResult, error) {
 }
 
 // BLETransport manages BLE communication with the xKey phone app.
-// This is a stub implementation for platforms without BLE support.
-type BLETransport struct {
-	cfg         *BLETransportConfig
-	fragmenter  *Fragmenter
-	reassembler *Reassembler
-}
+// This is a stub implementation for platforms without BLE support; every
+// method returns ErrBLEUnavailable, so it carries no state.
+type BLETransport struct{}
 
 // NewBLETransport creates a new BLE transport.
 // On platforms without BLE support, this returns ErrBLEUnavailable.

@@ -29,17 +29,6 @@ import (
 // Test helpers
 // ---------------------------------------------------------------------------
 
-// mockStorageServiceHelper wraps a real StorageService with a mock elevator
-// configured for testing. Since StorageService.GetStatus calls real LUKS
-// code, we use a mock elevator to control UnlockVolume behavior.
-type mockStorageServiceHelper struct {
-	getStatusMounted bool
-	getStatusErr     error
-	unlockErr        error
-	unlockCalled     bool
-	unlockPassphrase string
-}
-
 // newAutoUnsealTestSvc creates an AutoUnsealService wired to a mock TPM
 // and a real StorageService with a mock elevator.
 func newAutoUnsealTestSvc(t *testing.T, mock *sealMockTPM) (*AutoUnsealService, *SealService, *StorageService) {

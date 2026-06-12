@@ -1509,6 +1509,9 @@ func (e *errorBackend) Get(_ context.Context, _ string) ([]byte, error) {
 func (e *errorBackend) Put(_ context.Context, _ string, _ []byte) error {
 	return errors.New("put error")
 }
+func (e *errorBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
+	return false, errors.New("put error")
+}
 func (e *errorBackend) Delete(_ context.Context, _ string) error {
 	return errors.New("delete error")
 }

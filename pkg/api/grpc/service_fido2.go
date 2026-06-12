@@ -18,7 +18,6 @@ import (
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -31,8 +30,8 @@ func (s *Service) BeginRegistration(ctx context.Context, req *pb.BeginRegistrati
 	if req == nil || req.Username == "" {
 		return nil, status.Error(codes.InvalidArgument, "username is required")
 	}
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	resp, cErr := svc.BeginRegistration(ctx, &transport.BeginRegistrationRequest{
@@ -56,8 +55,8 @@ func (s *Service) FinishRegistration(ctx context.Context, req *pb.FinishRegistra
 	if req == nil || req.SessionId == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	resp, cErr := svc.FinishRegistration(ctx, &transport.FinishRegistrationRequest{
@@ -83,8 +82,8 @@ func (s *Service) BeginAuthentication(ctx context.Context, req *pb.BeginAuthenti
 	if req == nil || req.Username == "" {
 		return nil, status.Error(codes.InvalidArgument, "username is required")
 	}
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	resp, cErr := svc.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{
@@ -107,8 +106,8 @@ func (s *Service) FinishAuthentication(ctx context.Context, req *pb.FinishAuthen
 	if req == nil || req.SessionId == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	resp, cErr := svc.FinishAuthentication(ctx, &transport.FinishAuthenticationRequest{

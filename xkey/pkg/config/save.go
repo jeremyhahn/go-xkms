@@ -61,18 +61,18 @@ func SaveToPath(cfg *Config, path string) error {
 	success := false
 	defer func() {
 		if !success {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 		}
 	}()
 
 	if _, writeErr := tmpFile.Write(data); writeErr != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return errors.Join(ErrConfigSaveFailed, writeErr)
 	}
 
 	// Sync to disk before closing to ensure durability.
 	if syncErr := tmpFile.Sync(); syncErr != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return errors.Join(ErrConfigSaveFailed, syncErr)
 	}
 

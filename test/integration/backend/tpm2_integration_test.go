@@ -16,6 +16,7 @@
 package backend
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rand"
@@ -149,7 +150,7 @@ func TestTPM2_RSA_GenerateKey(t *testing.T) {
 	// TPM2 typically supports 2048-bit RSA keys
 	attrs := createTPM2RSAAttrs("test-rsa-2048", 2048)
 
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -176,7 +177,7 @@ func TestTPM2_RSA_GenerateKey(t *testing.T) {
 	}
 
 	// Clean up
-	if err := be.DeleteKey(attrs); err != nil {
+	if err := be.DeleteKey(context.Background(), attrs); err != nil {
 		t.Logf("DeleteKey failed: %v", err)
 	}
 }
@@ -189,7 +190,7 @@ func TestTPM2_ECDSA_GenerateKey(t *testing.T) {
 	// TPM2 supports P-256 ECDSA
 	attrs := createTPM2ECDSAAttrs("test-ecdsa-p256", "P-256")
 
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -216,7 +217,7 @@ func TestTPM2_ECDSA_GenerateKey(t *testing.T) {
 	}
 
 	// Clean up
-	if err := be.DeleteKey(attrs); err != nil {
+	if err := be.DeleteKey(context.Background(), attrs); err != nil {
 		t.Logf("DeleteKey failed: %v", err)
 	}
 }
@@ -228,14 +229,14 @@ func TestTPM2_RSA_Sign(t *testing.T) {
 
 	attrs := createTPM2RSAAttrs("test-rsa-sign", 2048)
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
-	defer be.DeleteKey(attrs)
+	defer be.DeleteKey(context.Background(), attrs)
 
 	// Get signer
-	signer, err := be.Signer(attrs)
+	signer, err := be.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer failed: %v", err)
 	}
@@ -273,14 +274,14 @@ func TestTPM2_ECDSA_Sign(t *testing.T) {
 
 	attrs := createTPM2ECDSAAttrs("test-ecdsa-sign", "P-256")
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
-	defer be.DeleteKey(attrs)
+	defer be.DeleteKey(context.Background(), attrs)
 
 	// Get signer
-	signer, err := be.Signer(attrs)
+	signer, err := be.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer failed: %v", err)
 	}
@@ -318,17 +319,17 @@ func TestTPM2_GetKey(t *testing.T) {
 	attrs := createTPM2RSAAttrs("test-rsa-get", 2048)
 
 	// Generate key
-	originalKey, err := be.GenerateKey(attrs)
+	originalKey, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
-	defer be.DeleteKey(attrs)
+	defer be.DeleteKey(context.Background(), attrs)
 
 	originalSigner := originalKey.(crypto.Signer)
 	originalPub := originalSigner.Public().(*rsa.PublicKey)
 
 	// Retrieve key
-	retrievedKey, err := be.GetKey(attrs)
+	retrievedKey, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -350,18 +351,18 @@ func TestTPM2_DeleteKey(t *testing.T) {
 	attrs := createTPM2RSAAttrs("test-rsa-delete", 2048)
 
 	// Generate key
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// Delete key
-	if err := be.DeleteKey(attrs); err != nil {
+	if err := be.DeleteKey(context.Background(), attrs); err != nil {
 		t.Fatalf("DeleteKey failed: %v", err)
 	}
 
 	// Verify key is deleted
-	_, err = be.GetKey(attrs)
+	_, err = be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when getting deleted key")
 	}
@@ -374,21 +375,21 @@ func TestTPM2_ListKeys(t *testing.T) {
 
 	// Generate some keys
 	rsaAttrs := createTPM2RSAAttrs("test-list-rsa", 2048)
-	_, err := be.GenerateKey(rsaAttrs)
+	_, err := be.GenerateKey(context.Background(), rsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey RSA failed: %v", err)
 	}
-	defer be.DeleteKey(rsaAttrs)
+	defer be.DeleteKey(context.Background(), rsaAttrs)
 
 	ecdsaAttrs := createTPM2ECDSAAttrs("test-list-ecdsa", "P-256")
-	_, err = be.GenerateKey(ecdsaAttrs)
+	_, err = be.GenerateKey(context.Background(), ecdsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey ECDSA failed: %v", err)
 	}
-	defer be.DeleteKey(ecdsaAttrs)
+	defer be.DeleteKey(context.Background(), ecdsaAttrs)
 
 	// List keys
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -425,14 +426,14 @@ func TestTPM2_RotateKey(t *testing.T) {
 	attrs := createTPM2RSAAttrs("test-rotate", 2048)
 
 	// Generate key
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
-	defer be.DeleteKey(attrs)
+	defer be.DeleteKey(context.Background(), attrs)
 
 	// Rotate should fail for hardware-backed keys
-	err = be.RotateKey(attrs)
+	err = be.RotateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for RotateKey on TPM2 backend")
 	}
@@ -452,7 +453,7 @@ func TestTPM2_Close(t *testing.T) {
 
 	// Operations after close should fail
 	attrs := createTPM2RSAAttrs("test-after-close", 2048)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error after close")
 	}
@@ -482,19 +483,19 @@ func TestTPM2_ErrorHandling_NilAttributes(t *testing.T) {
 	defer be.Close()
 
 	// GenerateKey with nil attrs
-	_, err := be.GenerateKey(nil)
+	_, err := be.GenerateKey(context.Background(), nil)
 	if err == nil {
 		t.Error("Expected error for nil attributes")
 	}
 
 	// GetKey with nil attrs
-	_, err = be.GetKey(nil)
+	_, err = be.GetKey(context.Background(), nil)
 	if err == nil {
 		t.Error("Expected error for nil attributes")
 	}
 
 	// DeleteKey with nil attrs
-	err = be.DeleteKey(nil)
+	err = be.DeleteKey(context.Background(), nil)
 	if err == nil {
 		t.Error("Expected error for nil attributes")
 	}
@@ -508,19 +509,19 @@ func TestTPM2_ErrorHandling_NonExistentKey(t *testing.T) {
 	attrs := createTPM2RSAAttrs("nonexistent-key", 2048)
 
 	// GetKey should fail
-	_, err := be.GetKey(attrs)
+	_, err := be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for non-existent key")
 	}
 
 	// Signer should fail
-	_, err = be.Signer(attrs)
+	_, err = be.Signer(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for non-existent key")
 	}
 
 	// Decrypter should fail
-	_, err = be.Decrypter(attrs)
+	_, err = be.Decrypter(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for non-existent key")
 	}
@@ -539,7 +540,7 @@ func TestTPM2_UnsupportedAlgorithm(t *testing.T) {
 		KeyAlgorithm: x509.DSA, // Not supported by TPM2
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for unsupported algorithm")
 	}
@@ -577,7 +578,7 @@ func TestTPM2_EndToEnd_RSA(t *testing.T) {
 	attrs := createTPM2RSAAttrs("test-e2e-rsa", 2048)
 
 	// Generate key
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -586,7 +587,7 @@ func TestTPM2_EndToEnd_RSA(t *testing.T) {
 	pub := signer.Public().(*rsa.PublicKey)
 
 	// Get key
-	retrieved, err := be.GetKey(attrs)
+	retrieved, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -599,7 +600,7 @@ func TestTPM2_EndToEnd_RSA(t *testing.T) {
 	}
 
 	// Sign
-	signerFromBackend, err := be.Signer(attrs)
+	signerFromBackend, err := be.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer failed: %v", err)
 	}
@@ -619,7 +620,7 @@ func TestTPM2_EndToEnd_RSA(t *testing.T) {
 	}
 
 	// List keys
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -636,12 +637,12 @@ func TestTPM2_EndToEnd_RSA(t *testing.T) {
 	}
 
 	// Delete key
-	if err := be.DeleteKey(attrs); err != nil {
+	if err := be.DeleteKey(context.Background(), attrs); err != nil {
 		t.Fatalf("DeleteKey failed: %v", err)
 	}
 
 	// Verify deletion
-	_, err = be.GetKey(attrs)
+	_, err = be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for deleted key")
 	}
@@ -655,7 +656,7 @@ func TestTPM2_EndToEnd_ECDSA(t *testing.T) {
 	attrs := createTPM2ECDSAAttrs("test-e2e-ecdsa", "P-256")
 
 	// Generate key
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -664,7 +665,7 @@ func TestTPM2_EndToEnd_ECDSA(t *testing.T) {
 	pub := signer.Public().(*ecdsa.PublicKey)
 
 	// Get key
-	retrieved, err := be.GetKey(attrs)
+	retrieved, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -677,7 +678,7 @@ func TestTPM2_EndToEnd_ECDSA(t *testing.T) {
 	}
 
 	// Sign
-	signerFromBackend, err := be.Signer(attrs)
+	signerFromBackend, err := be.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer failed: %v", err)
 	}
@@ -696,12 +697,12 @@ func TestTPM2_EndToEnd_ECDSA(t *testing.T) {
 	}
 
 	// Delete key
-	if err := be.DeleteKey(attrs); err != nil {
+	if err := be.DeleteKey(context.Background(), attrs); err != nil {
 		t.Fatalf("DeleteKey failed: %v", err)
 	}
 
 	// Verify deletion
-	_, err = be.GetKey(attrs)
+	_, err = be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for deleted key")
 	}

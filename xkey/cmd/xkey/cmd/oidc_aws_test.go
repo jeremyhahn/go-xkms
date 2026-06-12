@@ -50,10 +50,8 @@ func TestOIDCAWSCmd_MissingRegion(t *testing.T) {
 
 	// Verify required annotation exists
 	annotations := regionFlag.Annotations
-	if annotations != nil {
-		if _, ok := annotations["cobra_annotation_bash_completion_one_required_flag"]; ok {
-			// Flag is marked as required
-		}
+	if _, ok := annotations["cobra_annotation_bash_completion_one_required_flag"]; !ok {
+		t.Error("region flag should be marked as required")
 	}
 
 	// Test the error constant exists and has correct message

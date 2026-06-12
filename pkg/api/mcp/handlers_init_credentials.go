@@ -19,17 +19,15 @@ import (
 	"errors"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// ErrXKMSServiceUnavailable is returned when the xkms service singleton
-// cannot be retrieved.
+// ErrXKMSServiceUnavailable is returned when the xkms service is not available.
 var ErrXKMSServiceUnavailable = errors.New("xkms service unavailable")
 
 // handleGetInitStatus handles the init.getStatus method.
 func (s *Server) handleGetInitStatus(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 	return svc.GetInitStatus(ctx)
@@ -37,8 +35,8 @@ func (s *Server) handleGetInitStatus(ctx context.Context, req *JSONRPCRequest) (
 
 // handleClaimCertBegin handles the init.claimCertBegin method.
 func (s *Server) handleClaimCertBegin(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -52,8 +50,8 @@ func (s *Server) handleClaimCertBegin(ctx context.Context, req *JSONRPCRequest) 
 
 // handleClaimCertComplete handles the init.claimCertComplete method.
 func (s *Server) handleClaimCertComplete(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -67,8 +65,8 @@ func (s *Server) handleClaimCertComplete(ctx context.Context, req *JSONRPCReques
 
 // handleClaimShare handles the init.claimShare method.
 func (s *Server) handleClaimShare(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -82,8 +80,8 @@ func (s *Server) handleClaimShare(ctx context.Context, req *JSONRPCRequest) (int
 
 // handleSignCSRInit handles the init.signCSR method.
 func (s *Server) handleSignCSRInit(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -97,8 +95,8 @@ func (s *Server) handleSignCSRInit(ctx context.Context, req *JSONRPCRequest) (in
 
 // handleCredentialSubmit handles the credentials.submit method.
 func (s *Server) handleCredentialSubmit(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -112,8 +110,8 @@ func (s *Server) handleCredentialSubmit(ctx context.Context, req *JSONRPCRequest
 
 // handleCredentialStrategy handles the credentials.strategy method.
 func (s *Server) handleCredentialStrategy(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 

@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -222,7 +223,7 @@ func TestEnrollDevice_NotInitialized(t *testing.T) {
 		Subject: Subject{CommonName: "test-device"},
 	}
 
-	result, err := ca.EnrollDevice([]byte("any-data"), request)
+	result, err := ca.EnrollDevice(context.Background(), []byte("any-data"), request)
 	if result != nil {
 		t.Fatalf("EnrollDevice() returned non-nil result for uninitialized CA")
 	}
@@ -237,7 +238,7 @@ func TestEnrollDevice_NotInitialized_NilRequest(t *testing.T) {
 
 	ca := uninitializedEnrollmentTestCA(t)
 
-	result, err := ca.EnrollDevice(nil, nil)
+	result, err := ca.EnrollDevice(context.Background(), nil, nil)
 	if result != nil {
 		t.Fatal("EnrollDevice() returned non-nil result for uninitialized CA with nil request")
 	}
@@ -255,7 +256,7 @@ func TestEnrollDevice_NoTPMConfigured(t *testing.T) {
 		Subject: Subject{CommonName: "test-device"},
 	}
 
-	result, err := ca.EnrollDevice([]byte("any-data"), request)
+	result, err := ca.EnrollDevice(context.Background(), []byte("any-data"), request)
 	if result != nil {
 		t.Fatalf("EnrollDevice() returned non-nil result when no TPM is configured")
 	}
@@ -270,7 +271,7 @@ func TestEnrollDevice_NoTPMConfigured_EmptyCSR(t *testing.T) {
 
 	ca := enrollmentTestCA(t)
 
-	result, err := ca.EnrollDevice([]byte{}, nil)
+	result, err := ca.EnrollDevice(context.Background(), []byte{}, nil)
 	if result != nil {
 		t.Fatal("EnrollDevice() returned non-nil result when no TPM is configured")
 	}
@@ -613,7 +614,7 @@ func TestEnrollDevice_ErrorPriority_InitializedBeforeTPM(t *testing.T) {
 	// Should return ErrNotInitialized, not ErrTPMNotConfigured.
 	ca := uninitializedEnrollmentTestCA(t)
 
-	_, err := ca.EnrollDevice([]byte("data"), &CertificateRequest{
+	_, err := ca.EnrollDevice(context.Background(), []byte("data"), &CertificateRequest{
 		Subject: Subject{CommonName: "device"},
 	})
 	if !errors.Is(err, ErrNotInitialized) {
@@ -629,7 +630,7 @@ func TestEnrollDevice_ErrorPriority_TPMBeforeCSR(t *testing.T) {
 	// Should return ErrTPMNotConfigured, not ErrTCGCSRUnmarshalFailed.
 	ca := enrollmentTestCA(t)
 
-	_, err := ca.EnrollDevice([]byte("garbage-csr"), &CertificateRequest{
+	_, err := ca.EnrollDevice(context.Background(), []byte("garbage-csr"), &CertificateRequest{
 		Subject: Subject{CommonName: "device"},
 	})
 	if !errors.Is(err, ErrTPMNotConfigured) {

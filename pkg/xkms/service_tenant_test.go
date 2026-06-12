@@ -14,6 +14,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"testing"
@@ -121,7 +122,7 @@ func TestGenerateKey_TenantValidation(t *testing.T) {
 			CN:           "test-key",
 			KeyAlgorithm: x509.ECDSA,
 		}
-		key, err := GenerateKey(attrs)
+		key, err := GenerateKey(context.Background(), attrs)
 		require.NoError(t, err)
 		assert.NotNil(t, key)
 	})
@@ -132,7 +133,7 @@ func TestGenerateKey_TenantValidation(t *testing.T) {
 			TenantID:     "acme-corp",
 			KeyAlgorithm: x509.ECDSA,
 		}
-		key, err := GenerateKey(attrs)
+		key, err := GenerateKey(context.Background(), attrs)
 		require.NoError(t, err)
 		assert.NotNil(t, key)
 	})
@@ -143,7 +144,7 @@ func TestGenerateKey_TenantValidation(t *testing.T) {
 			TenantID:     "../escape",
 			KeyAlgorithm: x509.ECDSA,
 		}
-		key, err := GenerateKey(attrs)
+		key, err := GenerateKey(context.Background(), attrs)
 		assert.Error(t, err)
 		assert.Nil(t, key)
 		var invalidTenantErr *storage.ErrInvalidTenantID
@@ -166,11 +167,11 @@ func TestKey_TenantValidation(t *testing.T) {
 		CN:           "retrieve-key",
 		KeyAlgorithm: x509.ECDSA,
 	}
-	_, genErr := GenerateKey(attrs)
+	_, genErr := GenerateKey(context.Background(), attrs)
 	require.NoError(t, genErr)
 
 	t.Run("single-tenant retrieval works", func(t *testing.T) {
-		key, err := Key(attrs)
+		key, err := Key(context.Background(), attrs)
 		require.NoError(t, err)
 		assert.NotNil(t, key)
 	})
@@ -180,7 +181,7 @@ func TestKey_TenantValidation(t *testing.T) {
 			CN:       "retrieve-key",
 			TenantID: "bad/tenant",
 		}
-		key, err := Key(badAttrs)
+		key, err := Key(context.Background(), badAttrs)
 		assert.Error(t, err)
 		assert.Nil(t, key)
 	})
@@ -201,7 +202,7 @@ func TestDeleteKey_TenantValidation(t *testing.T) {
 			CN:       "some-key",
 			TenantID: "..\\escape",
 		}
-		err := DeleteKey(attrs)
+		err := DeleteKey(context.Background(), attrs)
 		assert.Error(t, err)
 		var invalidTenantErr *storage.ErrInvalidTenantID
 		assert.True(t, errors.As(err, &invalidTenantErr))
@@ -213,10 +214,10 @@ func TestDeleteKey_TenantValidation(t *testing.T) {
 			KeyAlgorithm: x509.ECDSA,
 		}
 		// Generate so the key exists
-		_, genErr := GenerateKey(attrs)
+		_, genErr := GenerateKey(context.Background(), attrs)
 		require.NoError(t, genErr)
 
-		err := DeleteKey(attrs)
+		err := DeleteKey(context.Background(), attrs)
 		assert.NoError(t, err)
 	})
 }
@@ -278,7 +279,7 @@ func TestTenantID_PropagatesThroughAttrs(t *testing.T) {
 		TenantID:     "acme-corp",
 		KeyAlgorithm: x509.ECDSA,
 	}
-	key, err := GenerateKey(attrs)
+	key, err := GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.NotNil(t, key)
 
@@ -301,7 +302,7 @@ func TestSigner_TenantValidation(t *testing.T) {
 			CN:       "signer-key",
 			TenantID: "evil/../path",
 		}
-		signer, err := Signer(attrs)
+		signer, err := Signer(context.Background(), attrs)
 		assert.Error(t, err)
 		assert.Nil(t, signer)
 	})
@@ -322,7 +323,7 @@ func TestDecrypter_TenantValidation(t *testing.T) {
 			CN:       "decrypter-key",
 			TenantID: "/absolute/path",
 		}
-		decrypter, err := Decrypter(attrs)
+		decrypter, err := Decrypter(context.Background(), attrs)
 		assert.Error(t, err)
 		assert.Nil(t, decrypter)
 	})
@@ -344,40 +345,40 @@ func TestCertificateOps_TenantValidation(t *testing.T) {
 	}
 
 	t.Run("Certificate rejects invalid tenant", func(t *testing.T) {
-		cert, err := Certificate(badAttrs)
+		cert, err := Certificate(context.Background(), badAttrs)
 		assert.Error(t, err)
 		assert.Nil(t, cert)
 	})
 
 	t.Run("SaveCertificate rejects invalid tenant", func(t *testing.T) {
-		err := SaveCertificate(badAttrs, nil)
+		err := SaveCertificate(context.Background(), badAttrs, nil)
 		assert.Error(t, err)
 	})
 
 	t.Run("DeleteCertificate rejects invalid tenant", func(t *testing.T) {
-		err := DeleteCertificate(badAttrs)
+		err := DeleteCertificate(context.Background(), badAttrs)
 		assert.Error(t, err)
 	})
 
 	t.Run("CertificateChain rejects invalid tenant", func(t *testing.T) {
-		chain, err := CertificateChain(badAttrs)
+		chain, err := CertificateChain(context.Background(), badAttrs)
 		assert.Error(t, err)
 		assert.Nil(t, chain)
 	})
 
 	t.Run("SaveCertificateChain rejects invalid tenant", func(t *testing.T) {
-		err := SaveCertificateChain(badAttrs, nil)
+		err := SaveCertificateChain(context.Background(), badAttrs, nil)
 		assert.Error(t, err)
 	})
 
 	t.Run("CertificateExists rejects invalid tenant", func(t *testing.T) {
-		exists, err := CertificateExists(badAttrs)
+		exists, err := CertificateExists(context.Background(), badAttrs)
 		assert.Error(t, err)
 		assert.False(t, exists)
 	})
 
 	t.Run("TLSCertificate rejects invalid tenant", func(t *testing.T) {
-		_, err := TLSCertificate(badAttrs)
+		_, err := TLSCertificate(context.Background(), badAttrs)
 		assert.Error(t, err)
 	})
 }
@@ -398,7 +399,7 @@ func TestGenerateKeyWithBackend_TenantValidation(t *testing.T) {
 			TenantID:     "../../escape",
 			KeyAlgorithm: x509.ECDSA,
 		}
-		key, err := GenerateKeyWithBackend("test", attrs)
+		key, err := GenerateKeyWithBackend(context.Background(), "test", attrs)
 		assert.Error(t, err)
 		assert.Nil(t, key)
 	})
@@ -409,7 +410,7 @@ func TestGenerateKeyWithBackend_TenantValidation(t *testing.T) {
 			TenantID:     "valid-tenant",
 			KeyAlgorithm: x509.ECDSA,
 		}
-		key, err := GenerateKeyWithBackend("test", attrs)
+		key, err := GenerateKeyWithBackend(context.Background(), "test", attrs)
 		require.NoError(t, err)
 		assert.NotNil(t, key)
 	})

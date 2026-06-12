@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
@@ -78,14 +79,14 @@ func main() {
 		},
 	}
 
-	_, err = ks.GenerateECDSA(caKeyAttrs)
+	_, err = ks.GenerateECDSA(context.Background(), caKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate CA key: %v", err)
 	}
 	fmt.Printf("   ✓ CA private key generated\n\n")
 
 	// Get signer for the CA key
-	caSigner, err := ks.Signer(caKeyAttrs)
+	caSigner, err := ks.Signer(context.Background(), caKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get CA signer: %v", err)
 	}
@@ -148,7 +149,7 @@ func main() {
 
 	// Example 4: Store CA certificate
 	fmt.Println("4. Storing CA certificate...")
-	err = ks.SaveCert(caKeyAttrs.CN, caCert)
+	err = ks.SaveCert(context.Background(), caKeyAttrs.CN, caCert)
 	if err != nil {
 		log.Fatalf("Failed to store CA certificate: %v", err)
 	}
@@ -177,7 +178,7 @@ func main() {
 
 	// Example 6: Verify CA certificate
 	fmt.Println("6. Verifying CA certificate...")
-	retrievedCert, err := ks.GetCert(caKeyAttrs.CN)
+	retrievedCert, err := ks.GetCert(context.Background(), caKeyAttrs.CN)
 	if err != nil {
 		log.Fatalf("Failed to retrieve CA certificate: %v", err)
 	}

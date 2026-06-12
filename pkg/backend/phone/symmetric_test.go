@@ -43,7 +43,7 @@ func TestBackend_GenerateSymmetricKey_Success(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	key, err := b.GenerateSymmetricKey(attrs)
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -74,7 +74,7 @@ func TestBackend_GenerateSymmetricKey_AES128(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES128GCM,
 	}
 
-	key, err := b.GenerateSymmetricKey(attrs)
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -93,7 +93,7 @@ func TestBackend_GenerateSymmetricKey_Closed(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != ErrBackendClosed {
 		t.Errorf("expected ErrBackendClosed, got %v", err)
 	}
@@ -103,7 +103,7 @@ func TestBackend_GenerateSymmetricKey_NilAttrs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.GenerateSymmetricKey(nil)
+	_, err := b.GenerateSymmetricKey(context.Background(), nil)
 	if err != ErrInvalidConfig {
 		t.Errorf("expected ErrInvalidConfig, got %v", err)
 	}
@@ -118,7 +118,7 @@ func TestBackend_GenerateSymmetricKey_UnsupportedAlgorithm(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAlgorithm("unsupported-algo"),
 	}
 
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != ErrUnsupportedAlgorithm {
 		t.Errorf("expected ErrUnsupportedAlgorithm, got %v", err)
 	}
@@ -137,7 +137,7 @@ func TestBackend_GenerateSymmetricKey_RPCError(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != ErrKeyExists {
 		t.Errorf("expected ErrKeyExists, got %v", err)
 	}
@@ -163,7 +163,7 @@ func TestBackend_GetSymmetricKey_Success(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	key, err := b.GetSymmetricKey(attrs)
+	key, err := b.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -180,7 +180,7 @@ func TestBackend_GetSymmetricKey_Closed(t *testing.T) {
 	b := newTestBackend(t, sender)
 	_ = b.Close()
 
-	_, err := b.GetSymmetricKey(&types.KeyAttributes{CN: "key"})
+	_, err := b.GetSymmetricKey(context.Background(), &types.KeyAttributes{CN: "key"})
 	if err != ErrBackendClosed {
 		t.Errorf("expected ErrBackendClosed, got %v", err)
 	}
@@ -190,7 +190,7 @@ func TestBackend_GetSymmetricKey_NilAttrs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.GetSymmetricKey(nil)
+	_, err := b.GetSymmetricKey(context.Background(), nil)
 	if err != ErrInvalidConfig {
 		t.Errorf("expected ErrInvalidConfig, got %v", err)
 	}
@@ -205,7 +205,7 @@ func TestBackend_GetSymmetricKey_NotFound(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.GetSymmetricKey(&types.KeyAttributes{CN: "missing"})
+	_, err := b.GetSymmetricKey(context.Background(), &types.KeyAttributes{CN: "missing"})
 	if err != ErrKeyNotFound {
 		t.Errorf("expected ErrKeyNotFound, got %v", err)
 	}
@@ -231,7 +231,7 @@ func TestBackend_SymmetricEncrypter_Success(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	enc, err := b.SymmetricEncrypter(attrs)
+	enc, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -245,7 +245,7 @@ func TestBackend_SymmetricEncrypter_Closed(t *testing.T) {
 	b := newTestBackend(t, sender)
 	_ = b.Close()
 
-	_, err := b.SymmetricEncrypter(&types.KeyAttributes{CN: "key"})
+	_, err := b.SymmetricEncrypter(context.Background(), &types.KeyAttributes{CN: "key"})
 	if err != ErrBackendClosed {
 		t.Errorf("expected ErrBackendClosed, got %v", err)
 	}
@@ -255,7 +255,7 @@ func TestBackend_SymmetricEncrypter_NilAttrs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.SymmetricEncrypter(nil)
+	_, err := b.SymmetricEncrypter(context.Background(), nil)
 	if err != ErrInvalidConfig {
 		t.Errorf("expected ErrInvalidConfig, got %v", err)
 	}
@@ -270,7 +270,7 @@ func TestBackend_SymmetricEncrypter_KeyNotFound(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.SymmetricEncrypter(&types.KeyAttributes{CN: "missing"})
+	_, err := b.SymmetricEncrypter(context.Background(), &types.KeyAttributes{CN: "missing"})
 	if err != ErrKeyNotFound {
 		t.Errorf("expected ErrKeyNotFound, got %v", err)
 	}

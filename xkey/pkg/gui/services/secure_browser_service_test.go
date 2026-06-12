@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
@@ -36,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite" // pure-Go SQLite driver for inspecting NSS cert9.db
 )
 
 // testSecureBrowserCA generates a self-signed CA certificate for testing.
@@ -498,15 +500,17 @@ func TestRebuild(t *testing.T) {
 	err := svc.Rebuild()
 	require.NoError(t, err)
 
-	// Verify trust hash was written.
-	hashPath := filepath.Join(baseDir, trustHashFile)
-	data, err := os.ReadFile(hashPath)
-	require.NoError(t, err)
-	assert.NotEmpty(t, string(data))
-
-	// Verify the hash matches the expected value.
+	// Verify the per-target trust hash was written for each family's
+	// currently configured (default isolated) mode.
 	expectedHash := computeTrustHash([]*x509.Certificate{cert})
-	assert.Equal(t, expectedHash, strings.TrimSpace(string(data)))
+	for _, name := range []string{
+		trustHashFilePrefix + ".chrome.isolated",
+		trustHashFilePrefix + ".firefox.isolated",
+	} {
+		data, readErr := os.ReadFile(filepath.Join(baseDir, name))
+		require.NoError(t, readErr, "missing per-target hash file %s", name)
+		assert.Equal(t, expectedHash, strings.TrimSpace(string(data)))
+	}
 }
 
 // TestRebuildUpdatesHash verifies that rebuild writes a new hash when
@@ -517,7 +521,7 @@ func TestRebuildUpdatesHash(t *testing.T) {
 
 	require.NoError(t, svc.Rebuild())
 
-	hashPath := filepath.Join(baseDir, trustHashFile)
+	hashPath := filepath.Join(baseDir, trustHashFilePrefix+".chrome.isolated")
 	data1, err := os.ReadFile(hashPath)
 	require.NoError(t, err)
 
@@ -563,9 +567,9 @@ func TestSyncIfChangedTriggersOnNewHash(t *testing.T) {
 	cert := testSecureBrowserCA(t, "New Hash CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 
-	// Write a stale hash.
+	// Write a stale hash for the chrome isolated target store.
 	require.NoError(t, os.WriteFile(
-		filepath.Join(baseDir, trustHashFile),
+		filepath.Join(baseDir, trustHashFilePrefix+".chrome.isolated"),
 		[]byte("stale-hash-value"),
 		0o600,
 	))
@@ -584,10 +588,10 @@ func TestTrustHashReadWrite(t *testing.T) {
 	svc, _ := newTestSecureBrowserService(t, nil)
 
 	hash := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
-	err := svc.writeTrustHash(hash)
+	err := svc.writeTrustHash("chrome", hash)
 	require.NoError(t, err)
 
-	read, err := svc.readTrustHash()
+	read, err := svc.readTrustHash("chrome")
 	require.NoError(t, err)
 	assert.Equal(t, hash, read)
 }
@@ -597,7 +601,7 @@ func TestTrustHashReadMissing(t *testing.T) {
 	svc, _ := newTestSecureBrowserService(t, nil)
 	svc.baseDir = filepath.Join(t.TempDir(), "nonexistent")
 
-	_, err := svc.readTrustHash()
+	_, err := svc.readTrustHash("chrome")
 	assert.ErrorIs(t, err, ErrSecureBrowserHashRead)
 }
 
@@ -726,7 +730,7 @@ func TestNewSecureBrowserServiceNilLogger(t *testing.T) {
 // TestSetContextSecureBrowser verifies context is stored.
 func TestSetContextSecureBrowser(t *testing.T) {
 	svc, _ := newTestSecureBrowserService(t, nil)
-	ctx := context.WithValue(context.Background(), struct{}{}, "test")
+	ctx := context.WithValue(context.Background(), testCtxKey("sb"), "test")
 	svc.SetContext(ctx)
 	assert.Equal(t, ctx, svc.ctx)
 }
@@ -738,13 +742,188 @@ func TestRebuildWithEmptyStore(t *testing.T) {
 	err := svc.Rebuild()
 	require.NoError(t, err)
 
-	// Hash should still be written (hash of empty list).
-	hashPath := filepath.Join(baseDir, trustHashFile)
-	data, err := os.ReadFile(hashPath)
-	require.NoError(t, err)
-
+	// Per-target hashes should still be written (hash of empty list).
 	expected := computeTrustHash(nil)
-	assert.Equal(t, expected, strings.TrimSpace(string(data)))
+	for _, name := range []string{
+		trustHashFilePrefix + ".chrome.isolated",
+		trustHashFilePrefix + ".firefox.isolated",
+	} {
+		data, readErr := os.ReadFile(filepath.Join(baseDir, name))
+		require.NoError(t, readErr, "missing per-target hash file %s", name)
+		assert.Equal(t, expected, strings.TrimSpace(string(data)))
+	}
+}
+
+// setChromeMode sets the Chrome profile mode on the service's browser config.
+func setChromeMode(t *testing.T, svc *SecureBrowserService, mode string) {
+	t.Helper()
+	config := svc.browserService.GetConfig()
+	config.ChromeProfileMode = mode
+	require.NoError(t, svc.browserService.SetConfig(config))
+}
+
+// nssdbCertLabels opens an NSS cert9.db and returns the set of xkey-managed
+// certificate labels (column a3) it contains. It is used to assert which
+// certificates landed in a given target store.
+func nssdbCertLabels(t *testing.T, nssdbDir string) map[string]struct{} {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(nssdbDir, "cert9.db"))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	rows, err := db.Query(
+		"SELECT CAST(a3 AS TEXT) FROM nssPublic WHERE typeof(a3) = 'blob' AND CAST(a3 AS TEXT) LIKE ?",
+		nssdbCertLabelPrefix+"%",
+	)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	labels := make(map[string]struct{})
+	for rows.Next() {
+		var label string
+		require.NoError(t, rows.Scan(&label))
+		labels[label] = struct{}{}
+	}
+	require.NoError(t, rows.Err())
+	return labels
+}
+
+// expectedCertLabel returns the xkey- NSS label syncChrome/syncFirefox assign
+// to the given certificate.
+func expectedCertLabel(cert *x509.Certificate) string {
+	return nssdbCertLabelPrefix + certFingerprint(cert)[:16]
+}
+
+// TestSyncIfChangedReSyncsOnModeFlipSharedToIsolated reproduces the confirmed
+// bug: a shared-mode sync records its hash, then the mode is flipped to
+// isolated. With a single global hash the launch short-circuited (hash matched
+// and a stale isolated cert9.db happened to exist), leaving the isolated NSS DB
+// without the current CAs. Change detection is now per resolved target store,
+// so the isolated store MUST be re-synced.
+func TestSyncIfChangedReSyncsOnModeFlipSharedToIsolated(t *testing.T) {
+	// Redirect HOME so shared-mode chrome targets a hermetic ~/.pki/nssdb and
+	// never the real user store.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// oldCA is the stale CA that a prior launch left in the isolated store
+	// (e.g. from May). newCA is the current trust-store CA.
+	oldCA := testSecureBrowserCA(t, "Stale May CA")
+	newCA := testSecureBrowserCA2(t)
+	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{newCA})
+	isolatedNSSDB := filepath.Join(baseDir, "chrome", "profile", ".pki", "nssdb")
+
+	// Seed a stale-but-valid isolated NSS DB containing only the OLD CA, as
+	// if a previous isolated launch weeks ago populated it. Done directly so
+	// no hash is recorded for the isolated target.
+	require.NoError(t, svc.syncChrome([]*x509.Certificate{oldCA}))
+	require.FileExists(t, filepath.Join(isolatedNSSDB, "cert9.db"))
+
+	// 1. Shared mode: sync the NEW CA. This records the shared-store hash and
+	//    populates ~/.pki/nssdb — but must NOT touch the isolated store.
+	setChromeMode(t, svc, ProfileModeShared)
+	require.NoError(t, svc.syncIfChanged("chrome", []*x509.Certificate{newCA}))
+	require.FileExists(t, filepath.Join(baseDir, trustHashFilePrefix+".chrome.shared"),
+		"shared-mode hash must be recorded")
+	require.FileExists(t, filepath.Join(home, ".pki", "nssdb", "cert9.db"),
+		"shared store must be populated")
+
+	// Precondition for the bug: the isolated store still holds the OLD CA and
+	// NOT the new one.
+	staleLabels := nssdbCertLabels(t, isolatedNSSDB)
+	require.Contains(t, staleLabels, expectedCertLabel(oldCA))
+	require.NotContains(t, staleLabels, expectedCertLabel(newCA))
+
+	// 2. Flip to isolated mode and launch. With a global hash this skipped
+	//    (hash matched + isolated cert9.db existed). It must now re-sync the
+	//    isolated store so it holds the NEW CA and no longer the OLD one.
+	setChromeMode(t, svc, ProfileModeIsolated)
+	require.NoError(t, svc.syncIfChanged("chrome", []*x509.Certificate{newCA}))
+
+	labels := nssdbCertLabels(t, isolatedNSSDB)
+	assert.Contains(t, labels, expectedCertLabel(newCA),
+		"isolated store must receive the current CA after mode flip")
+	assert.NotContains(t, labels, expectedCertLabel(oldCA),
+		"isolated store must drop the stale CA after re-sync")
+	assert.FileExists(t, filepath.Join(baseDir, trustHashFilePrefix+".chrome.isolated"),
+		"isolated-mode hash must be recorded after re-sync")
+}
+
+// TestSyncIfChangedReSyncsOnModeFlipIsolatedToShared verifies the reverse
+// direction: an isolated-mode sync records its hash, then the mode is flipped
+// to shared; the shared store (~/.pki/nssdb) must be synced even though the
+// trust contents are unchanged.
+func TestSyncIfChangedReSyncsOnModeFlipIsolatedToShared(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cert := testSecureBrowserCA(t, "Reverse Flip CA")
+	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
+
+	// 1. Isolated mode sync.
+	setChromeMode(t, svc, ProfileModeIsolated)
+	require.NoError(t, svc.syncIfChanged("chrome", []*x509.Certificate{cert}))
+	require.FileExists(t, filepath.Join(baseDir, trustHashFilePrefix+".chrome.isolated"))
+	sharedDB := filepath.Join(home, ".pki", "nssdb", "cert9.db")
+	require.NoFileExists(t, sharedDB, "shared store must not exist after isolated sync")
+
+	// 2. Flip to shared mode and launch. The shared store has no recorded
+	//    hash, so the sync MUST run and populate ~/.pki/nssdb.
+	setChromeMode(t, svc, ProfileModeShared)
+	require.NoError(t, svc.syncIfChanged("chrome", []*x509.Certificate{cert}))
+
+	assert.FileExists(t, sharedDB, "shared store must be synced after mode flip")
+	sharedLabels := nssdbCertLabels(t, filepath.Join(home, ".pki", "nssdb"))
+	assert.Contains(t, sharedLabels, expectedCertLabel(cert),
+		"shared store must receive the current CA after mode flip")
+	assert.FileExists(t, filepath.Join(baseDir, trustHashFilePrefix+".chrome.shared"),
+		"shared-mode hash must be recorded")
+
+	// Bookkeeping must never be written into the real ~/.pki/nssdb.
+	assert.NoFileExists(t, filepath.Join(home, ".pki", "nssdb", trustHashFilePrefix+".chrome.shared"),
+		"trust hash must not be written into the user's ~/.pki/nssdb")
+}
+
+// TestSyncIfChangedReSyncsWhenStoreWiped verifies the preserved wiped-store
+// behavior: the per-target hash matches the current trust contents, but the
+// target store's cert9.db was deleted externally — the sync must still run.
+func TestSyncIfChangedReSyncsWhenStoreWiped(t *testing.T) {
+	cert := testSecureBrowserCA(t, "Wiped Store CA")
+	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
+
+	// First sync establishes the isolated hash and the NSS DB.
+	require.NoError(t, svc.syncIfChanged("chrome", []*x509.Certificate{cert}))
+	certDB := filepath.Join(baseDir, "chrome", "profile", ".pki", "nssdb", "cert9.db")
+	require.FileExists(t, certDB)
+
+	// Externally wipe the store while leaving the hash file intact.
+	require.NoError(t, os.Remove(certDB))
+
+	// Same certs => hash matches, but the store is gone, so the existence
+	// guard must force a re-sync that recreates cert9.db.
+	require.NoError(t, svc.syncIfChanged("chrome", []*x509.Certificate{cert}))
+	assert.FileExists(t, certDB, "wiped store must be re-synced even when hash matches")
+}
+
+// TestSyncIfChangedFastPathSkipsRedundantWrite verifies the no-change fast
+// path: same mode, same trust contents, store present => the sync is skipped
+// and no redundant write touches the target store.
+func TestSyncIfChangedFastPathSkipsRedundantWrite(t *testing.T) {
+	cert := testSecureBrowserCA(t, "Fast Path CA")
+	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
+
+	require.NoError(t, svc.syncIfChanged("chrome", []*x509.Certificate{cert}))
+	certDB := filepath.Join(baseDir, "chrome", "profile", ".pki", "nssdb", "cert9.db")
+	require.FileExists(t, certDB)
+
+	// Sentinel: a genuine skip leaves the cert DB untouched.
+	require.NoError(t, os.WriteFile(certDB, []byte("SENTINEL"), 0o600))
+
+	require.NoError(t, svc.syncIfChanged("chrome", []*x509.Certificate{cert}))
+	data, err := os.ReadFile(certDB)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("SENTINEL"), data,
+		"unchanged sync must skip and not rebuild the target store")
 }
 
 // TestFirefoxProfileDirCreated verifies isolated Firefox profile dir is created.

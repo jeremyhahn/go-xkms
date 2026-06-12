@@ -106,7 +106,7 @@ func runSeal(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create the volume
-	fmt.Fprintf(cmd.OutOrStdout(), "Creating encrypted volume at %s...\n", vol.LUKSPath)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Creating encrypted volume at %s...\n", vol.LUKSPath)
 	if err := vol.Create(sizeBytes, passphrase); err != nil {
 		return &SealError{Operation: "create_volume", Err: err}
 	}
@@ -120,19 +120,19 @@ func runSeal(cmd *cobra.Command, args []string) error {
 
 	// If --unseal is set, unlock and mount the volume so it's ready for use.
 	if sealUnseal && !vol.IsMounted() {
-		fmt.Fprintln(cmd.OutOrStdout(), "Unlocking volume...")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Unlocking volume...")
 		if err := vol.Unlock(passphrase); err != nil {
 			return &SealError{Operation: "unseal_after_create", Err: err}
 		}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "\nEncrypted storage created successfully!\n")
-	fmt.Fprintf(cmd.OutOrStdout(), "  LUKS file: %s\n", vol.LUKSPath)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Mount point: %s\n", vol.MountPoint)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nEncrypted storage created successfully!\n")
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  LUKS file: %s\n", vol.LUKSPath)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Mount point: %s\n", vol.MountPoint)
 	if sealUnseal {
-		fmt.Fprintln(cmd.OutOrStdout(), "\nVolume is unlocked and mounted.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nVolume is unlocked and mounted.")
 	} else {
-		fmt.Fprintln(cmd.OutOrStdout(), "\nUse 'xkey luks2 unseal' to unlock the encrypted storage.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nUse 'xkey luks2 unseal' to unlock the encrypted storage.")
 	}
 
 	return nil
@@ -195,16 +195,16 @@ func readAndConfirmPassphrase(out io.Writer) (string, error) {
 
 // readPassphraseFromTerminal reads passphrase securely from terminal.
 func readPassphraseFromTerminal(out io.Writer) (string, error) {
-	fmt.Fprint(out, "Enter passphrase for encrypted storage: ")
+	_, _ = fmt.Fprint(out, "Enter passphrase for encrypted storage: ")
 	passphrase1, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	if err != nil {
 		return "", &SealError{Operation: "read_passphrase", Err: err}
 	}
 
-	fmt.Fprint(out, "Confirm passphrase: ")
+	_, _ = fmt.Fprint(out, "Confirm passphrase: ")
 	passphrase2, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	if err != nil {
 		return "", &SealError{Operation: "read_passphrase", Err: err}
 	}
@@ -245,7 +245,7 @@ func readPassphraseFromStdin(out io.Writer) (string, error) {
 
 // migrateExistingData migrates data from existing directory to encrypted volume.
 func migrateExistingData(out io.Writer, vol *luks.Volume, passphrase string) error {
-	fmt.Fprintln(out, "Migrating existing data to encrypted volume...")
+	_, _ = fmt.Fprintln(out, "Migrating existing data to encrypted volume...")
 	dataDir := vol.MountPoint
 
 	// Create a temp dir to hold data during migration
@@ -253,7 +253,7 @@ func migrateExistingData(out io.Writer, vol *luks.Volume, passphrase string) err
 	if err != nil {
 		return &SealError{Operation: "create_temp", Err: err}
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Copy existing data to temp directory
 	if err := copyDirContents(dataDir, tmpDir); err != nil {
@@ -272,7 +272,7 @@ func migrateExistingData(out io.Writer, vol *luks.Volume, passphrase string) err
 
 	// Copy from temp to mounted volume
 	if err := vol.CopyDataToVolume(tmpDir); err != nil {
-		vol.Lock()
+		_ = vol.Lock()
 		return &SealError{Operation: "migrate_data", Err: err}
 	}
 
@@ -281,7 +281,7 @@ func migrateExistingData(out io.Writer, vol *luks.Volume, passphrase string) err
 		return &SealError{Operation: "lock_after_migration", Err: err}
 	}
 
-	fmt.Fprintln(out, "Data migration complete.")
+	_, _ = fmt.Fprintln(out, "Data migration complete.")
 	return nil
 }
 

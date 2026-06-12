@@ -40,6 +40,9 @@ var bootstrapAutoCmd = &cobra.Command{
 Each method that is configured (via flags or config file) will be tried in order.
 The first method that succeeds returns the CA bundle.
 
+When --config points to an xkmsd config file with a trust: section, the
+default scope's settings are used as base values; CLI flags override them.
+
 Direct is a last-resort fallback that uses standard HTTPS with the system trust
 store. It requires the server to already have a certificate trusted by a public
 CA or one installed in the OS trust store.`,
@@ -53,6 +56,13 @@ CA or one installed in the OS trust store.`,
 		directEnabled, _ := cmd.Flags().GetBool("direct")
 		bundlePath, _ := cmd.Flags().GetString("bundle-path")
 		bundleOutput, _ := cmd.Flags().GetString("bundle-output")
+		configFile, _ := cmd.Flags().GetString("config")
+
+		// Resolve the config file path: local --config flag takes
+		// precedence, then the global --config flag from root.
+		if configFile == "" && globalConfig != nil {
+			configFile = globalConfig.ConfigFile
+		}
 
 		params := &autoBootstrapParams{
 			serverURL:     serverURL,
@@ -65,6 +75,18 @@ CA or one installed in the OS trust store.`,
 			bundlePath:    bundlePath,
 			bundleOutput:  bundleOutput,
 		}
+
+		// Apply config-file-derived values as defaults (flags override).
+		if configFile != "" {
+			trustCfg, err := trustConfigFromFile(configFile)
+			if err != nil {
+				return err
+			}
+			if trustCfg != nil {
+				autoParamsFromResolverScope(params, trustCfg.Scope("default"))
+			}
+		}
+
 		return runAutoBootstrap(params)
 	},
 }
@@ -211,7 +233,7 @@ func init() {
 
 	// Flags for auto
 	bootstrapAutoCmd.Flags().String("server-url", "", "xkms server URL (e.g., https://kms.example.com:8443)")
-	bootstrapAutoCmd.Flags().String("config", "", "path to bootstrap config file")
+	bootstrapAutoCmd.Flags().String("config", "", "path to xkmsd config file (trust: section used as defaults)")
 	bootstrapAutoCmd.Flags().String("dane-hostname", "", "hostname for DANE/TLSA verification")
 	bootstrapAutoCmd.Flags().String("dane-dns-server", "", "DNS server for DANE lookups (e.g., 8.8.8.8:53)")
 	bootstrapAutoCmd.Flags().String("noise-key", "", "hex-encoded Noise static public key of the server")

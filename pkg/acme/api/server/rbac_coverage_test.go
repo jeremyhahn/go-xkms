@@ -1298,7 +1298,7 @@ func TestMCP_UpdateUser_Success(t *testing.T) {
 	params := map[string]interface{}{
 		"tenantId": "tenant-1",
 		"user": map[string]interface{}{
-			"id":       1,
+			"id":       "1",
 			"username": "alice-updated",
 			"roleIDs":  []string{"role-1", "role-3"},
 		},
@@ -1355,7 +1355,7 @@ func TestMCP_UpdateUser_ServiceError(t *testing.T) {
 	params := map[string]interface{}{
 		"tenantId": "tenant-1",
 		"user": map[string]interface{}{
-			"id":       1,
+			"id":       "1",
 			"username": "updated",
 		},
 	}

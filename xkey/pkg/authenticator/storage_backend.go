@@ -407,7 +407,11 @@ func (b *BackendStorage) LoadState() (*AuthenticatorState, error) {
 
 	var serializable SerializableState
 	if err := json.Unmarshal(data, &serializable); err != nil {
-		return nil, ErrDeserializationFailed
+		return nil, ErrIncompatibleState{
+			StorageKey: key,
+			Size:       len(data),
+			Cause:      err,
+		}
 	}
 
 	return serializableToState(&serializable)

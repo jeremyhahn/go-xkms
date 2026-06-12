@@ -521,7 +521,7 @@ func (b *Backend) Capabilities() types.Capabilities {
 
 // GenerateKey generates a new private key with the given attributes.
 // For AWS KMS, this creates a new KMS key and stores metadata.
-func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -539,12 +539,11 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 
 // GetKey retrieves an existing private key by its attributes.
 // For AWS KMS, this verifies the key exists and returns a reference.
-func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
 
-	ctx := context.Background()
 	if err := b.initClient(ctx); err != nil {
 		return nil, err
 	}
@@ -579,7 +578,7 @@ func (b *Backend) GetSignerByID(keyID string) (crypto.Signer, error) {
 		KeyType:   backend.KEY_TYPE_SIGNING,
 		StoreType: backend.STORE_AWSKMS,
 	}
-	key, err := b.GetKey(attrs)
+	key, err := b.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -597,7 +596,7 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 		KeyType:   backend.KEY_TYPE_ENCRYPTION,
 		StoreType: backend.STORE_AWSKMS,
 	}
-	key, err := b.GetKey(attrs)
+	key, err := b.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -609,13 +608,12 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 }
 
 // DeleteKey removes a key identified by its attributes.
-func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	return b.Delete(attrs)
 }
 
 // ListKeys returns attributes for all keys managed by this backend.
-func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
-	ctx := context.Background()
+func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	if err := b.initClient(ctx); err != nil {
 		return nil, err
 	}
@@ -675,12 +673,11 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 }
 
 // Signer returns a crypto.Signer for the key identified by attrs.
-func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
 
-	ctx := context.Background()
 	if err := b.initClient(ctx); err != nil {
 		return nil, err
 	}
@@ -717,7 +714,7 @@ func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
 }
 
 // Decrypter returns a crypto.Decrypter for the key identified by attrs.
-func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -731,7 +728,6 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 		return nil, fmt.Errorf("%w: key must be of type encryption", backend.ErrInvalidKeyType)
 	}
 
-	ctx := context.Background()
 	if err := b.initClient(ctx); err != nil {
 		return nil, err
 	}
@@ -762,12 +758,11 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 
 // RotateKey rotates/updates a key identified by attrs.
 // For AWS KMS, this uses the RotateKeyOnDemand API to create a new key version.
-func (b *Backend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil {
 		return backend.ErrInvalidAttributes
 	}
 
-	ctx := context.Background()
 	if err := b.initClient(ctx); err != nil {
 		return err
 	}
@@ -864,12 +859,11 @@ func (d *kmsDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.De
 //
 // The returned parameters must be used with WrapKey to encrypt the key material
 // before calling ImportKey.
-func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
 
-	ctx := context.Background()
 	if err := b.initClient(ctx); err != nil {
 		return nil, err
 	}
@@ -929,7 +923,7 @@ func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm back
 // The wrapping is performed locally to ensure the plaintext key material is never
 // transmitted to AWS over the network. Only the encrypted (wrapped) key material
 // is sent during the ImportKey operation.
-func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if len(keyMaterial) == 0 {
 		return nil, fmt.Errorf("%w: key material cannot be empty", backend.ErrInvalidAttributes)
 	}
@@ -983,7 +977,7 @@ func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) 
 //
 // For AWS KMS, key material is unwrapped automatically during the ImportKey operation
 // within the secure hardware boundary.
-func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	return nil, fmt.Errorf("%w: AWS KMS performs unwrapping internally within the HSM", backend.ErrNotSupported)
 }
 
@@ -999,7 +993,7 @@ func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend
 //
 // Important: The import token has a 24-hour validity period. If expired, new parameters
 // must be obtained via GetImportParameters.
-func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	if attrs == nil {
 		return backend.ErrInvalidAttributes
 	}
@@ -1013,7 +1007,6 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 		return fmt.Errorf("%w: wrapped key material is empty", backend.ErrInvalidAttributes)
 	}
 
-	ctx := context.Background()
 	if err := b.initClient(ctx); err != nil {
 		return err
 	}
@@ -1043,7 +1036,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 // This ensures that keys remain protected within the AWS hardware security modules.
 //
 // Returns ErrExportNotSupported to indicate this operation is not available.
-func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}

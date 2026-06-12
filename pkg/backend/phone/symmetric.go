@@ -80,7 +80,7 @@ type phoneSymmetricEncrypter struct {
 
 // GenerateSymmetricKey generates a new symmetric key on the phone's hardware
 // keystore. The key material remains in the TEE/StrongBox and is never exported.
-func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -98,7 +98,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 		Algorithm: phoneAlgo,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), b.config.RequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
 	resp, err := b.sendLocalRequest(ctx, phoneproto.MethodLocalGenerateKey, params)
@@ -123,7 +123,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 // GetSymmetricKey retrieves metadata for an existing symmetric key from the
 // phone's hardware keystore. The returned SymmetricKey provides algorithm and
 // size information but cannot export key material.
-func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -131,7 +131,7 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 		return nil, ErrInvalidConfig
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), b.config.RequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
 	resp, err := b.sendLocalRequest(ctx, phoneproto.MethodLocalGetKeyInfo, &phoneproto.LocalGetKeyInfoParams{
@@ -158,7 +158,7 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 // SymmetricEncrypter returns a SymmetricEncrypter that proxies encrypt/decrypt
 // operations to the phone's secure hardware for the key identified by attrs.
 // The key must exist on the phone before calling this method.
-func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	if b.closed.Load() {
 		return nil, ErrBackendClosed
 	}
@@ -166,7 +166,7 @@ func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.Symmetri
 		return nil, ErrInvalidConfig
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), b.config.RequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
 	// Verify the key exists on the phone.

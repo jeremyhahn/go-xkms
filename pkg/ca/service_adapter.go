@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -38,7 +39,7 @@ var (
 // If profile and validityDays are both zero-values, CA defaults are used.
 //
 // Thread-safe: Yes
-func (ca *CA) SignCSRRaw(csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error) {
+func (ca *CA) SignCSRRaw(ctx context.Context, csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error) {
 	var opts *SignOptions
 	if profile != "" || validityDays > 0 {
 		opts = &SignOptions{
@@ -46,7 +47,7 @@ func (ca *CA) SignCSRRaw(csrPEM []byte, profile string, validityDays int) (*x509
 			ValidityDays: validityDays,
 		}
 	}
-	return ca.SignCSR(csrPEM, opts)
+	return ca.SignCSR(ctx, csrPEM, opts)
 }
 
 // SignCSRWithSPIFFE signs a CSR and optionally stamps a tenant-scoped SPIFFE
@@ -59,7 +60,7 @@ func (ca *CA) SignCSRRaw(csrPEM []byte, profile string, validityDays int) (*x509
 // certificates without importing ca types.
 //
 // Thread-safe: Yes
-func (ca *CA) SignCSRWithSPIFFE(csrPEM []byte, profile string, validityDays int, trustDomain, tenantID, kind, name string) (*x509.Certificate, error) {
+func (ca *CA) SignCSRWithSPIFFE(ctx context.Context, csrPEM []byte, profile string, validityDays int, trustDomain, tenantID, kind, name string) (*x509.Certificate, error) {
 	opts := &SignOptions{
 		Profile:           profile,
 		ValidityDays:      validityDays,
@@ -68,7 +69,7 @@ func (ca *CA) SignCSRWithSPIFFE(csrPEM []byte, profile string, validityDays int,
 		SPIFFEKind:        kind,
 		SPIFFEName:        name,
 	}
-	return ca.SignCSR(csrPEM, opts)
+	return ca.SignCSR(ctx, csrPEM, opts)
 }
 
 // IssueCertificateRaw issues a certificate using only primitive parameter types,
@@ -83,6 +84,7 @@ func (ca *CA) SignCSRWithSPIFFE(csrPEM []byte, profile string, validityDays int,
 //
 // Thread-safe: Yes
 func (ca *CA) IssueCertificateRaw(
+	ctx context.Context,
 	commonName, organization string,
 	sans []string,
 	validityDays int,
@@ -103,7 +105,7 @@ func (ca *CA) IssueCertificateRaw(
 		request.SANS = sanStruct
 	}
 
-	issued, err := ca.IssueCertificateWithProfile(request, profile)
+	issued, err := ca.IssueCertificateWithProfile(ctx, request, profile)
 	if err != nil {
 		return nil, nil, nil, "", err
 	}
@@ -171,7 +173,7 @@ func (ca *CA) GetCACertificatePEM() ([]byte, error) {
 // IssueEKCertificateRaw issues an EK certificate using primitive types.
 // ekPubDER is DER-encoded public key bytes.
 // Thread-safe: Yes
-func (ca *CA) IssueEKCertificateRaw(commonName, organization string, ekPubDER []byte) (certDER []byte, err error) {
+func (ca *CA) IssueEKCertificateRaw(ctx context.Context, commonName, organization string, ekPubDER []byte) (certDER []byte, err error) {
 	pubKey, err := x509.ParsePKIXPublicKey(ekPubDER)
 	if err != nil {
 		return nil, fmt.Errorf("parse EK public key: %w", err)
@@ -184,7 +186,7 @@ func (ca *CA) IssueEKCertificateRaw(commonName, organization string, ekPubDER []
 		},
 	}
 
-	cert, err := ca.IssueEKCertificate(request, pubKey)
+	cert, err := ca.IssueEKCertificate(ctx, request, pubKey)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +197,7 @@ func (ca *CA) IssueEKCertificateRaw(commonName, organization string, ekPubDER []
 // IssueAKCertificateRaw issues an AK certificate using primitive types.
 // pubDER is DER-encoded public key bytes.
 // Thread-safe: Yes
-func (ca *CA) IssueAKCertificateRaw(commonName, organization string, pubDER []byte) (certDER []byte, err error) {
+func (ca *CA) IssueAKCertificateRaw(ctx context.Context, commonName, organization string, pubDER []byte) (certDER []byte, err error) {
 	pubKey, err := x509.ParsePKIXPublicKey(pubDER)
 	if err != nil {
 		return nil, fmt.Errorf("parse AK public key: %w", err)
@@ -208,7 +210,7 @@ func (ca *CA) IssueAKCertificateRaw(commonName, organization string, pubDER []by
 		},
 	}
 
-	cert, err := ca.IssueAKCertificate(request, pubKey)
+	cert, err := ca.IssueAKCertificate(ctx, request, pubKey)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +222,7 @@ func (ca *CA) IssueAKCertificateRaw(commonName, organization string, pubDER []by
 // packedCSR is the binary-marshalled TCG_CSR_IDEVID bytes.
 // Returns IAK cert DER and IDevID cert DER.
 // Thread-safe: Yes
-func (ca *CA) SignTCGCSRIDevIDRaw(commonName, organization string, packedCSR []byte) (iakDER, idevidDER []byte, err error) {
+func (ca *CA) SignTCGCSRIDevIDRaw(ctx context.Context, commonName, organization string, packedCSR []byte) (iakDER, idevidDER []byte, err error) {
 	// Unmarshal the packed bytes into a TCG_CSR_IDEVID structure.
 	tcgCSR, err := tpm2.UnmarshalIDevIDCSR(packedCSR)
 	if err != nil {
@@ -234,13 +236,13 @@ func (ca *CA) SignTCGCSRIDevIDRaw(commonName, organization string, packedCSR []b
 		},
 	}
 
-	return ca.SignTCGCSRIDevID(tcgCSR, request)
+	return ca.SignTCGCSRIDevID(ctx, tcgCSR, request)
 }
 
 // EnrollDeviceRaw performs TCG device enrollment using primitive types.
 // packedCSR is the binary-packed TCG_CSR_IDEVID bytes.
 // Thread-safe: Yes
-func (ca *CA) EnrollDeviceRaw(commonName, organization string, packedCSR []byte) (
+func (ca *CA) EnrollDeviceRaw(ctx context.Context, commonName, organization string, packedCSR []byte) (
 	iakDER, idevidDER, credBlob, encSecret, plainSecret []byte, err error,
 ) {
 	request := &CertificateRequest{
@@ -250,7 +252,7 @@ func (ca *CA) EnrollDeviceRaw(commonName, organization string, packedCSR []byte)
 		},
 	}
 
-	result, err := ca.EnrollDevice(packedCSR, request)
+	result, err := ca.EnrollDevice(ctx, packedCSR, request)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}

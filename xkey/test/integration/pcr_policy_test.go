@@ -19,6 +19,7 @@ package xkey
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,20 +88,34 @@ func TestCLI_PolicyCreate_InvalidBank(t *testing.T) {
 	}
 }
 
-// TestCLI_PolicyCreate_SHA384Bank verifies that SHA-384 bank is accepted.
+// TestCLI_PolicyCreate_SHA384Bank verifies SHA-384 bank handling. When the
+// TPM allocates a SHA-384 PCR bank, policy creation must succeed; when the
+// bank is not allocated (common on hardware TPMs that only enable SHA-256),
+// the CLI must fail with a clear error identifying the missing bank.
 func TestCLI_PolicyCreate_SHA384Bank(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
 	storePath := filepath.Join(dataDir, "policies")
 
-	stdout := RunXKeyExpectSuccess(t, binary, "",
+	args := []string{
 		"policy", "create", "sha384-policy",
 		"--pcrs", "0,7",
 		"--bank", "sha384",
-		"--store", storePath)
+		"--store", storePath,
+	}
 
-	if !strings.Contains(stdout, "Created policy") {
-		t.Errorf("Expected 'Created policy' in output, got: %s", stdout)
+	// The kernel exposes one sysfs directory per allocated PCR bank.
+	if _, err := os.Stat("/sys/class/tpm/tpm0/pcr-sha384"); err == nil {
+		stdout := RunXKeyExpectSuccess(t, binary, "", args...)
+		if !strings.Contains(stdout, "Created policy") {
+			t.Errorf("Expected 'Created policy' in output, got: %s", stdout)
+		}
+		return
+	}
+
+	errOutput := RunXKeyExpectFailure(t, binary, "", args...)
+	if !strings.Contains(errOutput, "sha384") {
+		t.Errorf("Expected error identifying the sha384 bank, got: %s", errOutput)
 	}
 }
 

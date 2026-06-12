@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -132,13 +133,13 @@ func createCA(ks xkms.Backend) (*x509.Certificate, crypto.Signer) {
 		},
 	}
 
-	_, err := ks.GenerateECDSA(caKeyAttrs)
+	_, err := ks.GenerateECDSA(context.Background(), caKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate CA key: %v", err)
 	}
 
 	// Get signer for the CA key
-	caSigner, err := ks.Signer(caKeyAttrs)
+	caSigner, err := ks.Signer(context.Background(), caKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get CA signer: %v", err)
 	}
@@ -174,7 +175,7 @@ func createCA(ks xkms.Backend) (*x509.Certificate, crypto.Signer) {
 
 	caCert, _ := x509.ParseCertificate(caCertBytes)
 	// #nosec G104 - Example code, error handling omitted for clarity
-	_ = ks.SaveCert(caKeyAttrs.CN, caCert)
+	_ = ks.SaveCert(context.Background(), caKeyAttrs.CN, caCert)
 
 	return caCert, caSigner
 }
@@ -192,13 +193,13 @@ func issueServerCertificate(ks xkms.Backend, caCert *x509.Certificate, caSigner 
 		},
 	}
 
-	_, err := ks.GenerateECDSA(serverKeyAttrs)
+	_, err := ks.GenerateECDSA(context.Background(), serverKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate server key: %v", err)
 	}
 
 	// Get signer for the server key
-	serverSigner, err := ks.Signer(serverKeyAttrs)
+	serverSigner, err := ks.Signer(context.Background(), serverKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get server signer: %v", err)
 	}
@@ -235,7 +236,7 @@ func issueServerCertificate(ks xkms.Backend, caCert *x509.Certificate, caSigner 
 
 	serverCert, _ := x509.ParseCertificate(serverCertBytes)
 	// #nosec G104 - Example code, error handling omitted for clarity
-	_ = ks.SaveCert(hostname, serverCert)
+	_ = ks.SaveCert(context.Background(), hostname, serverCert)
 
 	return serverCert
 }
@@ -253,13 +254,13 @@ func issueClientCertificate(ks xkms.Backend, caCert *x509.Certificate, caSigner 
 		},
 	}
 
-	_, err := ks.GenerateECDSA(clientKeyAttrs)
+	_, err := ks.GenerateECDSA(context.Background(), clientKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate client key: %v", err)
 	}
 
 	// Get signer for the client key
-	clientSigner, err := ks.Signer(clientKeyAttrs)
+	clientSigner, err := ks.Signer(context.Background(), clientKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get client signer: %v", err)
 	}
@@ -295,7 +296,7 @@ func issueClientCertificate(ks xkms.Backend, caCert *x509.Certificate, caSigner 
 
 	clientCert, _ := x509.ParseCertificate(clientCertBytes)
 	// #nosec G104 - Example code, error handling omitted for clarity
-	_ = ks.SaveCert(email, clientCert)
+	_ = ks.SaveCert(context.Background(), email, clientCert)
 
 	return clientCert
 }
@@ -313,13 +314,13 @@ func issueWildcardCertificate(ks xkms.Backend, caCert *x509.Certificate, caSigne
 		},
 	}
 
-	_, err := ks.GenerateECDSA(wildcardKeyAttrs)
+	_, err := ks.GenerateECDSA(context.Background(), wildcardKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate wildcard key: %v", err)
 	}
 
 	// Get signer for the wildcard key
-	wildcardSigner, err := ks.Signer(wildcardKeyAttrs)
+	wildcardSigner, err := ks.Signer(context.Background(), wildcardKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get wildcard signer: %v", err)
 	}
@@ -355,7 +356,7 @@ func issueWildcardCertificate(ks xkms.Backend, caCert *x509.Certificate, caSigne
 
 	wildcardCert, _ := x509.ParseCertificate(wildcardCertBytes)
 	// #nosec G104 - Example code, error handling omitted for clarity
-	_ = ks.SaveCert(domain, wildcardCert)
+	_ = ks.SaveCert(context.Background(), domain, wildcardCert)
 
 	return wildcardCert
 }

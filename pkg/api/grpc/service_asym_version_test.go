@@ -58,7 +58,11 @@ func setupAsymVersionTest(t *testing.T) *Service {
 		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
-	return NewService(nil, nil)
+	svc, err := xkms.Get()
+	if err != nil {
+		t.Fatalf("Failed to get xkms service: %v", err)
+	}
+	return NewService(nil, nil, svc)
 }
 
 // TestService_EncryptAsym tests asymmetric encryption functionality
@@ -264,7 +268,7 @@ func TestService_EncryptAsym(t *testing.T) {
 		}
 	})
 
-	t.Run("encrypts data with RSA key and SHA1 hash", func(t *testing.T) {
+	t.Run("rejects RSA OAEP with SHA-1 hash", func(t *testing.T) {
 		// Generate RSA key first
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "rsa-asym-key-sha1",
@@ -276,19 +280,15 @@ func TestService_EncryptAsym(t *testing.T) {
 			t.Fatalf("Failed to generate RSA key: %v", err)
 		}
 
-		// Encrypt with RSA key using SHA1
-		resp, err := service.EncryptAsym(context.Background(), &pb.EncryptAsymRequest{
+		// SHA-1 OAEP must be rejected — F-14 security policy.
+		_, err = service.EncryptAsym(context.Background(), &pb.EncryptAsymRequest{
 			KeyId:     "rsa-asym-key-sha1",
 			Backend:   "software",
 			Plaintext: []byte("test data to encrypt"),
 			Hash:      "sha1",
 		})
-		if err != nil {
-			t.Fatalf("EncryptAsym failed: %v", err)
-		}
-
-		if len(resp.Ciphertext) == 0 {
-			t.Error("Expected non-empty ciphertext")
+		if err == nil {
+			t.Fatal("EncryptAsym with SHA-1 hash should return an error but did not")
 		}
 	})
 
@@ -380,32 +380,45 @@ func TestService_EncryptAsym(t *testing.T) {
 	})
 }
 
-// TestParseHashAlgorithmForOAEP tests the hash parsing helper function
+// TestParseHashAlgorithmForOAEP tests the hash parsing helper function.
+// SHA-1 inputs must be rejected with an error; everything else resolves to
+// SHA-256 or stronger.
 func TestParseHashAlgorithmForOAEP(t *testing.T) {
 	testCases := []struct {
-		name     string
-		input    string
-		expected string
+		name      string
+		input     string
+		expected  string
+		expectErr bool
 	}{
-		{"empty string defaults to SHA256", "", "SHA-256"},
-		{"sha256 lowercase", "sha256", "SHA-256"},
-		{"SHA-256 uppercase with dash", "SHA-256", "SHA-256"},
-		{"256 only", "256", "SHA-256"},
-		{"sha384 lowercase", "sha384", "SHA-384"},
-		{"SHA-384 uppercase with dash", "SHA-384", "SHA-384"},
-		{"384 only", "384", "SHA-384"},
-		{"sha512 lowercase", "sha512", "SHA-512"},
-		{"SHA-512 uppercase with dash", "SHA-512", "SHA-512"},
-		{"512 only", "512", "SHA-512"},
-		{"sha1 lowercase", "sha1", "SHA-1"},
-		{"SHA-1 uppercase with dash", "SHA-1", "SHA-1"},
-		{"1 only", "1", "SHA-1"},
-		{"unknown defaults to SHA256", "md5", "SHA-256"},
+		{"empty string defaults to SHA256", "", "SHA-256", false},
+		{"sha256 lowercase", "sha256", "SHA-256", false},
+		{"SHA-256 uppercase with dash", "SHA-256", "SHA-256", false},
+		{"256 only", "256", "SHA-256", false},
+		{"sha384 lowercase", "sha384", "SHA-384", false},
+		{"SHA-384 uppercase with dash", "SHA-384", "SHA-384", false},
+		{"384 only", "384", "SHA-384", false},
+		{"sha512 lowercase", "sha512", "SHA-512", false},
+		{"SHA-512 uppercase with dash", "SHA-512", "SHA-512", false},
+		{"512 only", "512", "SHA-512", false},
+		{"sha1 lowercase is rejected", "sha1", "", true},
+		{"SHA-1 uppercase with dash is rejected", "SHA-1", "", true},
+		{"1 only is rejected", "1", "", true},
+		{"unknown defaults to SHA256", "md5", "SHA-256", false},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := parseHashAlgorithmForOAEP(tc.input)
+			result, err := parseHashAlgorithmForOAEP(tc.input)
+			if tc.expectErr {
+				if err == nil {
+					t.Errorf("parseHashAlgorithmForOAEP(%q) = %s, expected error", tc.input, result.String())
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("parseHashAlgorithmForOAEP(%q) returned unexpected error: %v", tc.input, err)
+				return
+			}
 			if result.String() != tc.expected {
 				t.Errorf("parseHashAlgorithmForOAEP(%q) = %s, expected %s", tc.input, result.String(), tc.expected)
 			}

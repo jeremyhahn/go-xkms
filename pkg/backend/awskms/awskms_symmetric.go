@@ -61,8 +61,7 @@ type awsKMSSymmetricEncrypter struct {
 
 // GenerateSymmetricKey generates a new symmetric key in AWS KMS.
 // AWS KMS only supports AES-256 symmetric keys (SYMMETRIC_DEFAULT).
-func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
-	ctx := context.Background()
+func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if err := b.initClient(ctx); err != nil {
 		return nil, err
 	}
@@ -168,8 +167,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 }
 
 // GetSymmetricKey retrieves an existing symmetric key by its attributes.
-func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
-	ctx := context.Background()
+func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if err := b.initClient(ctx); err != nil {
 		return nil, err
 	}
@@ -218,8 +216,7 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 }
 
 // SymmetricEncrypter returns a SymmetricEncrypter for the key identified by attrs.
-func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
-	ctx := context.Background()
+func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	if err := b.initClient(ctx); err != nil {
 		return nil, err
 	}

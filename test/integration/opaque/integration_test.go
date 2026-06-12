@@ -16,6 +16,7 @@
 package opaque
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -47,21 +48,21 @@ func newMockKeyStore() *mockKeyStore {
 	}
 }
 
-func (m *mockKeyStore) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyStore) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if key, ok := m.keys[attrs.CN]; ok {
 		return key, nil
 	}
 	return nil, opaque.ErrInvalidKeyAttributes
 }
 
-func (m *mockKeyStore) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockKeyStore) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	if signer, ok := m.signers[attrs.CN]; ok {
 		return signer, nil
 	}
 	return nil, opaque.ErrInvalidKeyAttributes
 }
 
-func (m *mockKeyStore) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockKeyStore) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	if decrypter, ok := m.decrypters[attrs.CN]; ok {
 		return decrypter, nil
 	}

@@ -210,7 +210,7 @@ func (c *Client) doPlainTokenRequest(ctx context.Context, data url.Values) (*Tok
 	if err != nil {
 		return nil, ErrTokenExchangeFailed
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -266,7 +266,7 @@ func (c *Client) doDPoPTokenRequest(ctx context.Context, data url.Values) (*Toke
 		}
 
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			return nil, ErrTokenExchangeFailed
 		}
@@ -597,7 +597,7 @@ func (c *Client) UserInfo(ctx context.Context, accessToken string) (*UserInfo, e
 	if err != nil {
 		return nil, ErrUserInfoFailed
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Capture server nonce from resource response.
 	if serverNonce := resp.Header.Get(DPoPNonceHeader); serverNonce != "" {
@@ -683,7 +683,7 @@ func (c *Client) RevokeToken(ctx context.Context, token string, tokenTypeHint st
 	if err != nil {
 		return ErrHTTPRequest
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return ErrHTTPRequest

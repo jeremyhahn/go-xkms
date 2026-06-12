@@ -41,7 +41,8 @@ func testTenantLogger() *slog.Logger {
 // testTenantRegistry creates an initialized BarrierRegistry backed by
 // an in-memory storage backend and the SoftwareStrategy. The barrier
 // is initialized and unsealed so tenant registration works immediately.
-func testTenantRegistry(t *testing.T) *seal.BarrierRegistry {
+// It also returns the configured XKMSService for injection into TenantHandlers.
+func testTenantRegistry(t *testing.T) (*seal.BarrierRegistry, *xkms.XKMSService) {
 	t.Helper()
 	base := storage.NewMemory()
 	barrier, err := seal.NewBarrier(
@@ -77,7 +78,7 @@ func testTenantRegistry(t *testing.T) *seal.BarrierRegistry {
 	svc.SetBarrierRegistry(registry)
 	t.Cleanup(func() { xkms.Reset() })
 
-	return registry
+	return registry, svc
 }
 
 // setupTenantTestHandlers creates TenantHandlers backed by a real
@@ -85,8 +86,8 @@ func testTenantRegistry(t *testing.T) *seal.BarrierRegistry {
 // route patterns.
 func setupTenantTestHandlers(t *testing.T) (*TenantHandlers, *chi.Mux) {
 	t.Helper()
-	registry := testTenantRegistry(t)
-	handlers := NewTenantHandlers(registry)
+	registry, svc := testTenantRegistry(t)
+	handlers := NewTenantHandlers(registry, svc)
 	r := chi.NewRouter()
 	r.Route("/tenants", func(r chi.Router) {
 		r.Post("/", handlers.CreateTenantHandler)
@@ -104,7 +105,7 @@ func setupTenantTestHandlers(t *testing.T) (*TenantHandlers, *chi.Mux) {
 // and mounts them on a chi router.
 func setupNilRegistryHandlers(t *testing.T) *chi.Mux {
 	t.Helper()
-	handlers := NewTenantHandlers(nil)
+	handlers := NewTenantHandlers(nil, nil)
 	r := chi.NewRouter()
 	r.Route("/tenants", func(r chi.Router) {
 		r.Post("/", handlers.CreateTenantHandler)
@@ -422,8 +423,8 @@ func TestTenantBarrierInitHandler_InvalidBody(t *testing.T) {
 // --- TenantBarrierUnsealHandler tests ---
 
 func TestTenantBarrierUnsealHandler_Success(t *testing.T) {
-	registry := testTenantRegistry(t)
-	handlers := NewTenantHandlers(registry)
+	registry, svc := testTenantRegistry(t)
+	handlers := NewTenantHandlers(registry, svc)
 	r := chi.NewRouter()
 	r.Route("/tenants", func(r chi.Router) {
 		r.Post("/", handlers.CreateTenantHandler)

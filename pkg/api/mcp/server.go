@@ -65,12 +65,17 @@ var (
 	// ErrBarrierRecoveryKeysRequired is returned when a recovery operation
 	// requires keys but none were provided.
 	ErrBarrierRecoveryKeysRequired = errors.New("recovery keys are required")
+
+	// ErrXKMSServiceRequired is returned when NewServer is called without
+	// an XKMSService in the Config.
+	ErrXKMSServiceRequired = errors.New("xkms service is required")
 )
 
 // Server represents an MCP JSON-RPC 2.0 server
 type Server struct {
 	addr            string
 	keystore        xkms.Backend // Default keystore for backward compatibility
+	xkmsService     *xkms.XKMSService
 	barrier         *seal.Barrier
 	passwordManager *staticpw.TenantPasswordStoreManager
 	listener        net.Listener
@@ -103,13 +108,17 @@ type Config struct {
 	RateLimiter     *ratelimit.Limiter
 	Barrier         *seal.Barrier
 	PasswordManager *staticpw.TenantPasswordStoreManager
+	// XKMSService is the injected XKMS service; replaces the package singleton lookup.
+	XKMSService *xkms.XKMSService
 }
 
-// NewServer creates a new MCP JSON-RPC server
-// The server uses the global xkms service for backend management
+// NewServer creates a new MCP JSON-RPC server. The XKMS service is injected
+// via Config.XKMSService by the composition root; the constructor rejects a
+// nil service so the server never starts without an initialized service.
 func NewServer(config *Config) (*Server, error) {
-	if !xkms.IsInitialized() {
-		return nil, fmt.Errorf("xkms service must be initialized before creating MCP server")
+	svc := config.XKMSService
+	if svc == nil {
+		return nil, ErrXKMSServiceRequired
 	}
 
 	if config.Addr == "" {
@@ -132,6 +141,7 @@ func NewServer(config *Config) (*Server, error) {
 
 	s := &Server{
 		addr:            config.Addr,
+		xkmsService:     svc,
 		barrier:         config.Barrier,
 		passwordManager: config.PasswordManager,
 		ctx:             ctx,
@@ -148,8 +158,8 @@ func NewServer(config *Config) (*Server, error) {
 		log.Info("Rate limiting enabled for MCP")
 	}
 
-	// Set default keystore from default backend for backward compatibility
-	keystore, err := xkms.DefaultBackend()
+	// Set default keystore from the injected service for backward compatibility.
+	keystore, err := svc.LookupDefaultBackend()
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to get default keystore: %w", err)
@@ -345,7 +355,7 @@ func (s *Server) handleRequest(ctx context.Context, req *JSONRPCRequest, conn ne
 	var err error
 
 	// Try FROST methods first
-	if frostResult, frostErr, handled := s.routeFrostMethods(req); handled {
+	if frostResult, frostErr, handled := s.routeFrostMethods(ctx, req); handled {
 		result = frostResult
 		err = frostErr
 		if err != nil {
@@ -371,83 +381,83 @@ func (s *Server) handleRequest(ctx context.Context, req *JSONRPCRequest, conn ne
 
 	switch req.Method {
 	case "health":
-		result, err = s.handleHealth(req)
+		result, err = s.handleHealth(ctx, req)
 	case "xkms.listBackends":
-		result, err = s.handleListBackends(req)
+		result, err = s.handleListBackends(ctx, req)
 	case "xkms.generateKey":
-		result, err = s.handleGenerateKey(req)
+		result, err = s.handleGenerateKey(ctx, req)
 	case "xkms.getKey":
-		result, err = s.handleGetKey(req)
+		result, err = s.handleGetKey(ctx, req)
 	case "xkms.deleteKey":
-		result, err = s.handleDeleteKey(req)
+		result, err = s.handleDeleteKey(ctx, req)
 	case "xkms.listKeys":
-		result, err = s.handleListKeys(req)
+		result, err = s.handleListKeys(ctx, req)
 	case "xkms.rotateKey":
-		result, err = s.handleRotateKey(req)
+		result, err = s.handleRotateKey(ctx, req)
 	case "xkms.sign":
-		result, err = s.handleSign(req)
+		result, err = s.handleSign(ctx, req)
 	case "xkms.verify":
-		result, err = s.handleVerify(req)
+		result, err = s.handleVerify(ctx, req)
 	case "xkms.encrypt":
-		result, err = s.handleEncrypt(req)
+		result, err = s.handleEncrypt(ctx, req)
 	case "xkms.decrypt":
-		result, err = s.handleDecrypt(req)
+		result, err = s.handleDecrypt(ctx, req)
 	case "xkms.asymmetricEncrypt":
-		result, err = s.handleAsymmetricEncrypt(req)
+		result, err = s.handleAsymmetricEncrypt(ctx, req)
 	case "xkms.asymmetricDecrypt":
-		result, err = s.handleAsymmetricDecrypt(req)
+		result, err = s.handleAsymmetricDecrypt(ctx, req)
 	case "xkms.getImportParameters":
-		result, err = s.handleGetImportParameters(req)
+		result, err = s.handleGetImportParameters(ctx, req)
 	case "xkms.wrapKey":
-		result, err = s.handleWrapKey(req)
+		result, err = s.handleWrapKey(ctx, req)
 	case "xkms.unwrapKey":
-		result, err = s.handleUnwrapKey(req)
+		result, err = s.handleUnwrapKey(ctx, req)
 	case "xkms.importKey":
-		result, err = s.handleImportKeyMaterial(req)
+		result, err = s.handleImportKeyMaterial(ctx, req)
 	case "xkms.exportKey":
-		result, err = s.handleExportKeyMaterial(req)
+		result, err = s.handleExportKeyMaterial(ctx, req)
 	case "xkms.copyKey":
-		result, err = s.handleCopyKey(req)
+		result, err = s.handleCopyKey(ctx, req)
 	case "xkms.saveCert":
-		result, err = s.handleSaveCert(req)
+		result, err = s.handleSaveCert(ctx, req)
 	case "xkms.getCert":
-		result, err = s.handleGetCert(req)
+		result, err = s.handleGetCert(ctx, req)
 	case "xkms.deleteCert":
-		result, err = s.handleDeleteCert(req)
+		result, err = s.handleDeleteCert(ctx, req)
 	case "xkms.listCerts":
-		result, err = s.handleListCerts(req)
+		result, err = s.handleListCerts(ctx, req)
 	case "xkms.certExists":
-		result, err = s.handleCertExists(req)
+		result, err = s.handleCertExists(ctx, req)
 	case "xkms.saveCertChain":
-		result, err = s.handleSaveCertChain(req)
+		result, err = s.handleSaveCertChain(ctx, req)
 	case "xkms.getCertChain":
-		result, err = s.handleGetCertChain(req)
+		result, err = s.handleGetCertChain(ctx, req)
 	case "xkms.getTLSCertificate":
-		result, err = s.handleGetTLSCertificate(req)
+		result, err = s.handleGetTLSCertificate(ctx, req)
 	case "xkms.subscribe":
-		result, err = s.handleSubscribe(req, conn)
+		result, err = s.handleSubscribe(ctx, req, conn)
 	case "xkms.seal":
 		result, err = s.handleSeal(ctx, req)
 	case "xkms.unseal":
 		result, err = s.handleUnseal(ctx, req)
 	case "xkms.canSeal":
-		result, err = s.handleCanSeal(req)
+		result, err = s.handleCanSeal(ctx, req)
 	case "xkms.listPIVSlots":
-		result, err = s.handleListPIVSlots(req)
+		result, err = s.handleListPIVSlots(ctx, req)
 	case "xkms.getPIVCertificate":
-		result, err = s.handleGetPIVCertificate(req)
+		result, err = s.handleGetPIVCertificate(ctx, req)
 	case "xkms.storePIVCertificate":
-		result, err = s.handleStorePIVCertificate(req)
+		result, err = s.handleStorePIVCertificate(ctx, req)
 	case "xkms.deletePIVCertificate":
-		result, err = s.handleDeletePIVCertificate(req)
+		result, err = s.handleDeletePIVCertificate(ctx, req)
 	case "xkms.generatePIVKey":
-		result, err = s.handleGeneratePIVKey(req)
+		result, err = s.handleGeneratePIVKey(ctx, req)
 	case "xkms.importPIVCertificate":
-		result, err = s.handleImportPIVCertificate(req)
+		result, err = s.handleImportPIVCertificate(ctx, req)
 	case "xkms.exportPIVCertificate":
-		result, err = s.handleExportPIVCertificate(req)
+		result, err = s.handleExportPIVCertificate(ctx, req)
 	case "xkms.generatePIVCSR":
-		result, err = s.handleGeneratePIVCSR(req)
+		result, err = s.handleGeneratePIVCSR(ctx, req)
 
 	// CA operations
 	case "xkms.ca.bundle":
@@ -487,9 +497,9 @@ func (s *Server) handleRequest(ctx context.Context, req *JSONRPCRequest, conn ne
 	case "barrier.unsealShares":
 		result, err = s.handleBarrierUnsealShares(ctx, req)
 	case "barrier.seal":
-		result, err = s.handleBarrierSeal(req)
+		result, err = s.handleBarrierSeal(ctx, req)
 	case "barrier.status":
-		result, err = s.handleBarrierStatus(req)
+		result, err = s.handleBarrierStatus(ctx, req)
 	case "barrier.rekey":
 		result, err = s.handleBarrierRekey(ctx, req)
 	case "barrier.generateRecoveryKeys":

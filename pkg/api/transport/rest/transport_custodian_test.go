@@ -173,7 +173,7 @@ func newCustodianTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 	svc.SetCustodianClient(newCustodianTestClient())
 	t.Cleanup(func() { xkms.Reset() })
 
-	handlers := restapi.NewCustodianHandlers()
+	handlers := restapi.NewCustodianHandlers(svc)
 
 	r := chi.NewRouter()
 

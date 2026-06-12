@@ -16,6 +16,7 @@ package rest
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -83,12 +84,14 @@ type distributeSharesResponse struct {
 // CustodianHandlers serves the custodian group REST endpoints. Custodian state
 // is owned by the embedded go-qrdb node; the handlers delegate to the unified
 // XKMSService servicer, which passes calls through to the node's custodian
-// group client. The handlers hold no local state.
-type CustodianHandlers struct{}
+// group client.
+type CustodianHandlers struct {
+	xkmsService *xkms.XKMSService
+}
 
-// NewCustodianHandlers creates a new CustodianHandlers.
-func NewCustodianHandlers() *CustodianHandlers {
-	return &CustodianHandlers{}
+// NewCustodianHandlers creates a new CustodianHandlers with the provided XKMS service.
+func NewCustodianHandlers(svc *xkms.XKMSService) *CustodianHandlers {
+	return &CustodianHandlers{xkmsService: svc}
 }
 
 // CreateGroupHandler handles POST /custodian/groups requests.
@@ -105,11 +108,11 @@ func NewCustodianHandlers() *CustodianHandlers {
 //	  "total": int
 //	}
 func (h *CustodianHandlers) CreateGroupHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	var req createCustodianGroupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -151,11 +154,11 @@ func (h *CustodianHandlers) CreateGroupHandler(w http.ResponseWriter, r *http.Re
 // ListGroupsHandler handles GET /custodian/groups requests.
 // Returns all custodian groups wrapped in a groups envelope.
 func (h *CustodianHandlers) ListGroupsHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	resp, err := svc.ListCustodianGroups(r.Context())
 	if err != nil {
@@ -175,11 +178,11 @@ func (h *CustodianHandlers) ListGroupsHandler(w http.ResponseWriter, r *http.Req
 // URL parameters:
 //   - id: custodian group identifier (required)
 func (h *CustodianHandlers) GetGroupHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -202,11 +205,11 @@ func (h *CustodianHandlers) GetGroupHandler(w http.ResponseWriter, r *http.Reque
 // URL parameters:
 //   - id: custodian group identifier (required)
 func (h *CustodianHandlers) DeleteGroupHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -236,11 +239,11 @@ func (h *CustodianHandlers) DeleteGroupHandler(w http.ResponseWriter, r *http.Re
 //	  "method": "string"
 //	}
 func (h *CustodianHandlers) AddMemberHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	groupID := chi.URLParam(r, "id")
 	if groupID == "" {
@@ -280,11 +283,11 @@ func (h *CustodianHandlers) AddMemberHandler(w http.ResponseWriter, r *http.Requ
 //   - id: custodian group identifier (required)
 //   - userID: user identifier of the member to remove (required)
 func (h *CustodianHandlers) RemoveMemberHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	groupID := chi.URLParam(r, "id")
 	if groupID == "" {
@@ -315,11 +318,11 @@ func (h *CustodianHandlers) RemoveMemberHandler(w http.ResponseWriter, r *http.R
 // URL parameters:
 //   - id: custodian group identifier (required)
 func (h *CustodianHandlers) DistributeSharesHandler(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
+	svc := h.xkmsService
 
 	groupID := chi.URLParam(r, "id")
 	if groupID == "" {
@@ -359,6 +362,9 @@ func handleCustodianError(w http.ResponseWriter, err error) {
 		errors.Is(err, qrdbsdk.ErrCeremonyInsufficientMembers):
 		writeError(w, err, http.StatusBadRequest)
 	default:
+		// An unexpected error from the custodian subsystem must never be silently
+		// collapsed into a bare 500 — log the underlying cause for diagnosis.
+		slog.Default().Error("custodian operation failed", "error", err)
 		writeError(w, ErrInternalError, http.StatusInternalServerError)
 	}
 }

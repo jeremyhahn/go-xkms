@@ -178,28 +178,28 @@ func NewWriter(nssdbDir string) (*Writer, error) {
 
 	keyDB, err := sql.Open("sqlite", keyDBPath)
 	if err != nil {
-		certDB.Close()
+		_ = certDB.Close()
 		return nil, fmt.Errorf("%w: key4.db: %s", ErrOpenDatabase, err)
 	}
 
 	// Enable WAL mode for better concurrent read performance.
 	for _, db := range []*sql.DB{certDB, keyDB} {
 		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-			certDB.Close()
-			keyDB.Close()
+			_ = certDB.Close()
+			_ = keyDB.Close()
 			return nil, fmt.Errorf("%w: %s", ErrCreateSchema, err)
 		}
 	}
 
 	if _, err := certDB.Exec(cert9Schema); err != nil {
-		certDB.Close()
-		keyDB.Close()
+		_ = certDB.Close()
+		_ = keyDB.Close()
 		return nil, fmt.Errorf("%w: cert9.db: %s", ErrCreateSchema, err)
 	}
 
 	if _, err := keyDB.Exec(key4Schema); err != nil {
-		certDB.Close()
-		keyDB.Close()
+		_ = certDB.Close()
+		_ = keyDB.Close()
 		return nil, fmt.Errorf("%w: key4.db: %s", ErrCreateSchema, err)
 	}
 
@@ -212,8 +212,8 @@ func NewWriter(nssdbDir string) (*Writer, error) {
 	// Initialize the password entry if not already present, and derive the
 	// intermediate key used for trust object signatures.
 	if err := w.ensurePassword(); err != nil {
-		certDB.Close()
-		keyDB.Close()
+		_ = certDB.Close()
+		_ = keyDB.Close()
 		return nil, err
 	}
 
@@ -298,7 +298,7 @@ func (w *Writer) RemoveByPrefix(prefix string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %s", ErrRemoveCertificate, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type certRef struct {
 		id     int64
@@ -336,16 +336,16 @@ func (w *Writer) RemoveByPrefix(prefix string) error {
 		for tRows.Next() {
 			var id int64
 			if err := tRows.Scan(&id); err != nil {
-				tRows.Close()
+				_ = tRows.Close()
 				return fmt.Errorf("%w: %s", ErrRemoveTrust, err)
 			}
 			trustIDs = append(trustIDs, id)
 		}
 		if err := tRows.Err(); err != nil {
-			tRows.Close()
+			_ = tRows.Close()
 			return fmt.Errorf("%w: %s", ErrRemoveTrust, err)
 		}
-		tRows.Close()
+		_ = tRows.Close()
 	}
 
 	// Gather all IDs to delete (certs + trust objects) and run a single

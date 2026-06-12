@@ -24,10 +24,10 @@ import (
 )
 
 func TestServer_RouteFrostMethods_StubBehavior(t *testing.T) {
-	setupTestXKMS(t)
+	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0"})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{
@@ -36,7 +36,7 @@ func TestServer_RouteFrostMethods_StubBehavior(t *testing.T) {
 		ID:      1,
 	}
 
-	result, frostErr, handled := server.routeFrostMethods(req)
+	result, frostErr, handled := server.routeFrostMethods(context.Background(), req)
 
 	// When built without frost tag, FROST methods return an error
 	assert.True(t, handled)
@@ -49,10 +49,10 @@ func TestServer_RouteFrostMethods_StubBehavior(t *testing.T) {
 // Note: According to the actual implementation in server.go (lines 298-303), FROST methods
 // return an error response even for notifications when an error occurs.
 func TestServer_HandleRequest_FrostMethodAsNotification(t *testing.T) {
-	setupTestXKMS(t)
+	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0"})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
 	require.NoError(t, err)
 
 	ctx := context.Background()

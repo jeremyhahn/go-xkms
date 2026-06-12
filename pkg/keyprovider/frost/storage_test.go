@@ -8,6 +8,7 @@
 package frost
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -58,11 +59,11 @@ func TestKeyStore_StoreAndLoadKeyPackage(t *testing.T) {
 	}
 
 	// Store
-	err := ks.StoreKeyPackage(keyID, pkg, metadata)
+	err := ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata)
 	require.NoError(t, err)
 
 	// Load
-	loadedPkg, loadedMeta, err := ks.LoadKeyPackage(keyID, 1)
+	loadedPkg, loadedMeta, err := ks.LoadKeyPackage(context.Background(), keyID, 1)
 	require.NoError(t, err)
 	require.NotNil(t, loadedPkg)
 	require.NotNil(t, loadedMeta)
@@ -108,11 +109,11 @@ func TestKeyStore_LoadKeyPackage_UseMetadataParticipantID(t *testing.T) {
 		ParticipantID: 2, // Metadata stores participant ID as 2
 	}
 
-	err := ks.StoreKeyPackage(keyID, pkg, metadata)
+	err := ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata)
 	require.NoError(t, err)
 
 	// Load with participantID=0 should use metadata value
-	loadedPkg, _, err := ks.LoadKeyPackage(keyID, 0)
+	loadedPkg, _, err := ks.LoadKeyPackage(context.Background(), keyID, 0)
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), loadedPkg.ParticipantID)
 }
@@ -122,7 +123,7 @@ func TestKeyStore_LoadKeyPackage_NotFound(t *testing.T) {
 	secretBackend := newMockSecretBackend()
 	ks := NewKeyStore(publicStorage, secretBackend)
 
-	pkg, meta, err := ks.LoadKeyPackage("nonexistent", 1)
+	pkg, meta, err := ks.LoadKeyPackage(context.Background(), "nonexistent", 1)
 	require.Error(t, err)
 	assert.Nil(t, pkg)
 	assert.Nil(t, meta)
@@ -156,11 +157,11 @@ func TestKeyStore_LoadPublicKeyPackage(t *testing.T) {
 		Total:     2,
 	}
 
-	err := ks.StoreKeyPackage(keyID, pkg, metadata)
+	err := ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata)
 	require.NoError(t, err)
 
 	// Load public package only
-	pubPkg, loadedMeta, err := ks.LoadPublicKeyPackage(keyID)
+	pubPkg, loadedMeta, err := ks.LoadPublicKeyPackage(context.Background(), keyID)
 	require.NoError(t, err)
 	require.NotNil(t, pubPkg)
 	require.NotNil(t, loadedMeta)
@@ -176,7 +177,7 @@ func TestKeyStore_LoadPublicKeyPackage_NotFound(t *testing.T) {
 	secretBackend := newMockSecretBackend()
 	ks := NewKeyStore(publicStorage, secretBackend)
 
-	pkg, meta, err := ks.LoadPublicKeyPackage("nonexistent")
+	pkg, meta, err := ks.LoadPublicKeyPackage(context.Background(), "nonexistent")
 	require.Error(t, err)
 	assert.Nil(t, pkg)
 	assert.Nil(t, meta)
@@ -211,19 +212,19 @@ func TestKeyStore_DeleteKey(t *testing.T) {
 	}
 
 	// Store and verify exists
-	err := ks.StoreKeyPackage(keyID, pkg, metadata)
+	err := ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata)
 	require.NoError(t, err)
 
-	exists, err := ks.KeyExists(keyID)
+	exists, err := ks.KeyExists(context.Background(), keyID)
 	require.NoError(t, err)
 	assert.True(t, exists)
 
 	// Delete
-	err = ks.DeleteKey(keyID)
+	err = ks.DeleteKey(context.Background(), keyID)
 	assert.NoError(t, err)
 
 	// Verify deleted
-	exists, err = ks.KeyExists(keyID)
+	exists, err = ks.KeyExists(context.Background(), keyID)
 	require.NoError(t, err)
 	assert.False(t, exists)
 }
@@ -234,7 +235,7 @@ func TestKeyStore_DeleteKey_NonexistentKey(t *testing.T) {
 	ks := NewKeyStore(publicStorage, secretBackend)
 
 	// Should not error even if key doesn't exist
-	err := ks.DeleteKey("nonexistent")
+	err := ks.DeleteKey(context.Background(), "nonexistent")
 	assert.NoError(t, err)
 }
 
@@ -244,7 +245,7 @@ func TestKeyStore_KeyExists(t *testing.T) {
 	ks := NewKeyStore(publicStorage, secretBackend)
 
 	// Should not exist initially
-	exists, err := ks.KeyExists("test-key")
+	exists, err := ks.KeyExists(context.Background(), "test-key")
 	require.NoError(t, err)
 	assert.False(t, exists)
 
@@ -263,11 +264,11 @@ func TestKeyStore_KeyExists(t *testing.T) {
 		Threshold: 2,
 		Total:     2,
 	}
-	err = ks.StoreKeyPackage("test-key", pkg, metadata)
+	err = ks.StoreKeyPackage(context.Background(), "test-key", pkg, metadata)
 	require.NoError(t, err)
 
 	// Should exist now
-	exists, err = ks.KeyExists("test-key")
+	exists, err = ks.KeyExists(context.Background(), "test-key")
 	require.NoError(t, err)
 	assert.True(t, exists)
 }
@@ -278,7 +279,7 @@ func TestKeyStore_ListKeys(t *testing.T) {
 	ks := NewKeyStore(publicStorage, secretBackend)
 
 	// Initially empty
-	keys, err := ks.ListKeys()
+	keys, err := ks.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, keys)
 
@@ -298,12 +299,12 @@ func TestKeyStore_ListKeys(t *testing.T) {
 			Threshold: 2,
 			Total:     2,
 		}
-		err := ks.StoreKeyPackage(keyID, pkg, metadata)
+		err := ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata)
 		require.NoError(t, err)
 	}
 
 	// Should list keys - verify the expected keys are present
-	keys, err = ks.ListKeys()
+	keys, err = ks.ListKeys(context.Background())
 	require.NoError(t, err)
 	// The result should contain the key IDs
 	assert.Contains(t, keys, "key1")
@@ -334,12 +335,12 @@ func TestKeyStore_ListKeysWithMetadata(t *testing.T) {
 			Threshold: 2,
 			Total:     3,
 		}
-		err := ks.StoreKeyPackage(keyID, pkg, metadata)
+		err := ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata)
 		require.NoError(t, err)
 	}
 
 	// List with metadata
-	metadataList, err := ks.ListKeysWithMetadata()
+	metadataList, err := ks.ListKeysWithMetadata(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, metadataList, 2)
 
@@ -415,14 +416,14 @@ func TestKeyStore_ListKeysWithMetadata_CorruptMetadata(t *testing.T) {
 		Threshold: 2,
 		Total:     2,
 	}
-	err := ks.StoreKeyPackage("good-key", pkg, metadata)
+	err := ks.StoreKeyPackage(context.Background(), "good-key", pkg, metadata)
 	require.NoError(t, err)
 
 	// Manually insert corrupt metadata for another key
 	publicStorage.data["frost/keys/bad-key/metadata.json"] = []byte("not valid json")
 
 	// Should return only the good key, skipping the corrupt one
-	metadataList, err := ks.ListKeysWithMetadata()
+	metadataList, err := ks.ListKeysWithMetadata(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, metadataList, 1)
 	assert.Equal(t, "good-key", metadataList[0].KeyID)
@@ -449,14 +450,14 @@ func TestKeyStore_LoadKeyPackage_InsufficientVerificationShares(t *testing.T) {
 		Threshold: 3, // Require 3 shares
 		Total:     3,
 	}
-	err := ks.StoreKeyPackage("test-key", pkg, metadata)
+	err := ks.StoreKeyPackage(context.Background(), "test-key", pkg, metadata)
 	require.NoError(t, err)
 
 	// Delete some verification shares to create insufficient shares scenario
 	delete(publicStorage.data, "frost/keys/test-key/verification_shares/1.bin")
 
 	// Should fail because we don't have enough verification shares
-	_, _, err = ks.LoadKeyPackage("test-key", 1)
+	_, _, err = ks.LoadKeyPackage(context.Background(), "test-key", 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "insufficient verification shares")
 }
@@ -482,14 +483,14 @@ func TestKeyStore_LoadKeyPackage_MissingGroupPublicKey(t *testing.T) {
 		Threshold: 2,
 		Total:     2,
 	}
-	err := ks.StoreKeyPackage("test-key", pkg, metadata)
+	err := ks.StoreKeyPackage(context.Background(), "test-key", pkg, metadata)
 	require.NoError(t, err)
 
 	// Delete group public key (correct filename: group_public.bin)
 	delete(publicStorage.data, "frost/keys/test-key/group_public.bin")
 
 	// Should fail
-	_, _, err = ks.LoadKeyPackage("test-key", 1)
+	_, _, err = ks.LoadKeyPackage(context.Background(), "test-key", 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to load group public key")
 }
@@ -515,14 +516,14 @@ func TestKeyStore_LoadPublicKeyPackage_MissingGroupPublicKey(t *testing.T) {
 		Threshold: 2,
 		Total:     2,
 	}
-	err := ks.StoreKeyPackage("test-key", pkg, metadata)
+	err := ks.StoreKeyPackage(context.Background(), "test-key", pkg, metadata)
 	require.NoError(t, err)
 
 	// Delete group public key (correct filename: group_public.bin)
 	delete(publicStorage.data, "frost/keys/test-key/group_public.bin")
 
 	// Should fail
-	_, _, err = ks.LoadPublicKeyPackage("test-key")
+	_, _, err = ks.LoadPublicKeyPackage(context.Background(), "test-key")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to load group public key")
 }
@@ -535,7 +536,7 @@ func TestKeyStore_LoadKeyPackage_CorruptMetadata(t *testing.T) {
 	// Manually insert corrupt metadata
 	publicStorage.data["frost/keys/corrupt-key/metadata.json"] = []byte("not valid json")
 
-	_, _, err := ks.LoadKeyPackage("corrupt-key", 1)
+	_, _, err := ks.LoadKeyPackage(context.Background(), "corrupt-key", 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to unmarshal metadata")
 }
@@ -548,7 +549,7 @@ func TestKeyStore_LoadPublicKeyPackage_CorruptMetadata(t *testing.T) {
 	// Manually insert corrupt metadata
 	publicStorage.data["frost/keys/corrupt-key/metadata.json"] = []byte("not valid json")
 
-	_, _, err := ks.LoadPublicKeyPackage("corrupt-key")
+	_, _, err := ks.LoadPublicKeyPackage(context.Background(), "corrupt-key")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to unmarshal metadata")
 }
@@ -558,7 +559,7 @@ func TestKeyStore_ListKeys_Error(t *testing.T) {
 	secretBackend := newMockSecretBackend()
 	ks := NewKeyStore(publicStorage, secretBackend)
 
-	_, err := ks.ListKeys()
+	_, err := ks.ListKeys(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "storage error")
 }
@@ -568,7 +569,7 @@ func TestKeyStore_ListKeysWithMetadata_ListError(t *testing.T) {
 	secretBackend := newMockSecretBackend()
 	ks := NewKeyStore(publicStorage, secretBackend)
 
-	_, err := ks.ListKeysWithMetadata()
+	_, err := ks.ListKeysWithMetadata(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "storage error")
 }

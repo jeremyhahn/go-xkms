@@ -21,7 +21,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"log/slog"
 	"net"
 	"os"
 	"strconv"
@@ -86,13 +85,8 @@ func NewAdapter(config *api.AdapterConfig) (*Adapter, error) {
 	} else {
 		// TCP connection - configure TLS if provided
 		if config.TLSConfig != nil {
-			if config.TLSConfig.InsecureSkipVerify {
-				slog.Warn("acme/grpc: TLS certificate verification disabled via InsecureSkipVerify; do not use in production",
-					"address", config.GRPCAddr)
-			}
 			tlsConfig := &tls.Config{
-				MinVersion:         tls.VersionTLS13,
-				InsecureSkipVerify: config.TLSConfig.InsecureSkipVerify,
+				MinVersion: tls.VersionTLS13,
 			}
 
 			// Load client certificate if provided

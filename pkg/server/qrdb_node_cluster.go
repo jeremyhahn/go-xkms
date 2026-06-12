@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 
-	qrdbconfig "github.com/jeremyhahn/go-qrdb/pkg/config"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	quicraftconfig "github.com/jeremyhahn/go-quicraft/pkg/config"
@@ -50,7 +49,7 @@ func (e *ErrRaftTLSRead) Unwrap() error { return e.Err }
 // enabled it falls back to a standalone node, so a raft-built binary still runs
 // single-node. The Raft parameters were mapped onto qcfg.Raft by
 // buildXKMSQRDBConfig; the initial membership comes from Cluster.Peers.
-func (s *Server) newQRDBNode(qcfg *qrdbconfig.Config, serverOpts []qrdbsdk.ServerOption, nodeOpts []qrdbnode.NodeOption) (*qrdbnode.Node, error) {
+func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbsdk.ServerOption, nodeOpts []qrdbnode.NodeOption) (*qrdbnode.Node, error) {
 	if !s.config.Cluster.Enabled {
 		s.logger.Info("Hosting qrdb engine in-process via NewStandaloneNode")
 		return qrdbnode.NewStandaloneNode(s.ctx, qcfg, serverOpts, nodeOpts...)

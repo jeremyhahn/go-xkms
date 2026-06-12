@@ -102,7 +102,7 @@ func Wipe(opts WipeOptions) error {
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Perform wipe passes
 	for i, pattern := range patterns {

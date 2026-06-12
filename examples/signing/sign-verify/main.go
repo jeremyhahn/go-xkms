@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -83,13 +84,13 @@ func main() {
 		},
 	}
 
-	_, err = ks.GenerateRSA(rsaAttrs)
+	_, err = ks.GenerateRSA(context.Background(), rsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate RSA key: %v", err)
 	}
 
 	// Get signer
-	rsaSigner, err := ks.Signer(rsaAttrs)
+	rsaSigner, err := ks.Signer(context.Background(), rsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get RSA signer: %v", err)
 	}
@@ -124,13 +125,13 @@ func main() {
 		},
 	}
 
-	_, err = ks.GenerateECDSA(ecdsaAttrs)
+	_, err = ks.GenerateECDSA(context.Background(), ecdsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate ECDSA key: %v", err)
 	}
 
 	// Get signer
-	ecdsaSigner, err := ks.Signer(ecdsaAttrs)
+	ecdsaSigner, err := ks.Signer(context.Background(), ecdsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get ECDSA signer: %v", err)
 	}
@@ -159,13 +160,13 @@ func main() {
 		KeyAlgorithm: x509.Ed25519,
 	}
 
-	_, err = ks.GenerateEd25519(ed25519Attrs)
+	_, err = ks.GenerateEd25519(context.Background(), ed25519Attrs)
 	if err != nil {
 		log.Fatalf("Failed to generate Ed25519 key: %v", err)
 	}
 
 	// Get signer
-	ed25519Signer, err := ks.Signer(ed25519Attrs)
+	ed25519Signer, err := ks.Signer(context.Background(), ed25519Attrs)
 	if err != nil {
 		log.Fatalf("Failed to get Ed25519 signer: %v", err)
 	}

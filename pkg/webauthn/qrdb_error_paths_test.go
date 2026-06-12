@@ -265,7 +265,7 @@ func (f *indexPutFailKV) Put(ctx context.Context, key string, value []byte, opts
 	if hasPrefix(key, "__xkms:webauthn/users/") && hasSuffix(key, "/credentials") {
 		return errKVFault
 	}
-	return f.faultyKV.inner.Put(ctx, key, value, opts...)
+	return f.inner.Put(ctx, key, value, opts...)
 }
 
 func hasSuffix(s, suffix string) bool {
@@ -298,7 +298,10 @@ func TestQRDBAdapter_GetByCredentialID_NotFound(t *testing.T) {
 
 func TestQRDBAdapter_GetByCredentialID_CorruptBlob(t *testing.T) {
 	kv := newFakeKV()
-	_ = kv.Put(context.Background(), credKey("c"), []byte("{not-json"))
+	// Store the corrupt blob under the canonical key the lookup will
+	// derive for the raw credential id []byte("c") — credKey segments are
+	// base64url-encoded so binary credential ids round-trip losslessly.
+	_ = kv.Put(context.Background(), credKey(credIDToString([]byte("c"))), []byte("{not-json"))
 	_, cs := newFaultyAdapter(t, newFakeUserClient(), kv)
 	_, err := cs.GetByCredentialID(context.Background(), []byte("c"))
 	if err == nil {

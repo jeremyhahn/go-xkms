@@ -60,7 +60,11 @@ func setupExportWrapTest(t *testing.T) *Service {
 	}
 	t.Cleanup(xkms.Reset)
 
-	return NewService(nil, nil)
+	svc, err := xkms.Get()
+	if err != nil {
+		t.Fatalf("Failed to get xkms service: %v", err)
+	}
+	return NewService(nil, nil, svc)
 }
 
 // =============================================================================

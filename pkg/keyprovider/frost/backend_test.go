@@ -8,6 +8,7 @@
 package frost
 
 import (
+	"context"
 	"crypto"
 	"errors"
 	"testing"
@@ -88,7 +89,7 @@ func TestFrostBackend_GenerateKey_Success(t *testing.T) {
 		},
 	}
 
-	key, err := backend.GenerateKey(attrs)
+	key, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, key)
 
@@ -106,7 +107,7 @@ func TestFrostBackend_GenerateKey_MissingCN(t *testing.T) {
 		StoreType: types.StoreFrost,
 	}
 
-	key, err := backend.GenerateKey(attrs)
+	key, err := backend.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Nil(t, key)
 	assert.Contains(t, err.Error(), "CN")
@@ -128,11 +129,11 @@ func TestFrostBackend_GenerateKey_Duplicate(t *testing.T) {
 	}
 
 	// First generation
-	_, err := backend.GenerateKey(attrs)
+	_, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Second generation should fail
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrKeyAlreadyExists))
 }
@@ -153,7 +154,7 @@ func TestFrostBackend_GenerateKey_UsesConfigDefaults(t *testing.T) {
 		},
 	}
 
-	key, err := backend.GenerateKey(attrs)
+	key, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	handle := key.(*FrostKeyHandle)
@@ -169,7 +170,7 @@ func TestFrostBackend_GenerateKey_Closed(t *testing.T) {
 		StoreType: types.StoreFrost,
 	}
 
-	_, err := backend.GenerateKey(attrs)
+	_, err := backend.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrBackendClosed))
 }
@@ -189,11 +190,11 @@ func TestFrostBackend_GetKey_Success(t *testing.T) {
 			Algorithm:     types.FrostAlgorithmEd25519,
 		},
 	}
-	_, err := backend.GenerateKey(attrs)
+	_, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get the key
-	key, err := backend.GetKey(attrs)
+	key, err := backend.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, key)
 
@@ -209,7 +210,7 @@ func TestFrostBackend_GetKey_NotFound(t *testing.T) {
 		StoreType: types.StoreFrost,
 	}
 
-	key, err := backend.GetKey(attrs)
+	key, err := backend.GetKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Nil(t, key)
 }
@@ -223,7 +224,7 @@ func TestFrostBackend_GetKey_Closed(t *testing.T) {
 		StoreType: types.StoreFrost,
 	}
 
-	_, err := backend.GetKey(attrs)
+	_, err := backend.GetKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrBackendClosed))
 }
@@ -243,15 +244,15 @@ func TestFrostBackend_DeleteKey_Success(t *testing.T) {
 			Algorithm:     types.FrostAlgorithmEd25519,
 		},
 	}
-	_, err := backend.GenerateKey(attrs)
+	_, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Delete the key
-	err = backend.DeleteKey(attrs)
+	err = backend.DeleteKey(context.Background(), attrs)
 	assert.NoError(t, err)
 
 	// Verify it's gone
-	_, err = backend.GetKey(attrs)
+	_, err = backend.GetKey(context.Background(), attrs)
 	require.Error(t, err)
 }
 
@@ -262,7 +263,7 @@ func TestFrostBackend_DeleteKey_MissingCN(t *testing.T) {
 		StoreType: types.StoreFrost,
 	}
 
-	err := backend.DeleteKey(attrs)
+	err := backend.DeleteKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "CN")
 }
@@ -276,7 +277,7 @@ func TestFrostBackend_DeleteKey_Closed(t *testing.T) {
 		StoreType: types.StoreFrost,
 	}
 
-	err := backend.DeleteKey(attrs)
+	err := backend.DeleteKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrBackendClosed))
 }
@@ -284,7 +285,7 @@ func TestFrostBackend_DeleteKey_Closed(t *testing.T) {
 func TestFrostBackend_ListKeys_Empty(t *testing.T) {
 	backend := createTestBackend(t)
 
-	keys, err := backend.ListKeys()
+	keys, err := backend.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, keys)
 }
@@ -305,11 +306,11 @@ func TestFrostBackend_ListKeys_MultipleKeys(t *testing.T) {
 				Algorithm:     types.FrostAlgorithmEd25519,
 			},
 		}
-		_, err := backend.GenerateKey(attrs)
+		_, err := backend.GenerateKey(context.Background(), attrs)
 		require.NoError(t, err)
 	}
 
-	keys, err := backend.ListKeys()
+	keys, err := backend.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, keys, 3)
 }
@@ -318,7 +319,7 @@ func TestFrostBackend_ListKeys_Closed(t *testing.T) {
 	backend := createTestBackend(t)
 	backend.Close()
 
-	_, err := backend.ListKeys()
+	_, err := backend.ListKeys(context.Background())
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrBackendClosed))
 }
@@ -338,11 +339,11 @@ func TestFrostBackend_Signer(t *testing.T) {
 			Algorithm:     types.FrostAlgorithmEd25519,
 		},
 	}
-	_, err := backend.GenerateKey(attrs)
+	_, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get signer
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 
@@ -359,7 +360,7 @@ func TestFrostBackend_Signer_NotFound(t *testing.T) {
 		StoreType: types.StoreFrost,
 	}
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Nil(t, signer)
 }
@@ -373,7 +374,7 @@ func TestFrostBackend_Signer_Closed(t *testing.T) {
 		StoreType: types.StoreFrost,
 	}
 
-	_, err := backend.Signer(attrs)
+	_, err := backend.Signer(context.Background(), attrs)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrBackendClosed))
 }
@@ -387,7 +388,7 @@ func TestFrostBackend_Decrypter(t *testing.T) {
 	}
 
 	// FROST does not support decryption
-	decrypter, err := backend.Decrypter(attrs)
+	decrypter, err := backend.Decrypter(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Nil(t, decrypter)
 	assert.True(t, errors.Is(err, ErrDecryptionNotSupported))
@@ -408,16 +409,16 @@ func TestFrostBackend_RotateKey(t *testing.T) {
 			Algorithm:     types.FrostAlgorithmEd25519,
 		},
 	}
-	key1, err := backend.GenerateKey(attrs)
+	key1, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	oldPubKey := key1.(*FrostKeyHandle).GroupPublicKey
 
 	// Rotate the key
-	err = backend.RotateKey(attrs)
+	err = backend.RotateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get the new key
-	key2, err := backend.GetKey(attrs)
+	key2, err := backend.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 	newPubKey := key2.(*FrostKeyHandle).GroupPublicKey
 
@@ -433,7 +434,7 @@ func TestFrostBackend_RotateKey_NotFound(t *testing.T) {
 		StoreType: types.StoreFrost,
 	}
 
-	err := backend.RotateKey(attrs)
+	err := backend.RotateKey(context.Background(), attrs)
 	require.Error(t, err)
 }
 
@@ -446,7 +447,7 @@ func TestFrostBackend_RotateKey_Closed(t *testing.T) {
 		StoreType: types.StoreFrost,
 	}
 
-	err := backend.RotateKey(attrs)
+	err := backend.RotateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrBackendClosed))
 }
@@ -506,7 +507,7 @@ func TestFrostBackend_GenerateKey_InvalidFrostAttributes(t *testing.T) {
 		},
 	}
 
-	_, err := backend.GenerateKey(attrs)
+	_, err := backend.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	// Error message contains "frost" (from frost attributes validation)
 	assert.Contains(t, err.Error(), "frost")
@@ -528,7 +529,7 @@ func TestFrostBackend_GenerateKey_ParticipantIDFromConfig(t *testing.T) {
 		},
 	}
 
-	key, err := backend.GenerateKey(attrs)
+	key, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, key)
 
@@ -551,7 +552,7 @@ func TestFrostBackend_GenerateKey_InvalidParticipantIDTooHigh(t *testing.T) {
 		},
 	}
 
-	_, err := backend.GenerateKey(attrs)
+	_, err := backend.GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "participant")
 }
@@ -564,7 +565,7 @@ func TestFrostBackend_GetKey_MissingCN(t *testing.T) {
 		// Missing CN
 	}
 
-	_, err := backend.GetKey(attrs)
+	_, err := backend.GetKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "CN")
 }
@@ -577,7 +578,7 @@ func TestFrostBackend_Signer_MissingCN(t *testing.T) {
 		// Missing CN
 	}
 
-	_, err := backend.Signer(attrs)
+	_, err := backend.Signer(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "CN")
 }
@@ -590,7 +591,7 @@ func TestFrostBackend_RotateKey_MissingCN(t *testing.T) {
 		// Missing CN
 	}
 
-	err := backend.RotateKey(attrs)
+	err := backend.RotateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "CN")
 }
@@ -622,7 +623,7 @@ func TestFrostBackend_GetKey_WithZeroParticipantID(t *testing.T) {
 			Algorithm:     types.FrostAlgorithmEd25519,
 		},
 	}
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get key with zero participant ID in attrs - should fall back to default (1)
@@ -631,7 +632,7 @@ func TestFrostBackend_GetKey_WithZeroParticipantID(t *testing.T) {
 		StoreType: types.StoreFrost,
 		// No FrostAttributes - ParticipantID will be 0
 	}
-	key, err := backend.GetKey(getAttrs)
+	key, err := backend.GetKey(context.Background(), getAttrs)
 	require.NoError(t, err)
 	require.NotNil(t, key)
 }
@@ -663,7 +664,7 @@ func TestFrostBackend_Signer_WithZeroParticipantID(t *testing.T) {
 			Algorithm:     types.FrostAlgorithmEd25519,
 		},
 	}
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get signer with zero participant ID - should fall back to default (1)
@@ -671,7 +672,7 @@ func TestFrostBackend_Signer_WithZeroParticipantID(t *testing.T) {
 		CN:        "zero-pid-signer-test",
 		StoreType: types.StoreFrost,
 	}
-	signer, err := backend.Signer(signerAttrs)
+	signer, err := backend.Signer(context.Background(), signerAttrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 }

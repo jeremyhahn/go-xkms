@@ -19,12 +19,15 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -37,11 +40,23 @@ type mockCACert struct {
 	err  error
 }
 
-func (m *mockCACert) CACertificate() (*x509.Certificate, error) {
-	return m.cert, m.err
+func (m *mockCACert) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: m.cert.Raw})
+	return &transport.GetCACertificateResponse{
+		CertificatePEM: certPEM,
+		Subject:        m.cert.Subject.String(),
+		Issuer:         m.cert.Issuer.String(),
+		SerialNumber:   m.cert.SerialNumber.Text(16),
+		NotBefore:      m.cert.NotBefore.UTC().Format("2006-01-02T15:04:05Z"),
+		NotAfter:       m.cert.NotAfter.UTC().Format("2006-01-02T15:04:05Z"),
+		IsCA:           m.cert.IsCA,
+	}, nil
 }
 
-// mockCASignCSR implements grpcCAMethodSignCSR and grpcCAMethodCert.
+// mockCASignCSR implements grpcCAMethodSignCSR.
 type mockCASignCSR struct {
 	cert   *x509.Certificate
 	err    error
@@ -49,12 +64,20 @@ type mockCASignCSR struct {
 	caErr  error
 }
 
-func (m *mockCASignCSR) SignCSRRaw(csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error) {
-	return m.cert, m.err
-}
-
-func (m *mockCASignCSR) CACertificate() (*x509.Certificate, error) {
-	return m.caCert, m.caErr
+func (m *mockCASignCSR) SignCSR(ctx context.Context, req *transport.SignCSRRequest) (*transport.SignCSRResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: m.cert.Raw})
+	var chainPEM []byte
+	if m.caErr == nil && m.caCert != nil {
+		chainPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: m.caCert.Raw})
+	}
+	return &transport.SignCSRResponse{
+		CertificatePEM: certPEM,
+		ChainPEM:       chainPEM,
+		SerialNumber:   m.cert.SerialNumber.Text(16),
+	}, nil
 }
 
 // mockCAIssue implements grpcCAMethodIssue.
@@ -66,8 +89,16 @@ type mockCAIssue struct {
 	err       error
 }
 
-func (m *mockCAIssue) IssueCertificateRaw(commonName, organization string, sans []string, validityDays int, profile, algorithm string) ([]byte, []byte, []byte, string, error) {
-	return m.certPEM, m.chainPEM, m.keyPEM, m.serialHex, m.err
+func (m *mockCAIssue) IssueCertificate(ctx context.Context, req *transport.IssueCertificateRequest) (*transport.IssueCertificateResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &transport.IssueCertificateResponse{
+		CertificatePEM: m.certPEM,
+		ChainPEM:       m.chainPEM,
+		PrivateKeyPEM:  m.keyPEM,
+		SerialNumber:   m.serialHex,
+	}, nil
 }
 
 // mockCARevoke implements grpcCAMethodRevoke.
@@ -75,8 +106,14 @@ type mockCARevoke struct {
 	err error
 }
 
-func (m *mockCARevoke) Revoke(serial *big.Int, reason int) error {
-	return m.err
+func (m *mockCARevoke) RevokeCertificate(ctx context.Context, req *transport.RevokeCertificateRequest) (*transport.RevokeCertificateResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &transport.RevokeCertificateResponse{
+		Success: true,
+		Message: fmt.Sprintf("certificate %s revoked", req.SerialNumber),
+	}, nil
 }
 
 // mockCACRL implements grpcCAMethodCRL.
@@ -85,8 +122,12 @@ type mockCACRL struct {
 	err    error
 }
 
-func (m *mockCACRL) GenerateCRL() ([]byte, error) {
-	return m.crlDER, m.err
+func (m *mockCACRL) GenerateCRL(ctx context.Context, req *transport.GenerateCRLRequest) (*transport.GenerateCRLResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	crlPEM := pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: m.crlDER})
+	return &transport.GenerateCRLResponse{CRLPEM: crlPEM}, nil
 }
 
 // mockCAIsRevoked implements grpcCAMethodIsRevoked.
@@ -95,8 +136,17 @@ type mockCAIsRevoked struct {
 	err     error
 }
 
-func (m *mockCAIsRevoked) IsRevoked(serial *big.Int) (bool, error) {
-	return m.revoked, m.err
+func (m *mockCAIsRevoked) IsRevoked(ctx context.Context, req *transport.IsRevokedRequest) (*transport.IsRevokedResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	resp := &transport.IsRevokedResponse{Revoked: m.revoked}
+	if m.revoked {
+		resp.Message = "certificate is revoked"
+	} else {
+		resp.Message = "certificate is not revoked"
+	}
+	return resp, nil
 }
 
 // mockCAAll implements all CA interfaces for multi-method tests.
@@ -109,12 +159,12 @@ type mockCAAll struct {
 	signImpl  mockCASignCSR
 }
 
-func (m *mockCAAll) SignCSRRaw(csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error) {
-	return m.signImpl.cert, m.signImpl.err
+func (m *mockCAAll) SignCSR(ctx context.Context, req *transport.SignCSRRequest) (*transport.SignCSRResponse, error) {
+	return m.signImpl.SignCSR(ctx, req)
 }
 
-func (m *mockCAAll) IssueCertificateRaw(commonName, organization string, sans []string, validityDays int, profile, algorithm string) ([]byte, []byte, []byte, string, error) {
-	return m.issueImpl.certPEM, m.issueImpl.chainPEM, m.issueImpl.keyPEM, m.issueImpl.serialHex, m.issueImpl.err
+func (m *mockCAAll) IssueCertificate(ctx context.Context, req *transport.IssueCertificateRequest) (*transport.IssueCertificateResponse, error) {
+	return m.issueImpl.IssueCertificate(ctx, req)
 }
 
 func generateTestCert(t *testing.T) *x509.Certificate {
@@ -156,7 +206,7 @@ func TestSetCA_GetCA(t *testing.T) {
 }
 
 func TestGetCACertificate(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
 		old := GetCA()
@@ -211,7 +261,7 @@ func TestGetCACertificate(t *testing.T) {
 }
 
 func TestSignCSR(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	cert := generateTestCert(t)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
@@ -292,7 +342,7 @@ func TestSignCSR(t *testing.T) {
 }
 
 func TestIssueCertificate(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
 		old := GetCA()
@@ -369,7 +419,7 @@ func TestIssueCertificate(t *testing.T) {
 }
 
 func TestRevokeCertificate(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
 		old := GetCA()
@@ -447,7 +497,7 @@ func TestRevokeCertificate(t *testing.T) {
 }
 
 func TestGenerateCRL(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
 		old := GetCA()
@@ -498,7 +548,7 @@ func TestGenerateCRL(t *testing.T) {
 }
 
 func TestIsRevoked(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
 		old := GetCA()

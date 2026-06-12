@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -219,7 +220,7 @@ func TestIssueEKCertificate_ExternalSigner_ECDSA(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "Test EK Certificate"
 
-	cert, err := ca.IssueEKCertificate(request, ekKey.Public())
+	cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if err != nil {
 		t.Fatalf("IssueEKCertificate() returned unexpected error: %v", err)
 	}
@@ -293,7 +294,7 @@ func TestIssueEKCertificate_ExternalSigner_RSA(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "RSA EK Certificate"
 
-	cert, err := ca.IssueEKCertificate(request, ekKey.Public())
+	cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if err != nil {
 		t.Fatalf("IssueEKCertificate() with RSA signer returned unexpected error: %v", err)
 	}
@@ -326,7 +327,7 @@ func TestIssueEKCertificate_WithExtensions(t *testing.T) {
 	request.ProdSerial = "SN-12345"
 	request.PermanentID = "device-001"
 
-	cert, err := ca.IssueEKCertificate(request, ekKey.Public())
+	cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if err != nil {
 		t.Fatalf("IssueEKCertificate() with extensions returned unexpected error: %v", err)
 	}
@@ -378,7 +379,7 @@ func TestIssueEKCertificate_WithSANs(t *testing.T) {
 		URIs:  []string{"urn:example:device:001"},
 	}
 
-	cert, err := ca.IssueEKCertificate(request, ekKey.Public())
+	cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if err != nil {
 		t.Fatalf("IssueEKCertificate() with SANs returned unexpected error: %v", err)
 	}
@@ -427,7 +428,7 @@ func TestIssueEKCertificate_NotInitialized(t *testing.T) {
 
 	request := createTestCertRequest(t, signerKey, issuerCert)
 
-	_, err := ca.IssueEKCertificate(request, ekKey.Public())
+	_, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if !errors.Is(err, ErrNotInitialized) {
 		t.Errorf("IssueEKCertificate() error = %v, want %v", err, ErrNotInitialized)
 	}
@@ -441,7 +442,7 @@ func TestIssueEKCertificate_NilPublicKey(t *testing.T) {
 
 	request := createTestCertRequest(t, signerKey, issuerCert)
 
-	_, err := ca.IssueEKCertificate(request, nil)
+	_, err := ca.IssueEKCertificate(context.Background(), request, nil)
 	if !errors.Is(err, ErrTCGInvalidPublicKey) {
 		t.Errorf("IssueEKCertificate(nil pubkey) error = %v, want %v", err, ErrTCGInvalidPublicKey)
 	}
@@ -458,7 +459,7 @@ func TestIssueEKCertificate_UnsupportedKeyType(t *testing.T) {
 
 	request := createTestCertRequest(t, signerKey, issuerCert)
 
-	_, err := ca.IssueEKCertificate(request, ed25519Key.Public())
+	_, err := ca.IssueEKCertificate(context.Background(), request, ed25519Key.Public())
 	if !errors.Is(err, ErrTCGInvalidPublicKey) {
 		t.Errorf("IssueEKCertificate(Ed25519) error = %v, want %v", err, ErrTCGInvalidPublicKey)
 	}
@@ -477,7 +478,7 @@ func TestIssueEKCertificate_SignerWithoutIssuerCert(t *testing.T) {
 		// IssuerCert intentionally omitted
 	}
 
-	_, err := ca.IssueEKCertificate(request, ekKey.Public())
+	_, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if !errors.Is(err, ErrTCGInvalidIssuer) {
 		t.Errorf("IssueEKCertificate(signer without issuerCert) error = %v, want %v", err, ErrTCGInvalidIssuer)
 	}
@@ -495,7 +496,7 @@ func TestIssueEKCertificate_CertStoreError(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "EK Store Fail"
 
-	_, err := ca.IssueEKCertificate(request, ekKey.Public())
+	_, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if !errors.Is(err, ErrStorageError) {
 		t.Errorf("IssueEKCertificate() with storage error = %v, want wrapping %v", err, ErrStorageError)
 	}
@@ -512,7 +513,7 @@ func TestIssueEKCertificate_ECDSASigner_RSAPublicKey(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "Cross-Algorithm EK"
 
-	cert, err := ca.IssueEKCertificate(request, ekKey.Public())
+	cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if err != nil {
 		t.Fatalf("IssueEKCertificate() with cross-algorithm returned unexpected error: %v", err)
 	}
@@ -537,7 +538,7 @@ func TestIssueEKCertificate_NoExtensionFields(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "Minimal EK"
 
-	cert, err := ca.IssueEKCertificate(request, ekKey.Public())
+	cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if err != nil {
 		t.Fatalf("IssueEKCertificate() returned unexpected error: %v", err)
 	}
@@ -573,7 +574,7 @@ func TestIssueAKCertificate_ExternalSigner_ECDSA(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "Test AK Certificate"
 
-	cert, err := ca.IssueAKCertificate(request, akKey.Public())
+	cert, err := ca.IssueAKCertificate(context.Background(), request, akKey.Public())
 	if err != nil {
 		t.Fatalf("IssueAKCertificate() returned unexpected error: %v", err)
 	}
@@ -653,7 +654,7 @@ func TestIssueAKCertificate_ExternalSigner_Ed25519(t *testing.T) {
 		IssuerCert: issuerCert,
 	}
 
-	cert, err := ca.IssueAKCertificate(request, akEd25519Key.Public())
+	cert, err := ca.IssueAKCertificate(context.Background(), request, akEd25519Key.Public())
 	if err != nil {
 		t.Fatalf("IssueAKCertificate() with Ed25519 returned unexpected error: %v", err)
 	}
@@ -684,7 +685,7 @@ func TestIssueAKCertificate_ExternalSigner_RSA(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "RSA AK Certificate"
 
-	cert, err := ca.IssueAKCertificate(request, akKey.Public())
+	cert, err := ca.IssueAKCertificate(context.Background(), request, akKey.Public())
 	if err != nil {
 		t.Fatalf("IssueAKCertificate() with RSA returned unexpected error: %v", err)
 	}
@@ -703,7 +704,7 @@ func TestIssueAKCertificate_NotInitialized(t *testing.T) {
 
 	request := createTestCertRequest(t, signerKey, issuerCert)
 
-	_, err := ca.IssueAKCertificate(request, akKey.Public())
+	_, err := ca.IssueAKCertificate(context.Background(), request, akKey.Public())
 	if !errors.Is(err, ErrNotInitialized) {
 		t.Errorf("IssueAKCertificate() error = %v, want %v", err, ErrNotInitialized)
 	}
@@ -716,7 +717,7 @@ func TestIssueAKCertificate_NilPublicKey(t *testing.T) {
 
 	request := createTestCertRequest(t, signerKey, issuerCert)
 
-	_, err := ca.IssueAKCertificate(request, nil)
+	_, err := ca.IssueAKCertificate(context.Background(), request, nil)
 	if !errors.Is(err, ErrTCGInvalidPublicKey) {
 		t.Errorf("IssueAKCertificate(nil pubkey) error = %v, want %v", err, ErrTCGInvalidPublicKey)
 	}
@@ -733,7 +734,7 @@ func TestIssueAKCertificate_UnsupportedKeyType(t *testing.T) {
 	type unsupportedKey struct{}
 	var badKey unsupportedKey
 
-	_, err := ca.IssueAKCertificate(request, badKey)
+	_, err := ca.IssueAKCertificate(context.Background(), request, badKey)
 	if !errors.Is(err, ErrTCGInvalidPublicKey) {
 		t.Errorf("IssueAKCertificate(unsupported key type) error = %v, want %v", err, ErrTCGInvalidPublicKey)
 	}
@@ -751,7 +752,7 @@ func TestIssueAKCertificate_SignerWithoutIssuerCert(t *testing.T) {
 		// IssuerCert intentionally omitted
 	}
 
-	_, err := ca.IssueAKCertificate(request, akKey.Public())
+	_, err := ca.IssueAKCertificate(context.Background(), request, akKey.Public())
 	if !errors.Is(err, ErrTCGInvalidIssuer) {
 		t.Errorf("IssueAKCertificate(signer without issuerCert) error = %v, want %v", err, ErrTCGInvalidIssuer)
 	}
@@ -771,7 +772,7 @@ func TestIssueAKCertificate_WithSANs(t *testing.T) {
 		IPs: []string{"10.0.0.42"},
 	}
 
-	cert, err := ca.IssueAKCertificate(request, akKey.Public())
+	cert, err := ca.IssueAKCertificate(context.Background(), request, akKey.Public())
 	if err != nil {
 		t.Fatalf("IssueAKCertificate() with SANs returned unexpected error: %v", err)
 	}
@@ -796,7 +797,7 @@ func TestIssueAKCertificate_CertStoreError(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "AK Store Fail"
 
-	_, err := ca.IssueAKCertificate(request, akKey.Public())
+	_, err := ca.IssueAKCertificate(context.Background(), request, akKey.Public())
 	if !errors.Is(err, ErrStorageError) {
 		t.Errorf("IssueAKCertificate() with storage error = %v, want wrapping %v", err, ErrStorageError)
 	}
@@ -813,7 +814,7 @@ func TestSignTCGCSRIDevID_NilCSR(t *testing.T) {
 		Subject: Subject{CommonName: "Device"},
 	}
 
-	_, _, err := ca.SignTCGCSRIDevID(nil, request)
+	_, _, err := ca.SignTCGCSRIDevID(context.Background(), nil, request)
 	if !errors.Is(err, ErrInvalidCSR) {
 		t.Errorf("SignTCGCSRIDevID(nil) error = %v, want %v", err, ErrInvalidCSR)
 	}
@@ -827,7 +828,7 @@ func TestSignTCGCSRIDevID_NotInitialized(t *testing.T) {
 		Subject: Subject{CommonName: "Device"},
 	}
 
-	_, _, err := ca.SignTCGCSRIDevID(csr, request)
+	_, _, err := ca.SignTCGCSRIDevID(context.Background(), csr, request)
 	if !errors.Is(err, ErrNotInitialized) {
 		t.Errorf("SignTCGCSRIDevID() error = %v, want %v", err, ErrNotInitialized)
 	}
@@ -848,7 +849,7 @@ func TestSignTCGCSRIDevID_InvalidCSR(t *testing.T) {
 		IssuerCert: issuerCert,
 	}
 
-	_, _, err := ca.SignTCGCSRIDevID(csr, request)
+	_, _, err := ca.SignTCGCSRIDevID(context.Background(), csr, request)
 	if !errors.Is(err, ErrTCGCSRVerificationFailed) {
 		t.Errorf("SignTCGCSRIDevID(empty CSR) error = %v, want %v", err, ErrTCGCSRVerificationFailed)
 	}
@@ -870,7 +871,7 @@ func TestSignTCGCSRIDevID_SignerWithoutIssuerCert(t *testing.T) {
 		// IssuerCert omitted
 	}
 
-	_, _, err := ca.SignTCGCSRIDevID(csr, request)
+	_, _, err := ca.SignTCGCSRIDevID(context.Background(), csr, request)
 	// Expect CSR verification to fail first since the CSR is empty
 	if err == nil {
 		t.Error("SignTCGCSRIDevID() should have returned an error for empty CSR with signer but no issuer cert")
@@ -892,7 +893,7 @@ func TestResolveTCGSigner_ExternalSigner(t *testing.T) {
 		IssuerCert: issuerCert,
 	}
 
-	signer, cert, keystoreType, err := ca.resolveTCGSigner(request)
+	signer, cert, keystoreType, err := ca.resolveTCGSigner(context.Background(), request)
 	if err != nil {
 		t.Fatalf("resolveTCGSigner() returned unexpected error: %v", err)
 	}
@@ -931,7 +932,7 @@ func TestResolveTCGSigner_SignerWithoutCert(t *testing.T) {
 		// IssuerCert omitted
 	}
 
-	_, _, _, err := ca.resolveTCGSigner(request)
+	_, _, _, err := ca.resolveTCGSigner(context.Background(), request)
 	if !errors.Is(err, ErrTCGInvalidIssuer) {
 		t.Errorf("resolveTCGSigner(signer without cert) error = %v, want %v", err, ErrTCGInvalidIssuer)
 	}
@@ -946,7 +947,7 @@ func TestResolveTCGSigner_NoSignerNoConfig(t *testing.T) {
 		// No Signer, no IssuerCert
 	}
 
-	_, _, _, err := ca.resolveTCGSigner(request)
+	_, _, _, err := ca.resolveTCGSigner(context.Background(), request)
 	// No internal signer configured, should fail trying to get issuing certificate
 	if err == nil {
 		t.Error("resolveTCGSigner() should return error when no signer and no internal config")
@@ -964,7 +965,7 @@ func TestResolveTCGSigner_RSASigner(t *testing.T) {
 		IssuerCert: issuerCert,
 	}
 
-	signer, cert, keystoreType, err := ca.resolveTCGSigner(request)
+	signer, cert, keystoreType, err := ca.resolveTCGSigner(context.Background(), request)
 	if err != nil {
 		t.Fatalf("resolveTCGSigner() with RSA returned unexpected error: %v", err)
 	}
@@ -1371,7 +1372,7 @@ func TestIssueEKCertificate_ConcurrentAccess(t *testing.T) {
 				Signer:     signerKey,
 				IssuerCert: issuerCert,
 			}
-			_, err = ca.IssueEKCertificate(request, ekKey.Public())
+			_, err = ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 			errCh <- err
 		}(i)
 	}
@@ -1405,7 +1406,7 @@ func TestIssueAKCertificate_ConcurrentAccess(t *testing.T) {
 				Signer:     signerKey,
 				IssuerCert: issuerCert,
 			}
-			_, err = ca.IssueAKCertificate(request, akKey.Public())
+			_, err = ca.IssueAKCertificate(context.Background(), request, akKey.Public())
 			errCh <- err
 		}(i)
 	}
@@ -1439,7 +1440,7 @@ func TestIssueEKAndAKCertificates_UniqueSerials(t *testing.T) {
 			IssuerCert: issuerCert,
 		}
 
-		cert, err := ca.IssueEKCertificate(request, ekKey.Public())
+		cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 		if err != nil {
 			t.Fatalf("IssueEKCertificate() iteration %d returned error: %v", i, err)
 		}
@@ -1461,7 +1462,7 @@ func TestIssueEKAndAKCertificates_UniqueSerials(t *testing.T) {
 			IssuerCert: issuerCert,
 		}
 
-		cert, err := ca.IssueAKCertificate(request, akKey.Public())
+		cert, err := ca.IssueAKCertificate(context.Background(), request, akKey.Public())
 		if err != nil {
 			t.Fatalf("IssueAKCertificate() iteration %d returned error: %v", i, err)
 		}
@@ -1488,7 +1489,7 @@ func TestIssueEKCertificate_NotBeforeBackdated(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "Backdated EK"
 
-	cert, err := ca.IssueEKCertificate(request, ekKey.Public())
+	cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if err != nil {
 		t.Fatalf("IssueEKCertificate() returned unexpected error: %v", err)
 	}
@@ -1513,7 +1514,7 @@ func TestIssueAKCertificate_NotBeforeBackdated(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "Backdated AK"
 
-	cert, err := ca.IssueAKCertificate(request, akKey.Public())
+	cert, err := ca.IssueAKCertificate(context.Background(), request, akKey.Public())
 	if err != nil {
 		t.Fatalf("IssueAKCertificate() returned unexpected error: %v", err)
 	}
@@ -1537,7 +1538,7 @@ func TestIssueEKCertificate_TPMSpecificationExtension(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "EK Spec Test"
 
-	cert, err := ca.IssueEKCertificate(request, ekKey.Public())
+	cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if err != nil {
 		t.Fatalf("IssueEKCertificate() returned unexpected error: %v", err)
 	}
@@ -1567,7 +1568,7 @@ func TestIssueEKCertificate_IssuerFieldsMatchSigningCert(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "EK Issuer Check"
 
-	cert, err := ca.IssueEKCertificate(request, ekKey.Public())
+	cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if err != nil {
 		t.Fatalf("IssueEKCertificate() returned unexpected error: %v", err)
 	}
@@ -1600,7 +1601,7 @@ func TestIssueEKCertificate_ECDSA_P384(t *testing.T) {
 	request := createTestCertRequest(t, signerKey, issuerCert)
 	request.Subject.CommonName = "P384 EK"
 
-	cert, err := ca.IssueEKCertificate(request, ekKey.Public())
+	cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
 	if err != nil {
 		t.Fatalf("IssueEKCertificate() with P-384 returned unexpected error: %v", err)
 	}

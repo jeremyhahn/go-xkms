@@ -248,7 +248,7 @@ func ParseURI(uri string) (*Credential, error) {
 
 // ToURI returns the otpauth:// URI for this credential.
 func (c *Credential) ToURI() string {
-	label := c.AccountName
+	var label string
 	if c.Issuer != "" {
 		label = fmt.Sprintf("%s:%s", url.PathEscape(c.Issuer), url.PathEscape(c.AccountName))
 	} else {

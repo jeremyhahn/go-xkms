@@ -14,6 +14,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 	"crypto/elliptic"
 	"crypto/x509"
@@ -121,18 +122,22 @@ func (g *backendPIVKeyGenerator) GeneratePIVKey(slot pivcert.PIVSlot, algorithm 
 		}
 	}
 
+	// context.Background() is correct here: GeneratePIVKey implements the
+	// PIVKeyGenerator interface, which carries no request context.
+	ctx := context.Background()
+
 	// Generate the key using the appropriate backend method
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		if _, err := g.backend.GenerateRSA(attrs); err != nil {
+		if _, err := g.backend.GenerateRSA(ctx, attrs); err != nil {
 			return nil, err
 		}
 	case x509.ECDSA:
-		if _, err := g.backend.GenerateECDSA(attrs); err != nil {
+		if _, err := g.backend.GenerateECDSA(ctx, attrs); err != nil {
 			return nil, err
 		}
 	case x509.Ed25519:
-		if _, err := g.backend.GenerateEd25519(attrs); err != nil {
+		if _, err := g.backend.GenerateEd25519(ctx, attrs); err != nil {
 			return nil, err
 		}
 	default:
@@ -140,7 +145,7 @@ func (g *backendPIVKeyGenerator) GeneratePIVKey(slot pivcert.PIVSlot, algorithm 
 	}
 
 	// Retrieve the signer for the generated key
-	return g.backend.Signer(attrs)
+	return g.backend.Signer(ctx, attrs)
 }
 
 // GetPIVSigner returns a signer for an existing key in the given PIV slot.
@@ -152,7 +157,9 @@ func (g *backendPIVKeyGenerator) GetPIVSigner(slot pivcert.PIVSlot, cn string) (
 		CN:      cn,
 		PIVSlot: string(slot),
 	}
-	return g.backend.Signer(attrs)
+	// context.Background() is correct here: GetPIVSigner implements the
+	// PIVKeyGenerator interface, which carries no request context.
+	return g.backend.Signer(context.Background(), attrs)
 }
 
 // Verify interface compliance at compile time.

@@ -536,59 +536,35 @@ func TestSubInterfaceIndependence(t *testing.T) {
 	stub := &stubClient{}
 
 	t.Run("ConnectionServiceOnly", func(t *testing.T) {
-		var svc ConnectionService = stub
-		if svc == nil {
-			t.Error("ConnectionService assignment failed")
-		}
+		var _ ConnectionService = stub
 	})
 
 	t.Run("KeyServiceOnly", func(t *testing.T) {
-		var svc KeyService = stub
-		if svc == nil {
-			t.Error("KeyService assignment failed")
-		}
+		var _ KeyService = stub
 	})
 
 	t.Run("CryptoServiceOnly", func(t *testing.T) {
-		var svc CryptoService = stub
-		if svc == nil {
-			t.Error("CryptoService assignment failed")
-		}
+		var _ CryptoService = stub
 	})
 
 	t.Run("CertServiceOnly", func(t *testing.T) {
-		var svc CertService = stub
-		if svc == nil {
-			t.Error("CertService assignment failed")
-		}
+		var _ CertService = stub
 	})
 
 	t.Run("BarrierServiceOnly", func(t *testing.T) {
-		var svc BarrierService = stub
-		if svc == nil {
-			t.Error("BarrierService assignment failed")
-		}
+		var _ BarrierService = stub
 	})
 
 	t.Run("CAServiceOnly", func(t *testing.T) {
-		var svc CAService = stub
-		if svc == nil {
-			t.Error("CAService assignment failed")
-		}
+		var _ CAService = stub
 	})
 
 	t.Run("InitCeremonyServiceOnly", func(t *testing.T) {
-		var svc InitCeremonyService = stub
-		if svc == nil {
-			t.Error("InitCeremonyService assignment failed")
-		}
+		var _ InitCeremonyService = stub
 	})
 
 	t.Run("CredentialManagementServiceOnly", func(t *testing.T) {
-		var svc CredentialManagementService = stub
-		if svc == nil {
-			t.Error("CredentialManagementService assignment failed")
-		}
+		var _ CredentialManagementService = stub
 	})
 }
 
@@ -600,8 +576,5 @@ func TestClientAssignableFromSubInterfaces(t *testing.T) {
 
 	// This assignment would fail at compile time if stubClient didn't satisfy
 	// every embedded sub-interface in Client.
-	var c Client = stub
-	if c == nil {
-		t.Error("expected non-nil Client from stubClient")
-	}
+	var _ Client = stub
 }

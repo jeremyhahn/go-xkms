@@ -65,16 +65,17 @@
 //	    log.Fatal(err)
 //	}
 //
-//	if err := trustedCA.Init(); err != nil {
+//	if err := trustedCA.Init(ctx); err != nil {
 //	    log.Fatal(err)
 //	}
 //
-//	issued, err := trustedCA.IssueCertificate(&ca.CertificateRequest{
+//	issued, err := trustedCA.IssueCertificate(ctx, &ca.CertificateRequest{
 //	    Subject: ca.Subject{CommonName: "server.example.com"},
 //	})
 package ca
 
 import (
+	"context"
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
@@ -117,7 +118,7 @@ type TrustedCA interface {
 	// Returns errors from the underlying keystore if key generation fails.
 	//
 	// Thread-safe: Yes, but should typically be called once during startup.
-	Init() error
+	Init(ctx context.Context) error
 
 	// Load loads an existing Certificate Authority from storage.
 	//
@@ -131,7 +132,7 @@ type TrustedCA interface {
 	// Returns storage errors if the key or certificates cannot be retrieved.
 	//
 	// Thread-safe: Yes, but should typically be called once during startup.
-	Load() error
+	Load(ctx context.Context) error
 
 	// IsInitialized returns true if the CA has been initialized.
 	//
@@ -165,7 +166,7 @@ type TrustedCA interface {
 	// Returns storage errors if the certificate cannot be stored.
 	//
 	// Thread-safe: Yes
-	SignCSR(csrPEM []byte, opts *SignOptions) (*x509.Certificate, error)
+	SignCSR(ctx context.Context, csrPEM []byte, opts *SignOptions) (*x509.Certificate, error)
 
 	// CreateCSR creates a new certificate signing request for the given request.
 	//
@@ -179,7 +180,7 @@ type TrustedCA interface {
 	// Returns errors from the keystore if key generation fails.
 	//
 	// Thread-safe: Yes
-	CreateCSR(request *CertificateRequest) ([]byte, error)
+	CreateCSR(ctx context.Context, request *CertificateRequest) ([]byte, error)
 
 	// ========================================================================
 	// Certificate Issuance
@@ -202,7 +203,7 @@ type TrustedCA interface {
 	// Returns errors from key generation or signing operations.
 	//
 	// Thread-safe: Yes
-	IssueCertificate(request *CertificateRequest) (*IssuedCertificate, error)
+	IssueCertificate(ctx context.Context, request *CertificateRequest) (*IssuedCertificate, error)
 
 	// IssueCertificateWithProfile issues a certificate using a named profile.
 	//
@@ -217,7 +218,7 @@ type TrustedCA interface {
 	// Common Name already exists.
 	//
 	// Thread-safe: Yes
-	IssueCertificateWithProfile(request *CertificateRequest, profile string) (*IssuedCertificate, error)
+	IssueCertificateWithProfile(ctx context.Context, request *CertificateRequest, profile string) (*IssuedCertificate, error)
 
 	// ========================================================================
 	// Trust Chain Operations
@@ -296,7 +297,7 @@ type TrustedCA interface {
 	// Returns ErrAlreadyRevoked if the certificate is already revoked.
 	//
 	// Thread-safe: Yes
-	Revoke(serial *big.Int, reason int) error
+	Revoke(ctx context.Context, serial *big.Int, reason int) error
 
 	// GenerateCRL generates a Certificate Revocation List.
 	//
@@ -310,7 +311,7 @@ type TrustedCA interface {
 	// Returns ErrCRLGenerationFailed if CRL generation fails.
 	//
 	// Thread-safe: Yes
-	GenerateCRL() ([]byte, error)
+	GenerateCRL(ctx context.Context) ([]byte, error)
 
 	// IsRevoked checks if a certificate serial number is revoked.
 	//
@@ -336,7 +337,7 @@ type TrustedCA interface {
 	// Returns keystore errors if the private key cannot be retrieved.
 	//
 	// Thread-safe: Yes
-	TLSCertificate(attrs *types.KeyAttributes) (tls.Certificate, error)
+	TLSCertificate(ctx context.Context, attrs *types.KeyAttributes) (tls.Certificate, error)
 
 	// TLSConfig returns a TLS configuration for the given key attributes.
 	//
@@ -354,7 +355,7 @@ type TrustedCA interface {
 	// Returns ErrCertificateNotFound if the certificate does not exist.
 	//
 	// Thread-safe: Yes
-	TLSConfig(attrs *types.KeyAttributes) (*tls.Config, error)
+	TLSConfig(ctx context.Context, attrs *types.KeyAttributes) (*tls.Config, error)
 
 	// ServerTLSConfig returns a TLS configuration suitable for server
 	// listeners. requireClientCert=true enables mutual TLS.
@@ -368,7 +369,7 @@ type TrustedCA interface {
 	// Returns ErrCertificateNotFound if the certificate does not exist.
 	//
 	// Thread-safe: Yes
-	ServerTLSConfig(attrs *types.KeyAttributes, requireClientCert bool) (*tls.Config, error)
+	ServerTLSConfig(ctx context.Context, attrs *types.KeyAttributes, requireClientCert bool) (*tls.Config, error)
 
 	// ClientTLSConfig returns a TLS configuration suitable for clients
 	// dialing TLS endpoints. serverName is required for proper SNI and
@@ -378,7 +379,7 @@ type TrustedCA interface {
 	// Returns ErrCertificateNotFound if the certificate does not exist.
 	//
 	// Thread-safe: Yes
-	ClientTLSConfig(attrs *types.KeyAttributes, serverName string) (*tls.Config, error)
+	ClientTLSConfig(ctx context.Context, attrs *types.KeyAttributes, serverName string) (*tls.Config, error)
 
 	// QuantumSafeTLSConfig creates a TLS configuration optimized for post-quantum
 	// cryptographic algorithms. This configuration enables hybrid key exchange
@@ -392,7 +393,7 @@ type TrustedCA interface {
 	// Returns ErrTLSConfigFailed if the configuration cannot be created.
 	//
 	// Thread-safe: Yes
-	QuantumSafeTLSConfig(attrs *types.KeyAttributes) (*tls.Config, error)
+	QuantumSafeTLSConfig(ctx context.Context, attrs *types.KeyAttributes) (*tls.Config, error)
 
 	// ========================================================================
 	// Trust Pool Builders
@@ -497,43 +498,43 @@ type TrustedCA interface {
 	// ========================================================================
 
 	// Signer returns a crypto.Signer backed by the CA's issuing identity key.
-	Signer() (crypto.Signer, error)
+	Signer(ctx context.Context) (crypto.Signer, error)
 
 	// PrivateKey retrieves a private key handle from the CA's keystore.
 	// Hardware-bound keys are returned as opaque crypto.PrivateKey values.
-	PrivateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error)
+	PrivateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error)
 
 	// PubKey returns the public key half of the key identified by attrs.
-	PubKey(attrs *types.KeyAttributes) (crypto.PublicKey, error)
+	PubKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PublicKey, error)
 
 	// SignedBlob signs arbitrary data using the CA's signing key.
-	SignedBlob(data []byte) ([]byte, error)
+	SignedBlob(ctx context.Context, data []byte) ([]byte, error)
 
 	// ========================================================================
 	// Certificate Retrieval & Import
 	// ========================================================================
 
 	// Issued reports whether a certificate for the given CN has been issued.
-	Issued(cn string) (bool, error)
+	Issued(ctx context.Context, cn string) (bool, error)
 
 	// Exists reports whether a certificate for cn exists with the specified
 	// public-key algorithm.
-	Exists(cn string, algo x509.PublicKeyAlgorithm) (bool, error)
+	Exists(ctx context.Context, cn string, algo x509.PublicKeyAlgorithm) (bool, error)
 
 	// Certificate retrieves a certificate using its KeyAttributes.
-	Certificate(attrs *types.KeyAttributes) (*x509.Certificate, error)
+	Certificate(ctx context.Context, attrs *types.KeyAttributes) (*x509.Certificate, error)
 
 	// CertificatePEM returns the certificate identified by cn in PEM form.
-	CertificatePEM(cn string) ([]byte, error)
+	CertificatePEM(ctx context.Context, cn string) ([]byte, error)
 
 	// ImportCertificate stores an externally-issued certificate in the CA.
-	ImportCertificate(cert *x509.Certificate) error
+	ImportCertificate(ctx context.Context, cert *x509.Certificate) error
 
 	// ImportCertificatePEM parses a PEM-encoded certificate and imports it.
-	ImportCertificatePEM(cn string, pemBytes []byte) error
+	ImportCertificatePEM(ctx context.Context, cn string, pemBytes []byte) error
 
 	// PEM is a KeyAttributes-keyed alias for CertificatePEM.
-	PEM(attrs *types.KeyAttributes) ([]byte, error)
+	PEM(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error)
 
 	// ========================================================================
 	// Object Store Helpers
@@ -561,7 +562,7 @@ type TrustedCA interface {
 
 	// ImportIssuingCAs recursively imports issuing CA certificates from the
 	// certificate's AuthorityInformationAccess (AIA) extension.
-	ImportIssuingCAs(cert *x509.Certificate) error
+	ImportIssuingCAs(ctx context.Context, cert *x509.Certificate) error
 
 	// ParseBundle parses a PEM-encoded certificate bundle.
 	ParseBundle(bundle []byte) ([]*x509.Certificate, error)
@@ -604,22 +605,22 @@ type TrustedCA interface {
 
 	// ImportAttestation stores a TPM attestation blob (quote/event log/PCRs)
 	// together with a CA-produced signature.
-	ImportAttestation(akAttrs *types.KeyAttributes, blobType string, data []byte) error
+	ImportAttestation(ctx context.Context, akAttrs *types.KeyAttributes, blobType string, data []byte) error
 
 	// ImportAttestationKeyCertificate stores a DER-encoded AK certificate.
-	ImportAttestationKeyCertificate(attrs *types.KeyAttributes, akDER []byte) error
+	ImportAttestationKeyCertificate(ctx context.Context, attrs *types.KeyAttributes, akDER []byte) error
 
 	// ImportAttestationEventLog stores a TPM event log blob.
-	ImportAttestationEventLog(akAttrs *types.KeyAttributes, eventLog []byte) error
+	ImportAttestationEventLog(ctx context.Context, akAttrs *types.KeyAttributes, eventLog []byte) error
 
 	// ImportAttestationPCRs stores a TPM PCR snapshot blob.
-	ImportAttestationPCRs(akAttrs *types.KeyAttributes, pcrs []byte) error
+	ImportAttestationPCRs(ctx context.Context, akAttrs *types.KeyAttributes, pcrs []byte) error
 
 	// ImportAttestationQuote stores a TPM quote blob.
-	ImportAttestationQuote(akAttrs *types.KeyAttributes, quote []byte) error
+	ImportAttestationQuote(ctx context.Context, akAttrs *types.KeyAttributes, quote []byte) error
 
 	// ImportLocalAttestation imports a complete local attestation.
-	ImportLocalAttestation(akAttrs *types.KeyAttributes, quote *tpm2.Quote) error
+	ImportLocalAttestation(ctx context.Context, akAttrs *types.KeyAttributes, quote *tpm2.Quote) error
 
 	// VerifyAttestationQuote checks a previously-stored quote blob.
 	VerifyAttestationQuote(akAttrs *types.KeyAttributes, quote []byte) error
@@ -643,13 +644,13 @@ type TrustedCA interface {
 	// ========================================================================
 
 	// TLSBundle returns a PEM bundle (chain + private key).
-	TLSBundle(attrs *types.KeyAttributes) ([]byte, error)
+	TLSBundle(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error)
 
 	// TLSBundleWithCrossSigner prepends cross-signed certificates.
-	TLSBundleWithCrossSigner(attrs *types.KeyAttributes, xsigner crypto.Signer) ([]byte, error)
+	TLSBundleWithCrossSigner(ctx context.Context, attrs *types.KeyAttributes, xsigner crypto.Signer) ([]byte, error)
 
 	// TLSConfigWithXSigner augments RootCAs with cross-signed certificates.
-	TLSConfigWithXSigner(attrs *types.KeyAttributes, xsigner crypto.Signer) (*tls.Config, error)
+	TLSConfigWithXSigner(ctx context.Context, attrs *types.KeyAttributes, xsigner crypto.Signer) (*tls.Config, error)
 
 	// ========================================================================
 	// Configuration & Metadata
@@ -659,7 +660,7 @@ type TrustedCA interface {
 	CAKeyAttributes(storeType types.StoreType) (*types.KeyAttributes, error)
 
 	// CASigner returns a crypto.Signer filtered by storeType/algorithm.
-	CASigner(storeType types.StoreType, algo x509.PublicKeyAlgorithm) (crypto.Signer, error)
+	CASigner(ctx context.Context, storeType types.StoreType, algo x509.PublicKeyAlgorithm) (crypto.Signer, error)
 
 	// CAConfig returns the flat CAConfig supplied at construction time.
 	CAConfig() CAConfig
@@ -694,7 +695,7 @@ type TrustedCA interface {
 	CABundleFiltered(storeType types.StoreType, keyAlgorithm x509.PublicKeyAlgorithm) ([]byte, error)
 
 	// RevokeCert revokes a certificate and optionally deletes its signing key.
-	RevokeCert(cert *x509.Certificate, opts RevokeOptions) error
+	RevokeCert(ctx context.Context, cert *x509.Certificate, opts RevokeOptions) error
 }
 
 // ProfileProvider defines the interface for certificate profile providers.
@@ -817,14 +818,14 @@ type ProfileRegistry interface {
 //
 //	// Create a CA that supports TCG operations
 //	trustedCA, _ := ca.New(params)
-//	trustedCA.Init()
+//	trustedCA.Init(ctx)
 //
 //	// Cast to TCGCA for TCG operations
 //	tcgCA := trustedCA.(ca.TCGCA)
 //	tcgCA.SetTPM(tpmInstance)
 //
 //	// Enroll a device
-//	result, err := tcgCA.EnrollDevice(packedCSR, &ca.CertificateRequest{
+//	result, err := tcgCA.EnrollDevice(ctx, packedCSR, &ca.CertificateRequest{
 //	    Subject: ca.Subject{CommonName: "device-001"},
 //	})
 type TCGCA interface {
@@ -842,7 +843,7 @@ type TCGCA interface {
 	// Returns ErrTCGInvalidIssuer if Signer is set without IssuerCert.
 	//
 	// Thread-safe: Yes
-	IssueEKCertificate(request *CertificateRequest, ekPubKey crypto.PublicKey) (*x509.Certificate, error)
+	IssueEKCertificate(ctx context.Context, request *CertificateRequest, ekPubKey crypto.PublicKey) (*x509.Certificate, error)
 
 	// IssueAKCertificate issues an Attestation Key certificate per TCG spec.
 	// AK certs use indefinite validity and DigitalSignature key usage with
@@ -856,7 +857,7 @@ type TCGCA interface {
 	// Returns ErrTCGInvalidIssuer if Signer is set without IssuerCert.
 	//
 	// Thread-safe: Yes
-	IssueAKCertificate(request *CertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error)
+	IssueAKCertificate(ctx context.Context, request *CertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error)
 
 	// SignTCGCSRIDevID verifies and signs a TCG-CSR-IDEVID for device identity
 	// enrollment. Verifies the CSR signature, extracts IAK/IDevID public keys,
@@ -867,7 +868,7 @@ type TCGCA interface {
 	// Returns ErrTCGCSRVerificationFailed if signature verification fails.
 	//
 	// Thread-safe: Yes
-	SignTCGCSRIDevID(tcgCSR *tpm2.TCG_CSR_IDEVID, request *CertificateRequest) (iakDER, idevidDER []byte, err error)
+	SignTCGCSRIDevID(ctx context.Context, tcgCSR *tpm2.TCG_CSR_IDEVID, request *CertificateRequest) (iakDER, idevidDER []byte, err error)
 
 	// EnrollDevice performs complete TCG enrollment: verifies the packed CSR,
 	// generates a MakeCredential challenge, and prepares certificates.
@@ -881,7 +882,7 @@ type TCGCA interface {
 	// Returns ErrTCGCSRUnmarshalFailed if the packed CSR is invalid.
 	//
 	// Thread-safe: Yes
-	EnrollDevice(packedCSR []byte, request *CertificateRequest) (*TCGEnrollmentResult, error)
+	EnrollDevice(ctx context.Context, packedCSR []byte, request *CertificateRequest) (*TCGEnrollmentResult, error)
 
 	// SetTPM configures the TPM instance for enrollment operations requiring
 	// MakeCredentialWithExternalEK (server-side credential challenge).

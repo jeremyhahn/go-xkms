@@ -28,9 +28,8 @@
 //	barrier unseal         --passphrase <passphrase>         (passphrase / single-secret only)
 //	barrier unseal-shares  --share <s> [--share <s> ...] | --shares-file <path>   ('-' = stdin)
 //	barrier seal           [--so-pin <pin>] [-y|--assume-yes]
-//	barrier rekey          --passphrase <new-pp>
-//	                       [--so-pin <pin>]
-//	                       [--threshold N --total M]     (paired; for Shamir rekey)
+//	barrier rekey          --threshold N --total M       (xkms wire is Shamir-only)
+//	                       [--so-pin <pin>]              (no secret on the wire)
 //	barrier recovery generate  --threshold N --total M [--so-pin <pin>]
 //	barrier recovery recover   --share <s> [--share <s> ...]
 //
@@ -215,18 +214,17 @@ func (e *BarrierSharesFileEmptyError) Error() string {
 	return "barrier unseal-shares: --shares-file " + e.Path + " contains no shares"
 }
 
-// XKMSPassphraseRekeyUnsupportedError is returned when `barrier rekey`
-// is invoked with --passphrase alone (no Shamir flags). xkms's wire-level
-// BarrierRekey only supports Shamir share regeneration; passphrase
-// rotation is not part of its server surface. The CLI accepts --passphrase
-// at the flag level for UX parity but emits this typed error if the
-// operator does not pair it with --threshold / --total.
-type XKMSPassphraseRekeyUnsupportedError struct{}
+// XKMSRekeyShamirParamsRequiredError is returned when `barrier rekey`
+// is invoked without --threshold / --total. xkms's wire-level
+// BarrierRekey only supports Shamir share regeneration; the server
+// derives all secret material itself, so the verb carries no secret
+// and the Shamir parameters are mandatory.
+type XKMSRekeyShamirParamsRequiredError struct{}
 
 // Error returns a human-readable description.
-func (e *XKMSPassphraseRekeyUnsupportedError) Error() string {
+func (e *XKMSRekeyShamirParamsRequiredError) Error() string {
 	return "barrier rekey: xkms only supports Shamir share regeneration; " +
-		"pair --passphrase with --threshold and --total"
+		"provide --threshold and --total"
 }
 
 // BarrierRecoverySharesRequiredError is returned when `barrier recovery
@@ -277,7 +275,7 @@ consistent surface across the stack:
   unseal         Unseal with --passphrase (single-secret; --passphrase is a deprecated alias)
   unseal-shares  Unseal with one or more Shamir shares (--share / --shares-file)
   seal           Seal the barrier
-  rekey          Rotate the barrier master key (--passphrase + --threshold/--total)
+  rekey          Regenerate Shamir shares (--threshold/--total; no secret on the wire)
   recovery       Generate or use recovery keys (generate | recover)`,
 }
 
@@ -396,16 +394,16 @@ Examples:
 var barrierRekeyCmd = &cobra.Command{
 	Use:   "rekey",
 	Short: "Rotate the barrier master key",
-	Long: `Rotate the cryptographic barrier's master key.
+	Long: `Regenerate the barrier's Shamir share set.
 
---passphrase supplies the new passphrase. xkms's wire-level rekey currently
-supports Shamir share regeneration; pair --passphrase with --threshold and
---total to regenerate Shamir shares for the new master key. --so-pin is
-verified when supplied.
+xkms's wire-level rekey supports Shamir share regeneration only: the
+server generates the fresh secret material itself, so no secret travels
+on the request. --threshold / --total define the new M-of-N layout and
+are required. --so-pin is verified when supplied.
 
 Example:
-  xkmsctl barrier rekey --passphrase '<new-pp>' --threshold 3 --total 5
-  xkmsctl barrier rekey --passphrase '<new-pp>' --so-pin SO12345 --threshold 3 --total 5`,
+  xkmsctl barrier rekey --threshold 3 --total 5
+  xkmsctl barrier rekey --so-pin SO12345 --threshold 3 --total 5`,
 	RunE: runBarrierRekeyCmd,
 }
 
@@ -832,13 +830,9 @@ func runBarrierSealCmd(cmd *cobra.Command, _ []string) error {
 // validateRekeyFlags enforces the canonical rekey invariants.
 //
 // xkms's wire-level BarrierRekey carries only Threshold/Total — it
-// regenerates Shamir shares. The CLI accepts --passphrase at the flag level
-// for UX parity but emits XKMSPassphraseRekeyUnsupportedError if the
-// operator does not pair it with --threshold/--total.
-func validateRekeyFlags(secret string, threshold, total int) error {
-	if secret == "" {
-		return &BarrierSecretRequiredError{Op: "rekey"}
-	}
+// regenerates Shamir shares and the server derives all secret material
+// itself, so the verb takes no secret flag at all.
+func validateRekeyFlags(threshold, total int) error {
 	hasThresh := threshold > 0
 	hasTotal := total > 0
 	if hasThresh != hasTotal {
@@ -848,7 +842,7 @@ func validateRekeyFlags(secret string, threshold, total int) error {
 		}
 	}
 	if !hasThresh && !hasTotal {
-		return &XKMSPassphraseRekeyUnsupportedError{}
+		return &XKMSRekeyShamirParamsRequiredError{}
 	}
 	if threshold > total {
 		return &BarrierShamirParamsError{Op: "rekey", Reason: "--threshold cannot exceed --total"}
@@ -858,7 +852,7 @@ func validateRekeyFlags(secret string, threshold, total int) error {
 
 // runBarrierRekeyCmd executes 'barrier rekey'.
 func runBarrierRekeyCmd(cmd *cobra.Command, _ []string) error {
-	if err := validateRekeyFlags(barrierSecret, barrierThreshold, barrierTotal); err != nil {
+	if err := validateRekeyFlags(barrierThreshold, barrierTotal); err != nil {
 		return err
 	}
 
@@ -1000,24 +994,23 @@ func printBarrierStatus(printer *Printer, resp *transport.BarrierStatusResponse)
 }
 
 // printBarrierShamirResult renders a Shamir initialization response.
+// Share material is never returned (qrdb share-free contract): shares are
+// sealed to enrolled Security Officers, who claim them individually.
 func printBarrierShamirResult(printer *Printer, resp *transport.BarrierInitializeShamirResponse) error {
 	switch printer.format {
 	case OutputFormatJSON:
 		return printer.PrintJSON(map[string]interface{}{
-			"shares":       resp.Shares,
 			"threshold":    resp.Threshold,
 			"total_shares": resp.TotalShares,
+			"share_count":  resp.ShareCount,
 		})
 	case OutputFormatTable, OutputFormatText:
 		_, _ = fmt.Fprintf(printer.writer, "Shamir Secret Sharing Initialized\n")
 		_, _ = fmt.Fprintf(printer.writer, "  Threshold:    %d of %d shares required\n",
 			resp.Threshold, resp.TotalShares)
-		_, _ = fmt.Fprintf(printer.writer, "\nShares (store these securely):\n")
-		for i, share := range resp.Shares {
-			_, _ = fmt.Fprintf(printer.writer, "  Share %d: %s\n", i+1, share)
-		}
-		_, _ = fmt.Fprintf(printer.writer, "\nWARNING: Store each share in a separate secure location.\n")
-		_, _ = fmt.Fprintf(printer.writer, "These shares will not be displayed again.\n")
+		_, _ = fmt.Fprintf(printer.writer, "  Shares Generated: %d\n", resp.ShareCount)
+		_, _ = fmt.Fprintf(printer.writer, "\nShares are sealed to enrolled Security Officers and are never\n")
+		_, _ = fmt.Fprintf(printer.writer, "displayed. Each officer must claim their share individually.\n")
 		return nil
 	default:
 		return fmt.Errorf("unknown output format: %s", printer.format)
@@ -1025,22 +1018,22 @@ func printBarrierShamirResult(printer *Printer, resp *transport.BarrierInitializ
 }
 
 // printBarrierRekeyResult renders a rekey response.
+// New shares are sealed to enrolled Security Officers and never returned
+// (qrdb share-free contract); only the threshold/total metadata is shown.
 func printBarrierRekeyResult(printer *Printer, resp *transport.BarrierRekeyResponse) error {
 	switch printer.format {
 	case OutputFormatJSON:
 		return printer.PrintJSON(map[string]interface{}{
-			"shares":       resp.Shares,
 			"threshold":    resp.Threshold,
 			"total_shares": resp.TotalShares,
+			"share_count":  resp.ShareCount,
 		})
 	case OutputFormatTable, OutputFormatText:
 		_, _ = fmt.Fprintf(printer.writer, "Barrier Rekey Complete\n")
 		_, _ = fmt.Fprintf(printer.writer, "  New Threshold: %d of %d\n", resp.Threshold, resp.TotalShares)
-		_, _ = fmt.Fprintf(printer.writer, "\nNew Shares (store these securely):\n")
-		for i, share := range resp.Shares {
-			_, _ = fmt.Fprintf(printer.writer, "  Share %d: %s\n", i+1, share)
-		}
-		_, _ = fmt.Fprintf(printer.writer, "\nWARNING: Store each new share in a separate secure location.\n")
+		_, _ = fmt.Fprintf(printer.writer, "  Shares Generated: %d\n", resp.ShareCount)
+		_, _ = fmt.Fprintf(printer.writer, "\nNew shares are sealed to enrolled Security Officers and are never\n")
+		_, _ = fmt.Fprintf(printer.writer, "displayed. Each officer must claim their new share individually.\n")
 		return nil
 	default:
 		return fmt.Errorf("unknown output format: %s", printer.format)
@@ -1048,24 +1041,23 @@ func printBarrierRekeyResult(printer *Printer, resp *transport.BarrierRekeyRespo
 }
 
 // printBarrierRecoveryKeys renders a recovery-key generation response.
+// Recovery shares are sealed to enrolled recovery officers and never
+// returned (qrdb share-free contract); only the metadata is shown.
 func printBarrierRecoveryKeys(printer *Printer, resp *transport.BarrierRecoveryKeysResponse) error {
 	switch printer.format {
 	case OutputFormatJSON:
 		return printer.PrintJSON(map[string]interface{}{
-			"recovery_keys": resp.Keys,
-			"threshold":     resp.Threshold,
-			"total_keys":    resp.Total,
+			"threshold":    resp.Threshold,
+			"total_shares": resp.TotalShares,
+			"share_count":  resp.ShareCount,
 		})
 	case OutputFormatTable, OutputFormatText:
 		_, _ = fmt.Fprintf(printer.writer, "Recovery Keys Generated\n")
 		_, _ = fmt.Fprintf(printer.writer, "  Threshold: %d of %d keys required\n",
-			resp.Threshold, resp.Total)
-		_, _ = fmt.Fprintf(printer.writer, "\nRecovery Keys (store these securely):\n")
-		for i, key := range resp.Keys {
-			_, _ = fmt.Fprintf(printer.writer, "  Key %d: %s\n", i+1, key)
-		}
-		_, _ = fmt.Fprintf(printer.writer, "\nWARNING: Store each key in a separate secure location.\n")
-		_, _ = fmt.Fprintf(printer.writer, "These keys will not be displayed again.\n")
+			resp.Threshold, resp.TotalShares)
+		_, _ = fmt.Fprintf(printer.writer, "  Shares Generated: %d\n", resp.ShareCount)
+		_, _ = fmt.Fprintf(printer.writer, "\nRecovery shares are sealed to enrolled recovery officers and are\n")
+		_, _ = fmt.Fprintf(printer.writer, "never displayed. Each officer must claim their share individually.\n")
 		return nil
 	default:
 		return fmt.Errorf("unknown output format: %s", printer.format)
@@ -1115,9 +1107,8 @@ func init() {
 	barrierSealCmd.Flags().BoolVarP(&barrierAssumeYes, "assume-yes", "y", false,
 		"Skip the interactive confirmation prompt")
 
-	// rekey flags
-	barrierRekeyCmd.Flags().StringVar(&barrierSecret, "passphrase", "",
-		"New master passphrase (required)")
+	// rekey flags — no secret flag: the server generates the fresh
+	// secret material itself (xkms wire is Shamir-only).
 	barrierRekeyCmd.Flags().StringVar(&barrierFlagSOPin, "so-pin", "",
 		"Security Officer PIN (verified before the rekey RPC when supplied)")
 	barrierRekeyCmd.Flags().IntVar(&barrierThreshold, "threshold", 0,

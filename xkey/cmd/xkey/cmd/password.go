@@ -587,7 +587,7 @@ func runPasswordUnlock(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrPasswordUnlockFailed, err)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Password store unlocked.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Password store unlocked.")
 	return nil
 }
 
@@ -605,7 +605,7 @@ func runPasswordLock(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrPasswordLockFailed, err)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Password store locked.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Password store locked.")
 	return nil
 }
 
@@ -625,12 +625,12 @@ func runPasswordStatus(cmd *cobra.Command, args []string) error {
 
 	out := cmd.OutOrStdout()
 
-	fmt.Fprintln(out, "Password Store Status:")
-	fmt.Fprintln(out)
-	fmt.Fprintf(out, "  Access Mode:     %s\n", resp.AccessMode)
-	fmt.Fprintf(out, "  Locked:          %v\n", resp.IsLocked)
-	fmt.Fprintf(out, "  Auto-Unsealed:   %v\n", resp.AutoUnsealed)
-	fmt.Fprintf(out, "  Password Count:  %d\n", resp.PasswordCount)
+	_, _ = fmt.Fprintln(out, "Password Store Status:")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "  Access Mode:     %s\n", resp.AccessMode)
+	_, _ = fmt.Fprintf(out, "  Locked:          %v\n", resp.IsLocked)
+	_, _ = fmt.Fprintf(out, "  Auto-Unsealed:   %v\n", resp.AutoUnsealed)
+	_, _ = fmt.Fprintf(out, "  Password Count:  %d\n", resp.PasswordCount)
 
 	return nil
 }
@@ -662,7 +662,7 @@ func runPasswordAccessMode(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrPasswordAccessModeFailed, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Access mode set to: %s\n", mode)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Access mode set to: %s\n", mode)
 	return nil
 }
 

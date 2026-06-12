@@ -77,7 +77,7 @@ func getTLSCertLocal(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm
 	}
 
 	// Get the private key
-	key, err := be.GetKey(attrs)
+	key, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		handleError(fmt.Errorf("failed to get key: %w", err))
 		return

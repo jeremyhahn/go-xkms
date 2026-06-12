@@ -15,7 +15,6 @@ package services
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -24,8 +23,6 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,50 +31,6 @@ import (
 // ---------------------------------------------------------------------------
 // PasswordProtectionService - SetModeTPMSealed
 // ---------------------------------------------------------------------------
-
-// mockSealerForPP holds configuration for password protection seal tests.
-// It is converted to an SDK sealMockClient via ppWireSealClient.
-type mockSealerForPP struct {
-	sealErr   error
-	unsealErr error
-	canSeal   bool
-	sealedID  string
-	unsealB64 string
-}
-
-// ppWireSealClient wires a sealMockClient into the given SealService,
-// deriving SDK client behavior from the mockSealerForPP configuration.
-func ppWireSealClient(svc *SealService, m *mockSealerForPP) {
-	mc := &sealMockClient{
-		sealFn: func(_ context.Context, req *transport.SealRequest) (*transport.SealResponse, error) {
-			if m.sealErr != nil {
-				return nil, m.sealErr
-			}
-			return &transport.SealResponse{
-				Backend:    req.Backend,
-				Ciphertext: req.Data,
-				TPMPublic:  []byte("tpm-public"),
-				TPMPrivate: []byte("tpm-private"),
-			}, nil
-		},
-		unsealFn: func(_ context.Context, req *transport.UnsealRequest) (*transport.UnsealResponse, error) {
-			if m.unsealErr != nil {
-				return nil, m.unsealErr
-			}
-			var data []byte
-			if m.unsealB64 != "" {
-				data, _ = base64.StdEncoding.DecodeString(m.unsealB64)
-			} else {
-				data = req.Ciphertext
-			}
-			return &transport.UnsealResponse{Plaintext: data}, nil
-		},
-		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
-			return &transport.CanSealResponse{CanSeal: m.canSeal, Backend: backend}, nil
-		},
-	}
-	svc.SetClientFunc(func() xkms.Client { return mc })
-}
 
 // ---------------------------------------------------------------------------
 // AdminService - GetAuditLogs, ExportAuditLogs
@@ -714,7 +667,7 @@ func TestPlatformPolicy_ValidatePlatformPolicyDigests_NoTPM(t *testing.T) {
 func TestPlatformPolicy_GetPolicyContext_WithContext(t *testing.T) {
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "policy.json"))
 
-	ctx := context.WithValue(context.Background(), "test", "value")
+	ctx := context.WithValue(context.Background(), testCtxKey("test"), "value")
 	svc.SetContext(ctx)
 
 	result := svc.getPolicyContext()

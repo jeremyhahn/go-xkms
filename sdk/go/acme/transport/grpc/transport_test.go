@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	stderrors "errors"
 	"sync/atomic"
 	"testing"
@@ -25,15 +26,31 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
+// testCtxKey is a typed context key used by tests to avoid collisions.
+type testCtxKey string
+
+// insecureTestTLSConfig returns the explicit TLS configuration that the
+// hardened transport contract requires alongside Insecure=true
+// (InsecureSkipVerify is forbidden). These tests never complete a TLS
+// handshake — gRPC dials lazily — so an empty root pool is sufficient.
+func insecureTestTLSConfig() *tls.Config {
+	return &tls.Config{
+		RootCAs:    x509.NewCertPool(),
+		MinVersion: tls.VersionTLS13,
+	}
+}
+
 // TestNewTransport_Success tests successful transport creation.
 func TestNewTransport_Success(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -124,6 +141,7 @@ func TestNewTransport_WithPooling(t *testing.T) {
 	cfg := &transport.Config{
 		Address:     "localhost:9443",
 		Insecure:    true,
+		TLSConfig:   insecureTestTLSConfig(),
 		PoolEnabled: true,
 		PoolMinSize: 2,
 		PoolMaxSize: 5,
@@ -149,8 +167,9 @@ func TestNewTransport_WithPooling(t *testing.T) {
 // TestNewTransport_UnixSocket tests transport creation with Unix socket address.
 func TestNewTransport_UnixSocket(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "/tmp/test.sock",
-		Insecure: true,
+		Address:   "/tmp/test.sock",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -167,8 +186,9 @@ func TestNewTransport_UnixSocket(t *testing.T) {
 // TestNewTransport_UnixSocketPrefix tests transport with unix:// prefix.
 func TestNewTransport_UnixSocketPrefix(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "unix:///tmp/test.sock",
-		Insecure: true,
+		Address:   "unix:///tmp/test.sock",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -181,8 +201,9 @@ func TestNewTransport_UnixSocketPrefix(t *testing.T) {
 // TestNewTransport_HTTPSAddress tests transport with HTTPS URL.
 func TestNewTransport_HTTPSAddress(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "https://localhost:8443",
-		Insecure: true,
+		Address:   "https://localhost:8443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -197,6 +218,7 @@ func TestNewTransport_UnixSocketWithPool(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "/tmp/test-pool.sock",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -217,8 +239,9 @@ func TestNewTransport_UnixSocketWithPool(t *testing.T) {
 // TestTransport_Close tests closing the transport.
 func TestTransport_Close(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -243,6 +266,7 @@ func TestTransport_Close_WithPool(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -263,8 +287,9 @@ func TestTransport_Close_WithPool(t *testing.T) {
 // TestTransport_Healthy_NotClosed tests Healthy returns true for valid connection.
 func TestTransport_Healthy_NotClosed(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -283,8 +308,9 @@ func TestTransport_Healthy_NotClosed(t *testing.T) {
 // TestTransport_Healthy_Closed tests Healthy returns false after close.
 func TestTransport_Healthy_Closed(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -305,6 +331,7 @@ func TestTransport_Healthy_WithPool(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -339,8 +366,9 @@ func TestTransport_Healthy_NilConn(t *testing.T) {
 // TestTransport_Conn_ReturnsConnection tests Conn returns underlying connection.
 func TestTransport_Conn_ReturnsConnection(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -360,6 +388,7 @@ func TestTransport_Conn_ReturnsPool(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -387,8 +416,9 @@ func TestTransport_Conn_ReturnsPool(t *testing.T) {
 // TestTransport_Request_ClosedTransport tests Request after close.
 func TestTransport_Request_ClosedTransport(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -411,8 +441,9 @@ func TestTransport_Request_ClosedTransport(t *testing.T) {
 // TestTransport_Request_UnknownService tests Request with unknown service.
 func TestTransport_Request_UnknownService(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -434,8 +465,9 @@ func TestTransport_Request_UnknownService(t *testing.T) {
 // TestTransport_Request_ACMEService tests Request returns unimplemented for ACME.
 func TestTransport_Request_ACMEService(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -471,8 +503,9 @@ func TestTransport_Request_ACMEService(t *testing.T) {
 // TestTransport_Request_CaseInsensitive tests Request handles service name case.
 func TestTransport_Request_CaseInsensitive(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -500,8 +533,9 @@ func TestTransport_Request_CaseInsensitive(t *testing.T) {
 // TestTransport_RequestStream_ClosedTransport tests RequestStream after close.
 func TestTransport_RequestStream_ClosedTransport(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -524,8 +558,9 @@ func TestTransport_RequestStream_ClosedTransport(t *testing.T) {
 // TestTransport_RequestStream_ACMEService tests RequestStream for ACME services.
 func TestTransport_RequestStream_ACMEService(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -547,8 +582,9 @@ func TestTransport_RequestStream_ACMEService(t *testing.T) {
 // TestTransport_RequestStream_AdminService tests RequestStream for Admin services.
 func TestTransport_RequestStream_AdminService(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -573,6 +609,7 @@ func TestTransport_RequestStream_WithPool(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -821,8 +858,9 @@ func TestFactory_Create(t *testing.T) {
 	factory := NewFactory()
 
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := factory.Create(cfg)
@@ -852,8 +890,9 @@ func TestFactory_Create_NilConfig(t *testing.T) {
 // TestApplyDefaults tests default values are applied.
 func TestApplyDefaults(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr := &Transport{cfg: cfg}
@@ -875,6 +914,7 @@ func TestApplyDefaults_PoolDefaults(t *testing.T) {
 	cfg := &transport.Config{
 		Address:     "localhost:9443",
 		Insecure:    true,
+		TLSConfig:   insecureTestTLSConfig(),
 		PoolEnabled: true,
 	}
 
@@ -900,6 +940,7 @@ func TestApplyDefaults_PoolMaxLessThanMin(t *testing.T) {
 	cfg := &transport.Config{
 		Address:     "localhost:9443",
 		Insecure:    true,
+		TLSConfig:   insecureTestTLSConfig(),
 		PoolEnabled: true,
 		PoolMinSize: 5,
 		PoolMaxSize: 2, // Less than min.
@@ -918,6 +959,7 @@ func TestApplyDefaults_PreservesExisting(t *testing.T) {
 	cfg := &transport.Config{
 		Address:          "localhost:9443",
 		Insecure:         true,
+		TLSConfig:        insecureTestTLSConfig(),
 		Timeout:          60 * time.Second,
 		KeepaliveTime:    45 * time.Second,
 		KeepaliveTimeout: 15 * time.Second,
@@ -980,6 +1022,7 @@ func TestConnectionPool_GetPut(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        2,
 		PoolMaxSize:        5,
@@ -1024,6 +1067,7 @@ func TestConnectionPool_Get_Closed(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -1054,6 +1098,7 @@ func TestConnectionPool_Healthy(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -1080,6 +1125,7 @@ func TestConnectionPool_Healthy_Closed(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -1106,6 +1152,7 @@ func TestConnectionPool_Close_Idempotent(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -1186,9 +1233,10 @@ func TestTranslateGRPCError_NonGRPCError(t *testing.T) {
 // TestTransport_Request_WithTimeout tests Request applies timeout from config.
 func TestTransport_Request_WithTimeout(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
-		Timeout:  100 * time.Millisecond,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
+		Timeout:   100 * time.Millisecond,
 	}
 
 	tr, err := NewTransport(cfg)
@@ -1210,9 +1258,10 @@ func TestTransport_Request_WithTimeout(t *testing.T) {
 // TestTransport_Request_WithContextDeadline tests Request respects existing deadline.
 func TestTransport_Request_WithContextDeadline(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
-		Timeout:  30 * time.Second, // Long default timeout.
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
+		Timeout:   30 * time.Second, // Long default timeout.
 	}
 
 	tr, err := NewTransport(cfg)
@@ -1313,6 +1362,7 @@ func TestPooledConnection_InUse(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        2,
@@ -1347,22 +1397,41 @@ func TestPooledConnection_InUse(t *testing.T) {
 
 // TestBuildDialOptions_Insecure tests dial options with insecure mode.
 func TestBuildDialOptions_Insecure(t *testing.T) {
-	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
-	}
+	t.Run("with explicit TLSConfig", func(t *testing.T) {
+		cfg := &transport.Config{
+			Address:   "localhost:9443",
+			Insecure:  true,
+			TLSConfig: insecureTestTLSConfig(),
+		}
 
-	tr := &Transport{cfg: cfg}
-	tr.applyDefaults()
+		tr := &Transport{cfg: cfg}
+		tr.applyDefaults()
 
-	opts, err := tr.buildDialOptions()
-	if err != nil {
-		t.Fatalf("buildDialOptions() error = %v", err)
-	}
+		opts, err := tr.buildDialOptions()
+		if err != nil {
+			t.Fatalf("buildDialOptions() error = %v", err)
+		}
 
-	if len(opts) == 0 {
-		t.Error("buildDialOptions() returned empty options")
-	}
+		if len(opts) == 0 {
+			t.Error("buildDialOptions() returned empty options")
+		}
+	})
+
+	// Insecure=true without an explicit TLSConfig is forbidden:
+	// InsecureSkipVerify was removed from the transport contract.
+	t.Run("without TLSConfig is rejected", func(t *testing.T) {
+		cfg := &transport.Config{
+			Address:  "localhost:9443",
+			Insecure: true,
+		}
+
+		tr := &Transport{cfg: cfg}
+		tr.applyDefaults()
+
+		if _, err := tr.buildDialOptions(); err == nil {
+			t.Fatal("buildDialOptions() with Insecure=true and nil TLSConfig must fail")
+		}
+	})
 }
 
 // TestBuildDialOptions_TLS tests dial options with TLS config.
@@ -1415,6 +1484,7 @@ func TestGetConnection_WithPool(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -1442,8 +1512,9 @@ func TestGetConnection_WithPool(t *testing.T) {
 // TestGetConnection_NoPool tests getConnection without pool.
 func TestGetConnection_NoPool(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -1483,8 +1554,9 @@ func TestGetConnection_NilConn(t *testing.T) {
 // TestReleaseConnection_NoPool tests releaseConnection without pool.
 func TestReleaseConnection_NoPool(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -1507,6 +1579,7 @@ func TestReleaseConnection_WithPool(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -1536,6 +1609,7 @@ func TestPool_Put_UnknownConnection(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -1552,7 +1626,7 @@ func TestPool_Put_UnknownConnection(t *testing.T) {
 	pool := grpcTransport.pool
 
 	// Create a separate connection not from pool.
-	otherConn, err := grpc.NewClient("localhost:9999", grpc.WithInsecure())
+	otherConn, err := grpc.NewClient("localhost:9999", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Skipf("Cannot create separate connection: %v", err)
 	}
@@ -1567,6 +1641,7 @@ func TestConnectionPool_IsConnectionHealthy_Expired(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -1599,6 +1674,7 @@ func TestConnectionPool_Get_AllInUse(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        2,
@@ -1640,6 +1716,7 @@ func TestConnectionPool_Healthy_NoHealthyConns(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -1668,6 +1745,7 @@ func TestConnectionPool_PerformHealthCheck(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        2,
 		PoolMaxSize:        5,
@@ -1740,6 +1818,7 @@ func TestNewTransport_WithAllConfig(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		Timeout:            60 * time.Second,
 		KeepaliveTime:      45 * time.Second,
 		KeepaliveTimeout:   15 * time.Second,
@@ -1948,6 +2027,7 @@ func TestHandleAdminRequest_WithPool(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -1974,8 +2054,9 @@ func TestHandleAdminRequest_WithPool(t *testing.T) {
 // TestHandleAdminRequest_WithoutPool tests handleAdminRequest without pool.
 func TestHandleAdminRequest_WithoutPool(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -2014,8 +2095,9 @@ func TestHandleAdminRequest_NilConnection(t *testing.T) {
 // TestHandleAdminRequest_FullMethodPath tests handleAdminRequest with full method path.
 func TestHandleAdminRequest_FullMethodPath(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -2054,6 +2136,7 @@ func TestConnectionPool_Get_EmptyPool(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -2087,6 +2170,7 @@ func TestPerformHealthCheck_WithInUseConnections(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -2124,6 +2208,7 @@ func TestPerformHealthCheck_ClosedPool(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -2150,6 +2235,7 @@ func TestPerformHealthCheck_UnhealthyNotInUse(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        5,
@@ -2209,8 +2295,9 @@ func TestWithAuth_MetadataAppended(t *testing.T) {
 // TestRequestStream_AllACMEServices tests RequestStream returns unimplemented for all ACME services.
 func TestRequestStream_AllACMEServices(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -2240,8 +2327,9 @@ func TestRequestStream_AllACMEServices(t *testing.T) {
 // TestRequestStream_CaseInsensitive tests RequestStream handles service case.
 func TestRequestStream_CaseInsensitive(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)
@@ -2279,6 +2367,7 @@ func TestPool_Get_RoundRobin(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        3,
 		PoolMaxSize:        5,
@@ -2317,6 +2406,7 @@ func TestConnectionPool_AddConnection(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        5,
@@ -2356,6 +2446,7 @@ func TestPooledConnection_CreatedAt(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -2390,6 +2481,7 @@ func TestIsConnectionHealthy_ValidConnection(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -2422,6 +2514,7 @@ func TestIsConnectionHealthy_ExpiredConnection(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -2455,9 +2548,10 @@ func TestIsConnectionHealthy_ExpiredConnection(t *testing.T) {
 // TestTransport_Request_AdminServices tests Request for all admin services.
 func TestTransport_Request_AdminServices(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
-		Timeout:  50 * time.Millisecond,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
+		Timeout:   50 * time.Millisecond,
 	}
 
 	tr, err := NewTransport(cfg)
@@ -2511,6 +2605,7 @@ func TestConnectionPool_GetAfterHealthCheck(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        2,
 		PoolMaxSize:        5,
@@ -2541,9 +2636,10 @@ func TestConnectionPool_GetAfterHealthCheck(t *testing.T) {
 // TestNewTransport_ZeroTimeout tests transport with zero timeout uses default.
 func TestNewTransport_ZeroTimeout(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
-		Timeout:  0, // Should use default.
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
+		Timeout:   0, // Should use default.
 	}
 
 	tr, err := NewTransport(cfg)
@@ -2563,6 +2659,7 @@ func TestConnectionPool_Get_MaxSizeReached(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        2,
 		PoolMaxSize:        2, // Same as min.
@@ -2612,6 +2709,7 @@ func TestHealthCheckLoop_StopsOnClose(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -2635,6 +2733,7 @@ func TestPool_IsConnectionHealthy_VariousStates(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -2674,9 +2773,10 @@ func TestPool_IsConnectionHealthy_VariousStates(t *testing.T) {
 // TestTransport_Request_ZeroTimeoutConfig tests Request with zero timeout in config.
 func TestTransport_Request_ZeroTimeoutConfig(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
-		Timeout:  0, // Will use default.
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
+		Timeout:   0, // Will use default.
 	}
 
 	tr, err := NewTransport(cfg)
@@ -2748,6 +2848,7 @@ func TestConnectionPool_Close_WithNilTicker(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
 		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
 		PoolEnabled:        true,
 		PoolMinSize:        1,
 		PoolMaxSize:        3,
@@ -2795,7 +2896,7 @@ func TestTransport_RequestStream_NilConnection(t *testing.T) {
 
 // TestGrpcStream_Context tests grpcStream context.
 func TestGrpcStream_Context(t *testing.T) {
-	ctx := context.WithValue(context.Background(), "key", "value")
+	ctx := context.WithValue(context.Background(), testCtxKey("key"), "value")
 	stream := &grpcStream{
 		ctx: ctx,
 	}
@@ -2808,8 +2909,9 @@ func TestGrpcStream_Context(t *testing.T) {
 // TestGrpcStream_Conn tests grpcStream connection.
 func TestGrpcStream_Conn(t *testing.T) {
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 
 	tr, err := NewTransport(cfg)

@@ -83,7 +83,7 @@ func TestSoftwareSealUnsealRSA(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := sb.GenerateKey(attrs)
+	_, err := sb.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestSoftwareSealUnsealECDSA(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := sb.GenerateKey(attrs)
+	_, err := sb.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate ECDSA key: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestSoftwareSealUnsealEd25519(t *testing.T) {
 		Hash:         crypto.SHA256,
 	}
 
-	_, err := sb.GenerateKey(attrs)
+	_, err := sb.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate Ed25519 key: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestSoftwareSealUnsealWithAAD(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := sb.GenerateKey(attrs)
+	_, err := sb.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestSoftwareSealUnsealAADMismatch(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := sb.GenerateKey(attrs)
+	_, err := sb.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestSoftwareSealReturnsSoftwareBackendType(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := sb.GenerateKey(attrs)
+	_, err := sb.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestSoftwareUnsealAcceptsBothBackendTypes(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := sb.GenerateKey(attrs)
+	_, err := sb.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key: %v", err)
 	}
@@ -486,7 +486,7 @@ func TestSoftwareSealClosedBackend(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err = sb.GenerateKey(attrs)
+	_, err = sb.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key: %v", err)
 	}
@@ -533,7 +533,7 @@ func TestSoftwareUnsealClosedBackend(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err = sb.GenerateKey(attrs)
+	_, err = sb.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key: %v", err)
 	}
@@ -584,7 +584,7 @@ func TestSoftwareUnsealWrongBackendType(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := sb.GenerateKey(attrs)
+	_, err := sb.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key: %v", err)
 	}

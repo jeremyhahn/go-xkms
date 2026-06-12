@@ -58,10 +58,11 @@ type ServerConfig struct {
 	EnableLogging  bool
 	EnableRecovery bool
 	RateLimiter    *ratelimit.Limiter
+	XKMSService    *xkms.XKMSService
 }
 
 // NewServer creates a new gRPC server
-// The server uses the global xkms service for backend management
+// The server uses the XKMSService in cfg for backend management
 func NewServer(cfg *ServerConfig) (*Server, error) {
 	// Don't set a default port here - let Port 0 remain 0 for ephemeral ports
 	// The port will be set in Start() after the listener is created
@@ -78,8 +79,8 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 		log = slog.Default()
 	}
 
-	// Create service with authorizer and audit logger
-	service := NewService(cfg.Authorizer, cfg.AuditLogger)
+	// Create service with authorizer, audit logger, and xkms service
+	service := NewService(cfg.Authorizer, cfg.AuditLogger, cfg.XKMSService)
 
 	// Create server instance for interceptor access
 	server := &Server{

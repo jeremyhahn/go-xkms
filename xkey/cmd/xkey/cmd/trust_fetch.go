@@ -187,7 +187,7 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintf(cmd.ErrOrStderr(), "Fetching CA bundle from %s\n", target)
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Fetching CA bundle from %s\n", target)
 
 	bundle, err := xkms.TrustFetcherFetch(ctx, target, opts)
 	if err != nil {
@@ -228,7 +228,7 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 		}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(),
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"Bundle fetched from %s\n  certificates: %d (added: %d, skipped: %d)\n  leaf SPKI:    %s\n",
 		target, len(bundle.Certificates), added, skipped, bundle.LeafSPKI)
 
@@ -258,17 +258,17 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 					ErrTrustFetchFailed, installErr)
 			}
 			if metaErr := store.SetSystemInstalled(fp, true); metaErr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(),
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 					"warning: failed to mark %s system-installed: %v\n", fp, metaErr)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(),
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"  installed to OS trust store: %s (%s)\n",
 				label, c.Subject.CommonName)
 			found = true
 			break
 		}
 		if !found {
-			fmt.Fprintf(cmd.ErrOrStderr(),
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 				"warning: root %s not found in trust store after fetch\n", fp)
 		}
 	}

@@ -55,8 +55,15 @@ func newAuthenticator(t *testing.T, rpID string) *authenticator {
 // coseKey returns the credential public key in COSE_Key (ES256) form.
 func (a *authenticator) coseKey(t *testing.T) []byte {
 	t.Helper()
-	x := a.priv.PublicKey.X.FillBytes(make([]byte, 32))
-	y := a.priv.PublicKey.Y.FillBytes(make([]byte, 32))
+	// Derive the uncompressed point (0x04 || X || Y) via crypto/ecdh rather than
+	// the deprecated ecdsa.PublicKey.X/.Y big.Int coordinate fields.
+	ecdhPub, err := a.priv.PublicKey.ECDH()
+	if err != nil {
+		t.Fatalf("convert public key to ecdh: %v", err)
+	}
+	point := ecdhPub.Bytes()
+	x := point[1:33]
+	y := point[33:65]
 	coseKey := map[int]interface{}{
 		1:  2,                          // kty: EC2
 		3:  int(webauthncose.AlgES256), // alg: ES256

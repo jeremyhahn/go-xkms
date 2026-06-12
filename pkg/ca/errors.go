@@ -160,6 +160,36 @@ var (
 	ErrPeerVerificationFailed = errors.New("ca: peer certificate verification failed")
 )
 
+// Algorithm security errors indicate issues with algorithm strength.
+var (
+	// ErrWeakSignatureAlgorithm indicates a non-anchor certificate in the chain
+	// uses a signature algorithm below the minimum strength threshold
+	// (SHA-256 or stronger).  The algorithm name and certificate subject are
+	// included in the ErrWeakSignatureAlgorithmDetail type returned by
+	// VerifyChainAlgorithms.
+	ErrWeakSignatureAlgorithm = errors.New("ca: weak signature algorithm")
+)
+
+// ErrWeakSignatureAlgorithmDetail carries the offending algorithm name and
+// certificate subject for an ErrWeakSignatureAlgorithm failure.
+type ErrWeakSignatureAlgorithmDetail struct {
+	// Algorithm is the human-readable name of the offending algorithm.
+	Algorithm string
+
+	// Subject is the subject DN of the certificate that used it.
+	Subject string
+}
+
+// Error implements the error interface.
+func (e *ErrWeakSignatureAlgorithmDetail) Error() string {
+	return "ca: weak signature algorithm " + e.Algorithm + " in certificate " + e.Subject
+}
+
+// Unwrap returns ErrWeakSignatureAlgorithm so that errors.Is works.
+func (e *ErrWeakSignatureAlgorithmDetail) Unwrap() error {
+	return ErrWeakSignatureAlgorithm
+}
+
 // Validation errors indicate issues with request validation.
 var (
 	// ErrSubjectCommonNameRequired indicates the subject common name is missing.
@@ -197,6 +227,9 @@ var (
 
 	// ErrTCGTenantIDEmpty indicates an empty tenant ID was provided.
 	ErrTCGTenantIDEmpty = errors.New("ca: tenant id must not be empty")
+
+	// ErrTCGNetworkZoneEmpty indicates an empty network zone was provided.
+	ErrTCGNetworkZoneEmpty = errors.New("ca: network zone must not be empty")
 
 	// ErrTCGInvalidPublicKey indicates the public key is nil or unsupported.
 	ErrTCGInvalidPublicKey = errors.New("ca: invalid public key for tcg certificate")

@@ -17,6 +17,7 @@
 package pkcs8
 
 import (
+	"context"
 	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
@@ -93,7 +94,7 @@ func createEd25519Attrs(cn string) *types.KeyAttributes {
 // 	// Test with 8192 bit RSA key (maximum commonly supported)
 // 	attrs := createRSAAttrs("test-rsa-max.com", 8192)
 
-// 	key, err := be.GenerateKey(attrs)
+// 	key, err := be.GenerateKey(context.Background(), attrs)
 // 	if err != nil {
 // 		t.Fatalf("GenerateKey with 8192 bits failed: %v", err)
 // 	}
@@ -118,7 +119,7 @@ func TestGenerateKey_AllCombinations(t *testing.T) {
 	for _, size := range rsaSizes {
 		t.Run(fmt.Sprintf("RSA-%d", size), func(t *testing.T) {
 			attrs := createRSAAttrs(fmt.Sprintf("test-combo-rsa-%d.com", size), size)
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey RSA-%d failed: %v", size, err)
 			}
@@ -133,7 +134,7 @@ func TestGenerateKey_AllCombinations(t *testing.T) {
 	for _, curve := range curves {
 		t.Run(fmt.Sprintf("ECDSA-%s", curve), func(t *testing.T) {
 			attrs := createECDSAAttrs(fmt.Sprintf("test-combo-%s.com", curve), curve)
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey ECDSA-%s failed: %v", curve, err)
 			}
@@ -146,7 +147,7 @@ func TestGenerateKey_AllCombinations(t *testing.T) {
 	// Test Ed25519
 	t.Run("Ed25519", func(t *testing.T) {
 		attrs := createEd25519Attrs("test-combo-ed25519.com")
-		key, err := be.GenerateKey(attrs)
+		key, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey Ed25519 failed: %v", err)
 		}
@@ -168,7 +169,7 @@ func TestGenerateKey_CommonRSA(t *testing.T) {
 		t.Run(fmt.Sprintf("Size%d", size), func(t *testing.T) {
 			attrs := createRSAAttrs(fmt.Sprintf("test-common-rsa-%d.com", size), size)
 
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey RSA-%d failed: %v", size, err)
 			}
@@ -184,7 +185,7 @@ func TestGenerateKey_CommonRSA(t *testing.T) {
 			}
 
 			// Verify key is stored
-			retrieved, err := be.GetKey(attrs)
+			retrieved, err := be.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GetKey failed: %v", err)
 			}

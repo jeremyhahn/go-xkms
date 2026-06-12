@@ -1483,26 +1483,6 @@ func TestSetupCov_ApplySetup_InitDataDirFails(t *testing.T) {
 	assert.True(t, containsSubstring(result.Errors, "data directory initialization failed"))
 }
 
-// fscSealer is a minimal types.Sealer for testing.
-type fscSealer struct {
-	canSeal bool
-	sealErr error
-}
-
-func (s *fscSealer) CanSeal() bool { return s.canSeal }
-func (s *fscSealer) Seal(_ context.Context, data []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
-	if s.sealErr != nil {
-		return nil, s.sealErr
-	}
-	return &xkms.SealedData{
-		Backend:    xkms.BackendTypeTPM2,
-		Ciphertext: data,
-	}, nil
-}
-func (s *fscSealer) Unseal(_ context.Context, sealed *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
-	return sealed.Ciphertext, nil
-}
-
 // ---------------------------------------------------------------------------
 // ProbeEnvironment regression tests — TPM device detection & backend listing
 // ---------------------------------------------------------------------------

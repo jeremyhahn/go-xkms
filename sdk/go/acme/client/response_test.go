@@ -14,7 +14,6 @@
 package client
 
 import (
-	"net/http"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
@@ -679,5 +678,5 @@ func TestExtractHeaders_HTTPHeaderType(t *testing.T) {
 		t.Fatal("expected non-nil headers")
 	}
 	// Verify it's the correct type
-	var _ http.Header = headers
+	_ = headers
 }

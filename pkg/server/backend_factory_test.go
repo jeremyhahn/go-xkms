@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -472,7 +473,7 @@ func TestBackendFactory_Integration(t *testing.T) {
 			KeySize: 2048,
 		},
 	}
-	_, err = pkcs8KS.GenerateRSA(attrs1)
+	_, err = pkcs8KS.GenerateRSA(context.Background(), attrs1)
 	assert.NoError(t, err)
 
 	attrs2 := &types.KeyAttributes{
@@ -483,21 +484,21 @@ func TestBackendFactory_Integration(t *testing.T) {
 			KeySize: 2048,
 		},
 	}
-	_, err = softwareKS.GenerateRSA(attrs2)
+	_, err = softwareKS.GenerateRSA(context.Background(), attrs2)
 	assert.NoError(t, err)
 
 	// Verify keys were created
-	key1, err := pkcs8KS.GetKey(attrs1)
+	key1, err := pkcs8KS.GetKey(context.Background(), attrs1)
 	assert.NoError(t, err)
 	assert.NotNil(t, key1)
 
-	key2, err := softwareKS.GetKey(attrs2)
+	key2, err := softwareKS.GetKey(context.Background(), attrs2)
 	assert.NoError(t, err)
 	assert.NotNil(t, key2)
 
 	// List keys from full-service backends (key providers are not included
 	// in ListKeys since they are partial implementations)
-	allKeys, err := xkms.ListKeys()
+	allKeys, err := xkms.ListKeys(context.Background())
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, len(allKeys), 1, "should have at least 1 key from full-service backend")
 
@@ -546,11 +547,11 @@ func TestBackendFactory_SharedCertStorage(t *testing.T) {
 
 	// Save cert via key provider
 	cert := createTestCert(t)
-	err = pkcs8KS.SaveCert("test-cert", cert)
+	err = pkcs8KS.SaveCert(context.Background(), "test-cert", cert)
 	require.NoError(t, err)
 
 	// Retrieve via full-service backend (shared storage)
-	retrievedCert, err := softwareKS.GetCert("test-cert")
+	retrievedCert, err := softwareKS.GetCert(context.Background(), "test-cert")
 	assert.NoError(t, err)
 	assert.Equal(t, cert.Subject.CommonName, retrievedCert.Subject.CommonName)
 

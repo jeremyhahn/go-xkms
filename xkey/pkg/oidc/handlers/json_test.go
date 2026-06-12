@@ -225,10 +225,9 @@ func TestJSONHandler_Handle(t *testing.T) {
 			t.Fatalf("Failed to parse JSON output: %v", err)
 		}
 
-		// With omit empty, empty token_type should not be present
+		// With omit empty, empty token_type should not be present.
 		if _, ok := result["token_type"]; ok {
-			// Note: Without omit empty, empty fields are included
-			// This test verifies the flag works
+			t.Errorf("token_type should be omitted when empty, got %v", result["token_type"])
 		}
 
 		// access_token should still be present

@@ -151,7 +151,7 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Get IDevID attributes
 	idevidAttrs, err := tpm.IDevIDAttributes()
@@ -306,7 +306,7 @@ func runIDevIDCertImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Get IDevID public key
 	idevidPubKey, idevidErr := tpm.IDevID()

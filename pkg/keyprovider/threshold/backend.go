@@ -98,7 +98,7 @@ func (b *ThresholdBackend) Capabilities() types.Capabilities {
 //
 // For threshold ECDSA/Ed25519, this will eventually use distributed key generation (DKG).
 // For now, it generates a standard key and splits it with Shamir.
-func (b *ThresholdBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *ThresholdBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -146,7 +146,7 @@ func (b *ThresholdBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.Priva
 	}
 
 	// Split the key using Shamir Secret Sharing
-	if err := b.splitAndStoreKey(attrs, privateKey); err != nil {
+	if err := b.splitAndStoreKey(ctx, attrs, privateKey); err != nil {
 		return nil, fmt.Errorf("failed to split key: %w", err)
 	}
 
@@ -157,7 +157,7 @@ func (b *ThresholdBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.Priva
 // GetKey retrieves an existing threshold key by its attributes.
 // This returns a reconstructed key if M shares are available,
 // or a threshold signer/decrypter that coordinates with other nodes.
-func (b *ThresholdBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *ThresholdBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -171,7 +171,7 @@ func (b *ThresholdBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey
 }
 
 // DeleteKey removes a threshold key and all its shares.
-func (b *ThresholdBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *ThresholdBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -186,7 +186,7 @@ func (b *ThresholdBackend) DeleteKey(attrs *types.KeyAttributes) error {
 		for i := 1; i <= attrs.ThresholdAttributes.Total; i++ {
 			shareKey := fmt.Sprintf("threshold/shares/%s/share-%d", keyID, i)
 			// Log errors but continue trying to delete other shares
-			if err := b.config.ShareStorage.Delete(context.Background(), shareKey); err != nil {
+			if err := b.config.ShareStorage.Delete(ctx, shareKey); err != nil {
 				// Only log if it's not a "not found" error
 				fmt.Printf("warning: failed to delete share %d for key %s: %v\n", i, keyID, err)
 			}
@@ -195,7 +195,7 @@ func (b *ThresholdBackend) DeleteKey(attrs *types.KeyAttributes) error {
 
 	// Delete metadata
 	metadataKey := fmt.Sprintf("threshold/metadata/%s", keyID)
-	if err := b.config.KeyStorage.Delete(context.Background(), metadataKey); err != nil {
+	if err := b.config.KeyStorage.Delete(ctx, metadataKey); err != nil {
 		return fmt.Errorf("failed to delete key metadata: %w", err)
 	}
 
@@ -208,7 +208,7 @@ func (b *ThresholdBackend) DeleteKey(attrs *types.KeyAttributes) error {
 }
 
 // ListKeys returns attributes for all threshold keys managed by this backend.
-func (b *ThresholdBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *ThresholdBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -217,14 +217,14 @@ func (b *ThresholdBackend) ListKeys() ([]*types.KeyAttributes, error) {
 	b.mu.RUnlock()
 
 	// List all metadata entries
-	metadataKeys, err := b.config.KeyStorage.List(context.Background(), "threshold/metadata/")
+	metadataKeys, err := b.config.KeyStorage.List(ctx, "threshold/metadata/")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
 
 	var keys []*types.KeyAttributes
 	for _, metaKey := range metadataKeys {
-		data, err := b.config.KeyStorage.Get(context.Background(), metaKey)
+		data, err := b.config.KeyStorage.Get(ctx, metaKey)
 		if err != nil {
 			continue // Skip entries that can't be read
 		}
@@ -241,7 +241,7 @@ func (b *ThresholdBackend) ListKeys() ([]*types.KeyAttributes, error) {
 }
 
 // Signer returns a crypto.Signer for threshold signing operations.
-func (b *ThresholdBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *ThresholdBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -254,12 +254,12 @@ func (b *ThresholdBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, er
 	var err error
 
 	if b.config.LocalShareID > 0 {
-		share, err = b.loadShare(attrs, b.config.LocalShareID)
+		share, err = b.loadShare(ctx, attrs, b.config.LocalShareID)
 	}
 
 	// If local share isn't available, try to load any available share
 	if err != nil || share == nil {
-		share, err = b.loadAnyShare(attrs)
+		share, err = b.loadAnyShare(ctx, attrs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load any share: %w", err)
 		}
@@ -274,7 +274,7 @@ func (b *ThresholdBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, er
 }
 
 // Decrypter returns a crypto.Decrypter for threshold decryption operations.
-func (b *ThresholdBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *ThresholdBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -286,7 +286,7 @@ func (b *ThresholdBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypt
 }
 
 // RotateKey rotates a threshold key.
-func (b *ThresholdBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *ThresholdBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -354,7 +354,7 @@ func (b *ThresholdBackend) generateEd25519Key(attrs *types.KeyAttributes) (ed255
 }
 
 // splitAndStoreKey splits a private key using Shamir Secret Sharing and stores all shares.
-func (b *ThresholdBackend) splitAndStoreKey(attrs *types.KeyAttributes, privateKey crypto.PrivateKey) error {
+func (b *ThresholdBackend) splitAndStoreKey(ctx context.Context, attrs *types.KeyAttributes, privateKey crypto.PrivateKey) error {
 	// Marshal the private key to bytes
 	keyBytes, err := b.marshalPrivateKey(privateKey)
 	if err != nil {
@@ -379,7 +379,7 @@ func (b *ThresholdBackend) splitAndStoreKey(attrs *types.KeyAttributes, privateK
 		}
 
 		shareKey := fmt.Sprintf("threshold/shares/%s/share-%d", keyID, share.Index)
-		if err := b.config.ShareStorage.Put(context.Background(), shareKey, shareData); err != nil {
+		if err := b.config.ShareStorage.Put(ctx, shareKey, shareData); err != nil {
 			return fmt.Errorf("failed to store share %d: %w", i, err)
 		}
 	}
@@ -399,7 +399,7 @@ func (b *ThresholdBackend) splitAndStoreKey(attrs *types.KeyAttributes, privateK
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	if err := b.config.KeyStorage.Put(context.Background(), metadataKey, metadataBytes); err != nil {
+	if err := b.config.KeyStorage.Put(ctx, metadataKey, metadataBytes); err != nil {
 		return fmt.Errorf("failed to store metadata: %w", err)
 	}
 
@@ -414,7 +414,7 @@ func (b *ThresholdBackend) splitAndStoreKey(attrs *types.KeyAttributes, privateK
 }
 
 // loadShare loads a specific share from storage.
-func (b *ThresholdBackend) loadShare(attrs *types.KeyAttributes, shareID int) (*qrdbsdk.ShamirShare, error) {
+func (b *ThresholdBackend) loadShare(ctx context.Context, attrs *types.KeyAttributes, shareID int) (*qrdbsdk.ShamirShare, error) {
 	keyID := b.getKeyID(attrs)
 
 	// Check cache first
@@ -427,7 +427,7 @@ func (b *ThresholdBackend) loadShare(attrs *types.KeyAttributes, shareID int) (*
 
 	// Load from storage
 	shareKey := fmt.Sprintf("threshold/shares/%s/share-%d", keyID, shareID)
-	data, err := b.config.ShareStorage.Get(context.Background(), shareKey)
+	data, err := b.config.ShareStorage.Get(ctx, shareKey)
 	if err != nil {
 		return nil, &ShareNotFoundError{KeyID: keyID, ShareID: shareID}
 	}
@@ -452,7 +452,7 @@ func (b *ThresholdBackend) loadShare(attrs *types.KeyAttributes, shareID int) (*
 
 // loadAnyShare tries to load any available share from storage.
 // This is useful when the local share isn't available but we still need to reconstruct the key.
-func (b *ThresholdBackend) loadAnyShare(attrs *types.KeyAttributes) (*qrdbsdk.ShamirShare, error) {
+func (b *ThresholdBackend) loadAnyShare(ctx context.Context, attrs *types.KeyAttributes) (*qrdbsdk.ShamirShare, error) {
 	if attrs.ThresholdAttributes == nil {
 		return nil, fmt.Errorf("threshold attributes required")
 	}
@@ -462,7 +462,7 @@ func (b *ThresholdBackend) loadAnyShare(attrs *types.KeyAttributes) (*qrdbsdk.Sh
 	// Try to load each share until we find one
 	for i := 1; i <= attrs.ThresholdAttributes.Total; i++ {
 		shareKey := fmt.Sprintf("threshold/shares/%s/share-%d", keyID, i)
-		data, err := b.config.ShareStorage.Get(context.Background(), shareKey)
+		data, err := b.config.ShareStorage.Get(ctx, shareKey)
 		if err != nil {
 			continue // This share doesn't exist, try next one
 		}

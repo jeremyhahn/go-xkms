@@ -1372,7 +1372,7 @@ func TestUserOperations(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("CreateTenantUser success", func(t *testing.T) {
-		responseBody := `{"id":1,"username":"alice","tenantID":"tenant-1"}`
+		responseBody := `{"id":"1","username":"alice","tenantID":"tenant-1"}`
 		response := &http.Response{
 			StatusCode: http.StatusCreated,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
@@ -1415,7 +1415,7 @@ func TestUserOperations(t *testing.T) {
 	})
 
 	t.Run("GetTenantUser success", func(t *testing.T) {
-		responseBody := `{"id":1,"username":"bob","tenantID":"tenant-1"}`
+		responseBody := `{"id":"1","username":"bob","tenantID":"tenant-1"}`
 		response := &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
@@ -1455,7 +1455,7 @@ func TestUserOperations(t *testing.T) {
 	})
 
 	t.Run("UpdateTenantUser success", func(t *testing.T) {
-		responseBody := `{"id":1,"username":"bob-updated","tenantID":"tenant-1"}`
+		responseBody := `{"id":"1","username":"bob-updated","tenantID":"tenant-1"}`
 		response := &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
@@ -1520,7 +1520,7 @@ func TestUserOperations(t *testing.T) {
 	})
 
 	t.Run("ListTenantUsers success", func(t *testing.T) {
-		responseBody := `{"users":[{"id":1,"username":"alice"},{"id":2,"username":"bob"}],"total":2,"hasMore":false}`
+		responseBody := `{"users":[{"id":"1","username":"alice"},{"id":"2","username":"bob"}],"total":2,"hasMore":false}`
 		response := &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),

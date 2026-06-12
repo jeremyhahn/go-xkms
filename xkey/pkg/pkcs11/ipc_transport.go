@@ -297,7 +297,7 @@ func (t *IPCTransport) sendMessage(msg *ipc.Message) (*ipc.Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrIPCConnectionFailed, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if err := conn.SetDeadline(time.Now().Add(t.timeout)); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrIPCConnectionFailed, err)

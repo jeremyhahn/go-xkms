@@ -8,6 +8,7 @@
 package quantum_test
 
 import (
+	"context"
 	"crypto"
 	"testing"
 
@@ -62,7 +63,7 @@ func TestQuantumSafeBackend_MLDSAKeyLifecycle(t *testing.T) {
 	}
 
 	// Generate key
-	privateKey, err := backend.GenerateKey(attrs)
+	privateKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, privateKey)
 
@@ -76,7 +77,7 @@ func TestQuantumSafeBackend_MLDSAKeyLifecycle(t *testing.T) {
 	assert.Greater(t, len(mldsaKey.PublicKey.Key), 1000)
 
 	// Get signer
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 
@@ -94,16 +95,16 @@ func TestQuantumSafeBackend_MLDSAKeyLifecycle(t *testing.T) {
 	assert.True(t, valid, "Signature should be valid")
 
 	// List keys
-	keys, err := backend.ListKeys()
+	keys, err := backend.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(keys), 1)
 
 	// Rotate key
-	err = backend.RotateKey(attrs)
+	err = backend.RotateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get rotated key
-	rotatedKey, err := backend.GetKey(attrs)
+	rotatedKey, err := backend.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	rotatedMLDSA, ok := rotatedKey.(*quantum.MLDSAPrivateKey)
@@ -115,11 +116,11 @@ func TestQuantumSafeBackend_MLDSAKeyLifecycle(t *testing.T) {
 		"Public key should change after rotation")
 
 	// Delete key
-	err = backend.DeleteKey(attrs)
+	err = backend.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify deletion
-	_, err = backend.GetKey(attrs)
+	_, err = backend.GetKey(context.Background(), attrs)
 	assert.Error(t, err, "Key should be deleted")
 }
 
@@ -142,7 +143,7 @@ func TestQuantumSafeBackend_MLKEMKeyLifecycle(t *testing.T) {
 	}
 
 	// Generate key
-	privateKey, err := backend.GenerateKey(attrs)
+	privateKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, privateKey)
 
@@ -158,7 +159,7 @@ func TestQuantumSafeBackend_MLKEMKeyLifecycle(t *testing.T) {
 	t.Logf("ML-KEM-768 public key size: %d bytes", len(mlkemKey.PublicKey.Key))
 
 	// ML-KEM doesn't support Decrypter interface
-	_, err = backend.Decrypter(attrs)
+	_, err = backend.Decrypter(context.Background(), attrs)
 	assert.Error(t, err, "ML-KEM should not support Decrypter interface")
 
 	// Test encapsulation/decapsulation
@@ -175,7 +176,7 @@ func TestQuantumSafeBackend_MLKEMKeyLifecycle(t *testing.T) {
 	assert.Equal(t, sharedSecret1, sharedSecret2, "Shared secrets should match")
 
 	// Retrieve key from storage
-	retrievedKey, err := backend.GetKey(attrs)
+	retrievedKey, err := backend.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	retrievedMLKEM, ok := retrievedKey.(*quantum.MLKEMPrivateKey)
@@ -188,7 +189,7 @@ func TestQuantumSafeBackend_MLKEMKeyLifecycle(t *testing.T) {
 	assert.Equal(t, sharedSecret1, sharedSecret3, "Retrieved key should decapsulate correctly")
 
 	// Delete key
-	err = backend.DeleteKey(attrs)
+	err = backend.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 }
 
@@ -225,7 +226,7 @@ func TestQuantumSafeBackend_MultipleKeys(t *testing.T) {
 			},
 		}
 
-		key, err := backend.GenerateKey(attrs)
+		key, err := backend.GenerateKey(context.Background(), attrs)
 		require.NoError(t, err)
 		require.NotNil(t, key)
 
@@ -246,7 +247,7 @@ func TestQuantumSafeBackend_MultipleKeys(t *testing.T) {
 	}()
 
 	// List all keys
-	keys, err := backend.ListKeys()
+	keys, err := backend.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 4, len(keys), "Should have 4 keys")
 
@@ -261,7 +262,7 @@ func TestQuantumSafeBackend_MultipleKeys(t *testing.T) {
 			},
 		}
 
-		key, err := backend.GetKey(attrs)
+		key, err := backend.GetKey(context.Background(), attrs)
 		require.NoError(t, err, "Should retrieve key %s", spec.cn)
 		require.NotNil(t, key)
 	}
@@ -285,10 +286,10 @@ func TestQuantumSafeBackend_CryptoSignerInterface(t *testing.T) {
 		},
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify it implements crypto.Signer
@@ -341,7 +342,7 @@ func TestQuantumSafeBackend_KeyPersistence(t *testing.T) {
 	}
 
 	// Generate key and sign
-	key1, err := backend.GenerateKey(attrs)
+	key1, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	mldsaKey1 := key1.(*quantum.MLDSAPrivateKey)
 	defer mldsaKey1.Clean()
@@ -353,7 +354,7 @@ func TestQuantumSafeBackend_KeyPersistence(t *testing.T) {
 	publicKey := mldsaKey1.PublicKey.Key
 
 	// Retrieve key from storage
-	key2, err := backend.GetKey(attrs)
+	key2, err := backend.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 	mldsaKey2 := key2.(*quantum.MLDSAPrivateKey)
 	defer mldsaKey2.Clean()
@@ -392,7 +393,7 @@ func TestQuantumSafeBackend_ErrorHandling(t *testing.T) {
 			// Missing QuantumAttributes
 		}
 
-		_, err := backend.GenerateKey(attrs)
+		_, err := backend.GenerateKey(context.Background(), attrs)
 		assert.Error(t, err, "Should fail without QuantumAttributes")
 	})
 
@@ -406,11 +407,11 @@ func TestQuantumSafeBackend_ErrorHandling(t *testing.T) {
 			},
 		}
 
-		key1, err := backend.GenerateKey(attrs)
+		key1, err := backend.GenerateKey(context.Background(), attrs)
 		require.NoError(t, err)
 		key1.(*quantum.MLDSAPrivateKey).Clean()
 
-		_, err = backend.GenerateKey(attrs)
+		_, err = backend.GenerateKey(context.Background(), attrs)
 		assert.Error(t, err, "Should fail on duplicate key")
 	})
 
@@ -424,7 +425,7 @@ func TestQuantumSafeBackend_ErrorHandling(t *testing.T) {
 			},
 		}
 
-		_, err := backend.GetKey(attrs)
+		_, err := backend.GetKey(context.Background(), attrs)
 		assert.Error(t, err, "Should fail for non-existent key")
 	})
 
@@ -438,11 +439,11 @@ func TestQuantumSafeBackend_ErrorHandling(t *testing.T) {
 			},
 		}
 
-		key, err := backend.GenerateKey(attrs)
+		key, err := backend.GenerateKey(context.Background(), attrs)
 		require.NoError(t, err)
 		key.(*quantum.MLKEMPrivateKey).Clean()
 
-		_, err = backend.Signer(attrs)
+		_, err = backend.Signer(context.Background(), attrs)
 		assert.Error(t, err, "Should fail to get signer for KEM key")
 	})
 }

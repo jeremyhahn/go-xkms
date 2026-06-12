@@ -14,6 +14,7 @@
 package software
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -68,7 +69,7 @@ func TestGetImportParameters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			params, err := be.(backend.ImportExportBackend).GetImportParameters(attrs, tt.algorithm)
+			params, err := be.(backend.ImportExportBackend).GetImportParameters(context.Background(), attrs, tt.algorithm)
 
 			if tt.wantErr {
 				if err == nil {
@@ -148,7 +149,7 @@ func TestWrapKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Get import parameters
-			params, err := be.(backend.ImportExportBackend).GetImportParameters(attrs, tt.algorithm)
+			params, err := be.(backend.ImportExportBackend).GetImportParameters(context.Background(), attrs, tt.algorithm)
 			if err != nil {
 				t.Fatalf("GetImportParameters failed: %v", err)
 			}
@@ -160,7 +161,7 @@ func TestWrapKey(t *testing.T) {
 			}
 
 			// Wrap the key
-			wrapped, err := be.(backend.ImportExportBackend).WrapKey(keyMaterial, params)
+			wrapped, err := be.(backend.ImportExportBackend).WrapKey(context.Background(), keyMaterial, params)
 
 			if tt.wantErr {
 				if err == nil {
@@ -195,7 +196,7 @@ func TestWrapKey_InvalidInputs(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test.com", 2048)
-	params, _ := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, _ := be.(backend.ImportExportBackend).GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 
 	tests := []struct {
 		name        string
@@ -225,7 +226,7 @@ func TestWrapKey_InvalidInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := be.(backend.ImportExportBackend).WrapKey(tt.keyMaterial, tt.params)
+			_, err := be.(backend.ImportExportBackend).WrapKey(context.Background(), tt.keyMaterial, tt.params)
 			if !tt.wantErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -268,7 +269,7 @@ func TestUnwrapKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Get import parameters
-			params, err := be.(backend.ImportExportBackend).GetImportParameters(attrs, tt.algorithm)
+			params, err := be.(backend.ImportExportBackend).GetImportParameters(context.Background(), attrs, tt.algorithm)
 			if err != nil {
 				t.Fatalf("GetImportParameters failed: %v", err)
 			}
@@ -279,13 +280,13 @@ func TestUnwrapKey(t *testing.T) {
 				t.Fatalf("failed to generate key material: %v", err)
 			}
 
-			wrapped, err := be.(backend.ImportExportBackend).WrapKey(keyMaterial, params)
+			wrapped, err := be.(backend.ImportExportBackend).WrapKey(context.Background(), keyMaterial, params)
 			if err != nil {
 				t.Fatalf("WrapKey failed: %v", err)
 			}
 
 			// Unwrap the key
-			unwrapped, err := be.(backend.ImportExportBackend).UnwrapKey(wrapped, params)
+			unwrapped, err := be.(backend.ImportExportBackend).UnwrapKey(context.Background(), wrapped, params)
 			if err != nil {
 				t.Fatalf("UnwrapKey failed: %v", err)
 			}
@@ -311,7 +312,7 @@ func TestUnwrapKey_InvalidToken(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test.com", 2048)
-	params, _ := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, _ := be.(backend.ImportExportBackend).GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 
 	// Create wrapped material with invalid token
 	wrapped := &backend.WrappedKeyMaterial{
@@ -320,7 +321,7 @@ func TestUnwrapKey_InvalidToken(t *testing.T) {
 		ImportToken: []byte("invalid-token-uuid"),
 	}
 
-	_, err := be.(backend.ImportExportBackend).UnwrapKey(wrapped, params)
+	_, err := be.(backend.ImportExportBackend).UnwrapKey(context.Background(), wrapped, params)
 	if err == nil {
 		t.Error("expected error for invalid token but got nil")
 	}
@@ -362,7 +363,7 @@ func TestImportKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Get import parameters
-			params, err := be.(backend.ImportExportBackend).GetImportParameters(tt.attrs, tt.algorithm)
+			params, err := be.(backend.ImportExportBackend).GetImportParameters(context.Background(), tt.attrs, tt.algorithm)
 			if err != nil {
 				t.Fatalf("GetImportParameters failed: %v", err)
 			}
@@ -371,22 +372,22 @@ func TestImportKey(t *testing.T) {
 			keyMaterial := tt.genKey()
 
 			// Wrap the key
-			wrapped, err := be.(backend.ImportExportBackend).WrapKey(keyMaterial, params)
+			wrapped, err := be.(backend.ImportExportBackend).WrapKey(context.Background(), keyMaterial, params)
 			if err != nil {
 				t.Fatalf("WrapKey failed: %v", err)
 			}
 
 			// Import the key
-			err = be.(backend.ImportExportBackend).ImportKey(tt.attrs, wrapped)
+			err = be.(backend.ImportExportBackend).ImportKey(context.Background(), tt.attrs, wrapped)
 			if err != nil {
 				t.Fatalf("ImportKey failed: %v", err)
 			}
 
 			// Verify the key was imported
 			if tt.attrs.IsSymmetric() {
-				_, err = be.GetSymmetricKey(tt.attrs)
+				_, err = be.GetSymmetricKey(context.Background(), tt.attrs)
 			} else {
-				_, err = be.GetKey(tt.attrs)
+				_, err = be.GetKey(context.Background(), tt.attrs)
 			}
 
 			if err != nil {
@@ -402,12 +403,12 @@ func TestImportKey_InvalidInputs(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("test", 256, types.SymmetricAES256GCM)
-	params, _ := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, _ := be.(backend.ImportExportBackend).GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 
 	// Create valid wrapped material
 	keyMaterial := make([]byte, 32)
 	_, _ = rand.Read(keyMaterial)
-	wrapped, _ := be.(backend.ImportExportBackend).WrapKey(keyMaterial, params)
+	wrapped, _ := be.(backend.ImportExportBackend).WrapKey(context.Background(), keyMaterial, params)
 
 	tests := []struct {
 		name    string
@@ -441,7 +442,7 @@ func TestImportKey_InvalidInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := be.(backend.ImportExportBackend).ImportKey(tt.attrs, tt.wrapped)
+			err := be.(backend.ImportExportBackend).ImportKey(context.Background(), tt.attrs, tt.wrapped)
 			if !tt.wantErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -472,7 +473,7 @@ func TestExportKey(t *testing.T) {
 			}(),
 			algorithm: backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256,
 			setup: func(attrs *types.KeyAttributes) error {
-				_, err := be.GenerateKey(attrs)
+				_, err := be.GenerateKey(context.Background(), attrs)
 				return err
 			},
 		},
@@ -485,7 +486,7 @@ func TestExportKey(t *testing.T) {
 			}(),
 			algorithm: backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 			setup: func(attrs *types.KeyAttributes) error {
-				_, err := be.GenerateSymmetricKey(attrs)
+				_, err := be.GenerateSymmetricKey(context.Background(), attrs)
 				return err
 			},
 		},
@@ -499,7 +500,7 @@ func TestExportKey(t *testing.T) {
 			}
 
 			// Export the key
-			wrapped, err := be.(backend.ImportExportBackend).ExportKey(tt.attrs, tt.algorithm)
+			wrapped, err := be.(backend.ImportExportBackend).ExportKey(context.Background(), tt.attrs, tt.algorithm)
 			if err != nil {
 				t.Fatalf("ExportKey failed: %v", err)
 			}
@@ -542,7 +543,7 @@ func TestImportExportRoundTrip(t *testing.T) {
 			genKey: func() error {
 				attrs := createRSAAttrs("roundtrip-rsa.com", 2048)
 				attrs.Exportable = true
-				_, err := be.GenerateKey(attrs)
+				_, err := be.GenerateKey(context.Background(), attrs)
 				return err
 			},
 		},
@@ -557,7 +558,7 @@ func TestImportExportRoundTrip(t *testing.T) {
 			genKey: func() error {
 				attrs := createAESAttrs("roundtrip-aes", 256, types.SymmetricAES256GCM)
 				attrs.Exportable = true
-				_, err := be.GenerateSymmetricKey(attrs)
+				_, err := be.GenerateSymmetricKey(context.Background(), attrs)
 				return err
 			},
 		},
@@ -571,24 +572,24 @@ func TestImportExportRoundTrip(t *testing.T) {
 			}
 
 			// Step 2: Export the key
-			wrapped, err := be.(backend.ImportExportBackend).ExportKey(tt.attrs, tt.algorithm)
+			wrapped, err := be.(backend.ImportExportBackend).ExportKey(context.Background(), tt.attrs, tt.algorithm)
 			if err != nil {
 				t.Fatalf("ExportKey failed: %v", err)
 			}
 
 			// Step 3: Delete the original key
-			if err := be.DeleteKey(tt.attrs); err != nil {
+			if err := be.DeleteKey(context.Background(), tt.attrs); err != nil {
 				t.Fatalf("failed to delete original key: %v", err)
 			}
 
 			// Step 4: Import the key back
-			if err := be.(backend.ImportExportBackend).ImportKey(tt.attrs, wrapped); err != nil {
+			if err := be.(backend.ImportExportBackend).ImportKey(context.Background(), tt.attrs, wrapped); err != nil {
 				t.Fatalf("ImportKey failed: %v", err)
 			}
 
 			// Step 5: Verify the key is accessible
 			if tt.attrs.IsSymmetric() {
-				key, err := be.GetSymmetricKey(tt.attrs)
+				key, err := be.GetSymmetricKey(context.Background(), tt.attrs)
 				if err != nil {
 					t.Fatalf("failed to retrieve imported symmetric key: %v", err)
 				}
@@ -596,7 +597,7 @@ func TestImportExportRoundTrip(t *testing.T) {
 					t.Error("imported symmetric key is nil")
 				}
 			} else {
-				key, err := be.GetKey(tt.attrs)
+				key, err := be.GetKey(context.Background(), tt.attrs)
 				if err != nil {
 					t.Fatalf("failed to retrieve imported asymmetric key: %v", err)
 				}
@@ -625,7 +626,7 @@ func TestImportExportConcurrency(t *testing.T) {
 			attrs := createAESAttrs(fmt.Sprintf("concurrent-key-%d", id), 256, types.SymmetricAES256GCM)
 
 			// Get import parameters
-			params, err := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+			params, err := be.(backend.ImportExportBackend).GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 			if err != nil {
 				errCh <- err
 				return
@@ -635,14 +636,14 @@ func TestImportExportConcurrency(t *testing.T) {
 			keyMaterial := make([]byte, 32)
 			_, _ = rand.Read(keyMaterial)
 
-			wrapped, err := be.(backend.ImportExportBackend).WrapKey(keyMaterial, params)
+			wrapped, err := be.(backend.ImportExportBackend).WrapKey(context.Background(), keyMaterial, params)
 			if err != nil {
 				errCh <- err
 				return
 			}
 
 			// Import the key
-			if err := be.(backend.ImportExportBackend).ImportKey(attrs, wrapped); err != nil {
+			if err := be.(backend.ImportExportBackend).ImportKey(context.Background(), attrs, wrapped); err != nil {
 				errCh <- err
 				return
 			}
@@ -670,7 +671,7 @@ func TestImportTokenExpiration(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-expiry.com", 2048)
-	params, err := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := be.(backend.ImportExportBackend).GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
 		t.Fatalf("GetImportParameters failed: %v", err)
 	}
@@ -812,7 +813,7 @@ func TestImportKey_WrongKeySize(t *testing.T) {
 	// Create attributes for 256-bit key
 	attrs := createAESAttrs("test", 256, types.SymmetricAES256GCM)
 
-	params, err := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := be.(backend.ImportExportBackend).GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
 		t.Fatalf("GetImportParameters failed: %v", err)
 	}
@@ -821,13 +822,13 @@ func TestImportKey_WrongKeySize(t *testing.T) {
 	keyMaterial := make([]byte, 16) // 128-bit
 	_, _ = rand.Read(keyMaterial)
 
-	wrapped, err := be.(backend.ImportExportBackend).WrapKey(keyMaterial, params)
+	wrapped, err := be.(backend.ImportExportBackend).WrapKey(context.Background(), keyMaterial, params)
 	if err != nil {
 		t.Fatalf("WrapKey failed: %v", err)
 	}
 
 	// This should fail because key size doesn't match attributes
-	err = be.(backend.ImportExportBackend).ImportKey(attrs, wrapped)
+	err = be.(backend.ImportExportBackend).ImportKey(context.Background(), attrs, wrapped)
 	if err == nil {
 		t.Error("expected error for wrong key size but got nil")
 	}
@@ -848,7 +849,7 @@ func TestBackendClosed(t *testing.T) {
 	attrs := createRSAAttrs("test.com", 2048)
 
 	// All operations should fail on closed backend
-	_, err = be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = be.(backend.ImportExportBackend).GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err == nil {
 		t.Error("expected error on closed backend for GetImportParameters")
 	}
@@ -859,17 +860,17 @@ func TestBackendClosed(t *testing.T) {
 		ImportToken: []byte("token"),
 	}
 
-	_, err = be.(backend.ImportExportBackend).UnwrapKey(wrapped, nil)
+	_, err = be.(backend.ImportExportBackend).UnwrapKey(context.Background(), wrapped, nil)
 	if err == nil {
 		t.Error("expected error on closed backend for UnwrapKey")
 	}
 
-	err = be.(backend.ImportExportBackend).ImportKey(attrs, wrapped)
+	err = be.(backend.ImportExportBackend).ImportKey(context.Background(), attrs, wrapped)
 	if err == nil {
 		t.Error("expected error on closed backend for ImportKey")
 	}
 
-	_, err = be.(backend.ImportExportBackend).ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = be.(backend.ImportExportBackend).ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err == nil {
 		t.Error("expected error on closed backend for ExportKey")
 	}
@@ -882,7 +883,7 @@ func TestExportKey_NonExistentKey(t *testing.T) {
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
-	_, err := be.(backend.ImportExportBackend).ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err := be.(backend.ImportExportBackend).ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err == nil {
 		t.Error("expected error when exporting non-existent key")
 	}
@@ -895,13 +896,13 @@ func TestExportKey_InvalidAlgorithm(t *testing.T) {
 
 	// Generate a key
 	attrs := createAESAttrs("test", 256, types.SymmetricAES256GCM)
-	_, err := be.GenerateSymmetricKey(attrs)
+	_, err := be.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
 	// Try to export with invalid algorithm
-	_, err = be.(backend.ImportExportBackend).ExportKey(attrs, backend.WrappingAlgorithm("INVALID"))
+	_, err = be.(backend.ImportExportBackend).ExportKey(context.Background(), attrs, backend.WrappingAlgorithm("INVALID"))
 	if err == nil {
 		t.Error("expected error for invalid wrapping algorithm")
 	}
@@ -943,7 +944,7 @@ func TestUnwrapKey_ExpiredToken(t *testing.T) {
 		Algorithm:         backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	_, err := be.(backend.ImportExportBackend).UnwrapKey(wrapped, params)
+	_, err := be.(backend.ImportExportBackend).UnwrapKey(context.Background(), wrapped, params)
 	if err == nil {
 		t.Error("expected error for expired token")
 	}
@@ -957,7 +958,7 @@ func TestUnwrapKey_AlgorithmMismatch(t *testing.T) {
 	attrs := createAESAttrs("test", 256, types.SymmetricAES256GCM)
 
 	// Get params with SHA256 algorithm
-	params, err := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := be.(backend.ImportExportBackend).GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
 		t.Fatalf("GetImportParameters failed: %v", err)
 	}
@@ -969,7 +970,7 @@ func TestUnwrapKey_AlgorithmMismatch(t *testing.T) {
 		ImportToken: params.ImportToken,
 	}
 
-	_, err = be.(backend.ImportExportBackend).UnwrapKey(wrapped, params)
+	_, err = be.(backend.ImportExportBackend).UnwrapKey(context.Background(), wrapped, params)
 	if err == nil {
 		t.Error("expected error for algorithm mismatch")
 	}
@@ -990,7 +991,7 @@ func TestUnwrapKey_EmptyToken(t *testing.T) {
 		Algorithm: backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	_, err := be.(backend.ImportExportBackend).UnwrapKey(wrapped, params)
+	_, err := be.(backend.ImportExportBackend).UnwrapKey(context.Background(), wrapped, params)
 	if err == nil {
 		t.Error("expected error for empty import token")
 	}
@@ -1026,7 +1027,7 @@ func TestImportKey_ExpiredToken(t *testing.T) {
 		ImportToken: []byte(tokenUUID),
 	}
 
-	err := be.(backend.ImportExportBackend).ImportKey(attrs, wrapped)
+	err := be.(backend.ImportExportBackend).ImportKey(context.Background(), attrs, wrapped)
 	if err == nil {
 		t.Error("expected error for expired import token")
 	}
@@ -1044,7 +1045,7 @@ func TestImportKey_EmptyToken(t *testing.T) {
 		ImportToken: []byte{}, // Empty token
 	}
 
-	err := be.(backend.ImportExportBackend).ImportKey(attrs, wrapped)
+	err := be.(backend.ImportExportBackend).ImportKey(context.Background(), attrs, wrapped)
 	if err == nil {
 		t.Error("expected error for empty import token")
 	}
@@ -1056,20 +1057,20 @@ func TestImportAsymmetricKey_InvalidPKCS8(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test.com", 2048)
-	params, err := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := be.(backend.ImportExportBackend).GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
 		t.Fatalf("GetImportParameters failed: %v", err)
 	}
 
 	// Wrap invalid PKCS8 data
 	invalidPKCS8 := []byte("not valid pkcs8 data")
-	wrapped, err := be.(backend.ImportExportBackend).WrapKey(invalidPKCS8, params)
+	wrapped, err := be.(backend.ImportExportBackend).WrapKey(context.Background(), invalidPKCS8, params)
 	if err != nil {
 		t.Fatalf("WrapKey failed: %v", err)
 	}
 
 	// Try to import - should fail on PKCS8 parsing
-	err = be.(backend.ImportExportBackend).ImportKey(attrs, wrapped)
+	err = be.(backend.ImportExportBackend).ImportKey(context.Background(), attrs, wrapped)
 	if err == nil {
 		t.Error("expected error for invalid PKCS8 data")
 	}

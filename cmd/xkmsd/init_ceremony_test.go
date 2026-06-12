@@ -119,7 +119,7 @@ func generateECDSACSR(t *testing.T, cn string) []byte {
 
 func TestNewCeremonyCA_Success(t *testing.T) {
 	env := &ceremonyEnv{logger: silentLogger(), hostname: "localhost", dataDir: t.TempDir()}
-	caInstance, err := newCeremonyCA(env)
+	caInstance, err := newCeremonyCA(context.Background(), env)
 	if err != nil {
 		t.Fatalf("newCeremonyCA: %v", err)
 	}
@@ -135,6 +135,7 @@ func TestNewCeremonyCA_Success(t *testing.T) {
 	}
 	if cert == nil {
 		t.Fatal("CACertificate returned nil")
+		return
 	}
 	if cert.Subject.CommonName != caCommonName {
 		t.Errorf("CN mismatch: want %q got %q", caCommonName, cert.Subject.CommonName)
@@ -169,6 +170,7 @@ func TestExecuteCeremony_SingleAdmin_WritesArtifacts(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("nil result")
+		return
 	}
 	if result.State != initialize.StateOperational {
 		t.Errorf("expected StateOperational, got %s", result.State)

@@ -393,7 +393,7 @@ func (s *PIVService) GenerateKeyAdvanced(opts PIVGenerateOptions) (*PIVGenerateA
 	}
 
 	// Build user-friendly message.
-	slotName, _ := pivSlotNameMap[opts.Slot]
+	slotName := pivSlotNameMap[opts.Slot]
 	if slotName == "" {
 		slotName = "PIV Key " + opts.Slot
 	}
@@ -491,7 +491,7 @@ func (s *PIVService) ExportPublicKey(slot string) (string, error) {
 		// Fall back to the software-backend "piv-<slot>" CN convention when the
 		// backend does not populate PIVSlot on listed keys.
 		cn := "piv-" + slot
-		keys, err := xkms.ListKeys(backend)
+		keys, err := xkms.ListKeys(s.ctx, backend)
 		if err != nil {
 			slog.Error("PIV export public key: list keys failed", "slot", slot, "backend", backend, "error", err)
 			return "", fmt.Errorf("pivcert: export public key for slot %s: %w", slot, err)
@@ -500,7 +500,7 @@ func (s *PIVService) ExportPublicKey(slot string) (string, error) {
 			if !strings.EqualFold(ka.PIVSlot, slot) && ka.CN != cn {
 				continue
 			}
-			signer, sErr := xkms.Signer(ka)
+			signer, sErr := xkms.Signer(s.ctx, ka)
 			if sErr != nil {
 				slog.Error("PIV export public key: signer lookup failed", "slot", slot, "cn", ka.CN, "error", sErr)
 				return "", fmt.Errorf("pivcert: export public key for slot %s: %w", slot, sErr)
@@ -638,7 +638,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 
 		// Now delete the underlying key from the key backend.
 		cn := "piv-" + slot
-		keys, listErr := xkms.ListKeys(backend)
+		keys, listErr := xkms.ListKeys(s.ctx, backend)
 		if listErr != nil {
 			slog.Error("PIV delete: list keys failed", "slot", slot, "backend", backend, "error", listErr)
 			// If the cert was deleted but we cannot list keys, surface partial success.
@@ -654,7 +654,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 			if !strings.EqualFold(ka.PIVSlot, slot) && ka.CN != cn {
 				continue
 			}
-			if err := xkms.DeleteKey(ka); err != nil {
+			if err := xkms.DeleteKey(s.ctx, ka); err != nil {
 				slog.Error("PIV delete key failed", "slot", slot, "cn", ka.CN, "error", err)
 				return fmt.Errorf("pivcert: delete key for slot %s: %w", slot, err)
 			}
@@ -688,7 +688,7 @@ func (s *PIVService) SelfSignExistingKey(slot, commonName string, validityDays i
 		return "", ErrPIVClientNotSet
 	}
 	backend := s.resolveXKMSBackendName(s.localBackend)
-	return xkms.SelfSignExistingPIVKey(backend, slot, commonName, validityDays)
+	return xkms.SelfSignExistingPIVKey(s.ctx, backend, slot, commonName, validityDays)
 }
 
 // --- Remote operation methods ---

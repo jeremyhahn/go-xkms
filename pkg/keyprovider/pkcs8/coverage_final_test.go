@@ -14,6 +14,7 @@
 package pkcs8
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"testing"
@@ -37,10 +38,10 @@ func TestSigner_X25519NotSigner(t *testing.T) {
 		X25519Attributes: &types.X25519Attributes{},
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	_, err = be.Signer(attrs)
+	_, err = be.Signer(context.Background(), attrs)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrKeyNotSigner))
 }

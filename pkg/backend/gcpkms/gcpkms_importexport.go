@@ -38,7 +38,7 @@ var _ backend.ImportExportBackend = (*Backend)(nil)
 //
 // GCP KMS import jobs remain valid for up to 3 days and can be used for multiple imports.
 // The import job name is returned as the import token.
-func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -49,8 +49,6 @@ func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm back
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
-
-	ctx := context.Background()
 
 	// Map backend wrapping algorithm to GCP KMS import method
 	importMethod, err := mapWrappingAlgorithmToImportMethod(algorithm)
@@ -107,7 +105,7 @@ func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm back
 
 // WrapKey wraps key material for secure transport using the specified parameters.
 // This uses the wrapping functions from pkg/crypto/wrapping.
-func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if keyMaterial == nil || len(keyMaterial) == 0 {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -159,13 +157,13 @@ func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) 
 // For GCP KMS, unwrapping happens in the HSM during import, so this returns an error.
 // This method exists to satisfy the ImportExportBackend interface but is not used
 // for GCP KMS imports.
-func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	return nil, fmt.Errorf("%w: unwrapping is performed by GCP KMS HSM during import", backend.ErrNotSupported)
 }
 
 // ImportKey imports externally generated key material into GCP KMS.
 // The key material must be wrapped using parameters obtained from GetImportParameters.
-func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -180,8 +178,6 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 	if wrapped == nil {
 		return backend.ErrInvalidAttributes
 	}
-
-	ctx := context.Background()
 
 	// The import token contains the import job name
 	importJobName := string(wrapped.ImportToken)
@@ -246,7 +242,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
 			return fmt.Errorf("failed to save metadata: %w", err)
 		}
 	}
@@ -257,7 +253,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 // ExportKey exports a key in wrapped form for secure transport.
 // GCP KMS does not support key export for HSM keys, so this returns an error
 // unless the key was created with SOFTWARE protection level and EXPORTABLE set.
-func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -279,8 +275,6 @@ func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wrappi
 	if b.client == nil {
 		return nil, ErrNotInitialized
 	}
-
-	ctx := context.Background()
 
 	// Get the crypto key to check its properties
 	cryptoKeyName := b.cryptoKeyName(attrs.CN)
@@ -308,7 +302,7 @@ func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wrappi
 // ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
 // GCP KMS does not support exporting raw key material from HSM-protected keys.
 // This method returns ErrExportNotSupported.
-func (b *Backend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}

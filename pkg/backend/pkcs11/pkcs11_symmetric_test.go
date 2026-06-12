@@ -17,6 +17,7 @@ package pkcs11
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
@@ -124,7 +125,7 @@ func TestBackend_GenerateSymmetricKey(t *testing.T) {
 				}
 			}
 
-			_, err := b.GenerateSymmetricKey(attrs)
+			_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GenerateSymmetricKey() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -159,7 +160,7 @@ func TestBackend_GetSymmetricKey(t *testing.T) {
 	}
 
 	// Should fail - not initialized
-	_, err := b.GetSymmetricKey(attrs)
+	_, err := b.GetSymmetricKey(context.Background(), attrs)
 	if err != ErrNotInitialized {
 		t.Errorf("GetSymmetricKey() error = %v, want %v", err, ErrNotInitialized)
 	}
@@ -187,7 +188,7 @@ func TestBackend_SymmetricEncrypter(t *testing.T) {
 	}
 
 	// Should fail - key doesn't exist
-	_, err := b.SymmetricEncrypter(attrs)
+	_, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err == nil {
 		t.Error("SymmetricEncrypter() should return error when key doesn't exist")
 	}
@@ -493,7 +494,7 @@ func TestBackend_GenerateSymmetricKey_AllKeySizes(t *testing.T) {
 				t.Fatalf("attrs.Validate() failed: %v", err)
 			}
 
-			_, err := b.GenerateSymmetricKey(attrs)
+			_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 			// Will fail due to not initialized, but validates structure
 			if err == nil {
 				t.Error("GenerateSymmetricKey() should fail (not initialized)")
@@ -521,7 +522,7 @@ func TestBackend_GetSymmetricKey_KeySizeInference(t *testing.T) {
 	}
 
 	// Should fail at not initialized, but tests inference logic
-	_, err := b.GetSymmetricKey(attrs)
+	_, err := b.GetSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("GetSymmetricKey() should fail (not initialized)")
 	}
@@ -587,9 +588,9 @@ func TestBackend_SymmetricInterface(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, _ = b.GenerateSymmetricKey(attrs)
-	_, _ = b.GetSymmetricKey(attrs)
-	_, _ = b.SymmetricEncrypter(attrs)
+	_, _ = b.GenerateSymmetricKey(context.Background(), attrs)
+	_, _ = b.GetSymmetricKey(context.Background(), attrs)
+	_, _ = b.SymmetricEncrypter(context.Background(), attrs)
 }
 
 // TestBackend_GenerateSymmetricKey_InvalidAttributes tests validation.
@@ -636,7 +637,7 @@ func TestBackend_GenerateSymmetricKey_InvalidAttributes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := b.GenerateSymmetricKey(tt.attrs)
+			_, err := b.GenerateSymmetricKey(context.Background(), tt.attrs)
 			if err == nil {
 				t.Error("GenerateSymmetricKey() should return error")
 			}

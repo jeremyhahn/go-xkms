@@ -41,7 +41,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -133,9 +132,6 @@ type Transport struct {
 // The service parameter provides context for disambiguating generic method names
 // (e.g., "create" maps to different gRPC methods depending on the service).
 type requestHandler func(ctx context.Context, t *Transport, service, method string, req interface{}) (interface{}, error)
-
-// streamHandler is the function signature for handling streaming requests.
-type streamHandler func(ctx context.Context, t *Transport, method string, req interface{}) (transport.Stream, error)
 
 // NewTransport creates a new gRPC transport with the given configuration.
 func NewTransport(cfg *transport.Config) (transport.Transport, error) {
@@ -268,16 +264,14 @@ func (t *Transport) buildDialOptions() ([]grpc.DialOption, error) {
 	// (admin API types) to be used without protobuf definitions.
 	opts = append(opts, grpc.WithDefaultCallOptions(grpc.ForceCodec(jsonCodec{})))
 
-	// Configure TLS or insecure mode.
-	if t.cfg.Insecure {
-		slog.Warn("acme/grpc: TLS certificate verification disabled via Insecure=true; do not use in production",
-			"address", t.cfg.Address)
-		// Use TLS with InsecureSkipVerify for self-signed certs in dev/testing.
-		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			MinVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: true, //nolint:gosec // Intentional for dev/testing
-		})))
-	} else if t.cfg.TLSConfig != nil {
+	// Insecure mode is forbidden. Callers must supply an explicit TLSConfig
+	// with RootCAs or an SPKI-pinned VerifyConnection callback.
+	if t.cfg.Insecure && t.cfg.TLSConfig == nil {
+		return nil, errors.NewInvalidInput("grpc.buildDialOptions",
+			"Insecure=true requires an explicit TLSConfig with RootCAs or VerifyConnection; InsecureSkipVerify is forbidden")
+	}
+
+	if t.cfg.TLSConfig != nil {
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(t.cfg.TLSConfig)))
 	} else {
 		// Default to system TLS with TLS 1.3.
@@ -828,7 +822,7 @@ func newConnectionPool(t *Transport, target string, opts []grpc.DialOption) (*co
 	// Create minimum connections.
 	for i := 0; i < t.cfg.PoolMinSize; i++ {
 		if err := pool.addConnection(); err != nil {
-			pool.Close()
+			_ = pool.Close()
 			return nil, err
 		}
 	}
@@ -996,7 +990,7 @@ func (p *connectionPool) performHealthCheck() {
 			healthy = append(healthy, pc)
 		} else if !pc.inUse.Load() {
 			// Close unhealthy connection.
-			pc.conn.Close()
+			_ = pc.conn.Close()
 		} else {
 			// Keep in-use connections even if unhealthy.
 			healthy = append(healthy, pc)

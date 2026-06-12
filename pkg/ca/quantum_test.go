@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -45,7 +46,7 @@ func generateTestMLDSAKey(t *testing.T, algorithm types.QuantumAlgorithm) *quant
 		},
 	}
 
-	key, err := qb.GenerateKey(attrs)
+	key, err := qb.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate ML-DSA key: %v", err)
 	}

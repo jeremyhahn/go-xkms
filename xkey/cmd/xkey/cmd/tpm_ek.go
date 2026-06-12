@@ -182,7 +182,7 @@ func runEKShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Get EK attributes
 	ekAttrs, err := tpm.EKAttributes()
@@ -202,6 +202,9 @@ func runEKShow(cmd *cobra.Command, args []string) error {
 		ekAttrs.RSAAttributes = nil
 	} else {
 		ekCert, err = tpm.EKCertificateRSA()
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrKeyNotFound, err)
 	}
 
 	// Output based on format
@@ -371,7 +374,7 @@ func runEKExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Get EK certificate based on algorithm flag
 	var ekCert *x509.Certificate
@@ -405,33 +408,13 @@ func runEKExport(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// getEKPublicKey extracts the public key from EK attributes
-func getEKPublicKey(tpm interface{}) (interface{}, error) {
-	type ekGetter interface {
-		EK() (interface{}, error)
-		EKRSA() (*rsa.PublicKey, error)
-		EKECC() (*ecdsa.PublicKey, error)
-	}
-
-	if eg, ok := tpm.(ekGetter); ok {
-		pub, err := eg.EK()
-		if err != nil {
-			return nil, err
-		}
-		if pub != nil {
-			return pub, nil
-		}
-	}
-
-	return nil, fmt.Errorf("unable to get EK public key")
-}
-
 func runEKBackup(cmd *cobra.Command, args []string) error {
+
 	tpm, err := openTPM()
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Ensure output directory exists
 	if err := os.MkdirAll(ekBackupOutput, 0750); err != nil {
@@ -516,7 +499,7 @@ func runEKRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Verify certificate matches EK public key (unless forced)
 	if !ekRestoreForce {
@@ -538,10 +521,11 @@ func runEKRestore(cmd *cobra.Command, args []string) error {
 				}
 			case *ecdsa.PublicKey:
 				if ekKey, ok := ekCert.PublicKey.(*ecdsa.PublicKey); ok {
-					if certKey.X.Cmp(ekKey.X) != 0 || certKey.Y.Cmp(ekKey.Y) != 0 {
+					if !certKey.Equal(ekKey) {
 						return fmt.Errorf("certificate public key does not match TPM EK - use --force to override")
 					}
 				}
+
 			}
 			fmt.Println("Certificate public key matches TPM EK")
 		}

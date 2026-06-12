@@ -15,6 +15,11 @@ package cmd
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -117,6 +122,27 @@ var (
 
 	// ErrFIDO2BarrierUnsealFailed indicates the barrier could not be unsealed.
 	ErrFIDO2BarrierUnsealFailed = errors.New("fido2: barrier unseal failed")
+
+	// ErrFIDO2CDPCaptureNoStorage indicates a CDP-captured credential could not
+	// be persisted because no storage backend is configured.
+	ErrFIDO2CDPCaptureNoStorage = errors.New("fido2: cdp credential capture requires a storage backend")
+
+	// ErrFIDO2CDPCaptureDecodeFailed indicates a CDP-captured credential field
+	// could not be base64-decoded. CDP carries these fields as standard base64
+	// (RFC 4648 section 4) with padding.
+	ErrFIDO2CDPCaptureDecodeFailed = errors.New("fido2: cdp credential capture decode failed")
+
+	// ErrFIDO2CDPCaptureKeyParseFailed indicates the captured PKCS#8 private key
+	// could not be parsed.
+	ErrFIDO2CDPCaptureKeyParseFailed = errors.New("fido2: cdp credential key parse failed")
+
+	// ErrFIDO2CDPCaptureUnsupportedKey indicates the captured key uses an
+	// algorithm/curve not supported by FIDO2.
+	ErrFIDO2CDPCaptureUnsupportedKey = errors.New("fido2: cdp credential key algorithm unsupported")
+
+	// ErrFIDO2CDPCapturePersistFailed indicates the captured credential could
+	// not be written to the storage backend.
+	ErrFIDO2CDPCapturePersistFailed = errors.New("fido2: cdp credential persist failed")
 )
 
 // FIDO2StorageType represents the credential storage backend type.
@@ -562,7 +588,7 @@ func init() {
 		if err != nil {
 			return 0, err
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		return f.Read(b)
 	}
 }
@@ -709,6 +735,23 @@ func (d *fido2Device) Run(ctx context.Context) error {
 	d.running = true
 	defer func() { d.running = false }()
 
+	// In CDP bridge mode the Chrome-internal virtual authenticator is the sole
+	// authenticator that answers browser WebAuthn ceremonies; xkey syncs its
+	// stored credentials into it and captures new ones back out. Creating the
+	// UHID device as well would expose TWO authenticators to the same browser,
+	// and Chrome routes ceremonies between them nondeterministically. --cdp and
+	// the UHID virtual USB device are therefore mutually exclusive.
+	if d.cfg.CDPEnabled {
+		d.logger.Info("CDP mode active: UHID virtual device suppressed (CDP authenticator is authoritative)")
+
+		// Initialize supplementary subsystems (keyboard, password store, IPC).
+		d.initSupplementarySubsystems(ctx)
+
+		// Run the CDP bridge until the context is cancelled. The bridge
+		// captures credentials created in Chrome via credentialAdded events.
+		return d.cdpLoop(ctx)
+	}
+
 	// Open UHID device
 	uhidDev, err := uhid.Open()
 	if err != nil {
@@ -763,6 +806,16 @@ func (d *fido2Device) Run(ctx context.Context) error {
 
 	// Run the event loop
 	return d.eventLoop(ctx)
+}
+
+// cdpLoop runs the CDP bridge mode until the context is cancelled. There is no
+// UHID device to poll; the Chrome virtual authenticator drives all ceremonies
+// and credential capture happens asynchronously via credentialAdded events.
+func (d *fido2Device) cdpLoop(ctx context.Context) error {
+	d.logger.Info("starting CDP bridge loop")
+	<-ctx.Done()
+	d.logger.Info("context cancelled, stopping CDP bridge loop")
+	return ctx.Err()
 }
 
 // initSupplementarySubsystems creates the virtual keyboard, opens the password
@@ -826,13 +879,19 @@ func (d *fido2Device) initSupplementarySubsystems(ctx context.Context) {
 				slog.Int("port", d.cfg.CDPPort))
 		} else {
 			bridge := cdp.NewBridge(cdpClient, d.logger)
+			// Register the durability sink BEFORE Start so credentialAdded
+			// events are captured for the entire session. Credentials created
+			// inside Chrome are persisted into xkey's --storage backend the
+			// instant Chrome reports them, surviving process kill.
+			bridge.SetCredentialSink(d.persistCapturedCredential)
 			if err := bridge.Start(ctx); err != nil {
 				d.logger.Warn("CDP bridge start failed",
 					slog.String("error", err.Error()))
 				_ = cdpClient.Close()
 			} else {
 				d.cdpBridge = bridge
-				// Sync existing credentials to CDP
+				// Sync existing (including previously CDP-captured) credentials
+				// into the Chrome virtual authenticator.
 				d.syncCredentialsToCDP(ctx)
 			}
 		}
@@ -1036,10 +1095,146 @@ func (p *staticBarrierProvider) IsAutoUVActive() bool {
 	return p.active
 }
 
+// persistCapturedCredential is the cdp.CredentialSink. It maps a credential
+// created inside the Chrome virtual authenticator into xkey's StoredCredential
+// model and persists it to the configured --storage backend so the key
+// survives the CDP session and is re-synced into Chrome on the next start.
+func (d *fido2Device) persistCapturedCredential(cred cdp.StoredCredential) error {
+	if d.storage == nil {
+		return ErrFIDO2CDPCaptureNoStorage
+	}
+
+	// CDP encodes WebAuthn.Credential binary fields (credentialId, privateKey,
+	// userHandle) as standard base64 (RFC 4648 section 4, with padding), NOT
+	// base64url. Decode with the standard alphabet so credential IDs containing
+	// '+' or '/' (e.g. "T4Gj/Bom...") are accepted.
+	credID, err := decodeCDPField(cred.CredentialID)
+	if err != nil {
+		return errors.Join(ErrFIDO2CDPCaptureDecodeFailed, err)
+	}
+
+	pkcs8Key, err := decodeCDPField(cred.PrivateKey)
+	if err != nil {
+		return errors.Join(ErrFIDO2CDPCaptureDecodeFailed, err)
+	}
+
+	var userID []byte
+	if cred.UserHandle != "" {
+		userID, err = decodeCDPField(cred.UserHandle)
+		if err != nil {
+			return errors.Join(ErrFIDO2CDPCaptureDecodeFailed, err)
+		}
+	}
+
+	algorithm, publicKeyCOSE, err := deriveCOSEFromPKCS8(pkcs8Key)
+	if err != nil {
+		return errors.Join(ErrFIDO2CDPCaptureDecodeFailed, err)
+	}
+
+	stored := &authenticator.StoredCredential{
+		CredentialID:  credID,
+		RPID:          cred.RpID,
+		UserID:        userID,
+		PrivateKey:    pkcs8Key,
+		PublicKeyCOSE: publicKeyCOSE,
+		Algorithm:     algorithm,
+		SignCount:     uint32(cred.SignCount),
+		Discoverable:  cred.IsResidentCredential,
+	}
+
+	if err := d.storage.Store(stored); err != nil {
+		// A credential created in a prior session is re-reported on re-sync;
+		// treat an existing-credential collision as a successful no-op.
+		if errors.Is(err, authenticator.ErrCredentialExists) {
+			return nil
+		}
+		return errors.Join(ErrFIDO2CDPCapturePersistFailed, err)
+	}
+
+	return nil
+}
+
+// decodeCDPField decodes a binary field as carried on the Chrome DevTools
+// Protocol WebAuthn wire. CDP uses standard base64 (RFC 4648 section 4) with
+// padding for credentialId, privateKey, userHandle, rpIdHash, and largeBlob.
+// The padded form is the documented encoding; the unpadded standard form is
+// also accepted so a stray missing pad does not drop a captured credential.
+func decodeCDPField(s string) ([]byte, error) {
+	if decoded, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return decoded, nil
+	}
+	return base64.RawStdEncoding.DecodeString(s)
+}
+
+// encodeCDPField encodes raw bytes for transmission on the Chrome DevTools
+// Protocol WebAuthn wire, which expects standard base64 (RFC 4648 section 4)
+// with padding. It is the inverse of decodeCDPField and is used when xkey
+// re-syncs its stored credentials into the Chrome virtual authenticator.
+func encodeCDPField(b []byte) string {
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// deriveCOSEFromPKCS8 parses a PKCS#8 private key and returns the COSE
+// algorithm identifier and COSE-encoded public key for the corresponding
+// public key. Only the EC and Ed25519 algorithms supported by FIDO2 are
+// recognized.
+func deriveCOSEFromPKCS8(pkcs8Key []byte) (int, []byte, error) {
+	key, err := x509.ParsePKCS8PrivateKey(pkcs8Key)
+	if err != nil {
+		return 0, nil, errors.Join(ErrFIDO2CDPCaptureKeyParseFailed, err)
+	}
+
+	var pub crypto.PublicKey
+	var algorithm int
+
+	switch k := key.(type) {
+	case *ecdsa.PrivateKey:
+		pub = &k.PublicKey
+		switch k.Curve {
+		case elliptic.P256():
+			algorithm = keybackend.COSEAlgES256
+		case elliptic.P384():
+			algorithm = keybackend.COSEAlgES384
+		case elliptic.P521():
+			algorithm = keybackend.COSEAlgES512
+		default:
+			return 0, nil, ErrFIDO2CDPCaptureUnsupportedKey
+		}
+	case ed25519.PrivateKey:
+		pub = k.Public()
+		algorithm = keybackend.COSEAlgEdDSA
+	default:
+		return 0, nil, ErrFIDO2CDPCaptureUnsupportedKey
+	}
+
+	cose, err := keybackend.EncodeCOSEPublicKey(pub, algorithm)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	return algorithm, cose, nil
+}
+
+// credentialSyncer registers stored credentials with a virtual authenticator.
+// *cdp.Bridge satisfies it; an interface seam keeps the sync logic testable
+// without a live Chrome connection.
+type credentialSyncer interface {
+	SyncCredentials(ctx context.Context, creds []cdp.StoredCredential) error
+}
+
 // syncCredentialsToCDP loads all credentials from storage and registers them
 // with the CDP virtual authenticator.
 func (d *fido2Device) syncCredentialsToCDP(ctx context.Context) {
-	if d.cdpBridge == nil || d.storage == nil {
+	if d.cdpBridge == nil {
+		return
+	}
+	d.syncCredentialsToCDPVia(ctx, d.cdpBridge)
+}
+
+// syncCredentialsToCDPVia performs the storage enumeration and credential
+// mapping against the supplied syncer.
+func (d *fido2Device) syncCredentialsToCDPVia(ctx context.Context, syncer credentialSyncer) {
+	if d.storage == nil {
 		return
 	}
 
@@ -1066,33 +1261,49 @@ func (d *fido2Device) syncCredentialsToCDP(ctx context.Context) {
 			continue
 		}
 
-		// Only sync credentials that have exportable keys.
-		handle, loadKeyErr := d.keyBackend.LoadKey(sc.CredentialID, sc.Algorithm)
-		if loadKeyErr != nil {
-			d.logger.Debug("skipping credential for CDP (key load failed)",
+		// Prefer the PKCS#8 key persisted alongside the credential. CDP-captured
+		// credentials store their private key inline here (the key backend never
+		// generated them). Fall back to the key backend's exporter for
+		// credentials minted by xkey's own software backend.
+		var pkcs8Key []byte
+		if len(sc.PrivateKey) > 0 {
+			pkcs8Key = sc.PrivateKey
+		} else if d.keyBackend != nil {
+			handle, loadKeyErr := d.keyBackend.LoadKey(sc.CredentialID, sc.Algorithm)
+			if loadKeyErr != nil {
+				d.logger.Debug("skipping credential for CDP (key load failed)",
+					slog.String("credId", fmt.Sprintf("%x", sc.CredentialID)))
+				continue
+			}
+
+			exported, exportErr := d.keyBackend.ExportPrivateKey(handle)
+			if exportErr != nil {
+				d.logger.Debug("skipping credential for CDP (export not supported)",
+					slog.String("credId", fmt.Sprintf("%x", sc.CredentialID)))
+				continue
+			}
+			pkcs8Key = exported
+		} else {
+			d.logger.Debug("skipping credential for CDP (no inline key and no key backend)",
 				slog.String("credId", fmt.Sprintf("%x", sc.CredentialID)))
 			continue
 		}
 
-		pkcs8Key, exportErr := d.keyBackend.ExportPrivateKey(handle)
-		if exportErr != nil {
-			d.logger.Debug("skipping credential for CDP (export not supported)",
-				slog.String("credId", fmt.Sprintf("%x", sc.CredentialID)))
-			continue
-		}
-
+		// CDP expects standard base64 (with padding) for the binary credential
+		// fields; encode with the standard alphabet so the round-trip matches
+		// what Chrome accepts on WebAuthn.addCredential.
 		cdpCreds = append(cdpCreds, cdp.StoredCredential{
-			CredentialID:         base64.RawURLEncoding.EncodeToString(sc.CredentialID),
+			CredentialID:         encodeCDPField(sc.CredentialID),
 			IsResidentCredential: sc.Discoverable,
 			RpID:                 sc.RPID,
-			PrivateKey:           base64.RawURLEncoding.EncodeToString(pkcs8Key),
-			UserHandle:           base64.RawURLEncoding.EncodeToString(sc.UserID),
+			PrivateKey:           encodeCDPField(pkcs8Key),
+			UserHandle:           encodeCDPField(sc.UserID),
 			SignCount:            int(sc.SignCount),
 		})
 	}
 
 	if len(cdpCreds) > 0 {
-		if err := d.cdpBridge.SyncCredentials(ctx, cdpCreds); err != nil {
+		if err := syncer.SyncCredentials(ctx, cdpCreds); err != nil {
 			d.logger.Warn("CDP credential sync failed",
 				slog.String("error", err.Error()))
 		}
@@ -1436,7 +1647,7 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 
 	memStorage, err := xkms.NewMemoryBackend()
 	if err != nil {
-		tpm.Close()
+		_ = tpm.Close()
 		return nil, errors.Join(ErrFIDO2TPMBackendCreationFailed, err)
 	}
 	keyBackend := xkms.NewFileBackend(logger, memStorage)
@@ -1447,7 +1658,7 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 		Logger:     logger,
 	})
 	if err != nil {
-		tpm.Close()
+		_ = tpm.Close()
 		return nil, errors.Join(ErrFIDO2TPMBackendCreationFailed, err)
 	}
 

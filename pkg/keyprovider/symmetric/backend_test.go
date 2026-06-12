@@ -60,7 +60,7 @@ func TestGenerateSymmetricKey_AllSizes(t *testing.T) {
 
 			symBackend := b
 
-			key, err := symBackend.GenerateSymmetricKey(attrs)
+			key, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 			}
@@ -110,13 +110,13 @@ func TestGenerateSymmetricKey_AlreadyExists(t *testing.T) {
 	}
 
 	// Generate first key
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("First GenerateSymmetricKey() failed: %v", err)
 	}
 
 	// Attempt to generate again with same attributes
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for duplicate key, got nil")
 	}
@@ -145,13 +145,13 @@ func TestGetSymmetricKey(t *testing.T) {
 	}
 
 	// Generate key
-	originalKey, err := symBackend.GenerateSymmetricKey(attrs)
+	originalKey, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
 	// Retrieve key
-	retrievedKey, err := symBackend.GetSymmetricKey(attrs)
+	retrievedKey, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey() failed: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestGetSymmetricKey_NotFound(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GetSymmetricKey(attrs)
+	_, err = symBackend.GetSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for nonexistent key, got nil")
 	}
@@ -227,13 +227,13 @@ func TestSymmetricEncrypter_EncryptDecrypt(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
 	// Get encrypter
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -297,12 +297,12 @@ func TestSymmetricEncrypter_WithAAD(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -359,12 +359,12 @@ func TestSymmetricEncrypter_CustomNonce(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -420,12 +420,12 @@ func TestSymmetricEncrypter_VariousDataSizes(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -481,7 +481,7 @@ func TestPasswordProtection(t *testing.T) {
 	}
 
 	// Generate password-protected key
-	key, err := symBackend.GenerateSymmetricKey(attrs)
+	key, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() with password failed: %v", err)
 	}
@@ -492,7 +492,7 @@ func TestPasswordProtection(t *testing.T) {
 	}
 
 	// Retrieve with correct password
-	retrievedKey, err := symBackend.GetSymmetricKey(attrs)
+	retrievedKey, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey() with correct password failed: %v", err)
 	}
@@ -509,7 +509,7 @@ func TestPasswordProtection(t *testing.T) {
 	wrongPasswordAttrs := *attrs
 	wrongPasswordAttrs.Password = backend.StaticPassword([]byte("wrong-password"))
 
-	_, err = symBackend.GetSymmetricKey(&wrongPasswordAttrs)
+	_, err = symBackend.GetSymmetricKey(context.Background(), &wrongPasswordAttrs)
 	if err == nil {
 		t.Error("Expected error with wrong password, got nil")
 	}
@@ -539,7 +539,7 @@ func TestPasswordProtection_NoPassword(t *testing.T) {
 	}
 
 	// Generate unprotected key
-	key, err := symBackend.GenerateSymmetricKey(attrs)
+	key, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() without password failed: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestPasswordProtection_NoPassword(t *testing.T) {
 	}
 
 	// Retrieve without password
-	retrievedKey, err := symBackend.GetSymmetricKey(attrs)
+	retrievedKey, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey() without password failed: %v", err)
 	}
@@ -583,12 +583,12 @@ func TestEncryptDecrypt_CorruptedData(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -657,7 +657,7 @@ func TestThreadSafety(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 				}
 
-				_, err := symBackend.GenerateSymmetricKey(attrs)
+				_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 				if err != nil {
 					t.Errorf("Goroutine %d: GenerateSymmetricKey() failed: %v", index, err)
 				}
@@ -675,12 +675,12 @@ func TestThreadSafety(t *testing.T) {
 			SymmetricAlgorithm: types.SymmetricAES256GCM,
 		}
 
-		_, err := symBackend.GenerateSymmetricKey(attrs)
+		_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 		}
 
-		encrypter, err := symBackend.SymmetricEncrypter(attrs)
+		encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("SymmetricEncrypter() failed: %v", err)
 		}
@@ -741,7 +741,7 @@ func TestInvalidAttributes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := symBackend.GenerateSymmetricKey(tt.attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), tt.attrs)
 			if err == nil {
 				t.Error("Expected error for invalid attributes, got nil")
 			}
@@ -773,12 +773,12 @@ func TestClosedBackendSymmetric(t *testing.T) {
 	}
 
 	// Attempt operations on closed backend
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if !errors.Is(err, ErrStorageClosed) {
 		t.Errorf("Expected ErrStorageClosed for GenerateSymmetricKey, got: %v", err)
 	}
 
-	_, err = symBackend.GetSymmetricKey(attrs)
+	_, err = symBackend.GetSymmetricKey(context.Background(), attrs)
 	if !errors.Is(err, ErrStorageClosed) {
 		t.Errorf("Expected ErrStorageClosed for GetSymmetricKey, got: %v", err)
 	}
@@ -803,12 +803,12 @@ func TestSymmetricEncrypter_NilEncryptedData(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -838,12 +838,12 @@ func TestSymmetricEncrypter_InvalidNonceSize(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -881,7 +881,7 @@ func TestPasswordProtection_EmptyPassword(t *testing.T) {
 		Password:           emptyPassword,
 	}
 
-	key, err := symBackend.GenerateSymmetricKey(attrs)
+	key, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() with empty password failed: %v", err)
 	}
@@ -892,7 +892,7 @@ func TestPasswordProtection_EmptyPassword(t *testing.T) {
 	}
 
 	// Retrieve with empty password
-	retrievedKey, err := symBackend.GetSymmetricKey(attrs)
+	retrievedKey, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey() with empty password failed: %v", err)
 	}
@@ -979,25 +979,25 @@ func TestDeleteKey(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
 	// Verify key exists
-	_, err = symBackend.GetSymmetricKey(attrs)
+	_, err = symBackend.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey() failed: %v", err)
 	}
 
 	// Delete key
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("DeleteKey(context.Background(), ) failed: %v", err)
 	}
 
 	// Verify key no longer exists
-	_, err = symBackend.GetSymmetricKey(attrs)
+	_, err = symBackend.GetSymmetricKey(context.Background(), attrs)
 	if !errors.Is(err, backend.ErrKeyNotFound) {
 		t.Errorf("Expected backend.ErrKeyNotFound after deletion, got: %v", err)
 	}
@@ -1020,7 +1020,7 @@ func TestDeleteKey_NotFound(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	if !errors.Is(err, backend.ErrKeyNotFound) {
 		t.Errorf("Expected backend.ErrKeyNotFound for non-existent key, got: %v", err)
 	}
@@ -1039,7 +1039,7 @@ func TestListKeys(t *testing.T) {
 	symBackend := b
 
 	// Initially should be empty
-	keys, err := b.ListKeys()
+	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys(context.Background(), ) failed: %v", err)
 	}
@@ -1056,14 +1056,14 @@ func TestListKeys(t *testing.T) {
 			StoreType:          backend.STORE_SW,
 			SymmetricAlgorithm: types.SymmetricAES256GCM,
 		}
-		_, err := symBackend.GenerateSymmetricKey(attrs)
+		_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateSymmetricKey() failed for %s: %v", name, err)
 		}
 	}
 
 	// List keys
-	keys, err = b.ListKeys()
+	keys, err = b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys(context.Background(), ) failed: %v", err)
 	}
@@ -1089,22 +1089,22 @@ func TestAsymmetricOperationsNotSupported(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = b.GenerateKey(attrs)
+	_, err = b.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("GenerateKey() should return error for software backend")
 	}
 
-	_, err = b.GetKey(attrs)
+	_, err = b.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("GetKey(context.Background(), ) should return error for software backend")
 	}
 
-	_, err = b.Signer(attrs)
+	_, err = b.Signer(context.Background(), attrs)
 	if err == nil {
 		t.Error("Signer() should return error for software backend")
 	}
 
-	_, err = b.Decrypter(attrs)
+	_, err = b.Decrypter(context.Background(), attrs)
 	if err == nil {
 		t.Error("Decrypter() should return error for software backend")
 	}
@@ -1133,19 +1133,19 @@ func TestRotateKey(t *testing.T) {
 	}
 
 	// Generate initial key
-	origKey, err := symBackend.GenerateSymmetricKey(attrs)
+	origKey, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
 	// Rotate key
-	err = b.RotateKey(attrs)
+	err = b.RotateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("RotateKey() failed: %v", err)
 	}
 
 	// Get new key
-	newKey, err := symBackend.GetSymmetricKey(attrs)
+	newKey, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey() after rotation failed: %v", err)
 	}
@@ -1249,7 +1249,7 @@ func TestRotateKey_ErrorOnDeleteFails(t *testing.T) {
 	defer func() { _ = b.Close() }()
 
 	// Test with nil attributes
-	err = b.RotateKey(nil)
+	err = b.RotateKey(context.Background(), nil)
 	if err == nil {
 		t.Error("RotateKey() with nil attributes should error")
 	}
@@ -1274,7 +1274,7 @@ func TestDeleteKey_WithClosedBackend(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	if !errors.Is(err, ErrStorageClosed) {
 		t.Errorf("Expected ErrStorageClosed, got: %v", err)
 	}
@@ -1299,12 +1299,12 @@ func TestSymmetricEncrypter_InvalidEncryptOptions(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -1340,7 +1340,7 @@ func TestGenerateSymmetricKey_AsymmetricAlgorithm(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("GenerateSymmetricKey() with asymmetric algorithm should error")
 	}
@@ -1365,7 +1365,7 @@ func TestGetSymmetricKey_AsymmetricAlgorithm(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	_, err = symBackend.GetSymmetricKey(attrs)
+	_, err = symBackend.GetSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("GetSymmetricKey() with asymmetric algorithm should error")
 	}
@@ -1391,7 +1391,7 @@ func TestSymmetricEncrypter_Errors(t *testing.T) {
 	}
 
 	// Try to get encrypter for non-existent key
-	_, err = symBackend.SymmetricEncrypter(attrs)
+	_, err = symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if !errors.Is(err, backend.ErrKeyNotFound) {
 		t.Errorf("Expected backend.ErrKeyNotFound, got: %v", err)
 	}
@@ -1463,7 +1463,7 @@ func TestStoreSymmetricKey_WithPassword(t *testing.T) {
 	}
 
 	// Generate and store
-	key, err := symBackend.GenerateSymmetricKey(attrs)
+	key, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
@@ -1471,7 +1471,7 @@ func TestStoreSymmetricKey_WithPassword(t *testing.T) {
 	originalRaw, _ := key.Raw()
 
 	// Retrieve with correct password
-	retrieved, err := symBackend.GetSymmetricKey(attrs)
+	retrieved, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey() failed: %v", err)
 	}
@@ -1555,7 +1555,7 @@ func TestListKeys_WithClosedBackend(t *testing.T) {
 
 	_ = b.Close()
 
-	_, err = b.ListKeys()
+	_, err = b.ListKeys(context.Background())
 	if !errors.Is(err, ErrStorageClosed) {
 		t.Errorf("Expected ErrStorageClosed, got: %v", err)
 	}
@@ -1622,7 +1622,7 @@ func TestDeleteKey_StorageError(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when storage DeleteKey fails")
 	}
@@ -1650,7 +1650,7 @@ func TestGenerateSymmetricKey_StorageKeyExistsError(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when KeyExists check fails")
 	}
@@ -1678,7 +1678,7 @@ func TestGenerateSymmetricKey_StorageSaveKeyError(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when SaveKey fails")
 	}
@@ -1706,7 +1706,7 @@ func TestRotateKey_StorageError(t *testing.T) {
 	}
 
 	// Generate initial key
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
@@ -1715,7 +1715,7 @@ func TestRotateKey_StorageError(t *testing.T) {
 	_ = b.Close()
 
 	// Try to rotate - should fail because backend is closed
-	err = b.RotateKey(attrs)
+	err = b.RotateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when rotating key on closed backend")
 	}
@@ -1731,7 +1731,7 @@ func TestListKeys_StorageError(t *testing.T) {
 	}
 	defer func() { _ = b.Close() }()
 
-	_, err = b.ListKeys()
+	_, err = b.ListKeys(context.Background())
 	if err == nil {
 		t.Error("Expected error when ListKeys fails")
 	}
@@ -1759,12 +1759,12 @@ func TestEncrypt_InvalidNonceSize(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -1814,7 +1814,7 @@ func TestExportKey_NotFound(t *testing.T) {
 		Exportable:         true,
 	}
 
-	_, err = symmetricBackend.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = symmetricBackend.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if !errors.Is(err, backend.ErrKeyNotFound) {
 		t.Errorf("Expected backend.ErrKeyNotFound, got: %v", err)
 	}
@@ -1892,7 +1892,7 @@ func TestGetSymmetricKey_StorageError(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GetSymmetricKey(attrs)
+	_, err = symBackend.GetSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when storage GetKey fails")
 	}
@@ -1920,7 +1920,7 @@ func TestStoreSymmetricKey_WithEmptyPassword(t *testing.T) {
 	// Test with empty password (should be treated as no password)
 	emptyPassword := backend.StaticPassword([]byte(""))
 
-	err = symmetricBackend.storeSymmetricKey(keyID, keyData, emptyPassword)
+	err = symmetricBackend.storeSymmetricKey(context.Background(), keyID, keyData, emptyPassword)
 	if err != nil {
 		t.Fatalf("storeSymmetricKey() with empty password failed: %v", err)
 	}
@@ -1982,12 +1982,12 @@ func TestEncrypt_EmptyPlaintext(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -2033,13 +2033,13 @@ func TestExportKey_WithPassword(t *testing.T) {
 	}
 
 	// Generate password-protected key
-	_, err = symmetricBackend.GenerateSymmetricKey(attrs)
+	_, err = symmetricBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
 	// Export the key
-	wrapped, err := symmetricBackend.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	wrapped, err := symmetricBackend.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
 		t.Fatalf("ExportKey() failed: %v", err)
 	}
@@ -2068,12 +2068,12 @@ func TestDecrypt_WithAADMismatch(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -2118,12 +2118,12 @@ func TestEncrypt_LargeData(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -2168,12 +2168,12 @@ func TestEncrypt_DecryptOptions(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -2214,12 +2214,12 @@ func TestEncrypt_MultipleRoundTrips(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -2263,7 +2263,7 @@ func TestExportKey_WithInvalidAttribute(t *testing.T) {
 	}
 
 	// Generate and export key successfully
-	_, err = symmetricBackend.GenerateSymmetricKey(attrs)
+	_, err = symmetricBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
@@ -2279,7 +2279,7 @@ func TestExportKey_WithInvalidAttribute(t *testing.T) {
 			KeySize: 2048,
 		},
 	}
-	_, err = symmetricBackend.ExportKey(invalidAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = symmetricBackend.ExportKey(context.Background(), invalidAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err == nil {
 		t.Error("Expected error when exporting with asymmetric algorithm")
 	}
@@ -2318,12 +2318,12 @@ func TestEncryptSymmetricEncrypter_VariousKeySizes(t *testing.T) {
 				SymmetricAlgorithm: ks.algorithm,
 			}
 
-			_, err = symBackend.GenerateSymmetricKey(attrs)
+			_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 			}
 
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("SymmetricEncrypter() failed: %v", err)
 			}
@@ -2427,13 +2427,13 @@ func TestRotateKey_NonexistentKey(t *testing.T) {
 	}
 
 	// Rotate a non-existent key - should create a new key
-	err = b.RotateKey(attrs)
+	err = b.RotateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("RotateKey() for non-existent key failed: %v", err)
 	}
 
 	// Verify key was created
-	key, err := symBackend.GetSymmetricKey(attrs)
+	key, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey() after rotation failed: %v", err)
 	}
@@ -2466,7 +2466,7 @@ func TestExportKey_WithClosedBackend(t *testing.T) {
 	symmetricBackend := b.(*Backend)
 
 	// Try to export key from closed backend
-	_, err = symmetricBackend.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = symmetricBackend.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if !errors.Is(err, ErrStorageClosed) {
 		t.Errorf("Expected ErrStorageClosed, got: %v", err)
 	}
@@ -2485,7 +2485,7 @@ func TestExportKey_NilAttributes(t *testing.T) {
 	symmetricBackend := b.(*Backend)
 
 	// Try to export with nil attributes
-	_, err = symmetricBackend.ExportKey(nil, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = symmetricBackend.ExportKey(context.Background(), nil, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err == nil {
 		t.Error("Expected error for nil attributes")
 	}
@@ -2556,7 +2556,7 @@ func TestGenerateSymmetricKey_WithInvalidAttributes(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for invalid attributes")
 	}
@@ -2590,7 +2590,7 @@ func TestGenerateSymmetricKey_WithCustomAEADOptions(t *testing.T) {
 		AEADOptions:        aeadOpts,
 	}
 
-	key, err := symBackend.GenerateSymmetricKey(attrs)
+	key, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() with custom AEAD options failed: %v", err)
 	}
@@ -2629,7 +2629,7 @@ func TestGenerateSymmetricKey_ChaCha20Poly1305(t *testing.T) {
 
 			symBackend := b
 
-			key, err := symBackend.GenerateSymmetricKey(attrs)
+			key, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 			}
@@ -2679,13 +2679,13 @@ func TestGetSymmetricKey_ChaCha20Poly1305(t *testing.T) {
 	}
 
 	// Generate key
-	key1, err := symBackend.GenerateSymmetricKey(attrs)
+	key1, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
 	// Get key
-	key2, err := symBackend.GetSymmetricKey(attrs)
+	key2, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey() failed: %v", err)
 	}
@@ -2739,13 +2739,13 @@ func TestSymmetricEncrypter_ChaCha20Poly1305(t *testing.T) {
 			}
 
 			// Generate key
-			_, err = symBackend.GenerateSymmetricKey(attrs)
+			_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 			}
 
 			// Get encrypter
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("SymmetricEncrypter() failed: %v", err)
 			}
@@ -2814,12 +2814,12 @@ func TestSymmetricEncrypter_ChaCha20_TamperingDetection(t *testing.T) {
 	}
 
 	// Generate key and encrypt
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -2865,12 +2865,12 @@ func TestSymmetricEncrypter_ChaCha20_WithAdditionalData(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = symBackend.GenerateSymmetricKey(attrs)
+	_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
@@ -2924,12 +2924,12 @@ func TestXChaCha20Poly1305_InvalidNonceSize(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricXChaCha20Poly1305,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -2965,13 +2965,13 @@ func TestRotateKey_TrackerWarning(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Rotate should succeed even if tracker operations have warnings
-	err = b.RotateKey(attrs)
+	err = b.RotateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("RotateKey failed: %v", err)
 	}
@@ -2994,12 +2994,12 @@ func TestEncryptDecrypt_RecordNonceWarning(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -3060,12 +3060,12 @@ func TestEncrypt_ChaCha20_ErrorPaths(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricChaCha20Poly1305,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -3108,13 +3108,13 @@ func TestPasswordEncryption_ErrorPaths(t *testing.T) {
 	}
 
 	// Generate key with password
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key with password: %v", err)
 	}
 
 	// Retrieve key with correct password
-	_, err = b.GetSymmetricKey(attrs)
+	_, err = b.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get key with correct password: %v", err)
 	}
@@ -3129,7 +3129,7 @@ func TestPasswordEncryption_ErrorPaths(t *testing.T) {
 		Password:           wrongPassword,
 	}
 
-	_, err = b.GetSymmetricKey(wrongAttrs)
+	_, err = b.GetSymmetricKey(context.Background(), wrongAttrs)
 	if err == nil {
 		t.Fatal("Expected error with wrong password")
 	}
@@ -3157,14 +3157,14 @@ func TestExportKey_WithPasswordAndValidation(t *testing.T) {
 	}
 
 	// Generate exportable key with password
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Export the key
 	symmetricBackend := b.(*Backend)
-	wrapped, err := symmetricBackend.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	wrapped, err := symmetricBackend.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
 		t.Fatalf("Failed to export key: %v", err)
 	}
@@ -3209,7 +3209,7 @@ func TestImportExport_MultipleAlgorithms(t *testing.T) {
 			}
 
 			// Get import parameters
-			params, err := symmetricBackend.GetImportParameters(attrs, alg)
+			params, err := symmetricBackend.GetImportParameters(context.Background(), attrs, alg)
 			if err != nil {
 				t.Fatalf("Failed to get import parameters: %v", err)
 			}
@@ -3221,13 +3221,13 @@ func TestImportExport_MultipleAlgorithms(t *testing.T) {
 				t.Fatalf("Failed to generate key material: %v", err)
 			}
 
-			wrapped, err := symmetricBackend.WrapKey(keyMaterial, params)
+			wrapped, err := symmetricBackend.WrapKey(context.Background(), keyMaterial, params)
 			if err != nil {
 				t.Fatalf("Failed to wrap key: %v", err)
 			}
 
 			// Unwrap the key
-			unwrapped, err := symmetricBackend.UnwrapKey(wrapped, params)
+			unwrapped, err := symmetricBackend.UnwrapKey(context.Background(), wrapped, params)
 			if err != nil {
 				t.Fatalf("Failed to unwrap key: %v", err)
 			}
@@ -3238,13 +3238,13 @@ func TestImportExport_MultipleAlgorithms(t *testing.T) {
 			}
 
 			// Import the key
-			err = symmetricBackend.ImportKey(attrs, wrapped)
+			err = symmetricBackend.ImportKey(context.Background(), attrs, wrapped)
 			if err != nil {
 				t.Fatalf("Failed to import key: %v", err)
 			}
 
 			// Verify we can retrieve the imported key
-			_, err = b.GetSymmetricKey(attrs)
+			_, err = b.GetSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get imported key: %v", err)
 			}
@@ -3279,12 +3279,12 @@ func TestEncryptDecrypt_AllCipherModes(t *testing.T) {
 				SymmetricAlgorithm: alg,
 			}
 
-			_, err = b.GenerateSymmetricKey(attrs)
+			_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to generate key: %v", err)
 			}
 
-			encrypter, err := b.SymmetricEncrypter(attrs)
+			encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get encrypter: %v", err)
 			}
@@ -3349,7 +3349,7 @@ func TestRotateKey_GenerateKeyError(t *testing.T) {
 	}
 
 	// Try to rotate a non-existent key (delete will succeed, generate will fail)
-	err = b.RotateKey(attrs)
+	err = b.RotateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when GenerateSymmetricKey fails, got nil")
 	}
@@ -3378,7 +3378,7 @@ func TestGenerateSymmetricKey_ChaCha20KeyCreationError(t *testing.T) {
 	}
 
 	// Normal generation should work
-	key, err := b.GenerateSymmetricKey(attrs)
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
@@ -3406,7 +3406,7 @@ func TestGenerateSymmetricKey_AESKeyCreationError(t *testing.T) {
 	}
 
 	// Normal generation should work
-	key, err := b.GenerateSymmetricKey(attrs)
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
@@ -3433,13 +3433,13 @@ func TestGetSymmetricKey_ChaCha20KeyCreation(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
 	// Retrieve key
-	key, err := b.GetSymmetricKey(attrs)
+	key, err := b.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey failed: %v", err)
 	}
@@ -3470,12 +3470,12 @@ func TestEncrypt_CiphertextTooShort(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter failed: %v", err)
 	}
@@ -3520,7 +3520,7 @@ func TestExportKey_GetImportParametersError(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = symmetricBackend.GenerateSymmetricKey(attrs)
+	_, err = symmetricBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
@@ -3529,7 +3529,7 @@ func TestExportKey_GetImportParametersError(t *testing.T) {
 	_ = symmetricBackend.Close()
 
 	// Try to export - should fail on closed backend
-	_, err = symmetricBackend.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = symmetricBackend.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err == nil {
 		t.Error("Expected error from closed backend, got nil")
 	}
@@ -3559,7 +3559,7 @@ func TestExportKey_StorageGetError(t *testing.T) {
 	}
 
 	// Try to export non-existent key with storage that fails on Get
-	_, err = symmetricBackend.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = symmetricBackend.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err == nil {
 		t.Error("Expected error from storage.Get, got nil")
 	}
@@ -3588,7 +3588,7 @@ func TestImportKey_StorageKeyExistsError(t *testing.T) {
 	}
 
 	// Create wrapped key material
-	params, err := symmetricBackend.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := symmetricBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
 		t.Fatalf("GetImportParameters failed: %v", err)
 	}
@@ -3599,13 +3599,13 @@ func TestImportKey_StorageKeyExistsError(t *testing.T) {
 		t.Fatalf("Failed to generate key material: %v", err)
 	}
 
-	wrapped, err := symmetricBackend.WrapKey(keyMaterial, params)
+	wrapped, err := symmetricBackend.WrapKey(context.Background(), keyMaterial, params)
 	if err != nil {
 		t.Fatalf("WrapKey failed: %v", err)
 	}
 
 	// Try to import with storage that fails on Exists
-	err = symmetricBackend.ImportKey(attrs, wrapped)
+	err = symmetricBackend.ImportKey(context.Background(), attrs, wrapped)
 	if err == nil {
 		t.Error("Expected error from storage.Exists, got nil")
 	}
@@ -3637,7 +3637,7 @@ func TestImportKey_StorageSaveError(t *testing.T) {
 	}
 
 	// Create wrapped key material
-	params, err := symmetricBackend.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := symmetricBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
 		t.Fatalf("GetImportParameters failed: %v", err)
 	}
@@ -3648,7 +3648,7 @@ func TestImportKey_StorageSaveError(t *testing.T) {
 		t.Fatalf("Failed to generate key material: %v", err)
 	}
 
-	wrapped, err := symmetricBackend.WrapKey(keyMaterial, params)
+	wrapped, err := symmetricBackend.WrapKey(context.Background(), keyMaterial, params)
 	if err != nil {
 		t.Fatalf("WrapKey failed: %v", err)
 	}
@@ -3659,7 +3659,7 @@ func TestImportKey_StorageSaveError(t *testing.T) {
 	symmetricBackend.mu.Unlock()
 
 	// Try to import with storage that fails on Put
-	err = symmetricBackend.ImportKey(attrs, wrapped)
+	err = symmetricBackend.ImportKey(context.Background(), attrs, wrapped)
 	if err == nil {
 		t.Error("Expected error from storage.Put, got nil")
 	}
@@ -3725,13 +3725,13 @@ func TestExportKey_WrapKeyError(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = symmetricBackend.GenerateSymmetricKey(attrs)
+	_, err = symmetricBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
 	// Try to export with unsupported algorithm to trigger WrapKey error
-	_, err = symmetricBackend.ExportKey(attrs, "INVALID_WRAP_ALGORITHM")
+	_, err = symmetricBackend.ExportKey(context.Background(), attrs, "INVALID_WRAP_ALGORITHM")
 	if err == nil {
 		t.Error("Expected error from WrapKey with invalid algorithm, got nil")
 	}
@@ -3757,12 +3757,12 @@ func TestDecrypt_ChaCha20CipherError(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricChaCha20Poly1305,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter failed: %v", err)
 	}
@@ -3801,12 +3801,12 @@ func TestDecrypt_AESCipherError(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter failed: %v", err)
 	}
@@ -3845,12 +3845,12 @@ func TestEncrypt_AESCipherError(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter failed: %v", err)
 	}
@@ -3884,12 +3884,12 @@ func TestEncrypt_ChaCha20CipherError(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricXChaCha20Poly1305,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter failed: %v", err)
 	}
@@ -4005,7 +4005,7 @@ func TestGenerateSymmetricKey_WithValidAEADOptions(t *testing.T) {
 		},
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey with valid AEAD options failed: %v", err)
 	}
@@ -4038,12 +4038,12 @@ func TestEncrypt_WithBytesTracking(t *testing.T) {
 		},
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter failed: %v", err)
 	}
@@ -4084,12 +4084,12 @@ func TestEncrypt_NonceReuse(t *testing.T) {
 		},
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter failed: %v", err)
 	}
@@ -4333,7 +4333,7 @@ func TestGenerateSymmetricKey_TrackerResetPath(t *testing.T) {
 		keyID := fmt.Sprintf("test-tracker-reset-%d", i)
 		attrs.CN = keyID
 
-		_, err := b.GenerateSymmetricKey(attrs)
+		_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("Generate %d failed: %v", i, err)
 		}
@@ -4362,12 +4362,12 @@ func TestEncrypt_AESNonceGeneration(t *testing.T) {
 			SymmetricAlgorithm: alg,
 		}
 
-		_, err := b.GenerateSymmetricKey(attrs)
+		_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateSymmetricKey for %s failed: %v", alg, err)
 		}
 
-		encrypter, err := b.SymmetricEncrypter(attrs)
+		encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("SymmetricEncrypter for %s failed: %v", alg, err)
 		}
@@ -4426,12 +4426,12 @@ func TestDecrypt_AllAlgorithms(t *testing.T) {
 			}
 		}
 
-		_, err := b.GenerateSymmetricKey(attrs)
+		_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("%s: GenerateSymmetricKey failed: %v", test.alg, err)
 		}
 
-		encrypter, err := b.SymmetricEncrypter(attrs)
+		encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("%s: SymmetricEncrypter failed: %v", test.alg, err)
 		}
@@ -4550,7 +4550,7 @@ func TestGenerateSymmetricKey_WithNilTracker(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	key, err := b.GenerateSymmetricKey(attrs)
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
@@ -4612,7 +4612,7 @@ func TestListKeys_WithPartitionedKeys(t *testing.T) {
 		Partition:          "test-partition",
 	}
 
-	_, err = b.GenerateSymmetricKey(partitionedAttrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), partitionedAttrs)
 	if err != nil {
 		t.Fatalf("Failed to generate partitioned key: %v", err)
 	}
@@ -4625,13 +4625,13 @@ func TestListKeys_WithPartitionedKeys(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES128GCM,
 	}
 
-	_, err = b.GenerateSymmetricKey(nonPartitionedAttrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), nonPartitionedAttrs)
 	if err != nil {
 		t.Fatalf("Failed to generate non-partitioned key: %v", err)
 	}
 
 	// List keys
-	keys, err := b.ListKeys()
+	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -4699,13 +4699,13 @@ func TestListKeys_WithMalformedKeyIDs(t *testing.T) {
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
-	_, err = b.GenerateSymmetricKey(normalAttrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), normalAttrs)
 	if err != nil {
 		t.Fatalf("Failed to generate normal key: %v", err)
 	}
 
 	// List keys - should handle malformed IDs gracefully
-	keys, err := b.ListKeys()
+	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -4762,7 +4762,7 @@ func TestListKeys_WithMetadataLoading(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 		Exportable:         true,
 	}
-	_, err = b.GenerateSymmetricKey(exportableAttrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), exportableAttrs)
 	if err != nil {
 		t.Fatalf("Failed to generate exportable key: %v", err)
 	}
@@ -4775,13 +4775,13 @@ func TestListKeys_WithMetadataLoading(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES128GCM,
 		Exportable:         false,
 	}
-	_, err = b.GenerateSymmetricKey(nonExportableAttrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), nonExportableAttrs)
 	if err != nil {
 		t.Fatalf("Failed to generate non-exportable key: %v", err)
 	}
 
 	// List keys and verify exportable flags
-	keys, err := b.ListKeys()
+	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -4817,7 +4817,7 @@ func TestListKeys_WithInvalidMetadata(t *testing.T) {
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
@@ -4831,7 +4831,7 @@ func TestListKeys_WithInvalidMetadata(t *testing.T) {
 	}
 
 	// List keys - should handle invalid metadata gracefully
-	keys, err := b.ListKeys()
+	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -4864,7 +4864,7 @@ func TestGenerateSymmetricKey_WithNilPassword(t *testing.T) {
 		Password:           nil, // Explicitly nil
 	}
 
-	key, err := b.GenerateSymmetricKey(attrs)
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
@@ -4874,7 +4874,7 @@ func TestGenerateSymmetricKey_WithNilPassword(t *testing.T) {
 	}
 
 	// Verify key can be retrieved without password
-	retrievedKey, err := b.GetSymmetricKey(attrs)
+	retrievedKey, err := b.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey failed: %v", err)
 	}
@@ -4904,12 +4904,12 @@ func TestEncrypt_WithNilOptions(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -4954,12 +4954,12 @@ func TestDecrypt_WithNilOptions(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -5003,7 +5003,7 @@ func TestStoreSymmetricKey_WithEmptyPasswordBytes(t *testing.T) {
 
 	// Should store without encryption (treats empty as no password)
 	keyID := "test:key:id"
-	err = backend.storeSymmetricKey(keyID, keyData, emptyPassword)
+	err = backend.storeSymmetricKey(context.Background(), keyID, keyData, emptyPassword)
 	if err != nil {
 		t.Fatalf("storeSymmetricKey failed: %v", err)
 	}
@@ -5088,7 +5088,7 @@ func TestDeleteKey_InvalidAttributes(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("expected error for DeleteKey with invalid attributes")
 	}
@@ -5119,7 +5119,7 @@ func TestExportKey_InvalidAttributesValidation(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symmetricBackend.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = symmetricBackend.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err == nil {
 		t.Fatal("expected error for ExportKey with invalid attributes")
 	}
@@ -5148,7 +5148,7 @@ func TestImportKey_EmptyCNValidation(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	err = symmetricBackend.ImportKey(attrs, &backend.WrappedKeyMaterial{
+	err = symmetricBackend.ImportKey(context.Background(), attrs, &backend.WrappedKeyMaterial{
 		WrappedKey:  []byte("wrapped"),
 		Algorithm:   backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 		ImportToken: []byte("token-id"),
@@ -5186,7 +5186,7 @@ func TestExportKey_WrongPassword(t *testing.T) {
 		Exportable:         true,
 	}
 
-	_, err = symmetricBackend.GenerateSymmetricKey(attrs)
+	_, err = symmetricBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
@@ -5195,7 +5195,7 @@ func TestExportKey_WrongPassword(t *testing.T) {
 	wrongPwAttrs := *attrs
 	wrongPwAttrs.Password = backend.StaticPassword([]byte("wrong-password"))
 
-	_, err = symmetricBackend.ExportKey(&wrongPwAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = symmetricBackend.ExportKey(context.Background(), &wrongPwAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err == nil {
 		t.Fatal("expected error for ExportKey with wrong password")
 	}
@@ -5223,7 +5223,7 @@ func TestGenerateSymmetricKey_NonSymmetricEd25519(t *testing.T) {
 		KeyAlgorithm: x509.Ed25519,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("expected error for GenerateSymmetricKey with Ed25519 attributes")
 	}

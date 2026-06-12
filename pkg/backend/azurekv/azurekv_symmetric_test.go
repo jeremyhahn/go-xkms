@@ -16,6 +16,7 @@
 package azurekv
 
 import (
+	"context"
 	"crypto/x509"
 	"testing"
 
@@ -95,7 +96,7 @@ func TestGenerateSymmetricKey(t *testing.T) {
 			}
 
 			// Generate symmetric key
-			key, err := b.GenerateSymmetricKey(attrs)
+			key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 
 			if tt.wantErr {
 				if err == nil {
@@ -144,13 +145,13 @@ func TestGenerateSymmetricKeyIdempotent(t *testing.T) {
 	}
 
 	// Generate first time
-	key1, err := b.GenerateSymmetricKey(attrs)
+	key1, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate symmetric key: %v", err)
 	}
 
 	// Generate second time with same attributes
-	key2, err := b.GenerateSymmetricKey(attrs)
+	key2, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate symmetric key on second attempt: %v", err)
 	}
@@ -179,13 +180,13 @@ func TestGetSymmetricKey(t *testing.T) {
 	}
 
 	// Generate key first
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate symmetric key: %v", err)
 	}
 
 	// Retrieve the key
-	key, err := b.GetSymmetricKey(attrs)
+	key, err := b.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get symmetric key: %v", err)
 	}
@@ -216,7 +217,7 @@ func TestGetSymmetricKeyNotFound(t *testing.T) {
 	}
 
 	// Try to get a key that doesn't exist
-	_, err := b.GetSymmetricKey(attrs)
+	_, err := b.GetSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for non-existent key, got nil")
 	}
@@ -236,13 +237,13 @@ func TestSymmetricEncryptDecrypt(t *testing.T) {
 	}
 
 	// Generate symmetric key
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate symmetric key: %v", err)
 	}
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get symmetric encrypter: %v", err)
 	}
@@ -301,13 +302,13 @@ func TestSymmetricEncryptDecryptWithAAD(t *testing.T) {
 	}
 
 	// Generate symmetric key
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate symmetric key: %v", err)
 	}
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get symmetric encrypter: %v", err)
 	}
@@ -359,13 +360,13 @@ func TestSymmetricEncryptEmptyData(t *testing.T) {
 	}
 
 	// Generate symmetric key
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate symmetric key: %v", err)
 	}
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get symmetric encrypter: %v", err)
 	}
@@ -402,13 +403,13 @@ func TestSymmetricEncryptLargeData(t *testing.T) {
 	}
 
 	// Generate symmetric key
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate symmetric key: %v", err)
 	}
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get symmetric encrypter: %v", err)
 	}
@@ -479,7 +480,7 @@ func TestSymmetricInvalidAttributes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := b.GenerateSymmetricKey(tt.attrs)
+			_, err := b.GenerateSymmetricKey(context.Background(), tt.attrs)
 			if err == nil {
 				t.Error("Expected error for invalid attributes, got nil")
 			}
@@ -521,13 +522,13 @@ func TestAzureKVBackend_NonceReuse(t *testing.T) {
 		},
 	}
 
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -579,13 +580,13 @@ func TestAzureKVBackend_BytesLimit(t *testing.T) {
 		},
 	}
 
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}

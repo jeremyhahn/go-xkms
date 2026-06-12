@@ -170,19 +170,19 @@ func (b *Backend) Capabilities() types.Capabilities {
 
 // GenerateKey is not supported by the symmetric backend (symmetric only).
 // Use GenerateSymmetricKey instead.
-func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, fmt.Errorf("%w: use GenerateSymmetricKey instead", backend.ErrOperationNotSupported)
 }
 
 // GetKey is not supported by the symmetric backend (symmetric only).
 // Use GetSymmetricKey instead.
-func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, fmt.Errorf("%w: use GetSymmetricKey instead", backend.ErrOperationNotSupported)
 }
 
 // DeleteKey removes a symmetric key identified by its attributes.
 // Returns an error if the key does not exist.
-func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -195,7 +195,7 @@ func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
 	}
 
 	keyID := attrs.ID()
-	if err := storage.DeleteKey(context.Background(), b.storage, keyID); err != nil {
+	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
 		if err == storage.ErrNotFound {
 			return backend.ErrKeyNotFound
 		}
@@ -207,7 +207,7 @@ func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
 
 // ListKeys returns attributes for all keys managed by this backend.
 // Returns an empty slice if no keys exist.
-func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -215,7 +215,7 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 		return nil, ErrStorageClosed
 	}
 
-	keyIDs, err := storage.ListKeys(context.Background(), b.storage)
+	keyIDs, err := storage.ListKeys(ctx, b.storage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
@@ -275,7 +275,7 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 
 		// Load metadata to get exportable flag
 		metaKey := "meta/" + id
-		if metaData, err := b.storage.Get(context.Background(), metaKey); err == nil {
+		if metaData, err := b.storage.Get(ctx, metaKey); err == nil {
 			var metadata map[string]interface{}
 			if json.Unmarshal(metaData, &metadata) == nil {
 				if exportable, ok := metadata["exportable"].(bool); ok {
@@ -291,12 +291,12 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 }
 
 // Signer is not supported by the symmetric backend (symmetric only).
-func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	return nil, backend.ErrOperationNotSupported
 }
 
 // Decrypter is not supported by the symmetric backend (symmetric only).
-func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, backend.ErrOperationNotSupported
 }
 
@@ -306,7 +306,7 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 // AEAD Safety Tracking:
 //   - Tracking state is reset (nonce history cleared, byte counters reset)
 //   - New key starts with fresh tracking state
-func (b *Backend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil {
 		return fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
 	}
@@ -322,12 +322,12 @@ func (b *Backend) RotateKey(attrs *types.KeyAttributes) error {
 	}
 
 	// Delete the old key
-	if err := b.DeleteKey(attrs); err != nil && err != backend.ErrKeyNotFound {
+	if err := b.DeleteKey(ctx, attrs); err != nil && err != backend.ErrKeyNotFound {
 		return fmt.Errorf("failed to delete old key: %w", err)
 	}
 
 	// Generate a new key with the same attributes (tracking will be re-initialized)
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(ctx, attrs)
 	if err != nil {
 		return fmt.Errorf("failed to generate new key: %w", err)
 	}
@@ -371,7 +371,7 @@ func (b *Backend) Close() error {
 //   - ChaCha20-Poly1305, XChaCha20-Poly1305 (key size: 256 bits)
 //
 // Storage format: See design doc Appendix B for password-encrypted format
-func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -389,7 +389,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 
 	// Check if key already exists
 	keyID := attrs.ID()
-	exists, err := storage.KeyExists(context.Background(), b.storage, keyID)
+	exists, err := storage.KeyExists(ctx, b.storage, keyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check key existence: %w", err)
 	}
@@ -436,7 +436,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	}
 
 	// Encode and store the key
-	if err := b.storeSymmetricKey(keyID, keyData, attrs.Password); err != nil {
+	if err := b.storeSymmetricKey(ctx, keyID, keyData, attrs.Password); err != nil {
 		return nil, err
 	}
 
@@ -453,7 +453,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 	metaKey := "meta/" + keyID
-	if err := b.storage.Put(context.Background(), metaKey, metadataBytes); err != nil {
+	if err := b.storage.Put(ctx, metaKey, metadataBytes); err != nil {
 		return nil, fmt.Errorf("failed to store metadata: %w", err)
 	}
 
@@ -462,7 +462,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 
 // GetSymmetricKey retrieves an existing symmetric key by its attributes.
 // Returns an error if the key does not exist.
-func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -479,7 +479,7 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 	}
 
 	keyID := attrs.ID()
-	keyData, err := storage.GetKey(context.Background(), b.storage, keyID)
+	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
 		if err == storage.ErrNotFound {
 			return nil, backend.ErrKeyNotFound
@@ -504,8 +504,8 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 
 // SymmetricEncrypter returns a SymmetricEncrypter for the specified key.
 // This allows the key to be used for encryption/decryption operations with AEAD safety tracking.
-func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
-	key, err := b.GetSymmetricKey(attrs)
+func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+	key, err := b.GetSymmetricKey(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -743,7 +743,7 @@ func (e *softwareSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *ty
 // storeSymmetricKey stores a symmetric key, optionally encrypted with a password.
 // Uses Argon2id for password-based key derivation with parameters:
 // - time=1, memory=64MB, threads=4, keyLen=32
-func (b *Backend) storeSymmetricKey(keyID string, keyData []byte, password types.Password) error {
+func (b *Backend) storeSymmetricKey(ctx context.Context, keyID string, keyData []byte, password types.Password) error {
 	var storedData []byte
 
 	if password != nil {
@@ -762,7 +762,7 @@ func (b *Backend) storeSymmetricKey(keyID string, keyData []byte, password types
 		storedData = keyData
 	}
 
-	if err := storage.SaveKey(context.Background(), b.storage, keyID, storedData); err != nil {
+	if err := storage.SaveKey(ctx, b.storage, keyID, storedData); err != nil {
 		return fmt.Errorf("failed to save key: %w", err)
 	}
 
@@ -877,7 +877,7 @@ func decryptWithPassword(encryptedData, password []byte) ([]byte, error) {
 // GetImportParameters generates RSA wrapping key pair for importing symmetric keys.
 // The private key is stored in memory with a UUID token, and the public key
 // is returned for use in wrapping operations.
-func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -939,7 +939,7 @@ func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm back
 
 // WrapKey wraps symmetric key material for secure transport using the specified parameters.
 // Uses pkg/crypto/wrapping to wrap the key material.
-func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if len(keyMaterial) == 0 {
 		return nil, fmt.Errorf("%w: key material cannot be nil or empty", backend.ErrInvalidAttributes)
 	}
@@ -993,7 +993,7 @@ func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) 
 
 // UnwrapKey unwraps key material using the stored RSA private key.
 // The import token is used to retrieve the corresponding private key.
-func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if wrapped == nil {
 		return nil, fmt.Errorf("%w: wrapped key material cannot be nil", backend.ErrInvalidAttributes)
 	}
@@ -1051,7 +1051,7 @@ func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend
 
 // ImportKey unwraps and imports symmetric key material into the backend.
 // The key material is validated and stored using the backend's storage mechanism.
-func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -1073,7 +1073,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 
 	// Check if key already exists
 	keyID := attrs.ID()
-	exists, err := storage.KeyExists(context.Background(), b.storage, keyID)
+	exists, err := storage.KeyExists(ctx, b.storage, keyID)
 	if err != nil {
 		return fmt.Errorf("failed to check key existence: %w", err)
 	}
@@ -1089,7 +1089,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 	}
 
 	// Unwrap the key material
-	keyData, err := b.UnwrapKey(wrapped, params)
+	keyData, err := b.UnwrapKey(ctx, wrapped, params)
 	if err != nil {
 		return fmt.Errorf("failed to unwrap key material: %w", err)
 	}
@@ -1102,7 +1102,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 	}
 
 	// Store the key using the existing storage mechanism
-	if err := b.storeSymmetricKey(keyID, keyData, attrs.Password); err != nil {
+	if err := b.storeSymmetricKey(ctx, keyID, keyData, attrs.Password); err != nil {
 		return fmt.Errorf("failed to store imported key: %w", err)
 	}
 
@@ -1119,7 +1119,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 
 // ExportKey exports a symmetric key in wrapped form for secure transport.
 // The key is retrieved and wrapped using the specified algorithm.
-func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -1151,7 +1151,7 @@ func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wrappi
 
 	// Retrieve the key
 	keyID := attrs.ID()
-	keyData, err := storage.GetKey(context.Background(), b.storage, keyID)
+	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
 		if err == storage.ErrNotFound {
 			return nil, backend.ErrKeyNotFound
@@ -1166,13 +1166,13 @@ func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wrappi
 	}
 
 	// Generate import parameters for wrapping
-	params, err := b.GetImportParameters(attrs, algorithm)
+	params, err := b.GetImportParameters(ctx, attrs, algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate import parameters: %w", err)
 	}
 
 	// Wrap the key material
-	wrapped, err := b.WrapKey(rawKey, params)
+	wrapped, err := b.WrapKey(ctx, rawKey, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wrap key material: %w", err)
 	}
@@ -1189,7 +1189,7 @@ func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wrappi
 //   - Returns ErrKeyNotExportable if the key is not marked as exportable
 //
 // For secure key transport between backends, prefer ExportKey which wraps the material.
-func (b *Backend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -1217,7 +1217,7 @@ func (b *Backend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) 
 
 	// Retrieve the key
 	keyID := attrs.ID()
-	keyData, err := storage.GetKey(context.Background(), b.storage, keyID)
+	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
 		if err == storage.ErrNotFound {
 			return nil, backend.ErrKeyNotFound

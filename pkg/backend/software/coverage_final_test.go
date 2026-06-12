@@ -34,7 +34,7 @@ func TestListKeys_WhenClosed(t *testing.T) {
 	err := be.Close()
 	require.NoError(t, err)
 
-	_, err = be.ListKeys()
+	_, err = be.ListKeys(context.Background())
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrStorageClosed))
 }
@@ -53,7 +53,7 @@ func TestExportKey_WhenClosed(t *testing.T) {
 		Exportable: true,
 	}
 
-	_, err = sb.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = sb.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrStorageClosed))
 }
@@ -97,7 +97,7 @@ func TestValidateKeyType_PublicKeyError(t *testing.T) {
 	sb := be.(*SoftwareBackend)
 
 	rsaAttrs := createRSAAttrs("validate-key-type", 2048)
-	key, err := sb.GenerateKey(rsaAttrs)
+	key, err := sb.GenerateKey(context.Background(), rsaAttrs)
 	require.NoError(t, err)
 
 	// Get the public key from the private key

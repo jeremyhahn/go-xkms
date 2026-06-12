@@ -202,8 +202,8 @@ func EncodeCOSEPublicKey(pub crypto.PublicKey, algorithm int) ([]byte, error) {
 
 // encodeEC2Key creates a COSE EC2 key map with proper coordinate padding.
 func encodeEC2Key(key *ecdsa.PublicKey, algorithm, curve, coordSize int) map[int]interface{} {
-	xBytes := padCoordinate(key.X.Bytes(), coordSize)
-	yBytes := padCoordinate(key.Y.Bytes(), coordSize)
+	xBytes := padCoordinate(key.X.Bytes(), coordSize) //nolint:staticcheck // CTAP2/COSE wire format requires raw EC coordinates via crypto/elliptic; crypto/ecdh migration is a separate, behavior-sensitive change.
+	yBytes := padCoordinate(key.Y.Bytes(), coordSize) //nolint:staticcheck // CTAP2/COSE wire format requires raw EC coordinates via crypto/elliptic; crypto/ecdh migration is a separate, behavior-sensitive change.
 
 	return map[int]interface{}{
 		coseKeyLabelKty: COSEKeyTypeEC2,
@@ -314,7 +314,7 @@ func decodeEC2Key(coseKey map[int]interface{}, alg int) (crypto.PublicKey, int, 
 		Y:     y,
 	}
 
-	if !curve.IsOnCurve(x, y) {
+	if !curve.IsOnCurve(x, y) { //nolint:staticcheck // on-curve validation of decoded COSE EC point; crypto/ecdh migration is a separate, behavior-sensitive change.
 		return nil, 0, ErrInvalidPublicKey
 	}
 

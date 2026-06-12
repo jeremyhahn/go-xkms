@@ -310,7 +310,7 @@ func TestPKCS11Integration(t *testing.T) {
 	t.Run("GetKey", func(t *testing.T) {
 		t.Run("RetrieveExistingRSAKey", func(t *testing.T) {
 			keyID := "test-rsa-2048"
-			retrievedKey, err := ks.GetKey(&types.KeyAttributes{
+			retrievedKey, err := ks.GetKey(context.Background(), &types.KeyAttributes{
 				CN:           keyID,
 				KeyAlgorithm: x509.RSA,
 			})
@@ -332,7 +332,7 @@ func TestPKCS11Integration(t *testing.T) {
 
 		t.Run("RetrieveExistingECDSAKey", func(t *testing.T) {
 			keyID := "test-ecdsa-p256"
-			retrievedKey, err := ks.GetKey(&types.KeyAttributes{
+			retrievedKey, err := ks.GetKey(context.Background(), &types.KeyAttributes{
 				CN:           keyID,
 				KeyAlgorithm: x509.ECDSA,
 			})
@@ -353,7 +353,7 @@ func TestPKCS11Integration(t *testing.T) {
 		})
 
 		t.Run("NonExistentKey", func(t *testing.T) {
-			_, err := ks.GetKey(&types.KeyAttributes{
+			_, err := ks.GetKey(context.Background(), &types.KeyAttributes{
 				CN:           "non-existent-key",
 				KeyAlgorithm: x509.RSA,
 			})
@@ -389,7 +389,7 @@ func TestPKCS11Integration(t *testing.T) {
 			// Note: Current PKCS11 backend implementation does not fully support
 			// key deletion (it only validates the key exists but doesn't destroy it).
 			// This is documented in the backend comments.
-			err = ks.DeleteKey(&types.KeyAttributes{
+			err = ks.DeleteKey(context.Background(), &types.KeyAttributes{
 				CN:           "test-delete-key",
 				KeyAlgorithm: x509.RSA,
 			})
@@ -399,7 +399,7 @@ func TestPKCS11Integration(t *testing.T) {
 			t.Log("✓ Delete operation completed (note: full deletion not yet implemented)")
 
 			// Verify key still exists (expected behavior with current implementation)
-			_, err = ks.GetKey(&types.KeyAttributes{
+			_, err = ks.GetKey(context.Background(), &types.KeyAttributes{
 				CN:           "test-delete-key",
 				KeyAlgorithm: x509.RSA,
 			})
@@ -411,7 +411,7 @@ func TestPKCS11Integration(t *testing.T) {
 		})
 
 		t.Run("DeleteNonExistentKey", func(t *testing.T) {
-			err := ks.DeleteKey(&types.KeyAttributes{
+			err := ks.DeleteKey(context.Background(), &types.KeyAttributes{
 				CN:           "non-existent-key",
 				KeyAlgorithm: x509.RSA,
 			})
@@ -522,7 +522,7 @@ func TestPKCS11Integration(t *testing.T) {
 		message := []byte("Test message for signing")
 
 		t.Run("RSA-SHA256", func(t *testing.T) {
-			key, err := ks.GetKey(&types.KeyAttributes{
+			key, err := ks.GetKey(context.Background(), &types.KeyAttributes{
 				CN:           "test-rsa-2048",
 				KeyAlgorithm: x509.RSA,
 			})
@@ -556,7 +556,7 @@ func TestPKCS11Integration(t *testing.T) {
 		})
 
 		t.Run("RSA-SHA384", func(t *testing.T) {
-			key, err := ks.GetKey(&types.KeyAttributes{
+			key, err := ks.GetKey(context.Background(), &types.KeyAttributes{
 				CN:           "test-rsa-2048",
 				KeyAlgorithm: x509.RSA,
 			})
@@ -590,7 +590,7 @@ func TestPKCS11Integration(t *testing.T) {
 		})
 
 		t.Run("RSA-SHA512", func(t *testing.T) {
-			key, err := ks.GetKey(&types.KeyAttributes{
+			key, err := ks.GetKey(context.Background(), &types.KeyAttributes{
 				CN:           "test-rsa-2048",
 				KeyAlgorithm: x509.RSA,
 			})
@@ -624,7 +624,7 @@ func TestPKCS11Integration(t *testing.T) {
 		})
 
 		t.Run("ECDSA-SHA256", func(t *testing.T) {
-			key, err := ks.GetKey(&types.KeyAttributes{
+			key, err := ks.GetKey(context.Background(), &types.KeyAttributes{
 				CN:           "test-ecdsa-p256",
 				KeyAlgorithm: x509.ECDSA,
 			})
@@ -659,7 +659,7 @@ func TestPKCS11Integration(t *testing.T) {
 
 		// RSA-PSS signature tests
 		t.Run("RSA-PSS-SHA256", func(t *testing.T) {
-			key, err := ks.GetKey(&types.KeyAttributes{
+			key, err := ks.GetKey(context.Background(), &types.KeyAttributes{
 				CN:           "test-rsa-2048",
 				KeyAlgorithm: x509.RSA,
 			})
@@ -702,7 +702,7 @@ func TestPKCS11Integration(t *testing.T) {
 		})
 
 		t.Run("RSA-PSS-SHA384", func(t *testing.T) {
-			key, err := ks.GetKey(&types.KeyAttributes{
+			key, err := ks.GetKey(context.Background(), &types.KeyAttributes{
 				CN:           "test-rsa-2048",
 				KeyAlgorithm: x509.RSA,
 			})
@@ -744,7 +744,7 @@ func TestPKCS11Integration(t *testing.T) {
 		})
 
 		t.Run("RSA-PSS-SHA512", func(t *testing.T) {
-			key, err := ks.GetKey(&types.KeyAttributes{
+			key, err := ks.GetKey(context.Background(), &types.KeyAttributes{
 				CN:           "test-rsa-2048",
 				KeyAlgorithm: x509.RSA,
 			})
@@ -807,7 +807,7 @@ func TestPKCS11Integration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to generate RSA key: %v", err)
 			}
-			defer ks.DeleteKey(attrs)
+			defer ks.DeleteKey(context.Background(), attrs)
 
 			// Get signer and public key
 			signer, ok := key.(crypto.Signer)
@@ -829,7 +829,7 @@ func TestPKCS11Integration(t *testing.T) {
 			t.Logf("✓ Encrypted %d bytes with PKCS#1 v1.5 (ciphertext: %d bytes)", len(plaintext), len(ciphertext))
 
 			// Get Decrypter
-			decrypter, err := ks.Decrypter(attrs)
+			decrypter, err := ks.Decrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get Decrypter: %v", err)
 			}
@@ -873,7 +873,7 @@ func TestPKCS11Integration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to generate RSA key: %v", err)
 			}
-			defer ks.DeleteKey(attrs)
+			defer ks.DeleteKey(context.Background(), attrs)
 
 			// Get signer and public key
 			signer, ok := key.(crypto.Signer)
@@ -896,7 +896,7 @@ func TestPKCS11Integration(t *testing.T) {
 			t.Logf("✓ Encrypted %d bytes with OAEP SHA256 (ciphertext: %d bytes)", len(plaintext), len(ciphertext))
 
 			// Get Decrypter
-			decrypter, err := ks.Decrypter(attrs)
+			decrypter, err := ks.Decrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get Decrypter: %v", err)
 			}
@@ -950,7 +950,7 @@ func TestPKCS11Integration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to generate RSA key: %v", err)
 			}
-			defer ks.DeleteKey(attrs)
+			defer ks.DeleteKey(context.Background(), attrs)
 
 			// Get signer and public key
 			signer, ok := key.(crypto.Signer)
@@ -979,7 +979,7 @@ func TestPKCS11Integration(t *testing.T) {
 			t.Logf("✓ Encrypted %d bytes with RSA-3072 OAEP SHA256 (ciphertext: %d bytes)", len(plaintext), len(ciphertext))
 
 			// Get Decrypter
-			decrypter, err := ks.Decrypter(attrs)
+			decrypter, err := ks.Decrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get Decrypter: %v", err)
 			}
@@ -1032,7 +1032,7 @@ func TestPKCS11Integration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to generate RSA key: %v", err)
 			}
-			defer ks.DeleteKey(attrs)
+			defer ks.DeleteKey(context.Background(), attrs)
 
 			// Get signer and public key
 			signer, ok := key.(crypto.Signer)
@@ -1061,7 +1061,7 @@ func TestPKCS11Integration(t *testing.T) {
 			t.Logf("✓ Encrypted %d bytes with RSA-4096 OAEP SHA512 (ciphertext: %d bytes)", len(plaintext), len(ciphertext))
 
 			// Get Decrypter
-			decrypter, err := ks.Decrypter(attrs)
+			decrypter, err := ks.Decrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get Decrypter: %v", err)
 			}
@@ -1115,7 +1115,7 @@ func TestPKCS11Integration(t *testing.T) {
 				}
 
 				// Get import parameters for RSA-OAEP wrapping
-				params, err := ks.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+				params, err := ks.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 				if err != nil {
 					t.Fatalf("GetImportParameters should succeed: %v", err)
 				}
@@ -1155,7 +1155,7 @@ func TestPKCS11Integration(t *testing.T) {
 				}
 
 				// Get import parameters for hybrid wrapping
-				params, err := ks.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+				params, err := ks.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 				if err != nil {
 					t.Fatalf("GetImportParameters should succeed: %v", err)
 				}
@@ -1180,7 +1180,7 @@ func TestPKCS11Integration(t *testing.T) {
 				}
 
 				// Try unsupported algorithm
-				_, err := ks.GetImportParameters(attrs, backend.WrappingAlgorithm("INVALID"))
+				_, err := ks.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithm("INVALID"))
 				if err == nil {
 					t.Fatal("GetImportParameters should fail for unsupported algorithm")
 				}
@@ -1201,7 +1201,7 @@ func TestPKCS11Integration(t *testing.T) {
 				}
 
 				// Get import parameters
-				params, err := ks.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+				params, err := ks.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 				if err != nil {
 					t.Fatalf("GetImportParameters should succeed: %v", err)
 				}
@@ -1213,7 +1213,7 @@ func TestPKCS11Integration(t *testing.T) {
 					t.Fatalf("Should generate random key material: %v", err)
 				}
 
-				wrapped, err := ks.WrapKey(keyMaterial, params)
+				wrapped, err := ks.WrapKey(context.Background(), keyMaterial, params)
 				if err != nil {
 					t.Fatalf("WrapKey should succeed: %v", err)
 				}
@@ -1243,7 +1243,7 @@ func TestPKCS11Integration(t *testing.T) {
 				}
 
 				// Get import parameters for hybrid wrapping
-				params, err := ks.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+				params, err := ks.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 				if err != nil {
 					t.Fatalf("GetImportParameters should succeed: %v", err)
 				}
@@ -1255,7 +1255,7 @@ func TestPKCS11Integration(t *testing.T) {
 					t.Fatalf("Should generate random key material: %v", err)
 				}
 
-				wrapped, err := ks.WrapKey(keyMaterial, params)
+				wrapped, err := ks.WrapKey(context.Background(), keyMaterial, params)
 				if err != nil {
 					t.Fatalf("WrapKey should succeed: %v", err)
 				}
@@ -1284,20 +1284,20 @@ func TestPKCS11Integration(t *testing.T) {
 					},
 				}
 
-				params, err := ks.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+				params, err := ks.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 				if err != nil {
 					t.Fatalf("GetImportParameters should succeed: %v", err)
 				}
 
 				// Test nil key material
-				_, err = ks.WrapKey(nil, params)
+				_, err = ks.WrapKey(context.Background(), nil, params)
 				if err == nil {
 					t.Error("WrapKey should fail with nil key material")
 				}
 				t.Logf("✓ WrapKey correctly rejects nil key material: %v", err)
 
 				// Test empty key material
-				_, err = ks.WrapKey([]byte{}, params)
+				_, err = ks.WrapKey(context.Background(), []byte{}, params)
 				if err == nil {
 					t.Error("WrapKey should fail with empty key material")
 				}
@@ -1305,7 +1305,7 @@ func TestPKCS11Integration(t *testing.T) {
 
 				// Test nil parameters
 				keyMaterial := make([]byte, 32)
-				_, err = ks.WrapKey(keyMaterial, nil)
+				_, err = ks.WrapKey(context.Background(), keyMaterial, nil)
 				if err == nil {
 					t.Error("WrapKey should fail with nil parameters")
 				}
@@ -1334,14 +1334,14 @@ func TestPKCS11Integration(t *testing.T) {
 				}
 
 				// Get import parameters using hybrid wrapping
-				params, err := ks.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+				params, err := ks.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 				if err != nil {
 					t.Fatalf("GetImportParameters failed: %v", err)
 				}
 				t.Log("✓ Retrieved import parameters from HSM")
 
 				// Wrap the key material - this should work
-				wrapped, err := ks.WrapKey(keyMaterial, params)
+				wrapped, err := ks.WrapKey(context.Background(), keyMaterial, params)
 				if err != nil {
 					t.Fatalf("WrapKey failed: %v", err)
 				}
@@ -1357,7 +1357,7 @@ func TestPKCS11Integration(t *testing.T) {
 				t.Log("✓ Wrapped key structure is valid")
 
 				// Attempt import - expected to fail with SoftHSM due to unwrapping incompatibility
-				err = ks.ImportKey(attrs, wrapped)
+				err = ks.ImportKey(context.Background(), attrs, wrapped)
 				if err != nil {
 					// Expected: SoftHSM hybrid unwrapping fails
 					t.Logf("✓ Confirmed SoftHSM hybrid unwrapping limitation: %v", err)
@@ -1365,10 +1365,10 @@ func TestPKCS11Integration(t *testing.T) {
 				} else {
 					// Import succeeded - this would happen with hardware HSMs
 					t.Log("✓ Imported AES-128 key into HSM (hardware HSM detected)")
-					defer ks.DeleteKey(attrs)
+					defer ks.DeleteKey(context.Background(), attrs)
 
 					// Verify the imported key works
-					encrypter, err := ks.SymmetricEncrypter(attrs)
+					encrypter, err := ks.SymmetricEncrypter(context.Background(), attrs)
 					if err != nil {
 						t.Fatalf("Failed to get encrypter for imported key: %v", err)
 					}
@@ -1408,14 +1408,14 @@ func TestPKCS11Integration(t *testing.T) {
 				}
 
 				// Get import parameters
-				params, err := ks.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+				params, err := ks.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 				if err != nil {
 					t.Fatalf("GetImportParameters failed: %v", err)
 				}
 				t.Log("✓ Retrieved import parameters from HSM")
 
 				// Wrap the key material - this should work
-				wrapped, err := ks.WrapKey(keyMaterial, params)
+				wrapped, err := ks.WrapKey(context.Background(), keyMaterial, params)
 				if err != nil {
 					t.Fatalf("WrapKey failed: %v", err)
 				}
@@ -1428,7 +1428,7 @@ func TestPKCS11Integration(t *testing.T) {
 				t.Log("✓ Wrapped key structure is valid")
 
 				// Attempt import - expected to fail with SoftHSM
-				err = ks.ImportKey(attrs, wrapped)
+				err = ks.ImportKey(context.Background(), attrs, wrapped)
 				if err != nil {
 					// Expected: SoftHSM hybrid unwrapping fails
 					t.Logf("✓ Confirmed SoftHSM hybrid unwrapping limitation: %v", err)
@@ -1436,10 +1436,10 @@ func TestPKCS11Integration(t *testing.T) {
 				} else {
 					// Import succeeded - hardware HSM
 					t.Log("✓ Imported AES-256 key into HSM (hardware HSM detected)")
-					defer ks.DeleteKey(attrs)
+					defer ks.DeleteKey(context.Background(), attrs)
 
 					// Verify the imported key works
-					encrypter, err := ks.SymmetricEncrypter(attrs)
+					encrypter, err := ks.SymmetricEncrypter(context.Background(), attrs)
 					if err != nil {
 						t.Fatalf("Failed to get encrypter for imported key: %v", err)
 					}
@@ -1469,7 +1469,7 @@ func TestPKCS11Integration(t *testing.T) {
 					WrappedKey: []byte("test"),
 					Algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 				}
-				err := ks.ImportKey(nil, wrapped)
+				err := ks.ImportKey(context.Background(), nil, wrapped)
 				if err == nil {
 					t.Error("ImportKey should fail with nil attributes")
 				}
@@ -1483,7 +1483,7 @@ func TestPKCS11Integration(t *testing.T) {
 					KeyType:            backend.KEY_TYPE_ENCRYPTION,
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 				}
-				err := ks.ImportKey(attrs, nil)
+				err := ks.ImportKey(context.Background(), attrs, nil)
 				if err == nil {
 					t.Error("ImportKey should fail with nil wrapped material")
 				}
@@ -1499,7 +1499,7 @@ func TestPKCS11Integration(t *testing.T) {
 				}
 
 				// Get valid import parameters
-				params, err := ks.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+				params, err := ks.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 				if err != nil {
 					t.Fatalf("GetImportParameters failed: %v", err)
 				}
@@ -1511,7 +1511,7 @@ func TestPKCS11Integration(t *testing.T) {
 					ImportToken: params.ImportToken,
 				}
 
-				err = ks.ImportKey(attrs, wrapped)
+				err = ks.ImportKey(context.Background(), attrs, wrapped)
 				if err == nil {
 					t.Error("ImportKey should fail with corrupted wrapped key")
 				}
@@ -1533,7 +1533,7 @@ func TestPKCS11Integration(t *testing.T) {
 					ImportToken: []byte("non-existent-wrapping-key"),
 				}
 
-				err := ks.ImportKey(attrs, wrapped)
+				err := ks.ImportKey(context.Background(), attrs, wrapped)
 				if err == nil {
 					t.Error("ImportKey should fail with invalid wrapping token")
 				}
@@ -1556,14 +1556,14 @@ func TestPKCS11Integration(t *testing.T) {
 			}
 
 			// Generate a key (will have CKA_EXTRACTABLE=false by default)
-			_, err := ks.GenerateKey(attrs)
+			_, err := ks.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Key generation should succeed: %v", err)
 			}
-			defer ks.DeleteKey(attrs)
+			defer ks.DeleteKey(context.Background(), attrs)
 
 			// ExportKey should fail for non-extractable keys
-			wrapped, err := ks.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+			wrapped, err := ks.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 			if err == nil {
 				t.Fatal("ExportKey should fail for non-extractable keys")
 			}
@@ -1593,25 +1593,25 @@ func TestPKCS11Integration(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 				}
 
-				params, err := ks.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+				params, err := ks.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 				if err != nil {
 					t.Fatalf("GetImportParameters failed for key %d: %v", i, err)
 				}
 
-				wrapped, err := ks.WrapKey(keyMaterial, params)
+				wrapped, err := ks.WrapKey(context.Background(), keyMaterial, params)
 				if err != nil {
 					t.Fatalf("WrapKey failed for key %d: %v", i, err)
 				}
 				successfulWraps++
 
 				// Attempt import - may fail with SoftHSM
-				err = ks.ImportKey(attrs, wrapped)
+				err = ks.ImportKey(context.Background(), attrs, wrapped)
 				if err != nil {
 					// SoftHSM limitation - log and continue
 					t.Logf("Import %d: SoftHSM limitation confirmed: %v", i+1, err)
 				} else {
 					successfulImports++
-					defer ks.DeleteKey(attrs)
+					defer ks.DeleteKey(context.Background(), attrs)
 					t.Logf("✓ Successfully imported key %d", i+1)
 				}
 			}
@@ -1645,12 +1645,12 @@ func TestPKCS11Integration(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 				}
 
-				params, err := ks.GetImportParameters(attrs, algo)
+				params, err := ks.GetImportParameters(context.Background(), attrs, algo)
 				if err != nil {
 					t.Fatalf("GetImportParameters failed for %s: %v", algo, err)
 				}
 
-				wrapped, err := ks.WrapKey(keyMaterial, params)
+				wrapped, err := ks.WrapKey(context.Background(), keyMaterial, params)
 				if err != nil {
 					t.Fatalf("WrapKey failed for %s: %v", algo, err)
 				}
@@ -1689,12 +1689,12 @@ func TestPKCS11Integration(t *testing.T) {
 						KeyType:   backend.KEY_TYPE_ENCRYPTION,
 					}
 
-					params, err := ks.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+					params, err := ks.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 					if err != nil {
 						t.Fatalf("GetImportParameters failed: %v", err)
 					}
 
-					wrapped, err := ks.WrapKey(keyMaterial, params)
+					wrapped, err := ks.WrapKey(context.Background(), keyMaterial, params)
 					if err != nil {
 						t.Fatalf("WrapKey failed for %d-byte key: %v", tc.size, err)
 					}
@@ -1743,7 +1743,7 @@ func TestPKCS11Integration(t *testing.T) {
 			t.Log("✓ Generated RSA key for deletion test")
 
 			// Verify key exists
-			retrievedKey, err := ks.GetKey(attrs)
+			retrievedKey, err := ks.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to retrieve generated key: %v", err)
 			}
@@ -1753,14 +1753,14 @@ func TestPKCS11Integration(t *testing.T) {
 			t.Log("✓ Verified key exists before deletion")
 
 			// Delete the key
-			err = ks.DeleteKey(attrs)
+			err = ks.DeleteKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to delete RSA key: %v", err)
 			}
 			t.Log("✓ Deleted RSA key successfully")
 
 			// Verify key is actually deleted
-			retrievedKey, err = ks.GetKey(attrs)
+			retrievedKey, err = ks.GetKey(context.Background(), attrs)
 			if err == nil {
 				t.Fatal("Expected error when retrieving deleted key, got nil")
 			}
@@ -1792,7 +1792,7 @@ func TestPKCS11Integration(t *testing.T) {
 			t.Log("✓ Generated ECDSA key for deletion test")
 
 			// Verify key exists
-			retrievedKey, err := ks.GetKey(attrs)
+			retrievedKey, err := ks.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to retrieve generated key: %v", err)
 			}
@@ -1802,14 +1802,14 @@ func TestPKCS11Integration(t *testing.T) {
 			t.Log("✓ Verified key exists before deletion")
 
 			// Delete the key
-			err = ks.DeleteKey(attrs)
+			err = ks.DeleteKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to delete ECDSA key: %v", err)
 			}
 			t.Log("✓ Deleted ECDSA key successfully")
 
 			// Verify key is actually deleted
-			retrievedKey, err = ks.GetKey(attrs)
+			retrievedKey, err = ks.GetKey(context.Background(), attrs)
 			if err == nil {
 				t.Fatal("Expected error when retrieving deleted key, got nil")
 			}
@@ -1830,7 +1830,7 @@ func TestPKCS11Integration(t *testing.T) {
 				},
 			}
 
-			err := ks.DeleteKey(attrs)
+			err := ks.DeleteKey(context.Background(), attrs)
 			if err == nil {
 				t.Fatal("Expected error when deleting non-existent key, got nil")
 			}
@@ -1859,14 +1859,14 @@ func TestPKCS11Integration(t *testing.T) {
 			t.Log("✓ Generated RSA key")
 
 			// Delete the key first time
-			err = ks.DeleteKey(attrs)
+			err = ks.DeleteKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to delete key first time: %v", err)
 			}
 			t.Log("✓ Deleted key successfully first time")
 
 			// Try to delete again
-			err = ks.DeleteKey(attrs)
+			err = ks.DeleteKey(context.Background(), attrs)
 			if err == nil {
 				t.Fatal("Expected error when deleting already deleted key, got nil")
 			}
@@ -1933,7 +1933,7 @@ func TestPKCS11Integration(t *testing.T) {
 
 			// Delete all keys
 			for _, k := range keys {
-				err := ks.DeleteKey(k.attrs)
+				err := ks.DeleteKey(context.Background(), k.attrs)
 				if err != nil {
 					t.Fatalf("Failed to delete key %s: %v", k.attrs.CN, err)
 				}
@@ -1942,7 +1942,7 @@ func TestPKCS11Integration(t *testing.T) {
 
 			// Verify all keys are deleted
 			for _, k := range keys {
-				retrievedKey, err := ks.GetKey(k.attrs)
+				retrievedKey, err := ks.GetKey(context.Background(), k.attrs)
 				if err == nil {
 					t.Fatalf("Expected error when retrieving deleted key %s, got nil", k.attrs.CN)
 				}
@@ -1969,14 +1969,14 @@ func TestPKCS11Integration(t *testing.T) {
 			}
 
 			// Generate symmetric key on HSM
-			key, err := ks.GenerateSymmetricKey(attrs)
+			key, err := ks.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to generate AES-128 key: %v", err)
 			}
 			t.Logf("✓ Generated AES-128-GCM key on HSM: %d bits", key.KeySize())
 
 			// Get encrypter for the key
-			encrypter, err := ks.SymmetricEncrypter(attrs)
+			encrypter, err := ks.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get encrypter: %v", err)
 			}
@@ -2017,7 +2017,7 @@ func TestPKCS11Integration(t *testing.T) {
 			t.Log("✓ Decrypted plaintext matches original")
 
 			// Cleanup
-			defer ks.DeleteKey(attrs)
+			defer ks.DeleteKey(context.Background(), attrs)
 		})
 
 		t.Run("AES-256-GCM_BasicEncryptDecrypt", func(t *testing.T) {
@@ -2030,14 +2030,14 @@ func TestPKCS11Integration(t *testing.T) {
 			}
 
 			// Generate symmetric key on HSM
-			key, err := ks.GenerateSymmetricKey(attrs)
+			key, err := ks.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to generate AES-256 key: %v", err)
 			}
 			t.Logf("✓ Generated AES-256-GCM key on HSM: %d bits", key.KeySize())
 
 			// Get encrypter for the key
-			encrypter, err := ks.SymmetricEncrypter(attrs)
+			encrypter, err := ks.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get encrypter: %v", err)
 			}
@@ -2065,7 +2065,7 @@ func TestPKCS11Integration(t *testing.T) {
 			t.Log("✓ AES-256-GCM encryption/decryption successful")
 
 			// Cleanup
-			defer ks.DeleteKey(attrs)
+			defer ks.DeleteKey(context.Background(), attrs)
 		})
 
 		t.Run("AES-GCM_WithAAD", func(t *testing.T) {
@@ -2079,14 +2079,14 @@ func TestPKCS11Integration(t *testing.T) {
 			}
 
 			// Generate key
-			_, err := ks.GenerateSymmetricKey(attrs)
+			_, err := ks.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to generate key: %v", err)
 			}
-			defer ks.DeleteKey(attrs)
+			defer ks.DeleteKey(context.Background(), attrs)
 
 			// Get encrypter
-			encrypter, err := ks.SymmetricEncrypter(attrs)
+			encrypter, err := ks.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get encrypter: %v", err)
 			}
@@ -2146,13 +2146,13 @@ func TestPKCS11Integration(t *testing.T) {
 			}
 
 			// Generate key
-			_, err := ks.GenerateSymmetricKey(attrs)
+			_, err := ks.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to generate key: %v", err)
 			}
-			defer ks.DeleteKey(attrs)
+			defer ks.DeleteKey(context.Background(), attrs)
 
-			encrypter, err := ks.SymmetricEncrypter(attrs)
+			encrypter, err := ks.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get encrypter: %v", err)
 			}
@@ -2193,13 +2193,13 @@ func TestPKCS11Integration(t *testing.T) {
 			}
 
 			// Generate key
-			_, err := ks.GenerateSymmetricKey(attrs)
+			_, err := ks.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to generate key: %v", err)
 			}
-			defer ks.DeleteKey(attrs)
+			defer ks.DeleteKey(context.Background(), attrs)
 
-			encrypter, err := ks.SymmetricEncrypter(attrs)
+			encrypter, err := ks.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get encrypter: %v", err)
 			}
@@ -2270,7 +2270,7 @@ func TestPKCS11Integration(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 				}
 
-				_, err := ks.SymmetricEncrypter(nonExistentAttrs)
+				_, err := ks.SymmetricEncrypter(context.Background(), nonExistentAttrs)
 				if err == nil {
 					t.Error("Getting encrypter for non-existent key should fail")
 				}
@@ -2287,13 +2287,13 @@ func TestPKCS11Integration(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 			}
 
-			_, err := ks.GenerateSymmetricKey(attrs)
+			_, err := ks.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to generate key: %v", err)
 			}
-			defer ks.DeleteKey(attrs)
+			defer ks.DeleteKey(context.Background(), attrs)
 
-			encrypter, err := ks.SymmetricEncrypter(attrs)
+			encrypter, err := ks.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get encrypter: %v", err)
 			}
@@ -2327,13 +2327,13 @@ func TestPKCS11Integration(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 			}
 
-			_, err := ks.GenerateSymmetricKey(attrs)
+			_, err := ks.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to generate key: %v", err)
 			}
-			defer ks.DeleteKey(attrs)
+			defer ks.DeleteKey(context.Background(), attrs)
 
-			encrypter, err := ks.SymmetricEncrypter(attrs)
+			encrypter, err := ks.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get encrypter: %v", err)
 			}
@@ -2383,11 +2383,11 @@ func TestPKCS11Integration(t *testing.T) {
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 			}
-			_, err := ks.GenerateSymmetricKey(attrs1)
+			_, err := ks.GenerateSymmetricKey(context.Background(), attrs1)
 			if err != nil {
 				t.Fatalf("Failed to generate key1: %v", err)
 			}
-			defer ks.DeleteKey(attrs1)
+			defer ks.DeleteKey(context.Background(), attrs1)
 
 			// Generate second key
 			attrs2 := &types.KeyAttributes{
@@ -2396,14 +2396,14 @@ func TestPKCS11Integration(t *testing.T) {
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 			}
-			_, err = ks.GenerateSymmetricKey(attrs2)
+			_, err = ks.GenerateSymmetricKey(context.Background(), attrs2)
 			if err != nil {
 				t.Fatalf("Failed to generate key2: %v", err)
 			}
-			defer ks.DeleteKey(attrs2)
+			defer ks.DeleteKey(context.Background(), attrs2)
 
 			// Encrypt with first key
-			encrypter1, err := ks.SymmetricEncrypter(attrs1)
+			encrypter1, err := ks.SymmetricEncrypter(context.Background(), attrs1)
 			if err != nil {
 				t.Fatalf("Failed to get encrypter1: %v", err)
 			}
@@ -2413,7 +2413,7 @@ func TestPKCS11Integration(t *testing.T) {
 			}
 
 			// Encrypt with second key
-			encrypter2, err := ks.SymmetricEncrypter(attrs2)
+			encrypter2, err := ks.SymmetricEncrypter(context.Background(), attrs2)
 			if err != nil {
 				t.Fatalf("Failed to get encrypter2: %v", err)
 			}

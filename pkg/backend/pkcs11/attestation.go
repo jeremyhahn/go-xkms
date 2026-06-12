@@ -16,6 +16,7 @@
 package pkcs11
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
 	"errors"
@@ -43,7 +44,7 @@ import (
 //   - ErrNotSupported if the HSM doesn't support attestation
 //   - ErrNotFound if the key doesn't exist
 //   - Other errors if attestation fails
-func (b *Backend) AttestKey(attrs *types.KeyAttributes, nonce []byte) (interface{}, error) {
+func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, nonce []byte) (interface{}, error) {
 	if err := attrs.Validate(); err != nil {
 		return nil, fmt.Errorf("pkcs11: invalid key attributes: %w", err)
 	}

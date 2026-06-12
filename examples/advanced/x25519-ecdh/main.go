@@ -22,6 +22,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"log"
@@ -51,7 +52,7 @@ func main() {
 		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	aliceKeyInterface, err := backend.GenerateKey(aliceAttrs)
+	aliceKeyInterface, err := backend.GenerateKey(context.Background(), aliceAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate Alice's key: %v", err)
 	}
@@ -67,7 +68,7 @@ func main() {
 		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	bobKeyInterface, err := backend.GenerateKey(bobAttrs)
+	bobKeyInterface, err := backend.GenerateKey(context.Background(), bobAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate Bob's key: %v", err)
 	}
@@ -78,7 +79,7 @@ func main() {
 	// Alice derives shared secret using Bob's public key
 	fmt.Println("\n3. Alice performing ECDH with Bob's public key...")
 	concreteBackend := backend.(*software.SoftwareBackend)
-	aliceSharedSecret, err := concreteBackend.DeriveSharedSecret(aliceAttrs, bobPublicKey)
+	aliceSharedSecret, err := concreteBackend.DeriveSharedSecret(context.Background(), aliceAttrs, bobPublicKey)
 	if err != nil {
 		log.Fatalf("Failed to derive shared secret: %v", err)
 	}
@@ -86,7 +87,7 @@ func main() {
 
 	// Bob derives shared secret using Alice's public key
 	fmt.Println("\n4. Bob performing ECDH with Alice's public key...")
-	bobSharedSecret, err := concreteBackend.DeriveSharedSecret(bobAttrs, alicePublicKey)
+	bobSharedSecret, err := concreteBackend.DeriveSharedSecret(context.Background(), bobAttrs, alicePublicKey)
 	if err != nil {
 		log.Fatalf("Failed to derive shared secret: %v", err)
 	}
@@ -174,7 +175,7 @@ func main() {
 
 	// Retrieve keys from backend storage
 	fmt.Println("\n10. Retrieving generated keys from backend storage...")
-	retrievedAlice, err := backend.GetKey(aliceAttrs)
+	retrievedAlice, err := backend.GetKey(context.Background(), aliceAttrs)
 	if err != nil {
 		log.Fatalf("Failed to retrieve Alice's key: %v", err)
 	}

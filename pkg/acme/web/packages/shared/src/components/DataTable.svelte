@@ -2,7 +2,7 @@
   import LoadingSpinner from './LoadingSpinner.svelte';
   import Pagination from './Pagination.svelte';
 
-  export interface Column {
+  interface Column {
     key: string;
     label: string;
     sortable?: boolean;
@@ -20,6 +20,9 @@
   export let currentPage: number = 1;
   export let totalPages: number = 1;
   export let showPagination: boolean = false;
+  export let onPageChange: ((event: CustomEvent<number>) => void) | undefined =
+    undefined;
+  export let onRowClick: ((row: unknown) => void) | undefined = undefined;
 
   function handleSort(key: string) {
     if (sortKey === key) {
@@ -39,6 +42,7 @@
 
   function handlePageChange(event: CustomEvent<number>) {
     currentPage = event.detail;
+    onPageChange?.(event);
   }
 </script>
 
@@ -92,7 +96,11 @@
           </tr>
         {:else}
           {#each data as row}
-            <tr class="bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700/50">
+            <tr
+              class="bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700/50
+                     {onRowClick ? 'cursor-pointer' : ''}"
+              on:click={onRowClick ? () => onRowClick(row) : undefined}
+            >
               {#each columns as col}
                 <td
                   class="px-4 py-3 text-slate-700 dark:text-slate-300

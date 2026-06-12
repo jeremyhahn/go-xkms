@@ -62,6 +62,17 @@ func (m *mockStorageBackend) Put(_ context.Context, key string, value []byte) er
 	return nil
 }
 
+func (m *mockStorageBackend) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
+	if m.putErr != nil {
+		return false, m.putErr
+	}
+	if _, ok := m.data[key]; ok {
+		return false, nil
+	}
+	m.data[key] = value
+	return true, nil
+}
+
 func (m *mockStorageBackend) Delete(_ context.Context, key string) error {
 	if m.delErr != nil {
 		return m.delErr

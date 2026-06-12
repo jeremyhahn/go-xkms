@@ -69,6 +69,6 @@ func runPINResetLockout(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintln(out, "Lockout reset successfully.")
+	_, _ = fmt.Fprintln(out, "Lockout reset successfully.")
 	return nil
 }

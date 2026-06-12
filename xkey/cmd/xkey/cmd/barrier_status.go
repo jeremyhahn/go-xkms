@@ -87,9 +87,9 @@ func runBarrierStatus(cmd *cobra.Command, args []string) error {
 			return writeJSON(out, info)
 		}
 
-		fmt.Fprintln(out, "Barrier Status: Not Initialized")
-		fmt.Fprintf(out, "  Data directory:  %s\n", dataDir)
-		fmt.Fprintln(out, "\nRun 'xkey barrier init' to initialize the barrier.")
+		_, _ = fmt.Fprintln(out, "Barrier Status: Not Initialized")
+		_, _ = fmt.Fprintf(out, "  Data directory:  %s\n", dataDir)
+		_, _ = fmt.Fprintln(out, "\nRun 'xkey barrier init' to initialize the barrier.")
 		return nil
 	}
 
@@ -101,7 +101,7 @@ func runBarrierStatus(cmd *cobra.Command, args []string) error {
 	if readErr == nil {
 		var sealed xkms.SealedRootKey
 		if jsonErr := json.Unmarshal(data, &sealed); jsonErr == nil {
-			info.Strategy = string(sealed.Strategy)
+			info.Strategy = strategyDisplayName(sealed.Strategy)
 		}
 	}
 
@@ -133,12 +133,12 @@ func runBarrierStatus(cmd *cobra.Command, args []string) error {
 		hwStr = "Yes"
 	}
 
-	fmt.Fprintln(out, "Barrier Status:")
-	fmt.Fprintf(out, "  Initialized:      Yes\n")
-	fmt.Fprintf(out, "  State:            %s\n", sealedStr)
-	fmt.Fprintf(out, "  Strategy:         %s\n", info.Strategy)
-	fmt.Fprintf(out, "  Hardware-backed:  %s\n", hwStr)
-	fmt.Fprintf(out, "  Data directory:   %s\n", dataDir)
+	_, _ = fmt.Fprintln(out, "Barrier Status:")
+	_, _ = fmt.Fprintf(out, "  Initialized:      Yes\n")
+	_, _ = fmt.Fprintf(out, "  State:            %s\n", sealedStr)
+	_, _ = fmt.Fprintf(out, "  Strategy:         %s\n", info.Strategy)
+	_, _ = fmt.Fprintf(out, "  Hardware-backed:  %s\n", hwStr)
+	_, _ = fmt.Fprintf(out, "  Data directory:   %s\n", dataDir)
 
 	return nil
 }

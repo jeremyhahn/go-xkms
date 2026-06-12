@@ -54,13 +54,17 @@ type BaseBackendFactory func(storageDir string) (xkms.StorageBackend, error)
 // BarrierService wraps the seal.Barrier for GUI integration, providing
 // cross-platform encrypted storage with automatic strategy selection.
 type BarrierService struct {
-	mu            sync.Mutex
-	ctx           context.Context
-	log           *slog.Logger
-	barrier       *xkms.Barrier
-	configDir     string
-	dataDir       string
-	baseBackendFn BaseBackendFactory
+	mu      sync.Mutex
+	ctx     context.Context
+	log     *slog.Logger
+	barrier *xkms.Barrier
+	// barrierBackend wraps barrier so it satisfies storage.Backend (which now
+	// requires PutIfAbsent). Cached so a single instance — and thus a single
+	// mutex — guards check-then-write across all callers in this process.
+	barrierBackend *xkms.BarrierBackend
+	configDir      string
+	dataDir        string
+	baseBackendFn  BaseBackendFactory
 
 	// tpmSealerFn is called to obtain a TPM2 sealer when probing strategies.
 	// If nil, TPM2 strategy is unavailable.
@@ -221,7 +225,11 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 		slog.String("strategy", strategyID),
 		slog.Bool("has_password", password != ""))
 
-	// Check whether the barrier directory already has data.
+	// UX-only preflight: surface ErrBarrierAlreadyInit early so the GUI can
+	// show a friendly message before any strategy/password work. This check
+	// is advisory — the authoritative guard against concurrent initializers
+	// is the atomic PutIfAbsent compare-and-set inside barrier.Initialize,
+	// which returns ErrAlreadyInitialized to the race loser.
 	if _, err := os.Stat(storageDir); err == nil {
 		base, err := s.createBaseBackend(storageDir)
 		if err != nil {
@@ -289,6 +297,7 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 	}
 
 	s.barrier = barrier
+	s.barrierBackend = xkms.NewBarrierBackend(barrier)
 	s.lastStrategy = strategyID
 	hook := s.postUnsealHook
 	s.log.Info("barrier initialized", slog.String("strategy", strategyID))
@@ -380,6 +389,7 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	}
 
 	s.barrier = barrier
+	s.barrierBackend = xkms.NewBarrierBackend(barrier)
 	s.lastStrategy = strategyID
 	hook := s.postUnsealHook
 	s.log.Info("barrier unsealed", slog.String("strategy", strategyID))
@@ -472,7 +482,10 @@ func (s *BarrierService) GetBackend() xkms.StorageBackend {
 	if s.barrier == nil {
 		return nil
 	}
-	return s.barrier
+	if s.barrierBackend == nil {
+		s.barrierBackend = xkms.NewBarrierBackend(s.barrier)
+	}
+	return s.barrierBackend
 }
 
 // storageDir returns the directory used for barrier encrypted data storage.

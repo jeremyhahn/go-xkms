@@ -55,16 +55,17 @@
 //	}
 //
 //	// Initialize new CA (or use Load() for existing CA)
-//	if err := trustedCA.Init(); err != nil {
+//	if err := trustedCA.Init(ctx); err != nil {
 //	    log.Fatal(err)
 //	}
 //
 //	// CA is now ready for operations
-//	cert, err := trustedCA.IssueCertificate(&ca.CertificateRequest{...})
+//	cert, err := trustedCA.IssueCertificate(ctx, &ca.CertificateRequest{...})
 package ca
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -549,7 +550,7 @@ func (ca *CA) ObjectStore() objstore.Storage {
 //   - Storage errors if key generation or certificate storage fails
 //
 // Thread-safe: Yes, but should typically be called once during startup.
-func (ca *CA) Init() error {
+func (ca *CA) Init(ctx context.Context) error {
 	ca.mu.Lock()
 	defer ca.mu.Unlock()
 
@@ -558,13 +559,13 @@ func (ca *CA) Init() error {
 	}
 
 	// Create root CA certificate
-	if err := ca.createRootCertificate(); err != nil {
+	if err := ca.createRootCertificate(ctx); err != nil {
 		return fmt.Errorf("failed to create root certificate: %w", err)
 	}
 
 	// Create intermediate CA certificates if configured
 	if ca.config.HasIntermediate() {
-		if err := ca.createIntermediateCertificates(); err != nil {
+		if err := ca.createIntermediateCertificates(ctx); err != nil {
 			return fmt.Errorf("failed to create intermediate certificates: %w", err)
 		}
 	}
@@ -586,7 +587,7 @@ func (ca *CA) Init() error {
 //   - Storage errors if certificate retrieval fails
 //
 // Thread-safe: Yes, but should typically be called once during startup.
-func (ca *CA) Load() error {
+func (ca *CA) Load(ctx context.Context) error {
 	ca.mu.Lock()
 	defer ca.mu.Unlock()
 
@@ -611,7 +612,7 @@ func (ca *CA) Load() error {
 	if err != nil {
 		return fmt.Errorf("failed to get root key attributes: %w", err)
 	}
-	if _, err := ca.keyStore.Signer(rootAttrs); err != nil {
+	if _, err := ca.keyStore.Signer(ctx, rootAttrs); err != nil {
 		return fmt.Errorf("%w: root key not found: %v", ErrKeyStoreRequired, err)
 	}
 
@@ -633,7 +634,7 @@ func (ca *CA) Load() error {
 		if err != nil {
 			return fmt.Errorf("failed to get intermediate key attributes: %w", err)
 		}
-		if _, err := ca.keyStore.Signer(intermediateAttrs); err != nil {
+		if _, err := ca.keyStore.Signer(ctx, intermediateAttrs); err != nil {
 			return fmt.Errorf("%w: intermediate key not found: %v", ErrKeyStoreRequired, err)
 		}
 	}
@@ -641,7 +642,7 @@ func (ca *CA) Load() error {
 	// Replay any revocation records persisted to the object store. Missing
 	// or corrupt records are logged and skipped — a malformed record should
 	// not prevent the CA from loading.
-	if err := ca.loadPersistedRevocations(); err != nil {
+	if err := ca.loadPersistedRevocations(ctx); err != nil {
 		return err
 	}
 
@@ -706,7 +707,7 @@ func (ca *CA) Sign(randReader io.Reader, digest []byte, opts crypto.SignerOpts) 
 		return nil, ErrNotInitialized
 	}
 
-	signer, err := ca.getSigner()
+	signer, err := ca.getSigner(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
 	}
@@ -869,7 +870,7 @@ func (ca *CA) getIssuingCertificate() *x509.Certificate {
 
 // getSigner returns the crypto.Signer for the issuing CA.
 // This retrieves the signer from the keystore for the currently selected CA identity.
-func (ca *CA) getSigner() (crypto.Signer, error) {
+func (ca *CA) getSigner(ctx context.Context) (crypto.Signer, error) {
 	issuingIdentity := ca.config.IssuingIdentity()
 	if issuingIdentity == nil {
 		return nil, ErrInvalidConfig
@@ -880,7 +881,7 @@ func (ca *CA) getSigner() (crypto.Signer, error) {
 		return nil, fmt.Errorf("failed to get signer: %w", err)
 	}
 
-	return ca.keyStore.Signer(attrs)
+	return ca.keyStore.Signer(ctx, attrs)
 }
 
 // getCAKeyAttributes returns KeyAttributes for the specified identity.
@@ -904,9 +905,9 @@ func (ca *CA) getCAKeyAttributes(identity *Identity) (*types.KeyAttributes, erro
 // getOrGenerateCAKey retrieves an existing key or generates a new one if it doesn't exist.
 // This makes key operations idempotent, allowing CA initialization to be retried
 // without failing on "key already exists" errors.
-func (ca *CA) getOrGenerateCAKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (ca *CA) getOrGenerateCAKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	// First, try to get the existing key
-	privateKey, err := ca.keyStore.GetKey(attrs)
+	privateKey, err := ca.keyStore.GetKey(ctx, attrs)
 	if err == nil {
 		// Key exists, return it
 		return privateKey, nil
@@ -915,11 +916,11 @@ func (ca *CA) getOrGenerateCAKey(attrs *types.KeyAttributes) (crypto.PrivateKey,
 	// Key doesn't exist, generate a new one based on algorithm
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		privateKey, err = ca.keyStore.GenerateRSA(attrs)
+		privateKey, err = ca.keyStore.GenerateRSA(ctx, attrs)
 	case x509.ECDSA:
-		privateKey, err = ca.keyStore.GenerateECDSA(attrs)
+		privateKey, err = ca.keyStore.GenerateECDSA(ctx, attrs)
 	case x509.Ed25519:
-		privateKey, err = ca.keyStore.GenerateEd25519(attrs)
+		privateKey, err = ca.keyStore.GenerateEd25519(ctx, attrs)
 	default:
 		return nil, fmt.Errorf("%w: unsupported key algorithm: %v", ErrInvalidKeyAlgorithm, attrs.KeyAlgorithm)
 	}
@@ -932,7 +933,7 @@ func (ca *CA) getOrGenerateCAKey(attrs *types.KeyAttributes) (crypto.PrivateKey,
 
 // createRootCertificate generates a self-signed root CA certificate.
 // Must be called with mu held (write lock).
-func (ca *CA) createRootCertificate() error {
+func (ca *CA) createRootCertificate(ctx context.Context) error {
 	rootIdentity := ca.config.RootIdentity()
 	if rootIdentity == nil {
 		return ErrInvalidConfig
@@ -945,7 +946,7 @@ func (ca *CA) createRootCertificate() error {
 	}
 
 	// Get existing key or generate a new one (idempotent operation)
-	privateKey, err := ca.getOrGenerateCAKey(attrs)
+	privateKey, err := ca.getOrGenerateCAKey(ctx, attrs)
 	if err != nil {
 		return fmt.Errorf("failed to get or generate root CA key: %w", err)
 	}
@@ -957,7 +958,7 @@ func (ca *CA) createRootCertificate() error {
 	}
 
 	// Generate serial number
-	serial, err := ca.serialGen.Generate()
+	serial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to generate serial number: %w", err)
 	}
@@ -1028,7 +1029,7 @@ func (ca *CA) createRootCertificate() error {
 // createIntermediateCertificates generates intermediate CA certificates.
 // This creates certificates for all intermediate identities in the hierarchy.
 // Must be called with mu held (write lock).
-func (ca *CA) createIntermediateCertificates() error {
+func (ca *CA) createIntermediateCertificates(ctx context.Context) error {
 	intermediateIdentities := ca.config.IntermediateIdentities()
 	if len(intermediateIdentities) == 0 {
 		return nil
@@ -1045,7 +1046,7 @@ func (ca *CA) createIntermediateCertificates() error {
 		return fmt.Errorf("failed to get root key attributes: %w", err)
 	}
 
-	parentSigner, err := ca.keyStore.Signer(rootAttrs)
+	parentSigner, err := ca.keyStore.Signer(ctx, rootAttrs)
 	if err != nil {
 		return fmt.Errorf("failed to get root signer: %w", err)
 	}
@@ -1054,7 +1055,7 @@ func (ca *CA) createIntermediateCertificates() error {
 
 	// Create each intermediate CA in order
 	for i, identity := range intermediateIdentities {
-		cert, err := ca.createSingleIntermediateCertificate(&identity, parentCert, parentSigner)
+		cert, err := ca.createSingleIntermediateCertificate(ctx, &identity, parentCert, parentSigner)
 		if err != nil {
 			return fmt.Errorf("failed to create intermediate CA %d: %w", i+1, err)
 		}
@@ -1077,7 +1078,7 @@ func (ca *CA) createIntermediateCertificates() error {
 			return fmt.Errorf("failed to get intermediate key attributes: %w", err)
 		}
 
-		parentSigner, err = ca.keyStore.Signer(attrs)
+		parentSigner, err = ca.keyStore.Signer(ctx, attrs)
 		if err != nil {
 			return fmt.Errorf("failed to get intermediate signer: %w", err)
 		}
@@ -1098,6 +1099,7 @@ func (ca *CA) createIntermediateCertificates() error {
 
 // createSingleIntermediateCertificate creates a single intermediate CA certificate.
 func (ca *CA) createSingleIntermediateCertificate(
+	ctx context.Context,
 	identity *Identity,
 	parentCert *x509.Certificate,
 	parentSigner crypto.Signer,
@@ -1109,7 +1111,7 @@ func (ca *CA) createSingleIntermediateCertificate(
 	}
 
 	// Get existing key or generate a new one (idempotent operation)
-	privateKey, err := ca.getOrGenerateCAKey(attrs)
+	privateKey, err := ca.getOrGenerateCAKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get or generate intermediate CA key: %w", err)
 	}
@@ -1121,7 +1123,7 @@ func (ca *CA) createSingleIntermediateCertificate(
 	}
 
 	// Generate serial number
-	serial, err := ca.serialGen.Generate()
+	serial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate serial number: %w", err)
 	}
@@ -1227,7 +1229,7 @@ func determineSignatureAlgorithm(pub crypto.PublicKey) x509.SignatureAlgorithm {
 //   - Storage errors if the certificate cannot be stored
 //
 // Thread-safe: Yes
-func (ca *CA) SignCSR(csrPEM []byte, opts *SignOptions) (*x509.Certificate, error) {
+func (ca *CA) SignCSR(ctx context.Context, csrPEM []byte, opts *SignOptions) (*x509.Certificate, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
@@ -1275,14 +1277,14 @@ func (ca *CA) SignCSR(csrPEM []byte, opts *SignOptions) (*x509.Certificate, erro
 		}
 
 		var err error
-		signer, err = ca.getSigner()
+		signer, err = ca.getSigner(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
 		}
 	}
 
 	// Generate serial number
-	serial, err := ca.serialGen.Generate()
+	serial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrSerialGenerationFailed, err)
 	}
@@ -1374,6 +1376,11 @@ func (ca *CA) SignCSR(csrPEM []byte, opts *SignOptions) (*x509.Certificate, erro
 		template.URIs = append(template.URIs, spiffeURI)
 	}
 
+	// Append caller-supplied extensions (e.g. SDN network-zone extension).
+	if opts != nil && len(opts.ExtraExtensions) > 0 {
+		template.ExtraExtensions = append(template.ExtraExtensions, opts.ExtraExtensions...)
+	}
+
 	// Sign the certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, template, issuingCert, csr.PublicKey, signer)
 	if err != nil {
@@ -1411,8 +1418,8 @@ func (ca *CA) SignCSR(csrPEM []byte, opts *SignOptions) (*x509.Certificate, erro
 //   - Errors from key generation or signing operations
 //
 // Thread-safe: Yes
-func (ca *CA) IssueCertificate(request *CertificateRequest) (*IssuedCertificate, error) {
-	return ca.IssueCertificateWithProfile(request, "")
+func (ca *CA) IssueCertificate(ctx context.Context, request *CertificateRequest) (*IssuedCertificate, error) {
+	return ca.IssueCertificateWithProfile(ctx, request, "")
 }
 
 // IssueCertificateWithProfile issues a certificate using a named profile.
@@ -1431,7 +1438,7 @@ func (ca *CA) IssueCertificate(request *CertificateRequest) (*IssuedCertificate,
 //   - ErrCertificateAlreadyExists if a certificate with the same CN exists
 //
 // Thread-safe: Yes
-func (ca *CA) IssueCertificateWithProfile(request *CertificateRequest, profile string) (*IssuedCertificate, error) {
+func (ca *CA) IssueCertificateWithProfile(ctx context.Context, request *CertificateRequest, profile string) (*IssuedCertificate, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
@@ -1447,7 +1454,7 @@ func (ca *CA) IssueCertificateWithProfile(request *CertificateRequest, profile s
 	}
 
 	// Create CSR using the method from csr.go
-	csrPEM, err := ca.CreateCSR(request)
+	csrPEM, err := ca.CreateCSR(ctx, request)
 	if err != nil {
 		return nil, err
 	}
@@ -1466,10 +1473,11 @@ func (ca *CA) IssueCertificateWithProfile(request *CertificateRequest, profile s
 		TenantID:          request.TenantID,
 		SPIFFEKind:        request.SPIFFEKind,
 		SPIFFEName:        request.SPIFFEName,
+		ExtraExtensions:   request.ExtraExtensions,
 	}
 
 	// Sign the CSR
-	cert, err := ca.SignCSR(csrPEM, opts)
+	cert, err := ca.SignCSR(ctx, csrPEM, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -1606,7 +1614,7 @@ func (ca *CA) Verify(cert *x509.Certificate, xsigner ...crypto.Signer) ([][]*x50
 //   - ErrAlreadyRevoked if the certificate is already revoked
 //
 // Thread-safe: Yes
-func (ca *CA) Revoke(serial *big.Int, reason int) error {
+func (ca *CA) Revoke(ctx context.Context, serial *big.Int, reason int) error {
 	if !ca.initialized.Load() {
 		return ErrNotInitialized
 	}
@@ -1614,7 +1622,7 @@ func (ca *CA) Revoke(serial *big.Int, reason int) error {
 	// recordRevocation performs the serial-nil guard, the already-revoked
 	// check, the in-memory insertion, and object-store persistence so
 	// Revoke/RevokeCert remain consistent.
-	return ca.recordRevocation(serial, reason, false)
+	return ca.recordRevocation(ctx, serial, reason, false)
 }
 
 // GenerateCRL generates a Certificate Revocation List.
@@ -1630,7 +1638,7 @@ func (ca *CA) Revoke(serial *big.Int, reason int) error {
 //   - ErrCRLGenerationFailed if CRL generation fails
 //
 // Thread-safe: Yes
-func (ca *CA) GenerateCRL() ([]byte, error) {
+func (ca *CA) GenerateCRL(ctx context.Context) ([]byte, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
@@ -1643,7 +1651,7 @@ func (ca *CA) GenerateCRL() ([]byte, error) {
 		return nil, ErrCRLGenerationFailed
 	}
 
-	signer, err := ca.getSigner()
+	signer, err := ca.getSigner(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrCRLGenerationFailed, err)
 	}

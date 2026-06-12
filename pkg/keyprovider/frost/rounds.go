@@ -16,6 +16,7 @@
 package frost
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -54,7 +55,7 @@ func (b *FrostBackend) GenerateNonces(keyID string) (*NoncePackage, error) {
 	// Load key package - use participant ID from stored metadata (pass 0 to use metadata value)
 	// This is critical for CLI usage where the config may use a default value
 	// but the actual participant ID is stored in the key metadata.
-	pkg, _, err := b.keystore.LoadKeyPackage(keyID, 0) // 0 = load from metadata
+	pkg, _, err := b.keystore.LoadKeyPackage(context.Background(), keyID, 0) // 0 = load from metadata; FROST round API carries no context
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +177,7 @@ func (b *FrostBackend) SignRound(
 
 	// Load key package
 	participantID := nonces.ParticipantID
-	pkg, _, err := b.keystore.LoadKeyPackage(keyID, participantID)
+	pkg, _, err := b.keystore.LoadKeyPackage(context.Background(), keyID, participantID)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +334,7 @@ func (b *FrostBackend) Aggregate(
 	b.mu.RUnlock()
 
 	// Load public key package
-	pubPkg, _, err := b.keystore.LoadPublicKeyPackage(keyID)
+	pubPkg, _, err := b.keystore.LoadPublicKeyPackage(context.Background(), keyID)
 	if err != nil {
 		return nil, err
 	}
@@ -422,7 +423,7 @@ func (b *FrostBackend) Verify(keyID string, message, signature []byte) error {
 	b.mu.RUnlock()
 
 	// Load public key package
-	pubPkg, _, err := b.keystore.LoadPublicKeyPackage(keyID)
+	pubPkg, _, err := b.keystore.LoadPublicKeyPackage(context.Background(), keyID)
 	if err != nil {
 		return err
 	}

@@ -67,7 +67,7 @@ func setupFIDO2HandlerTest(t *testing.T, wa *pkgwebauthn.Service) *chi.Mux {
 	}
 	t.Cleanup(func() { xkms.Reset() })
 
-	s := &Server{}
+	s := &Server{xkmsService: svc}
 	r := chi.NewRouter()
 	r.Route("/webauthn/sdk", func(r chi.Router) {
 		r.Post("/registration/begin", s.handleSDKBeginRegistration)

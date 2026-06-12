@@ -57,7 +57,7 @@ type MockCAForFinalize struct {
 	returnCertWithLargeSerial bool
 }
 
-func (m *MockCAForFinalize) SignCSR(csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
+func (m *MockCAForFinalize) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
 	if m.shouldFailSignCSR {
 		return nil, caerrors.SigningFailureError("mock sign CSR error")
 	}
@@ -108,7 +108,7 @@ func (m *MockCAForFinalize) SignCSR(csrPEM []byte, opts *ca.SignOptions) (*x509.
 	return cert, nil
 }
 
-func (m *MockCAForFinalize) IssueEKCertificate(req *ca.CertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error) {
+func (m *MockCAForFinalize) IssueEKCertificate(_ context.Context, req *ca.CertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error) {
 	if m.shouldFailIssueEK {
 		return nil, caerrors.KeyGenerationFailureError("mock issue EK error")
 	}

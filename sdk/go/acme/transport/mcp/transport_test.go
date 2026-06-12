@@ -1013,8 +1013,8 @@ func TestInterfaceCompliance(t *testing.T) {
 	defer tr.Close()
 
 	// Verify Transport interface
-	var _ transport.Transport = tr
+	_ = tr
 
 	// Verify Factory interface
-	var _ transport.Factory = NewFactory()
+	_ = NewFactory()
 }

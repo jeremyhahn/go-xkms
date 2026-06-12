@@ -218,7 +218,7 @@ type mockOCSPResponder90 struct {
 	err      error
 }
 
-func (m *mockOCSPResponder90) HandleRequest(requestBytes []byte) ([]byte, error) {
+func (m *mockOCSPResponder90) HandleRequest(_ context.Context, requestBytes []byte) ([]byte, error) {
 	if m.err != nil {
 		return nil, m.err
 	}

@@ -14,6 +14,7 @@
 package tpm2
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -47,7 +48,7 @@ func TestAttestKey_NilAttributes(t *testing.T) {
 		tracker:    backend.NewMemoryAEADTracker(),
 	}
 
-	result, err := b.AttestKey(nil, []byte("nonce"))
+	result, err := b.AttestKey(context.Background(), nil, []byte("nonce"))
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
 }
@@ -67,7 +68,7 @@ func TestAttestKey_ClosedBackend(t *testing.T) {
 	}
 
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	result, err := b.AttestKey(attrs, []byte("nonce"))
+	result, err := b.AttestKey(context.Background(), attrs, []byte("nonce"))
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
@@ -88,7 +89,7 @@ func TestAttestKey_CertifyKeyError(t *testing.T) {
 	}
 
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	result, err := b.AttestKey(attrs, []byte("nonce"))
+	result, err := b.AttestKey(context.Background(), attrs, []byte("nonce"))
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, ErrAttestationFailed)
 }
@@ -125,7 +126,7 @@ func TestAttestKey_Success(t *testing.T) {
 	attrs := &types.KeyAttributes{CN: "test-key"}
 	nonce := []byte("test-nonce")
 
-	result, err := b.AttestKey(attrs, nonce)
+	result, err := b.AttestKey(context.Background(), attrs, nonce)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 

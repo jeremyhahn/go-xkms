@@ -39,7 +39,7 @@ func createBarrierTestServer(t *testing.T) *Server {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	base := storage.New()
 	strategy := seal.NewSoftwareStrategy()
-	barrier, err := seal.NewBarrier(logger, base, seal.BarrierConfig{}, strategy)
+	barrier, err := seal.NewBarrier(logger, base, seal.BarrierConfig{RootKeyPath: "test-root-key"}, strategy)
 	require.NoError(t, err)
 	server.barrier = barrier
 	return server

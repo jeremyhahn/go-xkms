@@ -33,6 +33,14 @@ type Backend interface {
 	// If the key already exists, it will be overwritten.
 	Put(ctx context.Context, key string, value []byte) error
 
+	// PutIfAbsent atomically stores value at key only if key does not already
+	// exist. It returns stored=true when the value was written, stored=false
+	// when key already held a value (store left unchanged). Replicated/clustered
+	// implementations MUST make this atomic across nodes (e.g. a consensus
+	// compare-and-swap); single-process implementations satisfy it via internal
+	// synchronization.
+	PutIfAbsent(ctx context.Context, key string, value []byte) (stored bool, err error)
+
 	// Delete removes the key and its value from storage.
 	// Returns ErrNotFound if the key does not exist.
 	Delete(ctx context.Context, key string) error

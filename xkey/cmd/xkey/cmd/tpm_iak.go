@@ -181,7 +181,7 @@ func runIAKShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Get IAK attributes
 	iakAttrs, err := tpm.IAKAttributes()
@@ -272,7 +272,7 @@ func runIAKCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Check if IAK already exists
 	if !iakCreateForce {
@@ -303,7 +303,7 @@ func runIAKExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Get IAK certificate
 	iakCert, err := tpm.IAKCertificate()
@@ -337,7 +337,7 @@ func runIAKCSR(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Get EK certificate
 	ekCert, err := tpm.EKCertificate()

@@ -22,9 +22,6 @@ import (
 func TestTypedErrors(t *testing.T) {
 	t.Run("TenantNotFoundError", func(t *testing.T) {
 		err := NewTenantNotFound("test.op", "tenant xyz not found")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeNotFound {
 			t.Errorf("expected CodeNotFound, got %v", err.Code)
 		}
@@ -37,9 +34,6 @@ func TestTypedErrors(t *testing.T) {
 
 	t.Run("TenantAlreadyExistsError", func(t *testing.T) {
 		err := NewTenantAlreadyExists("test.op", "tenant already exists")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeAlreadyExists {
 			t.Errorf("expected CodeAlreadyExists, got %v", err.Code)
 		}
@@ -47,9 +41,6 @@ func TestTypedErrors(t *testing.T) {
 
 	t.Run("EABNotFoundError", func(t *testing.T) {
 		err := NewEABNotFound("test.op", "eab not found")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeNotFound {
 			t.Errorf("expected CodeNotFound, got %v", err.Code)
 		}
@@ -57,9 +48,6 @@ func TestTypedErrors(t *testing.T) {
 
 	t.Run("RoleNotFoundError", func(t *testing.T) {
 		err := NewRoleNotFound("test.op", "role not found")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeNotFound {
 			t.Errorf("expected CodeNotFound, got %v", err.Code)
 		}
@@ -67,9 +55,6 @@ func TestTypedErrors(t *testing.T) {
 
 	t.Run("UserNotFoundError", func(t *testing.T) {
 		err := NewUserNotFound("test.op", "user not found")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeNotFound {
 			t.Errorf("expected CodeNotFound, got %v", err.Code)
 		}
@@ -77,9 +62,6 @@ func TestTypedErrors(t *testing.T) {
 
 	t.Run("CertificateNotFoundError", func(t *testing.T) {
 		err := NewCertificateNotFound("test.op", "certificate not found")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeNotFound {
 			t.Errorf("expected CodeNotFound, got %v", err.Code)
 		}
@@ -87,9 +69,6 @@ func TestTypedErrors(t *testing.T) {
 
 	t.Run("AccountNotFoundError", func(t *testing.T) {
 		err := NewAccountNotFound("test.op", "account not found")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeNotFound {
 			t.Errorf("expected CodeNotFound, got %v", err.Code)
 		}
@@ -97,9 +76,6 @@ func TestTypedErrors(t *testing.T) {
 
 	t.Run("OrderNotFoundError", func(t *testing.T) {
 		err := NewOrderNotFound("test.op", "order not found")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeNotFound {
 			t.Errorf("expected CodeNotFound, got %v", err.Code)
 		}
@@ -107,9 +83,6 @@ func TestTypedErrors(t *testing.T) {
 
 	t.Run("TenantRootCAExistsError", func(t *testing.T) {
 		err := NewTenantRootCAExists("test.op", "root CA already exists")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeAlreadyExists {
 			t.Errorf("expected CodeAlreadyExists, got %v", err.Code)
 		}
@@ -117,9 +90,6 @@ func TestTypedErrors(t *testing.T) {
 
 	t.Run("TenantRootCANotFoundError", func(t *testing.T) {
 		err := NewTenantRootCANotFound("test.op", "root CA not found")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeNotFound {
 			t.Errorf("expected CodeNotFound, got %v", err.Code)
 		}
@@ -127,9 +97,6 @@ func TestTypedErrors(t *testing.T) {
 
 	t.Run("IntermediateCANotFoundError", func(t *testing.T) {
 		err := NewIntermediateCANotFound("test.op", "intermediate CA not found")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeNotFound {
 			t.Errorf("expected CodeNotFound, got %v", err.Code)
 		}
@@ -137,9 +104,6 @@ func TestTypedErrors(t *testing.T) {
 
 	t.Run("IntermediateCAExistsError", func(t *testing.T) {
 		err := NewIntermediateCAExists("test.op", "intermediate CA already exists")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeAlreadyExists {
 			t.Errorf("expected CodeAlreadyExists, got %v", err.Code)
 		}
@@ -147,9 +111,6 @@ func TestTypedErrors(t *testing.T) {
 
 	t.Run("RevocationFailedError", func(t *testing.T) {
 		err := NewRevocationFailed("test.op", "revocation failed")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		if err.Code != errors.CodeInternal {
 			t.Errorf("expected CodeInternal, got %v", err.Code)
 		}
@@ -167,9 +128,6 @@ func TestTypedErrors_ErrorMessage(t *testing.T) {
 func TestTypedErrors_TypeAssertions(t *testing.T) {
 	t.Run("OrderNotFoundError is error", func(t *testing.T) {
 		var err error = NewOrderNotFound("test", "not found")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		_, ok := err.(*OrderNotFoundError)
 		if !ok {
 			t.Error("expected type assertion to OrderNotFoundError to succeed")
@@ -178,9 +136,6 @@ func TestTypedErrors_TypeAssertions(t *testing.T) {
 
 	t.Run("TenantRootCAExistsError is error", func(t *testing.T) {
 		var err error = NewTenantRootCAExists("test", "exists")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		_, ok := err.(*TenantRootCAExistsError)
 		if !ok {
 			t.Error("expected type assertion to TenantRootCAExistsError to succeed")
@@ -189,9 +144,6 @@ func TestTypedErrors_TypeAssertions(t *testing.T) {
 
 	t.Run("IntermediateCANotFoundError is error", func(t *testing.T) {
 		var err error = NewIntermediateCANotFound("test", "not found")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		_, ok := err.(*IntermediateCANotFoundError)
 		if !ok {
 			t.Error("expected type assertion to IntermediateCANotFoundError to succeed")
@@ -200,9 +152,6 @@ func TestTypedErrors_TypeAssertions(t *testing.T) {
 
 	t.Run("IntermediateCAExistsError is error", func(t *testing.T) {
 		var err error = NewIntermediateCAExists("test", "exists")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		_, ok := err.(*IntermediateCAExistsError)
 		if !ok {
 			t.Error("expected type assertion to IntermediateCAExistsError to succeed")
@@ -211,9 +160,6 @@ func TestTypedErrors_TypeAssertions(t *testing.T) {
 
 	t.Run("TenantRootCANotFoundError is error", func(t *testing.T) {
 		var err error = NewTenantRootCANotFound("test", "not found")
-		if err == nil {
-			t.Fatal("expected non-nil error")
-		}
 		_, ok := err.(*TenantRootCANotFoundError)
 		if !ok {
 			t.Error("expected type assertion to TenantRootCANotFoundError to succeed")

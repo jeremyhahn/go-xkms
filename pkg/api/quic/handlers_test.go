@@ -90,10 +90,13 @@ func createTestServer(t *testing.T) (*Server, *xkmsmocks.MockKeyStore) {
 	})
 	require.NoError(t, err)
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -119,7 +122,7 @@ func NewMockImportExportBackend() *MockImportExportBackend {
 	}
 }
 
-func (m *MockImportExportBackend) GetImportParameters(attrs *types.KeyAttributes, alg backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (m *MockImportExportBackend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, alg backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	if m.getImportParamsFunc != nil {
 		return m.getImportParamsFunc(attrs, alg)
 	}
@@ -137,7 +140,7 @@ func (m *MockImportExportBackend) GetImportParameters(attrs *types.KeyAttributes
 	}, nil
 }
 
-func (m *MockImportExportBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (m *MockImportExportBackend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if m.wrapKeyFunc != nil {
 		return m.wrapKeyFunc(keyMaterial, params)
 	}
@@ -148,21 +151,21 @@ func (m *MockImportExportBackend) WrapKey(keyMaterial []byte, params *backend.Im
 	}, nil
 }
 
-func (m *MockImportExportBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (m *MockImportExportBackend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if m.unwrapKeyFunc != nil {
 		return m.unwrapKeyFunc(wrapped, params)
 	}
 	return []byte("unwrapped-key-material"), nil
 }
 
-func (m *MockImportExportBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (m *MockImportExportBackend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	if m.importKeyFunc != nil {
 		return m.importKeyFunc(attrs, wrapped)
 	}
 	return nil
 }
 
-func (m *MockImportExportBackend) ExportKey(attrs *types.KeyAttributes, alg backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (m *MockImportExportBackend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if m.exportKeyFunc != nil {
 		return m.exportKeyFunc(attrs, alg)
 	}
@@ -174,7 +177,7 @@ func (m *MockImportExportBackend) ExportKey(attrs *types.KeyAttributes, alg back
 }
 
 // ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
-func (m *MockImportExportBackend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (m *MockImportExportBackend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	return nil, fmt.Errorf("not supported for asymmetric keys")
 }
 

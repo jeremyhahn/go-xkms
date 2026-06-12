@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -37,13 +37,15 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/jeremyhahn/go-objstore/pkg/local"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -414,23 +416,125 @@ func TestFinalizeTCGCSR_HookFailure(t *testing.T) {
 	assert.Contains(t, strings.ToLower(acmeError.Detail), "hook failed")
 }
 
-// Helper functions specific to this test file
+// =============================================================================
+// Test infrastructure helpers
+// =============================================================================
 
-// setupTestServiceWithRealCA creates a test ACME service with a real CA for TPM tests
+// newTestCA creates an initialized TCGCA backed by in-memory software storage.
+// Returns the CA and a cleanup function that resets the xkms service singleton.
+// The CA is a root+intermediate hierarchy; the intermediate is returned as the
+// issuing CA because it is the one that signs device certificates.
+func newTestCA(t *testing.T) (ca.TCGCA, func()) {
+	t.Helper()
+
+	// Reset any lingering singleton state from a previous test.
+	xkmssdk.ServiceReset()
+
+	// Build in-memory key storage and certificate storage.
+	keyStorageBackend, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+
+	certStorageBackend, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+
+	// PKCS#8 provider wraps key storage.
+	pkcs8Backend, err := xkmssdk.NewPKCS8Backend(&xkmssdk.PKCS8BackendConfig{
+		KeyStorage: keyStorageBackend,
+	})
+	require.NoError(t, err)
+
+	// xkms Backend bundles the key provider and certificate storage.
+	keyStore, err := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
+		Backend:     pkcs8Backend,
+		CertStorage: certStorageBackend,
+	})
+	require.NoError(t, err)
+
+	// Register the backend with the xkms service singleton.
+	err = xkmssdk.ServiceInitialize(&xkmssdk.ServiceConfig{
+		Backends: map[string]xkmssdk.ServiceBackend{
+			"software": keyStore,
+		},
+		DefaultBackend: "software",
+	})
+	require.NoError(t, err)
+
+	// Build an in-memory CertStore for the CA.
+	certAdapter := xkmssdk.NewStorageCertAdapter(certStorageBackend)
+	certStore, err := xkmssdk.NewCertStore(&xkmssdk.CertStoreConfig{
+		CertStorage: certAdapter,
+	})
+	require.NoError(t, err)
+
+	// Key configuration shared across root and intermediate: ECDSA P-256.
+	ecdsaKey := &types.KeyConfig{
+		KeyAlgorithm:       types.AlgorithmECDSA,
+		Hash:               types.HashSHA256,
+		SignatureAlgorithm: types.SigECDSAWithSHA256,
+		StoreType:          types.StoreSoftware,
+		ECCConfig:          &types.ECCConfig{Curve: types.CurveP256},
+		KeyType:            "CA",
+	}
+
+	params := &ca.Params{
+		Identity: []ca.Identity{
+			{
+				Subject: ca.Subject{
+					CommonName:   "Test Root CA",
+					Organization: "Test Organization",
+					Country:      "US",
+				},
+				Valid:         ca.DefaultRootValidityYears,
+				Keys:          []*types.KeyConfig{ecdsaKey},
+				KeystoreType:  types.StoreSoftware,
+				IsRoot:        true,
+				MaxPathLength: 1,
+			},
+			{
+				Subject: ca.Subject{
+					CommonName:   "Test Intermediate CA",
+					Organization: "Test Organization",
+					Country:      "US",
+				},
+				Valid:        ca.DefaultIntermediateValidityYears,
+				Keys:         []*types.KeyConfig{ecdsaKey},
+				KeystoreType: types.StoreSoftware,
+				ParentCA:     "Test Root CA",
+			},
+		},
+		Config: &ca.CAConfig{
+			DefaultCertValidityDays: ca.DefaultCertValidityDays,
+		},
+		KeyStore:  keyStore,
+		CertStore: certStore,
+	}
+
+	ctx := context.Background()
+	_, intermediate, err := ca.NewCA(ctx, params)
+	require.NoError(t, err)
+
+	tcgCA, ok := intermediate.(ca.TCGCA)
+	require.True(t, ok, "intermediate CA must implement ca.TCGCA")
+
+	cleanup := func() {
+		_ = xkmssdk.ServiceClose()
+	}
+
+	return tcgCA, cleanup
+}
+
+// setupTestServiceWithRealCA creates a test ACME service with a real CA for TPM tests.
 func setupTestServiceWithRealCA(t *testing.T) (*handlers.RestService, func()) {
-	tmpDir, err := os.MkdirTemp("", "acme-tcgcsr-test-*")
+	t.Helper()
+
+	// Build an in-memory KV store for ACME entity storage.
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
 	require.NoError(t, err)
 
-	// Create storage backend
-	store := local.New()
-	err = store.Configure(map[string]string{"path": tmpDir})
+	storageFactory, err := acmeobjstore.NewFactoryFromKVStore(kv)
 	require.NoError(t, err)
 
-	storageFactory, err := objstore.NewFactory(store)
-	require.NoError(t, err)
-
-	// Create real CA using the pattern from ca_fixtures.go
-	realCA, caCleanup := createRealCA(t)
+	realCA, caCleanup := newTestCA(t)
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelError,
@@ -449,108 +553,12 @@ func setupTestServiceWithRealCA(t *testing.T) (*handlers.RestService, func()) {
 	service, err := handlers.NewRestService(params)
 	require.NoError(t, err)
 
-	cleanup := func() {
-		caCleanup()
-		os.RemoveAll(tmpDir)
-	}
-
-	return service.(*handlers.RestService), cleanup
+	return service.(*handlers.RestService), caCleanup
 }
 
-// createRealCA creates a real Certificate Authority for testing using the pattern from ca_fixtures.go
-func createRealCA(t *testing.T) (*ca.CA, func()) {
-	// Reset any previous facade state to ensure clean test isolation
-	xkmssdk.ServiceReset()
-
-	// Create in-memory storage backends
-	keyStorage, err := xkmssdk.NewMemoryBackend()
-	require.NoError(t, err)
-	certStorageBackend, err := xkmssdk.NewMemoryBackend()
-	require.NoError(t, err)
-
-	// Create PKCS#8 backend for key storage
-	pkcs8Backend, err := xkmssdk.NewPKCS8Backend(&xkmssdk.PKCS8BackendConfig{
-		KeyStorage: keyStorage,
-	})
-	require.NoError(t, err)
-
-	// Create xkms (keystore) with software backend
-	keyStore, err := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
-		Backend:     pkcs8Backend,
-		CertStorage: certStorageBackend,
-	})
-	require.NoError(t, err)
-
-	// Initialize the XKMSFacade with the software backend as default
-	err = xkmssdk.ServiceInitialize(&xkmssdk.ServiceConfig{
-		Backends: map[string]xkmssdk.ServiceBackend{
-			"software": keyStore,
-		},
-		DefaultBackend: "software",
-	})
-	require.NoError(t, err)
-
-	// Create cert adapter and certstore for CA
-	certAdapter := xkmssdk.NewStorageCertAdapter(certStorageBackend)
-	certStore, err := xkmssdk.NewCertStore(&xkmssdk.CertStoreConfig{
-		CertStorage: certAdapter,
-	})
-	require.NoError(t, err)
-
-	// Create blob store using go-objstore
-	blobStore := local.New()
-	err = blobStore.Configure(map[string]string{"path": t.TempDir()})
-	require.NoError(t, err)
-
-	// Create CA configuration
-	config := ca.Config{
-		Identity: []ca.Identity{
-			{
-				Subject: ca.Subject{
-					CommonName:   "Test Root CA",
-					Organization: "Test Organization",
-					Country:      "US",
-				},
-				Valid:        10, // 10 years for root CA
-				KeyAlgorithm: x509.ECDSA,
-				ECCCurve:     "P256",
-				KeystoreType: "software",
-				IsRoot:       true,
-			},
-			{
-				Subject: ca.Subject{
-					CommonName:   "Test Intermediate CA",
-					Organization: "Test Organization",
-					Country:      "US",
-				},
-				Valid:        5, // 5 years for intermediate CA
-				KeyAlgorithm: x509.ECDSA,
-				ECCCurve:     "P256",
-				KeystoreType: "software",
-				ParentCA:     "Test Root CA",
-			},
-		},
-		SelectedCA:                1,   // Use intermediate CA for issuing
-		DefaultValidityPeriod:     365, // 365 days
-		DefaultKeyAlgorithm:       x509.ECDSA,
-		DefaultSignatureAlgorithm: x509.ECDSAWithSHA256,
-		DefaultHash:               crypto.SHA256,
-		LazyInitialization:        false,
-	}
-
-	// Create CA (gets KeyStore from facade based on config.Identity[0].KeystoreType)
-	caInstance, err := ca.New(config, certStore, blobStore)
-	require.NoError(t, err)
-
-	cleanup := func() {
-		xkmssdk.ServiceReset()
-	}
-
-	return caInstance, cleanup
-}
-
-// generateTestKeyPair creates a test ECDSA key pair
+// generateTestKeyPair creates a test ECDSA key pair.
 func generateTestKeyPair(t *testing.T) *TestKeyPair {
+	t.Helper()
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
@@ -560,14 +568,16 @@ func generateTestKeyPair(t *testing.T) *TestKeyPair {
 	}
 }
 
-// TestKeyPair holds a test keypair
+// TestKeyPair holds a test keypair.
 type TestKeyPair struct {
 	PrivateKey crypto.Signer
 	PublicKey  crypto.PublicKey
 }
 
-// createTestAccountForService creates a test account
+// createTestAccountForService creates a test ACME account in the service's storage.
 func createTestAccountForService(t *testing.T, service *handlers.RestService, key *TestKeyPair) *entities.ACMEAccount {
+	t.Helper()
+
 	ctx := context.Background()
 
 	accountDAO, err := service.GetStorageFactory().AccountDAO()
@@ -596,14 +606,16 @@ func createTestAccountForService(t *testing.T, service *handlers.RestService, ke
 	return account
 }
 
-// createTestOrderWithPermanentID creates an order with permanent-identifier in READY status
+// createTestOrderWithPermanentID creates an ACME order with a permanent-identifier
+// identifier in READY status, suitable for enroll-01 challenge finalization.
 func createTestOrderWithPermanentID(t *testing.T, service *handlers.RestService, accountID uint64, permanentID string) *entities.ACMEOrder {
+	t.Helper()
+
 	ctx := context.Background()
 
 	orderDAO, err := service.GetStorageFactory().OrderDAO(accountID)
 	require.NoError(t, err)
 
-	// Generate order ID
 	orderID, err := handlers.GenerateID()
 	require.NoError(t, err, "Failed to generate order ID")
 
@@ -625,14 +637,14 @@ func createTestOrderWithPermanentID(t *testing.T, service *handlers.RestService,
 	return order
 }
 
-// createJWSRequestForService creates a signed JWS request for testing
+// createJWSRequestForService creates a signed JWS HTTP request for testing ACME endpoints.
 func createJWSRequestForService(t *testing.T, service *handlers.RestService, key *TestKeyPair, url string, payload interface{}, useKID bool, accountID uint64) *http.Request {
-	// Get a valid nonce
+	t.Helper()
+
 	nonce, err := common.GenerateNonce(32)
 	require.NoError(t, err)
 	service.GetNonceStore().Add(nonce)
 
-	// Create JWS
 	kid := ""
 	if useKID {
 		kid = fmt.Sprintf("https://acme.test.example.com/acme/account/%d", accountID)
@@ -647,8 +659,8 @@ func createJWSRequestForService(t *testing.T, service *handlers.RestService, key
 	return req
 }
 
-// extractSerialFromURL extracts the serial number from a certificate URL
-// URL format: https://acme.test.example.com/acme/cert/8318666562681616638
+// extractSerialFromURL extracts the numeric serial number from a certificate URL.
+// Expected format: https://host/acme/cert/<serial>
 func extractSerialFromURL(t *testing.T, certURL string) uint64 {
 	t.Helper()
 
@@ -664,7 +676,8 @@ func extractSerialFromURL(t *testing.T, certURL string) uint64 {
 	return serialNum
 }
 
-// parseCertificateChain parses multiple PEM certificates
+// parseCertificateChain decodes all PEM CERTIFICATE blocks from pemData and
+// returns the parsed x509.Certificates in order.
 func parseCertificateChain(t *testing.T, pemData []byte) []*x509.Certificate {
 	t.Helper()
 

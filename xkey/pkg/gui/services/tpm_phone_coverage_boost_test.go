@@ -40,7 +40,6 @@ type tpcbPanicTPM struct {
 	panicOnSetHierarchyAuth bool
 	panicOnEKCert           bool
 	panicOnDictionaryReset  bool
-	panicOnCertifyKey       bool
 	panicOnRandomBytes      bool
 }
 

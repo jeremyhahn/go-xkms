@@ -620,7 +620,7 @@ func applySP80056AKDF(secret, otherInfo []byte, keyLen int, hashFunc func() hash
 // GetPublicKeyBytes returns the DER-encoded public key for a key pair.
 // This is useful for sharing the public key with peers for ECDH.
 func (b *Backend) GetPublicKeyBytes(attrs *types.KeyAttributes) ([]byte, error) {
-	signer, err := b.Signer(attrs)
+	signer, err := b.Signer(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}

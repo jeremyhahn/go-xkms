@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"errors"
 	"math/big"
 	"sync"
@@ -49,7 +50,7 @@ func TestSerialGenerator_Generate_ReturnsUniqueSerials(t *testing.T) {
 	const numSerials = 100
 
 	for i := 0; i < numSerials; i++ {
-		serial, err := generator.Generate()
+		serial, err := generator.Generate(context.Background())
 		if err != nil {
 			t.Fatalf("Generate() iteration %d: unexpected error: %v", i, err)
 		}
@@ -75,7 +76,7 @@ func TestSerialGenerator_Generate_ReturnsPositiveSerials(t *testing.T) {
 	const numSerials = 50
 
 	for i := 0; i < numSerials; i++ {
-		serial, err := generator.Generate()
+		serial, err := generator.Generate(context.Background())
 		if err != nil {
 			t.Fatalf("Generate() iteration %d: unexpected error: %v", i, err)
 		}
@@ -95,7 +96,7 @@ func TestSerialGenerator_Generate_ReturnsCorrectBitLength(t *testing.T) {
 	const numSerials = 50
 
 	for i := 0; i < numSerials; i++ {
-		serial, err := generator.Generate()
+		serial, err := generator.Generate(context.Background())
 		if err != nil {
 			t.Fatalf("Generate() iteration %d: unexpected error: %v", i, err)
 		}
@@ -120,13 +121,13 @@ func TestSerialGenerator_Generate_StoresSerial(t *testing.T) {
 	storage := NewMemoryStorage()
 	generator := NewSerialGenerator(storage)
 
-	serial, err := generator.Generate()
+	serial, err := generator.Generate(context.Background())
 	if err != nil {
 		t.Fatalf("Generate() unexpected error: %v", err)
 	}
 
 	// Verify serial is stored
-	exists, err := storage.SerialExists(serial)
+	exists, err := storage.SerialExists(context.Background(), serial)
 	if err != nil {
 		t.Fatalf("SerialExists() unexpected error: %v", err)
 	}
@@ -146,13 +147,13 @@ func TestSerialGenerator_IsUsed_ReturnsTrueForUsedSerial(t *testing.T) {
 	generator := NewSerialGenerator(storage)
 
 	// Generate a serial (which marks it as used)
-	serial, err := generator.Generate()
+	serial, err := generator.Generate(context.Background())
 	if err != nil {
 		t.Fatalf("Generate() unexpected error: %v", err)
 	}
 
 	// Check IsUsed
-	used, err := generator.IsUsed(serial)
+	used, err := generator.IsUsed(context.Background(), serial)
 	if err != nil {
 		t.Fatalf("IsUsed() unexpected error: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestSerialGenerator_IsUsed_ReturnsFalseForUnusedSerial(t *testing.T) {
 	// Create a serial that was never generated
 	unusedSerial := big.NewInt(999999)
 
-	used, err := generator.IsUsed(unusedSerial)
+	used, err := generator.IsUsed(context.Background(), unusedSerial)
 	if err != nil {
 		t.Fatalf("IsUsed() unexpected error: %v", err)
 	}
@@ -185,7 +186,7 @@ func TestSerialGenerator_IsUsed_Error_NilSerial(t *testing.T) {
 	storage := NewMemoryStorage()
 	generator := NewSerialGenerator(storage)
 
-	used, err := generator.IsUsed(nil)
+	used, err := generator.IsUsed(context.Background(), nil)
 	if err == nil {
 		t.Fatal("IsUsed() expected error for nil serial, got nil")
 	}
@@ -211,13 +212,13 @@ func TestSerialGenerator_MarkUsed_Success(t *testing.T) {
 
 	serial := big.NewInt(123456789)
 
-	err := generator.MarkUsed(serial)
+	err := generator.MarkUsed(context.Background(), serial)
 	if err != nil {
 		t.Fatalf("MarkUsed() unexpected error: %v", err)
 	}
 
 	// Verify it's now marked as used
-	used, err := generator.IsUsed(serial)
+	used, err := generator.IsUsed(context.Background(), serial)
 	if err != nil {
 		t.Fatalf("IsUsed() unexpected error: %v", err)
 	}
@@ -235,13 +236,13 @@ func TestSerialGenerator_MarkUsed_Error_AlreadyUsed(t *testing.T) {
 	serial := big.NewInt(123456789)
 
 	// Mark once
-	err := generator.MarkUsed(serial)
+	err := generator.MarkUsed(context.Background(), serial)
 	if err != nil {
 		t.Fatalf("MarkUsed() first call unexpected error: %v", err)
 	}
 
 	// Try to mark again
-	err = generator.MarkUsed(serial)
+	err = generator.MarkUsed(context.Background(), serial)
 	if err == nil {
 		t.Fatal("MarkUsed() expected error for duplicate serial, got nil")
 	}
@@ -256,7 +257,7 @@ func TestSerialGenerator_MarkUsed_Error_NilSerial(t *testing.T) {
 	storage := NewMemoryStorage()
 	generator := NewSerialGenerator(storage)
 
-	err := generator.MarkUsed(nil)
+	err := generator.MarkUsed(context.Background(), nil)
 	if err == nil {
 		t.Fatal("MarkUsed() expected error for nil serial, got nil")
 	}
@@ -285,7 +286,7 @@ func TestSerialGenerator_MarkUsed_Error_NonPositiveSerial(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := generator.MarkUsed(tt.serial)
+			err := generator.MarkUsed(context.Background(), tt.serial)
 			if err == nil {
 				t.Fatal("MarkUsed() expected error for non-positive serial, got nil")
 			}
@@ -317,7 +318,7 @@ func TestMemoryStorage_SerialExists_ReturnsFalseForUnknownSerial(t *testing.T) {
 	storage := NewMemoryStorage()
 	serial := big.NewInt(12345)
 
-	exists, err := storage.SerialExists(serial)
+	exists, err := storage.SerialExists(context.Background(), serial)
 	if err != nil {
 		t.Fatalf("SerialExists() unexpected error: %v", err)
 	}
@@ -332,12 +333,12 @@ func TestMemoryStorage_SerialExists_ReturnsTrueForStoredSerial(t *testing.T) {
 	storage := NewMemoryStorage()
 	serial := big.NewInt(12345)
 
-	err := storage.StoreSerial(serial)
+	err := storage.StoreSerial(context.Background(), serial)
 	if err != nil {
 		t.Fatalf("StoreSerial() unexpected error: %v", err)
 	}
 
-	exists, err := storage.SerialExists(serial)
+	exists, err := storage.SerialExists(context.Background(), serial)
 	if err != nil {
 		t.Fatalf("SerialExists() unexpected error: %v", err)
 	}
@@ -351,7 +352,7 @@ func TestMemoryStorage_SerialExists_Error_NilSerial(t *testing.T) {
 
 	storage := NewMemoryStorage()
 
-	exists, err := storage.SerialExists(nil)
+	exists, err := storage.SerialExists(context.Background(), nil)
 	if err == nil {
 		t.Fatal("SerialExists() expected error for nil serial, got nil")
 	}
@@ -372,7 +373,7 @@ func TestMemoryStorage_StoreSerial_Success(t *testing.T) {
 	}
 
 	for _, serial := range serials {
-		err := storage.StoreSerial(serial)
+		err := storage.StoreSerial(context.Background(), serial)
 		if err != nil {
 			t.Fatalf("StoreSerial(%s) unexpected error: %v", serial.Text(10), err)
 		}
@@ -380,7 +381,7 @@ func TestMemoryStorage_StoreSerial_Success(t *testing.T) {
 
 	// Verify all serials are stored
 	for _, serial := range serials {
-		exists, err := storage.SerialExists(serial)
+		exists, err := storage.SerialExists(context.Background(), serial)
 		if err != nil {
 			t.Fatalf("SerialExists(%s) unexpected error: %v", serial.Text(10), err)
 		}
@@ -395,7 +396,7 @@ func TestMemoryStorage_StoreSerial_Error_NilSerial(t *testing.T) {
 
 	storage := NewMemoryStorage()
 
-	err := storage.StoreSerial(nil)
+	err := storage.StoreSerial(context.Background(), nil)
 	if err == nil {
 		t.Fatal("StoreSerial() expected error for nil serial, got nil")
 	}
@@ -423,7 +424,7 @@ func TestSerialGenerator_ConcurrentGeneration_ThreadSafe(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < serialsPerGoroutine; j++ {
-				serial, err := generator.Generate()
+				serial, err := generator.Generate(context.Background())
 				if err != nil {
 					errChan <- err
 					return
@@ -477,13 +478,13 @@ func TestMemoryStorage_ConcurrentAccess_ThreadSafe(t *testing.T) {
 				// Each goroutine uses its own range of serial numbers
 				serial := big.NewInt(int64(goroutineID*1000 + j))
 
-				err := storage.StoreSerial(serial)
+				err := storage.StoreSerial(context.Background(), serial)
 				if err != nil {
 					errChan <- err
 					return
 				}
 
-				exists, err := storage.SerialExists(serial)
+				exists, err := storage.SerialExists(context.Background(), serial)
 				if err != nil {
 					errChan <- err
 					return
@@ -598,7 +599,7 @@ type failingStorage struct {
 	existsCount  int
 }
 
-func (f *failingStorage) SerialExists(serial *big.Int) (bool, error) {
+func (f *failingStorage) SerialExists(ctx context.Context, serial *big.Int) (bool, error) {
 	f.existsCount++
 	if f.failOnExists {
 		return false, errors.New("storage check failed")
@@ -606,7 +607,7 @@ func (f *failingStorage) SerialExists(serial *big.Int) (bool, error) {
 	return false, nil
 }
 
-func (f *failingStorage) StoreSerial(serial *big.Int) error {
+func (f *failingStorage) StoreSerial(ctx context.Context, serial *big.Int) error {
 	if f.failOnStore {
 		return errors.New("storage write failed")
 	}
@@ -619,7 +620,7 @@ func TestSerialGenerator_Generate_Error_StorageExistsFails(t *testing.T) {
 	storage := &failingStorage{failOnExists: true}
 	generator := NewSerialGenerator(storage)
 
-	_, err := generator.Generate()
+	_, err := generator.Generate(context.Background())
 	if err == nil {
 		t.Fatal("Generate() expected error when storage.SerialExists fails, got nil")
 	}
@@ -636,7 +637,7 @@ func TestSerialGenerator_Generate_Error_StorageStoreFails(t *testing.T) {
 	storage := &failingStorage{failOnStore: true}
 	generator := NewSerialGenerator(storage)
 
-	_, err := generator.Generate()
+	_, err := generator.Generate(context.Background())
 	if err == nil {
 		t.Fatal("Generate() expected error when storage.StoreSerial fails, got nil")
 	}
@@ -666,7 +667,7 @@ func newCollisionStorage(collisions int) *collisionStorage {
 	}
 }
 
-func (c *collisionStorage) SerialExists(serial *big.Int) (bool, error) {
+func (c *collisionStorage) SerialExists(ctx context.Context, serial *big.Int) (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -681,7 +682,7 @@ func (c *collisionStorage) SerialExists(serial *big.Int) (bool, error) {
 	return c.stored[key], nil
 }
 
-func (c *collisionStorage) StoreSerial(serial *big.Int) error {
+func (c *collisionStorage) StoreSerial(ctx context.Context, serial *big.Int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -697,7 +698,7 @@ func TestSerialGenerator_Generate_RetriesOnCollision(t *testing.T) {
 	storage := newCollisionStorage(3)
 	generator := NewSerialGenerator(storage)
 
-	serial, err := generator.Generate()
+	serial, err := generator.Generate(context.Background())
 	if err != nil {
 		t.Fatalf("Generate() unexpected error: %v", err)
 	}
@@ -714,7 +715,7 @@ func TestSerialGenerator_Generate_Error_MaxRetriesExceeded(t *testing.T) {
 	storage := newCollisionStorage(MaxSerialRetries + 5)
 	generator := NewSerialGenerator(storage)
 
-	_, err := generator.Generate()
+	_, err := generator.Generate(context.Background())
 	if err == nil {
 		t.Fatal("Generate() expected error when max retries exceeded, got nil")
 	}

@@ -20,6 +20,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"sync"
@@ -434,6 +435,39 @@ func TestDAOCredentialStore_LoadState_Closed(t *testing.T) {
 	loaded, err := store.LoadState()
 	require.ErrorIs(t, err, ErrStorageClosed)
 	assert.Nil(t, loaded)
+}
+
+// Regression: the DAO state path shares the JSON state format, so legacy
+// barrier-sealed (non-JSON) bytes at the DAO state key must surface the same
+// actionable ErrIncompatibleState rather than a terse ErrDeserializationFailed.
+func TestDAOCredentialStore_LoadState_IncompatibleSealedState(t *testing.T) {
+	backend := xkms.NewStorageMemory()
+	t.Cleanup(func() { _ = backend.Close() })
+
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
+	require.NoError(t, err)
+
+	// Seed legacy sealed bytes (8-byte BE header + high-entropy ciphertext)
+	// at the DAO state key. This is NOT JSON.
+	sealed := make([]byte, 189)
+	binary.BigEndian.PutUint64(sealed[:8], 1)
+	_, err = rand.Read(sealed[8:])
+	require.NoError(t, err)
+	require.NoError(t, kvStore.Put(context.Background(), daoStateKey, sealed))
+
+	store, err := NewDAOCredentialStore(kvStore)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	_, err = store.LoadState()
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrDeserializationFailed)
+
+	var incompat ErrIncompatibleState
+	require.ErrorAs(t, err, &incompat)
+	require.Equal(t, daoStateKey, incompat.StorageKey)
+	require.Equal(t, len(sealed), incompat.Size)
+	require.Contains(t, err.Error(), "Remediation")
 }
 
 func TestDAOCredentialStore_Clear(t *testing.T) {

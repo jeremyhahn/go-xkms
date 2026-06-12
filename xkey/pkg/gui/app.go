@@ -1907,8 +1907,8 @@ func NewApp(cfg *GUIConfig) *App {
 		mgr := a.pkcs11Service.GetManager()
 		if mgr != nil {
 			if conn, connErr := mgr.GetConnection(moduleID, slotID); connErr == nil {
-				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPIN)
-				if p11Err == nil {
+				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPIN) //nolint:staticcheck // SA4023: see below — stub build always errors.
+				if p11Err == nil {                                                              //nolint:staticcheck // SA4023: the !pkcs11 stub build always returns a non-nil error (branch statically dead there); real on-device registration runs in the pkcs11 build.
 					if pivErr := xkmssdk.RegisterPIVStore("pkcs11", p11Store); pivErr != nil {
 						a.log.Warn("failed to register PKCS#11 PIV store", "error", pivErr)
 					} else {
@@ -2333,7 +2333,7 @@ func (a *App) getTPM() xkmssdk.TrustedPlatformModule {
 		}
 		a.log.Warn("failed to open TPM", "error", err)
 		if factory != nil {
-			factory.Close()
+			_ = factory.Close()
 		}
 		return nil
 	}
@@ -2529,12 +2529,6 @@ func (a *App) startup(ctx context.Context) {
 	// Wire the FIDO2 device service emit function to the Wails runtime.
 	a.fido2DeviceService.SetEmitFunc(func(eventType string, data any) {
 		wailsruntime.EventsEmit(ctx, eventType, data)
-	})
-
-	// Wire the window hide callback so the app minimizes to tray after
-	// touch approval, returning focus to the browser.
-	a.fido2DeviceService.SetWindowHideFunc(func() {
-		a.HideWindow()
 	})
 
 	// Wire app lock event emitter.
@@ -3467,7 +3461,7 @@ func detectEKHandle(log *slog.Logger, device string) uint32 {
 	if err != nil {
 		return 0
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	t := tpmtransport.FromReadWriter(f)
 

@@ -78,13 +78,16 @@ The `secret` field is optional for direct mode and required for credential mode.
 **Response (200):**
 ```json
 {
-  "shares": ["base64share1", "base64share2", "base64share3", "base64share4", "base64share5"],
   "threshold": 3,
-  "total_shares": 5
+  "total_shares": 5,
+  "share_count": 5
 }
 ```
 
-Distribute the returned shares to key holders. The barrier transitions to unsealed.
+The response is share-free: generated shares are sealed to enrolled Security
+Officers via the ceremony distributor and are never returned over the wire.
+Each officer claims their share with their enrolled credential. The barrier
+transitions to unsealed.
 
 **Errors:** `ErrShamirNotConfigured` (400), `ErrShamirThresholdInvalid` (400), `ErrAlreadyInitialized` (409)
 
@@ -149,11 +152,14 @@ Generate new Shamir shares for the existing root key. The root key does not chan
 **Response (200):**
 ```json
 {
-  "shares": ["newshare1", "newshare2", "newshare3", "newshare4", "newshare5", "newshare6", "newshare7"],
   "threshold": 4,
-  "total_shares": 7
+  "total_shares": 7,
+  "share_count": 7
 }
 ```
+
+The response is share-free: the new shares are sealed to enrolled Security
+Officers and are never returned over the wire. Prior-round shares are revoked.
 
 **Errors:** `ErrSealed` (400), `ErrShamirNotConfigured` (400), `ErrShamirThresholdInvalid` (400)
 
@@ -246,7 +252,7 @@ Verify the integrity and consistency of all stored shares.
 
 ### POST /api/v1/barrier/recovery-keys/generate
 
-Generate an independent set of Shamir shares that can reconstruct the DEK. The barrier must be unsealed. Shares are returned for offline storage and are NOT persisted to the server.
+Generate an independent set of Shamir shares that can reconstruct the DEK. The barrier must be unsealed. Recovery shares are NOT persisted to the server.
 
 **Request:**
 ```json
@@ -259,11 +265,14 @@ Generate an independent set of Shamir shares that can reconstruct the DEK. The b
 **Response (200):**
 ```json
 {
-  "shares": ["recoveryshare1", "recoveryshare2", "recoveryshare3", "recoveryshare4", "recoveryshare5"],
   "threshold": 3,
-  "total_shares": 5
+  "total_shares": 5,
+  "share_count": 5
 }
 ```
+
+The response is share-free: recovery shares are sealed to enrolled recovery
+officers and are never returned over the wire.
 
 **Errors:** `ErrSealed` (400), `ErrShamirThresholdInvalid` (400), `ErrShamirSplitFailed` (500)
 

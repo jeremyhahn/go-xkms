@@ -51,7 +51,7 @@ const (
 //
 // For PKCS#11, import tokens are not required since the wrapping key is permanently stored
 // in the HSM and referenced by its label.
-func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -110,7 +110,7 @@ func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm back
 // The actual wrapping is performed locally using the wrapping public key from ImportParameters.
 // The wrapped key can then be securely transmitted and imported via ImportKey, which will
 // unwrap it using the corresponding private key in the HSM.
-func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if keyMaterial == nil || len(keyMaterial) == 0 {
 		return nil, fmt.Errorf("%w: key material cannot be nil or empty", backend.ErrInvalidAttributes)
 	}
@@ -163,7 +163,7 @@ func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) 
 //
 // The actual unwrapping is performed by the HSM's C_UnwrapKey function during ImportKey,
 // ensuring the plaintext key material never leaves the HSM hardware boundary.
-func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	return nil, fmt.Errorf("%w: unwrapping is performed by PKCS#11 HSM during import", backend.ErrNotSupported)
 }
 
@@ -185,7 +185,7 @@ func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend
 // some HSM implementations (including SoftHSM2) may return CKR_ARGUMENTS_BAD when attempting this
 // operation. This is a known limitation of certain HSM implementations. Production hardware HSMs
 // with complete PKCS#11 2.40 support should work correctly.
-func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -358,7 +358,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
 			return fmt.Errorf("failed to save metadata: %w", err)
 		}
 	}
@@ -513,7 +513,7 @@ func (b *Backend) buildImportKeyTemplate(attrs *types.KeyAttributes, keyID, keyL
 //   - The exported key is wrapped using the HSM's wrapping key
 //   - Keys imported with CKA_EXTRACTABLE=false cannot be exported
 //   - The export operation happens entirely within the HSM for maximum security
-func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -732,7 +732,7 @@ func determineKeySpec(attrs *types.KeyAttributes) string {
 //
 // Note: Most HSM security policies will prevent keys from having CKA_EXTRACTABLE=true.
 // This is primarily useful for testing with SoftHSM or specific compliance scenarios.
-func (b *Backend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 

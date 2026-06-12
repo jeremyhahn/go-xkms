@@ -239,7 +239,7 @@ func TestJWEIntegration_XKMSIntegration(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		keyID := "pkcs8:jwe-rsa-key"
+		keyID := "software:encryption:rsa:jwe-rsa-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
@@ -272,7 +272,7 @@ func TestJWEIntegration_XKMSIntegration(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		keyID := "pkcs8:jwe-ecdsa-p256-key"
+		keyID := "software:encryption:ecdsa-p256:jwe-ecdsa-p256-key"
 		err := setup.GenerateECDSAKey(keyID, elliptic.P256())
 		require.NoError(t, err)
 
@@ -301,7 +301,7 @@ func TestJWEIntegration_XKMSIntegration(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		keyID := "pkcs8:jwe-auto-key"
+		keyID := "software:encryption:rsa:jwe-auto-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
@@ -326,8 +326,8 @@ func TestJWEIntegration_XKMSIntegration(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		keyID1 := "pkcs8:jwe-key-1"
-		keyID2 := "pkcs8:jwe-key-2"
+		keyID1 := "software:encryption:rsa:jwe-key-1"
+		keyID2 := "software:encryption:rsa:jwe-key-2"
 
 		err := setup.GenerateRSAKey(keyID1, 2048)
 		require.NoError(t, err)
@@ -498,7 +498,7 @@ func TestJWEIntegration_ErrorHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// Try to encrypt with non-existent key
-		_, err = encrypter.EncryptWithKeyID(plaintext, "pkcs8:non-existent-key")
+		_, err = encrypter.EncryptWithKeyID(plaintext, "software:encryption:rsa:non-existent-key")
 		assert.Error(t, err)
 	})
 
@@ -506,7 +506,7 @@ func TestJWEIntegration_ErrorHandling(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		keyID := "pkcs8:jwe-test-key"
+		keyID := "software:encryption:rsa:jwe-test-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 

@@ -55,11 +55,14 @@ func createPasswordTestServer(t *testing.T) (*Server, staticpw.Store) {
 	memBackend := storage.NewMemory()
 	passwordStore := staticpw.NewStore(memBackend)
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		PasswordStore: passwordStore,
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -621,11 +624,14 @@ func TestPasswordHandlersWithoutStore(t *testing.T) {
 	defer xkms.Reset()
 
 	// Create server without password store
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		// No PasswordStore configured
+		XKMSService: svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -831,11 +837,14 @@ func TestPasswordWithTenantIdentity(t *testing.T) {
 		userID:   "test-user",
 	}
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: tenantAuth,
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		PasswordStore: passwordStore,
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -1027,10 +1036,13 @@ func TestSetPasswordStore(t *testing.T) {
 	require.NoError(t, err)
 	defer xkms.Reset()
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)

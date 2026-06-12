@@ -15,6 +15,7 @@ package symmetric
 
 import (
 	"bytes"
+	"context"
 	"crypto/x509"
 	"errors"
 	"testing"
@@ -45,7 +46,7 @@ func TestExportKeyMaterial_Success(t *testing.T) {
 	}
 
 	// Generate key
-	key, err := symmetricBackend.GenerateSymmetricKey(attrs)
+	key, err := symmetricBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
@@ -57,7 +58,7 @@ func TestExportKeyMaterial_Success(t *testing.T) {
 	}
 
 	// Export key material
-	exported, err := symmetricBackend.ExportKeyMaterial(attrs)
+	exported, err := symmetricBackend.ExportKeyMaterial(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("ExportKeyMaterial failed: %v", err)
 	}
@@ -81,7 +82,7 @@ func TestExportKeyMaterial_NilAttributes(t *testing.T) {
 	symmetricBackend := b.(*Backend)
 
 	// Test with nil attributes
-	_, err = symmetricBackend.ExportKeyMaterial(nil)
+	_, err = symmetricBackend.ExportKeyMaterial(context.Background(), nil)
 	if err == nil {
 		t.Error("Expected error for nil attributes")
 	}
@@ -111,13 +112,13 @@ func TestExportKeyMaterial_NonExportable(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = symmetricBackend.GenerateSymmetricKey(attrs)
+	_, err = symmetricBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
 	// Try to export - should fail
-	_, err = symmetricBackend.ExportKeyMaterial(attrs)
+	_, err = symmetricBackend.ExportKeyMaterial(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for non-exportable key")
 	}
@@ -151,7 +152,7 @@ func TestExportKeyMaterial_AsymmetricAlgorithm(t *testing.T) {
 	}
 
 	// Try to export - should fail
-	_, err = symmetricBackend.ExportKeyMaterial(attrs)
+	_, err = symmetricBackend.ExportKeyMaterial(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for asymmetric algorithm")
 	}
@@ -180,7 +181,7 @@ func TestExportKeyMaterial_ClosedBackend(t *testing.T) {
 	}
 
 	// Generate key before closing
-	_, err = symmetricBackend.GenerateSymmetricKey(attrs)
+	_, err = symmetricBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestExportKeyMaterial_ClosedBackend(t *testing.T) {
 	_ = symmetricBackend.Close()
 
 	// Try to export - should fail
-	_, err = symmetricBackend.ExportKeyMaterial(attrs)
+	_, err = symmetricBackend.ExportKeyMaterial(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for closed backend")
 	}
@@ -219,7 +220,7 @@ func TestExportKeyMaterial_KeyNotFound(t *testing.T) {
 	}
 
 	// Try to export non-existent key
-	_, err = symmetricBackend.ExportKeyMaterial(attrs)
+	_, err = symmetricBackend.ExportKeyMaterial(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for non-existent key")
 	}
@@ -252,7 +253,7 @@ func TestExportKeyMaterial_WithPassword(t *testing.T) {
 	}
 
 	// Generate key
-	key, err := symmetricBackend.GenerateSymmetricKey(attrs)
+	key, err := symmetricBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
@@ -263,7 +264,7 @@ func TestExportKeyMaterial_WithPassword(t *testing.T) {
 	}
 
 	// Export key material
-	exported, err := symmetricBackend.ExportKeyMaterial(attrs)
+	exported, err := symmetricBackend.ExportKeyMaterial(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("ExportKeyMaterial failed: %v", err)
 	}
@@ -296,7 +297,7 @@ func TestExportKeyMaterial_InvalidAttributes(t *testing.T) {
 	}
 
 	// Try to export - should fail validation
-	_, err = symmetricBackend.ExportKeyMaterial(attrs)
+	_, err = symmetricBackend.ExportKeyMaterial(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for invalid attributes")
 	}
@@ -333,7 +334,7 @@ func TestExportKeyMaterial_AllAlgorithms(t *testing.T) {
 			}
 
 			// Generate key
-			key, err := symmetricBackend.GenerateSymmetricKey(attrs)
+			key, err := symmetricBackend.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateSymmetricKey failed: %v", err)
 			}
@@ -344,7 +345,7 @@ func TestExportKeyMaterial_AllAlgorithms(t *testing.T) {
 			}
 
 			// Export key material
-			exported, err := symmetricBackend.ExportKeyMaterial(attrs)
+			exported, err := symmetricBackend.ExportKeyMaterial(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("ExportKeyMaterial failed: %v", err)
 			}
@@ -382,7 +383,7 @@ func TestExportKeyMaterial_WrongPassword(t *testing.T) {
 	}
 
 	// Generate key with correct password
-	_, err = symmetricBackend.GenerateSymmetricKey(attrsGenerate)
+	_, err = symmetricBackend.GenerateSymmetricKey(context.Background(), attrsGenerate)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
@@ -397,7 +398,7 @@ func TestExportKeyMaterial_WrongPassword(t *testing.T) {
 		Password:           wrongPassword,
 	}
 
-	_, err = symmetricBackend.ExportKeyMaterial(attrsExport)
+	_, err = symmetricBackend.ExportKeyMaterial(context.Background(), attrsExport)
 	if err == nil {
 		t.Error("Expected error for wrong password")
 	}

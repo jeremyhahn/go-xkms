@@ -116,7 +116,7 @@ func newShareTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 	svc.SetShareClient(&shareTestClient{})
 	t.Cleanup(func() { xkms.Reset() })
 
-	handlers := restapi.NewShareHandlers()
+	handlers := restapi.NewShareHandlers(svc)
 
 	r := chi.NewRouter()
 

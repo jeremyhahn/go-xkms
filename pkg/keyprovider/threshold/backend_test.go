@@ -121,7 +121,7 @@ func TestThresholdBackend_GenerateRSAKey(t *testing.T) {
 	}
 
 	// Generate threshold key
-	privKey, err := backend.GenerateKey(attrs)
+	privKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, privKey)
 
@@ -170,7 +170,7 @@ func TestThresholdBackend_GenerateECDSAKey(t *testing.T) {
 	}
 
 	// Generate threshold key
-	privKey, err := backend.GenerateKey(attrs)
+	privKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, privKey)
 
@@ -204,7 +204,7 @@ func TestThresholdBackend_GenerateEd25519Key(t *testing.T) {
 	}
 
 	// Generate threshold key
-	privKey, err := backend.GenerateKey(attrs)
+	privKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, privKey)
 
@@ -222,7 +222,7 @@ func TestThresholdBackend_ListKeys(t *testing.T) {
 	defer func() { _ = backend.Close() }()
 
 	// Initially should be empty
-	keys, err := backend.ListKeys()
+	keys, err := backend.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, keys)
 
@@ -244,14 +244,14 @@ func TestThresholdBackend_ListKeys(t *testing.T) {
 		KeyAlgorithm: x509.Ed25519,
 	}
 
-	_, err = backend.GenerateKey(attrs1)
+	_, err = backend.GenerateKey(context.Background(), attrs1)
 	require.NoError(t, err)
 
-	_, err = backend.GenerateKey(attrs2)
+	_, err = backend.GenerateKey(context.Background(), attrs2)
 	require.NoError(t, err)
 
 	// List should return both keys
-	keys, err = backend.ListKeys()
+	keys, err = backend.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, keys, 2)
 }
@@ -278,20 +278,20 @@ func TestThresholdBackend_DeleteKey(t *testing.T) {
 	}
 
 	// Generate key
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify it exists
-	keys, err := backend.ListKeys()
+	keys, err := backend.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, keys, 1)
 
 	// Delete key
-	err = backend.DeleteKey(attrs)
+	err = backend.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify it's gone
-	keys, err = backend.ListKeys()
+	keys, err = backend.ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, keys)
 }
@@ -320,11 +320,11 @@ func TestThresholdSigner_RSA(t *testing.T) {
 	}
 
 	// Generate threshold key
-	privKey, err := backend.GenerateKey(attrs)
+	privKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get threshold signer
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 
@@ -368,11 +368,11 @@ func TestThresholdSigner_ECDSA(t *testing.T) {
 	}
 
 	// Generate threshold key
-	privKey, err := backend.GenerateKey(attrs)
+	privKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get threshold signer
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 
@@ -417,11 +417,11 @@ func TestThresholdSigner_Ed25519(t *testing.T) {
 	}
 
 	// Generate threshold key
-	privKey, err := backend.GenerateKey(attrs)
+	privKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get threshold signer
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
 
@@ -466,7 +466,7 @@ func TestThresholdBackend_InsufficientShares(t *testing.T) {
 	}
 
 	// Generate threshold key
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Delete some shares to simulate insufficient shares
@@ -477,7 +477,7 @@ func TestThresholdBackend_InsufficientShares(t *testing.T) {
 	_ = keyStorage.Delete(context.Background(), shareKey)
 
 	// Now we only have 3 shares, but need 4 - signing should fail
-	signer, err := backend.Signer(attrs)
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	message := []byte("test")
@@ -507,10 +507,10 @@ func TestThresholdBackend_Close(t *testing.T) {
 		KeyAlgorithm: x509.ECDSA,
 	}
 
-	_, err = backend.GenerateKey(attrs)
+	_, err = backend.GenerateKey(context.Background(), attrs)
 	assert.ErrorIs(t, err, ErrBackendClosed)
 
-	_, err = backend.ListKeys()
+	_, err = backend.ListKeys(context.Background())
 	assert.ErrorIs(t, err, ErrBackendClosed)
 }
 
@@ -535,7 +535,7 @@ func TestThresholdBackend_DifferentShareCombinations(t *testing.T) {
 	}
 
 	// Generate key
-	privKey, err := backend.GenerateKey(attrs)
+	privKey, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	ed25519Key := privKey.(ed25519.PrivateKey)
@@ -558,8 +558,8 @@ func TestThresholdBackend_DifferentShareCombinations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Regenerate key before each test (except first) to restore all shares
 			if i > 0 {
-				_ = backend.DeleteKey(attrs)
-				privKey, err = backend.GenerateKey(attrs)
+				_ = backend.DeleteKey(context.Background(), attrs)
+				privKey, err = backend.GenerateKey(context.Background(), attrs)
 				require.NoError(t, err)
 				ed25519Key = privKey.(ed25519.PrivateKey)
 				originalPubKey = ed25519Key.Public().(ed25519.PublicKey)
@@ -579,7 +579,7 @@ func TestThresholdBackend_DifferentShareCombinations(t *testing.T) {
 
 			// Try to sign
 			message := []byte("test message")
-			signer, err := testBackend.Signer(attrs)
+			signer, err := testBackend.Signer(context.Background(), attrs)
 			if !tc.shouldReconstruct {
 				// Should fail to get signer or sign
 				require.NoError(t, err) // Signer should still be created

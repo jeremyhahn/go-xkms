@@ -17,6 +17,7 @@
 package integration
 
 import (
+	"context"
 	"crypto"
 	"crypto/elliptic"
 	"crypto/x509"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -76,7 +78,7 @@ func (s *testBackendSetup) GetKeyByID(cn string) (crypto.PrivateKey, error) {
 		},
 		Hash: crypto.SHA256,
 	}
-	key, err := s.backend.GetKey(attrs)
+	key, err := s.backend.GetKey(context.Background(), attrs)
 	if err == nil {
 		return key, nil
 	}
@@ -92,21 +94,21 @@ func (s *testBackendSetup) GetKeyByID(cn string) (crypto.PrivateKey, error) {
 		},
 		Hash: crypto.SHA256,
 	}
-	key, err = s.backend.GetKey(attrs)
+	key, err = s.backend.GetKey(context.Background(), attrs)
 	if err == nil {
 		return key, nil
 	}
 
 	// Try ECDSA P-384
 	attrs.ECCAttributes.Curve = elliptic.P384()
-	key, err = s.backend.GetKey(attrs)
+	key, err = s.backend.GetKey(context.Background(), attrs)
 	if err == nil {
 		return key, nil
 	}
 
 	// Try ECDSA P-521
 	attrs.ECCAttributes.Curve = elliptic.P521()
-	key, err = s.backend.GetKey(attrs)
+	key, err = s.backend.GetKey(context.Background(), attrs)
 	if err == nil {
 		return key, nil
 	}
@@ -118,7 +120,7 @@ func (s *testBackendSetup) GetKeyByID(cn string) (crypto.PrivateKey, error) {
 		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.Ed25519,
 	}
-	return s.backend.GetKey(attrs)
+	return s.backend.GetKey(context.Background(), attrs)
 }
 
 // Helper function to get a crypto.Signer by CN
@@ -143,6 +145,24 @@ func (s *testBackendSetup) GetDecrypterByID(cn string) (crypto.Decrypter, error)
 		return decrypter, nil
 	}
 	return nil, ErrUnsupportedOperation
+}
+
+// PublicJWK builds a public JWK for the key identified by keyID, tagging it
+// with the canonical Key ID as the JWK kid. This mirrors the production
+// dependency-injection pattern: the kid is opaque to the jwk package and is
+// resolved exclusively through getter functions (see jwk.XKMSKeyGetter).
+func (s *testBackendSetup) PublicJWK(keyID string) (*jwk.JWK, error) {
+	signer, err := s.GetSignerByID(keyID)
+	if err != nil {
+		return nil, err
+	}
+	publicJWK, err := jwk.FromPublicKey(signer.Public())
+	if err != nil {
+		return nil, err
+	}
+	publicJWK.Kid = keyID
+	publicJWK.Use = "sig"
+	return publicJWK, nil
 }
 
 // Helper function to get public key by CN
@@ -198,21 +218,21 @@ func createEd25519Attrs(cn string) *types.KeyAttributes {
 // GenerateRSAKey generates an RSA key with the given CN and key size
 func (s *testBackendSetup) GenerateRSAKey(cn string, keySize int) error {
 	attrs := createRSAAttrs(cn, keySize)
-	_, err := s.backend.GenerateKey(attrs)
+	_, err := s.backend.GenerateKey(context.Background(), attrs)
 	return err
 }
 
 // GenerateECDSAKey generates an ECDSA key with the given CN and curve
 func (s *testBackendSetup) GenerateECDSAKey(cn string, curve elliptic.Curve) error {
 	attrs := createECDSAAttrs(cn, curve)
-	_, err := s.backend.GenerateKey(attrs)
+	_, err := s.backend.GenerateKey(context.Background(), attrs)
 	return err
 }
 
 // GenerateEd25519Key generates an Ed25519 key with the given CN
 func (s *testBackendSetup) GenerateEd25519Key(cn string) error {
 	attrs := createEd25519Attrs(cn)
-	_, err := s.backend.GenerateKey(attrs)
+	_, err := s.backend.GenerateKey(context.Background(), attrs)
 	return err
 }
 

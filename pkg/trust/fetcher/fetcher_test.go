@@ -327,9 +327,11 @@ func TestBuildTLSConfig_Pin(t *testing.T) {
 	t.Parallel()
 	cfg, err := BuildTLSConfig(strings.Repeat("a", 64))
 	require.NoError(t, err)
-	// Pin mode disables system chain validation; PinVerifier is the gate.
-	assert.True(t, cfg.InsecureSkipVerify)
+	// Pin mode disables system chain validation; PinVerifier is the sole gate.
 	assert.NotNil(t, cfg.VerifyPeerCertificate)
+	// SessionTicketsDisabled must be true to prevent session resumption from
+	// bypassing PinVerifier (CWE-295).
+	assert.True(t, cfg.SessionTicketsDisabled)
 }
 
 func TestBuildTLSConfig_PinRequired(t *testing.T) {

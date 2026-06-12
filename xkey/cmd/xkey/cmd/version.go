@@ -54,12 +54,12 @@ func init() {
 
 // runVersion executes the version command logic.
 func runVersion(cmd *cobra.Command, args []string) {
-	fmt.Fprintln(cmd.OutOrStdout(), "xkey - xKey (go-xkms)")
-	fmt.Fprintf(cmd.OutOrStdout(), "  Version:    %s\n", Version)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Git Commit: %s\n", Commit)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Built:      %s\n", Date)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Go Version: %s\n", runtime.Version())
-	fmt.Fprintf(cmd.OutOrStdout(), "  OS/Arch:    %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "xkey - xKey (go-xkms)")
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Version:    %s\n", Version)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Git Commit: %s\n", Commit)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Built:      %s\n", Date)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Go Version: %s\n", runtime.Version())
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  OS/Arch:    %s/%s\n", runtime.GOOS, runtime.GOARCH)
 }
 
 // GetVersionInfo returns the version information as a formatted string.

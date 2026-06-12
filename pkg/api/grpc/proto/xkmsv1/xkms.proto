@@ -1911,14 +1911,21 @@ message BarrierInitializeShamirRequest {
   string secret = 1;
 }
 
-// BarrierShamirInitResponse returns the generated shares from initialization or rekey.
+// BarrierShamirInitResponse reports the Shamir parameters from
+// initialization or rekey. Share material is never returned (qrdb
+// share-free contract): shares are sealed to enrolled Security Officers
+// and claimed through the identity-gated claim endpoints.
 message BarrierShamirInitResponse {
-  // shares are the base64-encoded Shamir share values.
-  repeated string shares = 1;
+  // Field 1 carried raw share values before the share-free redesign and
+  // must never be reintroduced.
+  reserved 1;
+  reserved "shares";
   // threshold is the minimum number of shares needed to reconstruct.
   int32 threshold = 2;
   // total_shares is the total number of shares generated.
   int32 total_shares = 3;
+  // share_count is the number of shares sealed to officer enclaves.
+  int32 share_count = 4;
 }
 
 // BarrierUnsealShareRequest submits a single share for quorum unsealing.
@@ -1959,14 +1966,20 @@ message BarrierGenerateRecoveryKeysRequest {
   int32 total = 2;
 }
 
-// BarrierRecoveryKeysResponse returns the generated recovery key shares.
+// BarrierRecoveryKeysResponse reports the recovery key generation
+// parameters. Recovery key material is never returned (qrdb share-free
+// contract): recovery shares are sealed to enrolled recovery officers.
 message BarrierRecoveryKeysResponse {
-  // shares are the base64-encoded recovery share values.
-  repeated string shares = 1;
+  // Field 1 carried raw recovery share values before the share-free
+  // redesign and must never be reintroduced.
+  reserved 1;
+  reserved "shares";
   // threshold is the minimum shares needed to recover.
   int32 threshold = 2;
   // total_shares is the total number of recovery shares generated.
   int32 total_shares = 3;
+  // share_count is the number of shares sealed to officer enclaves.
+  int32 share_count = 4;
 }
 
 // BarrierRecoverWithKeysRequest requests recovery using recovery key shares.

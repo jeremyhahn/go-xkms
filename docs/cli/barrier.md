@@ -23,23 +23,22 @@ Implementation: [`cmd/xkmsctl/barrier.go`](../../cmd/xkmsctl/barrier.go).
 
 ```
 xkmsctl barrier status
-xkmsctl barrier init           --barrier-strategy <none|software|shamir>
-                               [--secret <pp>]               (required for software/shamir; rejected for none)
+xkmsctl barrier init           --barrier-strategy <none|passphrase|shamir>
+                               [--passphrase <pp>]               (required for passphrase/shamir; rejected for none)
                                [--so-pin <pin>]              (optional; rejected when --barrier-strategy=none)
                                [--user-pin <pin>]            (optional; requires --so-pin)
-xkmsctl barrier init-shamir    --secret <pp>
+xkmsctl barrier init-shamir    --passphrase <pp>
                                --threshold N
                                --total M
                                [--so-pin <pin>]
                                [--user-pin <pin>]            (requires --so-pin)
-xkmsctl barrier unseal         --secret <pp>                 (software / single-secret only)
+xkmsctl barrier unseal         --passphrase <pp>                 (passphrase / single-secret only)
 xkmsctl barrier unseal-shares  --share <s1> [--share <s2> ...]
                                | --shares-file <path>        ('-' = stdin)
 xkmsctl barrier seal           [--so-pin <pin>]
                                [-y | --assume-yes]
-xkmsctl barrier rekey          --secret <new-pp>
-                               [--so-pin <pin>]              (NO --user-pin on rekey)
-                               --threshold N --total M       (REQUIRED on xkms; see §3.2)
+xkmsctl barrier rekey          --threshold N --total M       (REQUIRED on xkms; see §3.2)
+                               [--so-pin <pin>]              (NO --user-pin; no secret on the wire)
 xkmsctl barrier recovery generate
                                --threshold N --total M
                                [--so-pin <pin>]
@@ -57,16 +56,26 @@ xkmsctl barrier recovery recover
 [`DefaultTransport`](../../cmd/xkmsctl/config.go) in xkmsctl's config
 package.
 
+### Security-officer ceremony verbs (canonical; xkmsctl mirror pending)
+
+The officer ceremony verb tree (`barrier officer *`,
+`barrier shamir-seal-vote`, `barrier recovery officer *`) is part of
+the canonical surface — under the share-free INV-1 contract the claim
+ceremony is the only way an officer ever holds a share. qrdb is the
+reference implementation; the xkmsctl mirror is pending. See
+[`08-bootstrap-auth-architecture.md §6`](https://github.com/automatethethings/software/blob/main/docs/08-bootstrap-auth-architecture.md#6-cli-surface-convergence)
+and [go-qrdb `docs/cli/barrier.md` §3.10](../../../go-qrdb/docs/cli/barrier.md).
+
 ---
 
-## 2. `--secret` vs. `--so-pin` / `--user-pin`
+## 2. `--passphrase` vs. `--so-pin` / `--user-pin`
 
 | Flag | Concern | Backend |
 |------|---------|---------|
-| `--secret` | Strategy wrapping passphrase. Software derives the wrapping key via Argon2id; Shamir uses it as the strategy seal; None ignores it. | `pkg/seal` strategies (`StrategyRegistry`) |
+| `--passphrase` | Strategy wrapping passphrase. The passphrase strategy derives the wrapping key via Argon2id; Shamir uses it as the strategy seal; None ignores it. | `pkg/seal` strategies (`StrategyRegistry`) |
 | `--so-pin`, `--user-pin` | Two-PIN compliance-gating material (FIPS 140-3 / PCI-DSS v4). | xkms `pkg/pin` `PINBackend` |
 
-The two are independent. `--secret` is **not** a PIN and never was;
+The two are independent. `--passphrase` is **not** a PIN and never was;
 the canonical naming has always been correct.
 
 ---
@@ -91,7 +100,7 @@ sequenceDiagram
     participant Bar as BarrierService
     participant Pin as PINService
 
-    Op->>CLI: barrier init --barrier-strategy software<br/>--secret <pp> --so-pin <so> --user-pin <usr>
+    Op->>CLI: barrier init --barrier-strategy passphrase<br/>--passphrase <pp> --so-pin <so> --user-pin <usr>
     CLI->>CLI: validateInitFlags(...)
     CLI->>SDK: Connect()
     CLI->>SDK: BarrierInitialize(secret)
@@ -145,22 +154,24 @@ sequenceDiagram
 
 ### 3.2 `barrier rekey` requires `--threshold` and `--total`
 
-xkms's wire-level `BarrierRekey` request currently carries only
-Shamir share regeneration parameters; it has no first-class
-"passphrase rotation only" code path. To keep the four-CLI flag
-surface lock-step, xkmsctl accepts `--secret` at the flag level but
-emits `XKMSPassphraseRekeyUnsupportedError` if it is supplied without
-`--threshold` and `--total`:
+xkms's wire-level `BarrierRekey` request carries only the Shamir
+share-regeneration parameters — the server generates the fresh secret
+material itself, so **no secret travels on the request** (the canonical
+surface removed the former dead secret field). The verb therefore takes
+no secret flag at all; xkmsctl emits
+`XKMSRekeyShamirParamsRequiredError` when `--threshold` / `--total`
+are omitted:
 
 ```bash
-# Accepted — Shamir share regeneration with the new wrapping material
-xkmsctl barrier rekey --secret '<new-pp>' --threshold 3 --total 5
+# Accepted — Shamir share regeneration (server derives the new material)
+xkmsctl barrier rekey --threshold 3 --total 5
 
-# Rejected — secret-only rekey not supported on xkms's wire
-xkmsctl barrier rekey --secret '<new-pp>'
+# Rejected — xkms's wire only supports Shamir share regeneration
+xkmsctl barrier rekey
 ```
 
-`qrdb` and `quicbaas` accept either form.
+`qrdb` and `quicbaas` additionally allow omitting `--threshold` /
+`--total` to reuse the existing M-of-N layout.
 
 ### 3.3 Strategy + PIN matrix on `barrier init`
 
@@ -169,17 +180,17 @@ nothing for them to gate; the same rule applies in every CLI.
 Validation is a pure function (`validateInitFlags`), tested by
 [`canonical_surface_test.go`](../../cmd/xkmsctl/canonical_surface_test.go).
 
-| `--barrier-strategy` | `--secret` | `--so-pin` | `--user-pin` | Result |
+| `--barrier-strategy` | `--passphrase` | `--so-pin` | `--user-pin` | Result |
 |---|---|---|---|---|
 | `none` | empty | empty | empty | OK |
 | `none` | non-empty | — | — | `BarrierSecretNotAllowedError` |
 | `none` | — | non-empty | — | `PINsNotAllowedError` |
 | `none` | — | — | non-empty | `PINsNotAllowedError` |
-| `software` | empty | — | — | `BarrierSecretRequiredError` |
-| `software` | non-empty | empty | empty | OK |
-| `software` | non-empty | set | empty | `PINPairError` |
-| `software` | non-empty | empty | set | `PINPairError` |
-| `software` | non-empty | set | set | OK |
+| `passphrase` | empty | — | — | `BarrierSecretRequiredError` |
+| `passphrase` | non-empty | empty | empty | OK |
+| `passphrase` | non-empty | set | empty | `PINPairError` |
+| `passphrase` | non-empty | empty | set | `PINPairError` |
+| `passphrase` | non-empty | set | set | OK |
 | `shamir` | — | — | — | `BarrierShamirOnInitError` (use `init-shamir`) |
 
 ---

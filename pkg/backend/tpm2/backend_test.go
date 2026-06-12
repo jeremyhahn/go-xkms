@@ -512,42 +512,42 @@ func TestNewBackend_InvalidConfig(t *testing.T) {
 func TestBackend_ClosedOperations(t *testing.T) {
 	b := &Backend{closed: true}
 	rsaAttrs := &types.KeyAttributes{CN: "test-key", KeyAlgorithm: x509.RSA}
-	if _, err := b.GenerateKey(rsaAttrs); err != ErrNotInitialized {
+	if _, err := b.GenerateKey(context.Background(), rsaAttrs); err != ErrNotInitialized {
 		t.Errorf("GenerateKey: expected ErrNotInitialized, got %v", err)
 	}
-	if _, err := b.GetKey(rsaAttrs); err != ErrNotInitialized {
+	if _, err := b.GetKey(context.Background(), rsaAttrs); err != ErrNotInitialized {
 		t.Errorf("GetKey: expected ErrNotInitialized, got %v", err)
 	}
-	if err := b.DeleteKey(rsaAttrs); err != ErrNotInitialized {
+	if err := b.DeleteKey(context.Background(), rsaAttrs); err != ErrNotInitialized {
 		t.Errorf("DeleteKey: expected ErrNotInitialized, got %v", err)
 	}
-	if _, err := b.ListKeys(); err != ErrNotInitialized {
+	if _, err := b.ListKeys(context.Background()); err != ErrNotInitialized {
 		t.Errorf("ListKeys: expected ErrNotInitialized, got %v", err)
 	}
-	if _, err := b.Signer(rsaAttrs); err != ErrNotInitialized {
+	if _, err := b.Signer(context.Background(), rsaAttrs); err != ErrNotInitialized {
 		t.Errorf("Signer: expected ErrNotInitialized, got %v", err)
 	}
-	if _, err := b.Decrypter(rsaAttrs); err != ErrNotInitialized {
+	if _, err := b.Decrypter(context.Background(), rsaAttrs); err != ErrNotInitialized {
 		t.Errorf("Decrypter: expected ErrNotInitialized, got %v", err)
 	}
 }
 
 func TestBackend_NilAttributes(t *testing.T) {
 	b := &Backend{closed: false}
-	if _, err := b.GenerateKey(nil); err != ErrInvalidKeyAttributes {
+	if _, err := b.GenerateKey(context.Background(), nil); err != ErrInvalidKeyAttributes {
 		t.Errorf("GenerateKey(nil): expected ErrInvalidKeyAttributes, got %v", err)
 	}
-	if _, err := b.GetKey(nil); err != ErrInvalidKeyAttributes {
+	if _, err := b.GetKey(context.Background(), nil); err != ErrInvalidKeyAttributes {
 		t.Errorf("GetKey(nil): expected ErrInvalidKeyAttributes, got %v", err)
 	}
-	if err := b.DeleteKey(nil); err != ErrInvalidKeyAttributes {
+	if err := b.DeleteKey(context.Background(), nil); err != ErrInvalidKeyAttributes {
 		t.Errorf("DeleteKey(nil): expected ErrInvalidKeyAttributes, got %v", err)
 	}
 }
 
 func TestBackend_RotateKey(t *testing.T) {
 	b := &Backend{}
-	if err := b.RotateKey(&types.KeyAttributes{CN: "test"}); err != ErrKeyRotationNotSupported {
+	if err := b.RotateKey(context.Background(), &types.KeyAttributes{CN: "test"}); err != ErrKeyRotationNotSupported {
 		t.Errorf("RotateKey: expected ErrKeyRotationNotSupported, got %v", err)
 	}
 }
@@ -565,7 +565,7 @@ func TestBackend_DoubleClose(t *testing.T) {
 func TestBackend_ListKeys_EmptyDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	b := &Backend{closed: false, config: &Config{KeyDir: tmpDir}}
-	keys, err := b.ListKeys()
+	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Errorf("ListKeys() error = %v", err)
 	}
@@ -576,7 +576,7 @@ func TestBackend_ListKeys_EmptyDir(t *testing.T) {
 
 func TestBackend_ListKeys_NonExistentDir(t *testing.T) {
 	b := &Backend{closed: false, config: &Config{KeyDir: "/nonexistent/path/xyz123"}}
-	keys, err := b.ListKeys()
+	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Errorf("ListKeys() error = %v", err)
 	}
@@ -649,7 +649,7 @@ func TestBackend_ListKeys_WithFiles(t *testing.T) {
 		t.Fatalf("Failed to create subdirectory: %v", err)
 	}
 	b := &Backend{closed: false, config: &Config{KeyDir: tmpDir}}
-	keys, err := b.ListKeys()
+	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Errorf("ListKeys() error = %v", err)
 	}
@@ -724,7 +724,7 @@ func TestTPM2Decrypter_Decrypt_NonRSA(t *testing.T) {
 func TestBackend_GenerateKey_UnsupportedAlgorithm(t *testing.T) {
 	b := &Backend{closed: false, srkAttrs: &types.KeyAttributes{CN: "test-srk"}}
 	attrs := &types.KeyAttributes{CN: "test-key", KeyAlgorithm: x509.Ed25519}
-	_, err := b.GenerateKey(attrs)
+	_, err := b.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for unsupported algorithm")
 	}
@@ -792,7 +792,7 @@ func TestBackend_GetKey_KeyNotFound(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: &mockKeyBackend{getError: errors.New("key not found")}}
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
-	_, err := b.GetKey(attrs)
+	_, err := b.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for non-existent key")
 	}
@@ -805,7 +805,7 @@ func TestBackend_SetsStoreType(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: &mockKeyBackend{getError: errors.New("key not found")}}
 	attrs := &types.KeyAttributes{CN: "test-key", StoreType: ""}
-	_, _ = b.GetKey(attrs)
+	_, _ = b.GetKey(context.Background(), attrs)
 	if attrs.StoreType != types.StoreTPM2 {
 		t.Errorf("Expected StoreType to be set to %v, got %v", types.StoreTPM2, attrs.StoreType)
 	}
@@ -815,7 +815,7 @@ func TestBackend_SetsParent(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: &mockKeyBackend{getError: errors.New("key not found")}}
 	attrs := &types.KeyAttributes{CN: "test-key", Parent: nil}
-	_, _ = b.GetKey(attrs)
+	_, _ = b.GetKey(context.Background(), attrs)
 	if attrs.Parent != srkAttrs {
 		t.Error("Expected Parent to be set to SRK attributes")
 	}
@@ -826,7 +826,7 @@ func TestBackend_PreservesExistingParent(t *testing.T) {
 	existingParent := &types.KeyAttributes{CN: "existing-parent"}
 	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: &mockKeyBackend{getError: errors.New("key not found")}}
 	attrs := &types.KeyAttributes{CN: "test-key", Parent: existingParent}
-	_, _ = b.GetKey(attrs)
+	_, _ = b.GetKey(context.Background(), attrs)
 	if attrs.Parent != existingParent {
 		t.Error("Expected existing Parent to be preserved")
 	}
@@ -904,7 +904,7 @@ func TestBackend_GenerateKey_RSA_Success(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-rsa-key", KeyAlgorithm: x509.RSA}
-	key, err := b.GenerateKey(attrs)
+	key, err := b.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey() error = %v", err)
 	}
@@ -931,7 +931,7 @@ func TestBackend_GenerateKey_ECDSA_Success(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-ecdsa-key", KeyAlgorithm: x509.ECDSA}
-	key, err := b.GenerateKey(attrs)
+	key, err := b.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey() error = %v", err)
 	}
@@ -958,7 +958,7 @@ func TestBackend_GenerateKey_ECDSA_DefaultCurve(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-ecdsa-key", KeyAlgorithm: x509.ECDSA, ECCAttributes: nil}
-	_, err = b.GenerateKey(attrs)
+	_, err = b.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey() error = %v", err)
 	}
@@ -976,7 +976,7 @@ func TestBackend_GenerateKey_RSA_Error(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-rsa-key", KeyAlgorithm: x509.RSA}
-	_, err := b.GenerateKey(attrs)
+	_, err := b.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error from CreateRSA")
 	}
@@ -988,7 +988,7 @@ func TestBackend_GenerateKey_ECDSA_Error(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-ecdsa-key", KeyAlgorithm: x509.ECDSA}
-	_, err := b.GenerateKey(attrs)
+	_, err := b.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error from CreateECDSA")
 	}
@@ -1004,7 +1004,7 @@ func TestBackend_GetKey_Success(t *testing.T) {
 	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicData: []byte("mock-public-blob")}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: mockKb, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	key, err := b.GetKey(attrs)
+	key, err := b.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey() error = %v", err)
 	}
@@ -1023,7 +1023,7 @@ func TestBackend_GetKey_PublicBlobError(t *testing.T) {
 	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicBlobError: errors.New("public blob error")}
 	b := &Backend{closed: false, tpm: &mockTPM{}, keyBackend: mockKb, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	_, err := b.GetKey(attrs)
+	_, err := b.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when public blob retrieval fails")
 	}
@@ -1039,7 +1039,7 @@ func TestBackend_GetKey_ParsePublicKeyError(t *testing.T) {
 	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicData: []byte("mock-public-blob")}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: mockKb, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	_, err := b.GetKey(attrs)
+	_, err := b.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when parsing public key fails")
 	}
@@ -1051,7 +1051,7 @@ func TestBackend_DeleteKey_Success(t *testing.T) {
 	mockKb := &mockKeyBackend{}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: mockKb, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	err := b.DeleteKey(attrs)
+	err := b.DeleteKey(context.Background(), attrs)
 	if err != nil {
 		t.Errorf("DeleteKey() error = %v", err)
 	}
@@ -1063,7 +1063,7 @@ func TestBackend_DeleteKey_Error(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	err := b.DeleteKey(attrs)
+	err := b.DeleteKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error from DeleteKey")
 	}
@@ -1079,7 +1079,7 @@ func TestBackend_Signer_Success(t *testing.T) {
 	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicData: []byte("mock-public-blob")}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: mockKb, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	signer, err := b.Signer(attrs)
+	signer, err := b.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer() error = %v", err)
 	}
@@ -1098,7 +1098,7 @@ func TestBackend_Decrypter_ReturnsError(t *testing.T) {
 	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicData: []byte("mock-public-blob")}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: mockKb, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	_, err = b.Decrypter(attrs)
+	_, err = b.Decrypter(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error because GetKey returns tpm2Signer not tpm2Decrypter")
 	}
@@ -1217,7 +1217,7 @@ func TestBackend_GenerateKey_SetsParentToSRK(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key", KeyAlgorithm: x509.RSA, Parent: nil}
-	_, err = b.GenerateKey(attrs)
+	_, err = b.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey() error = %v", err)
 	}
@@ -1235,7 +1235,7 @@ func TestBackend_GenerateKey_SetsStoreType(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key", KeyAlgorithm: x509.RSA, StoreType: ""}
-	_, err = b.GenerateKey(attrs)
+	_, err = b.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey() error = %v", err)
 	}
@@ -1249,7 +1249,7 @@ func TestBackend_DeleteKey_SetsParent(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key", Parent: nil}
-	err := b.DeleteKey(attrs)
+	err := b.DeleteKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("DeleteKey() error = %v", err)
 	}
@@ -1277,7 +1277,7 @@ func TestBackend_GenerateKey_PreservesExistingParent(t *testing.T) {
 	existingParent := &types.KeyAttributes{CN: "existing-parent"}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key", KeyAlgorithm: x509.RSA, Parent: existingParent}
-	_, err = b.GenerateKey(attrs)
+	_, err = b.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey() error = %v", err)
 	}
@@ -1295,7 +1295,7 @@ func TestBackend_ECDSA_WithExistingCurve(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-ecdsa-key", KeyAlgorithm: x509.ECDSA, ECCAttributes: &types.ECCAttributes{Curve: elliptic.P384()}}
-	_, err = b.GenerateKey(attrs)
+	_, err = b.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey() error = %v", err)
 	}
@@ -1309,7 +1309,7 @@ func TestBackend_Signer_GetKeyError(t *testing.T) {
 	mockKb := &mockKeyBackend{getError: errors.New("key not found")}
 	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: mockKb}
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
-	_, err := b.Signer(attrs)
+	_, err := b.Signer(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when GetKey fails")
 	}
@@ -1323,7 +1323,7 @@ func TestBackend_Decrypter_GetKeyError(t *testing.T) {
 	mockKb := &mockKeyBackend{getError: errors.New("key not found")}
 	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: mockKb}
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
-	_, err := b.Decrypter(attrs)
+	_, err := b.Decrypter(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when GetKey fails")
 	}
@@ -1347,7 +1347,7 @@ func TestBackend_ListKeys_ReadDirError(t *testing.T) {
 	}
 	// Point KeyDir at a file (not a directory) to trigger read error
 	b := &Backend{closed: false, config: &Config{KeyDir: tmpFile}}
-	_, err := b.ListKeys()
+	_, err := b.ListKeys(context.Background())
 	if err == nil {
 		t.Error("Expected error when KeyDir is not a directory")
 	}
@@ -1423,7 +1423,7 @@ func TestBackend_GenerateKey_ECDSA_WithNilCurve(t *testing.T) {
 		KeyAlgorithm:  x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{Curve: nil},
 	}
-	_, err = b.GenerateKey(attrs)
+	_, err = b.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey() error = %v", err)
 	}
@@ -1891,7 +1891,7 @@ func TestGenerateSymmetricKey_Success(t *testing.T) {
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "test-sym-key"}
-	key, err := b.GenerateSymmetricKey(attrs)
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() error = %v", err)
 	}
@@ -1915,7 +1915,7 @@ func TestGenerateSymmetricKey_Success(t *testing.T) {
 func TestGenerateSymmetricKey_Closed(t *testing.T) {
 	b := &Backend{closed: true}
 	attrs := &types.KeyAttributes{CN: "test-sym-key"}
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != ErrNotInitialized {
 		t.Errorf("Expected ErrNotInitialized, got %v", err)
 	}
@@ -1923,7 +1923,7 @@ func TestGenerateSymmetricKey_Closed(t *testing.T) {
 
 func TestGenerateSymmetricKey_NilAttrs(t *testing.T) {
 	b := &Backend{closed: false}
-	_, err := b.GenerateSymmetricKey(nil)
+	_, err := b.GenerateSymmetricKey(context.Background(), nil)
 	if err != ErrInvalidKeyAttributes {
 		t.Errorf("Expected ErrInvalidKeyAttributes, got %v", err)
 	}
@@ -1936,7 +1936,7 @@ func TestGenerateSymmetricKey_TPMError(t *testing.T) {
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "test-sym-key"}
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error from TPM GenerateSymmetricKey")
 	}
@@ -1953,7 +1953,7 @@ func TestGenerateSymmetricKey_PreservesExistingParent(t *testing.T) {
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "test-sym-key", Parent: existingParent}
-	_, err := b.GenerateSymmetricKey(attrs)
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey() error = %v", err)
 	}
@@ -1969,7 +1969,7 @@ func TestGetSymmetricKey_Success(t *testing.T) {
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "test-sym-key"}
-	key, err := b.GetSymmetricKey(attrs)
+	key, err := b.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey() error = %v", err)
 	}
@@ -1987,7 +1987,7 @@ func TestGetSymmetricKey_Success(t *testing.T) {
 func TestGetSymmetricKey_Closed(t *testing.T) {
 	b := &Backend{closed: true}
 	attrs := &types.KeyAttributes{CN: "test-sym-key"}
-	_, err := b.GetSymmetricKey(attrs)
+	_, err := b.GetSymmetricKey(context.Background(), attrs)
 	if err != ErrNotInitialized {
 		t.Errorf("Expected ErrNotInitialized, got %v", err)
 	}
@@ -1995,7 +1995,7 @@ func TestGetSymmetricKey_Closed(t *testing.T) {
 
 func TestGetSymmetricKey_NilAttrs(t *testing.T) {
 	b := &Backend{closed: false}
-	_, err := b.GetSymmetricKey(nil)
+	_, err := b.GetSymmetricKey(context.Background(), nil)
 	if err != ErrInvalidKeyAttributes {
 		t.Errorf("Expected ErrInvalidKeyAttributes, got %v", err)
 	}
@@ -2008,7 +2008,7 @@ func TestGetSymmetricKey_TPMError(t *testing.T) {
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "test-sym-key"}
-	_, err := b.GetSymmetricKey(attrs)
+	_, err := b.GetSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error from TPM GetSymmetricKey")
 	}
@@ -2024,7 +2024,7 @@ func TestSymmetricEncrypter_Success(t *testing.T) {
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "test-sym-key"}
-	enc, err := b.SymmetricEncrypter(attrs)
+	enc, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("SymmetricEncrypter() error = %v", err)
 	}
@@ -2042,7 +2042,7 @@ func TestSymmetricEncrypter_Success(t *testing.T) {
 func TestSymmetricEncrypter_Closed(t *testing.T) {
 	b := &Backend{closed: true}
 	attrs := &types.KeyAttributes{CN: "test-sym-key"}
-	_, err := b.SymmetricEncrypter(attrs)
+	_, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != ErrNotInitialized {
 		t.Errorf("Expected ErrNotInitialized, got %v", err)
 	}
@@ -2050,7 +2050,7 @@ func TestSymmetricEncrypter_Closed(t *testing.T) {
 
 func TestSymmetricEncrypter_NilAttrs(t *testing.T) {
 	b := &Backend{closed: false}
-	_, err := b.SymmetricEncrypter(nil)
+	_, err := b.SymmetricEncrypter(context.Background(), nil)
 	if err != ErrInvalidKeyAttributes {
 		t.Errorf("Expected ErrInvalidKeyAttributes, got %v", err)
 	}
@@ -2063,7 +2063,7 @@ func TestSymmetricEncrypter_TPMError(t *testing.T) {
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "test-sym-key"}
-	_, err := b.SymmetricEncrypter(attrs)
+	_, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error from TPM SymmetricEncrypter")
 	}

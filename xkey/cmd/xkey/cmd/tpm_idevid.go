@@ -192,7 +192,7 @@ func runIDevIDShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Get IDevID attributes
 	idevidAttrs, err := tpm.IDevIDAttributes()
@@ -283,7 +283,7 @@ func runIDevIDCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Check if IDevID already exists
 	if !idevidCreateForce {
@@ -320,7 +320,7 @@ func runIDevIDExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Get IDevID certificate
 	idevidCert, err := tpm.IDevIDCertificate()
@@ -354,7 +354,7 @@ func runIDevIDCSR(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Get EK certificate
 	ekCert, err := tpm.EKCertificate()

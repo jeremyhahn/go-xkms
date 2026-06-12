@@ -3,15 +3,59 @@ package xkms
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"sync"
 	"testing"
 
+	quicraftShamir "github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// testCaptureDistributor implements seal.CeremonyDistributor for use in unit
+// tests. It splits the secret using the real Shamir library and records the
+// share strings so tests can later call UnsealWithShare / RecoverWithKeys.
+type testCaptureDistributor struct {
+	mu     sync.Mutex
+	shares []string
+}
+
+// SealAndDistribute splits secret into total shares with the given threshold,
+// records them, and returns the count.
+func (c *testCaptureDistributor) SealAndDistribute(_ context.Context, secret []byte, threshold, total int) (int, error) {
+	raw, err := quicraftShamir.Split(secret, threshold, total)
+	if err != nil {
+		return 0, fmt.Errorf("shamir split failed: %w", err)
+	}
+	c.mu.Lock()
+	c.shares = make([]string, len(raw))
+	for i, s := range raw {
+		c.shares[i] = s.Value
+	}
+	c.mu.Unlock()
+	return len(raw), nil
+}
+
+// RekeyAndDistribute destroys the prior round and produces fresh shares.
+func (c *testCaptureDistributor) RekeyAndDistribute(ctx context.Context, newSecret []byte, newThreshold, newTotal int) (int, error) {
+	c.mu.Lock()
+	c.shares = nil
+	c.mu.Unlock()
+	return c.SealAndDistribute(ctx, newSecret, newThreshold, newTotal)
+}
+
+// Shares returns the share strings captured by the last SealAndDistribute call.
+func (c *testCaptureDistributor) Shares() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, len(c.shares))
+	copy(out, c.shares)
+	return out
+}
 
 // --- ErrNotConfigured guards ---
 
@@ -149,7 +193,7 @@ func TestBarrierGenerateRootToken_NotConfigured(t *testing.T) {
 // These tests create a real Barrier (software strategy) to exercise
 // the nil request check that occurs after the barrier nil check.
 
-func setupBarrier(t *testing.T) *seal.Barrier {
+func setupBarrier(t *testing.T) (*seal.Barrier, *testCaptureDistributor, *testCaptureDistributor) {
 	t.Helper()
 	barrierStore := storage.NewMemory()
 	softStrat := seal.NewSoftwareStrategy()
@@ -163,19 +207,35 @@ func setupBarrier(t *testing.T) *seal.Barrier {
 		softStrat,
 	)
 	require.NoError(t, err)
-	return barrier
+
+	// Wire ceremony and recovery distributors so all Shamir operations succeed.
+	dist := &testCaptureDistributor{}
+	recoveryDist := &testCaptureDistributor{}
+	barrier.SetCeremonyDistributor(dist)
+	barrier.SetRecoveryDistributor(recoveryDist)
+	return barrier, dist, recoveryDist
 }
 
 func setupServiceWithBarrier(t *testing.T) *XKMSService {
 	t.Helper()
-	setupService(t)
-	svc, err := Get()
-	require.NoError(t, err)
-	svc.SetBarrier(setupBarrier(t))
+	svc, _, _ := setupServiceWithBarrierDistributors(t)
 	return svc
 }
 
-func setupBarrierWithShamir(t *testing.T, threshold, total int) *seal.Barrier {
+// setupServiceWithBarrierDistributors returns the service along with the
+// ceremony and recovery capture distributors so tests can retrieve the
+// Shamir shares produced by the share-free seal contract.
+func setupServiceWithBarrierDistributors(t *testing.T) (*XKMSService, *testCaptureDistributor, *testCaptureDistributor) {
+	t.Helper()
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+	barrier, dist, recoveryDist := setupBarrier(t)
+	svc.SetBarrier(barrier)
+	return svc, dist, recoveryDist
+}
+
+func setupBarrierWithShamir(t *testing.T, threshold, total int) (*seal.Barrier, *testCaptureDistributor, *testCaptureDistributor) {
 	t.Helper()
 	barrierStore := storage.NewMemory()
 	softStrat := seal.NewSoftwareStrategy()
@@ -196,16 +256,23 @@ func setupBarrierWithShamir(t *testing.T, threshold, total int) *seal.Barrier {
 		shamirStrat,
 	)
 	require.NoError(t, err)
-	return barrier
+
+	// Wire ceremony and recovery distributors so all Shamir operations succeed.
+	dist := &testCaptureDistributor{}
+	recoveryDist := &testCaptureDistributor{}
+	barrier.SetCeremonyDistributor(dist)
+	barrier.SetRecoveryDistributor(recoveryDist)
+	return barrier, dist, recoveryDist
 }
 
-func setupServiceWithShamirBarrier(t *testing.T, threshold, total int) *XKMSService {
+func setupServiceWithShamirBarrier(t *testing.T, threshold, total int) (*XKMSService, *testCaptureDistributor, *testCaptureDistributor) {
 	t.Helper()
 	setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
-	svc.SetBarrier(setupBarrierWithShamir(t, threshold, total))
-	return svc
+	barrier, dist, recoveryDist := setupBarrierWithShamir(t, threshold, total)
+	svc.SetBarrier(barrier)
+	return svc, dist, recoveryDist
 }
 
 func TestBarrierInitialize_NilRequest(t *testing.T) {
@@ -399,7 +466,7 @@ func TestBarrierDeleteRecoveryKeys_AfterInit(t *testing.T) {
 // --- Recovery key generation and lifecycle ---
 
 func TestBarrierGenerateRecoveryKeys_AfterInit(t *testing.T) {
-	svc := setupServiceWithBarrier(t)
+	svc, _, recoveryDist := setupServiceWithBarrierDistributors(t)
 	ctx := context.Background()
 
 	// Initialize first
@@ -408,16 +475,18 @@ func TestBarrierGenerateRecoveryKeys_AfterInit(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Generate recovery keys
+	// Generate recovery keys. Key material is never returned; the recovery
+	// distributor receives the shares under the share-free seal contract.
 	resp, err := svc.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{
 		Threshold: 2,
 		Total:     3,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	assert.Len(t, resp.Keys, 3)
 	assert.Equal(t, 2, resp.Threshold)
-	assert.Equal(t, 3, resp.Total)
+	assert.Equal(t, 3, resp.TotalShares)
+	assert.Equal(t, 3, resp.ShareCount)
+	assert.Len(t, recoveryDist.Shares(), 3)
 
 	// Verify recovery keys exist
 	hasKeysResp, err := svc.BarrierHasRecoveryKeys(ctx)
@@ -437,17 +506,20 @@ func TestBarrierGenerateRecoveryKeys_AfterInit(t *testing.T) {
 // --- Barrier rekey ---
 
 func TestBarrierRekey_AfterInit(t *testing.T) {
-	svc := setupServiceWithShamirBarrier(t, 2, 3)
+	svc, dist, _ := setupServiceWithShamirBarrier(t, 2, 3)
 	ctx := context.Background()
 
-	// Initialize with Shamir (direct mode with ShamirStrategy)
+	// Initialize with Shamir (direct mode with ShamirStrategy). Shares are
+	// delivered through the ceremony distributor, never in the response.
 	shamirResp, err := svc.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
 		Threshold:   2,
 		TotalShares: 3,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, shamirResp)
-	assert.Len(t, shamirResp.Shares, 3)
+	assert.Equal(t, 3, shamirResp.TotalShares)
+	assert.Equal(t, 3, shamirResp.ShareCount)
+	assert.Len(t, dist.Shares(), 3)
 
 	// Rekey with different config
 	rekeyResp, err := svc.BarrierRekey(ctx, &transport.BarrierRekeyRequest{
@@ -456,23 +528,27 @@ func TestBarrierRekey_AfterInit(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, rekeyResp)
-	assert.Len(t, rekeyResp.Shares, 5)
+	assert.Equal(t, 5, rekeyResp.TotalShares)
 	assert.Equal(t, 3, rekeyResp.Threshold)
+	assert.Equal(t, 5, rekeyResp.ShareCount)
+	assert.Len(t, dist.Shares(), 5)
 }
 
 // --- Barrier Shamir unseal ---
 
 func TestBarrierUnsealWithShares_AfterShamirInit(t *testing.T) {
-	svc := setupServiceWithBarrier(t)
+	svc, dist, _ := setupServiceWithBarrierDistributors(t)
 	ctx := context.Background()
 
-	// Initialize with Shamir
-	shamirResp, err := svc.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
+	// Initialize with Shamir; shares are captured by the ceremony distributor.
+	_, err := svc.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
 		Secret:      "test-secret-shamir-unseal",
 		Threshold:   2,
 		TotalShares: 3,
 	})
 	require.NoError(t, err)
+	shares := dist.Shares()
+	require.Len(t, shares, 3)
 
 	// Seal the barrier
 	err = svc.BarrierSeal(ctx)
@@ -480,7 +556,7 @@ func TestBarrierUnsealWithShares_AfterShamirInit(t *testing.T) {
 
 	// Unseal with all shares at once
 	err = svc.BarrierUnsealWithShares(ctx, &transport.BarrierUnsealSharesRequest{
-		Shares: shamirResp.Shares[:2], // only need threshold
+		Shares: shares[:2], // only need threshold
 	})
 	require.NoError(t, err)
 
@@ -491,16 +567,19 @@ func TestBarrierUnsealWithShares_AfterShamirInit(t *testing.T) {
 }
 
 func TestBarrierUnsealWithShare_AfterShamirInit(t *testing.T) {
-	svc := setupServiceWithBarrier(t)
+	svc, dist, _ := setupServiceWithBarrierDistributors(t)
 	ctx := context.Background()
 
-	// Initialize with Shamir (threshold=2, total=3)
-	shamirResp, err := svc.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
+	// Initialize with Shamir (threshold=2, total=3); shares are captured by
+	// the ceremony distributor.
+	_, err := svc.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
 		Secret:      "test-secret-shamir-share",
 		Threshold:   2,
 		TotalShares: 3,
 	})
 	require.NoError(t, err)
+	shares := dist.Shares()
+	require.Len(t, shares, 3)
 
 	// Seal the barrier
 	err = svc.BarrierSeal(ctx)
@@ -508,7 +587,7 @@ func TestBarrierUnsealWithShare_AfterShamirInit(t *testing.T) {
 
 	// Submit first share
 	progress1, err := svc.BarrierUnsealWithShare(ctx, &transport.BarrierUnsealShareRequest{
-		Share: shamirResp.Shares[0],
+		Share: shares[0],
 	})
 	require.NoError(t, err)
 	require.NotNil(t, progress1)
@@ -518,7 +597,7 @@ func TestBarrierUnsealWithShare_AfterShamirInit(t *testing.T) {
 
 	// Submit second share (should complete quorum)
 	progress2, err := svc.BarrierUnsealWithShare(ctx, &transport.BarrierUnsealShareRequest{
-		Share: shamirResp.Shares[1],
+		Share: shares[1],
 	})
 	require.NoError(t, err)
 	require.NotNil(t, progress2)
@@ -528,7 +607,7 @@ func TestBarrierUnsealWithShare_AfterShamirInit(t *testing.T) {
 // --- BarrierRecoverWithKeys ---
 
 func TestBarrierRecoverWithKeys_AfterInit(t *testing.T) {
-	svc := setupServiceWithBarrier(t)
+	svc, _, recoveryDist := setupServiceWithBarrierDistributors(t)
 	ctx := context.Background()
 
 	// Initialize the barrier
@@ -537,12 +616,15 @@ func TestBarrierRecoverWithKeys_AfterInit(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Generate recovery keys
-	genResp, err := svc.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{
+	// Generate recovery keys; key material is captured by the recovery
+	// distributor.
+	_, err = svc.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{
 		Threshold: 2,
 		Total:     3,
 	})
 	require.NoError(t, err)
+	keys := recoveryDist.Shares()
+	require.Len(t, keys, 3)
 
 	// Seal the barrier
 	err = svc.BarrierSeal(ctx)
@@ -550,7 +632,7 @@ func TestBarrierRecoverWithKeys_AfterInit(t *testing.T) {
 
 	// Recover with keys
 	err = svc.BarrierRecoverWithKeys(ctx, &transport.BarrierRecoverWithKeysRequest{
-		Keys: genResp.Keys[:2], // only need threshold
+		Keys: keys[:2], // only need threshold
 	})
 	require.NoError(t, err)
 
@@ -563,10 +645,11 @@ func TestBarrierRecoverWithKeys_AfterInit(t *testing.T) {
 // --- BarrierGenerateRootToken success ---
 
 func TestBarrierGenerateRootToken_AfterShamirInit(t *testing.T) {
-	svc := setupServiceWithBarrier(t)
+	svc, dist, _ := setupServiceWithBarrierDistributors(t)
 	ctx := context.Background()
 
-	// Initialize with Shamir (credential mode)
+	// Initialize with Shamir (credential mode); shares are captured by the
+	// ceremony distributor.
 	shamirResp, err := svc.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
 		Secret:      "root-token-secret",
 		Threshold:   2,
@@ -574,11 +657,12 @@ func TestBarrierGenerateRootToken_AfterShamirInit(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, shamirResp)
-	require.Len(t, shamirResp.Shares, 3)
+	shares := dist.Shares()
+	require.Len(t, shares, 3)
 
 	// Generate root token using the Shamir shares
 	tokenResp, err := svc.BarrierGenerateRootToken(ctx, &transport.BarrierGenerateRootTokenRequest{
-		Shares: shamirResp.Shares,
+		Shares: shares,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, tokenResp)

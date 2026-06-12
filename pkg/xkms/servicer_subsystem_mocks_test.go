@@ -25,25 +25,25 @@ func (m *mockKeyProvider) Type() types.BackendType { return m.providerType }
 func (m *mockKeyProvider) Capabilities() types.Capabilities {
 	return types.Capabilities{Keys: true, Signing: true, Decryption: true}
 }
-func (m *mockKeyProvider) GenerateKey(_ *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyProvider) GenerateKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockKeyProvider) GetKey(_ *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyProvider) GetKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockKeyProvider) DeleteKey(_ *types.KeyAttributes) error {
+func (m *mockKeyProvider) DeleteKey(_ context.Context, _ *types.KeyAttributes) error {
 	return errors.New("not implemented")
 }
-func (m *mockKeyProvider) ListKeys() ([]*types.KeyAttributes, error) {
+func (m *mockKeyProvider) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockKeyProvider) Signer(_ *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockKeyProvider) Signer(_ context.Context, _ *types.KeyAttributes) (crypto.Signer, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockKeyProvider) Decrypter(_ *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockKeyProvider) Decrypter(_ context.Context, _ *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockKeyProvider) RotateKey(_ *types.KeyAttributes) error {
+func (m *mockKeyProvider) RotateKey(_ context.Context, _ *types.KeyAttributes) error {
 	return errors.New("not implemented")
 }
 func (m *mockKeyProvider) Close() error { return nil }

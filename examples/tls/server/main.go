@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
@@ -79,7 +80,7 @@ func main() {
 
 	// Step 3: Get TLS certificate from keystore
 	fmt.Println("3. Loading TLS certificate from xkms...")
-	tlsCert, err := ks.GetTLSCertificate("localhost", &types.KeyAttributes{
+	tlsCert, err := ks.GetTLSCertificate(context.Background(), "localhost", &types.KeyAttributes{
 		CN:           "localhost",
 		KeyType:      backend.KEY_TYPE_TLS,
 		StoreType:    backend.STORE_SW,
@@ -181,7 +182,7 @@ func createCA(ks xkms.Backend) (*x509.Certificate, interface{}) {
 		},
 	}
 
-	caPrivKey, err := ks.GenerateECDSA(keyAttrs)
+	caPrivKey, err := ks.GenerateECDSA(context.Background(), keyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate CA key: %v", err)
 	}
@@ -216,7 +217,7 @@ func createCA(ks xkms.Backend) (*x509.Certificate, interface{}) {
 
 	caCert, _ := x509.ParseCertificate(caCertBytes)
 	// #nosec G104 - Example code, error handling omitted for clarity
-	_ = ks.SaveCert(keyAttrs.CN, caCert)
+	_ = ks.SaveCert(context.Background(), keyAttrs.CN, caCert)
 
 	return caCert, caPrivKey
 }
@@ -233,7 +234,7 @@ func createServerCertificate(ks xkms.Backend, caCert *x509.Certificate, caPrivKe
 		},
 	}
 
-	serverPrivKey, err := ks.GenerateECDSA(serverKeyAttrs)
+	serverPrivKey, err := ks.GenerateECDSA(context.Background(), serverKeyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate server key: %v", err)
 	}
@@ -268,7 +269,7 @@ func createServerCertificate(ks xkms.Backend, caCert *x509.Certificate, caPrivKe
 
 	serverCert, _ := x509.ParseCertificate(serverCertBytes)
 	// #nosec G104 - Example code, error handling omitted for clarity
-	_ = ks.SaveCert("localhost", serverCert)
+	_ = ks.SaveCert(context.Background(), "localhost", serverCert)
 
 	return serverCert
 }

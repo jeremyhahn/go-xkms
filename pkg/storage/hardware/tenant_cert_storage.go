@@ -57,11 +57,13 @@ func (f *TenantCertStorageFactory) RemoveTenant(tenantID string) {
 }
 
 // NewTenantCertStorage creates a HardwareCertStorage scoped to a specific
-// tenant using the tenant's barrier for storage isolation.
+// tenant using the tenant's barrier for storage isolation. The barrier is
+// wrapped in a seal.BarrierBackend so it satisfies storage.Backend, including
+// the atomic PutIfAbsent primitive.
 func NewTenantCertStorage(registry *seal.BarrierRegistry, tenantID string) (HardwareCertStorage, error) {
 	tenantBarrier, err := registry.GetTenant(tenantID)
 	if err != nil {
 		return nil, err
 	}
-	return NewBackendCertStorageAdapter(tenantBarrier.Barrier()), nil
+	return NewBackendCertStorageAdapter(seal.NewBarrierBackend(tenantBarrier.Barrier())), nil
 }

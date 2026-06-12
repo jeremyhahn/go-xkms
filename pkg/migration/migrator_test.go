@@ -14,6 +14,7 @@
 package migration
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -64,7 +65,7 @@ func newMockImportExportBackend() *mockImportExportBackend {
 }
 
 // ExportKey exports a key as wrapped key material
-func (m *mockImportExportBackend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (m *mockImportExportBackend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	m.mu.Lock()
 	m.ExportKeyCalls = append(m.ExportKeyCalls, attrs.CN)
 	m.mu.Unlock()
@@ -108,7 +109,7 @@ func (m *mockImportExportBackend) ExportKey(attrs *types.KeyAttributes, algorith
 }
 
 // ImportKey imports wrapped key material
-func (m *mockImportExportBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (m *mockImportExportBackend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	m.mu.Lock()
 	m.ImportKeyCalls = append(m.ImportKeyCalls, attrs.CN)
 	m.mu.Unlock()
@@ -148,7 +149,7 @@ func (m *mockImportExportBackend) ImportKey(attrs *types.KeyAttributes, wrapped 
 }
 
 // GetImportParameters returns parameters needed to import a key
-func (m *mockImportExportBackend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (m *mockImportExportBackend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	m.mu.Lock()
 	m.GetImportParametersCalls = append(m.GetImportParametersCalls, attrs.CN)
 	m.mu.Unlock()
@@ -173,14 +174,14 @@ func (m *mockImportExportBackend) GetImportParameters(attrs *types.KeyAttributes
 }
 
 // UnwrapKey unwraps wrapped key material (mock implementation)
-func (m *mockImportExportBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (m *mockImportExportBackend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	// For testing purposes, we just return the wrapped key as-is
 	// In a real implementation, this would decrypt the wrapped material
 	return wrapped.WrappedKey, nil
 }
 
 // WrapKey wraps key material for transport (mock implementation)
-func (m *mockImportExportBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (m *mockImportExportBackend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	// For testing purposes, just wrap it in the structure
 	return &backend.WrappedKeyMaterial{
 		WrappedKey:  keyMaterial,
@@ -191,7 +192,7 @@ func (m *mockImportExportBackend) WrapKey(keyMaterial []byte, params *backend.Im
 }
 
 // ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
-func (m *mockImportExportBackend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (m *mockImportExportBackend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	return nil, fmt.Errorf("not supported for asymmetric keys")
 }
 
@@ -208,7 +209,7 @@ func (m *mockImportExportBackend) Reset() {
 }
 
 // GetKey overrides the MockBackend's GetKey to use our local storage
-func (m *mockImportExportBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockImportExportBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -220,7 +221,7 @@ func (m *mockImportExportBackend) GetKey(attrs *types.KeyAttributes) (crypto.Pri
 }
 
 // ListKeys overrides the MockBackend's ListKeys to use our local storage
-func (m *mockImportExportBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (m *mockImportExportBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -242,7 +243,7 @@ func (m *mockImportExportBackend) ListKeys() ([]*types.KeyAttributes, error) {
 }
 
 // DeleteKey overrides the MockBackend's DeleteKey to use our local storage
-func (m *mockImportExportBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (m *mockImportExportBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -254,7 +255,7 @@ func (m *mockImportExportBackend) DeleteKey(attrs *types.KeyAttributes) error {
 }
 
 // Signer overrides the MockBackend's Signer to use our local storage
-func (m *mockImportExportBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockImportExportBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -330,11 +331,11 @@ func TestMigrateKey_Success(t *testing.T) {
 		SkipVerification: true, // Skip verification for this test
 	}
 
-	err := migrator.MigrateKey(attrs, opts)
+	err := migrator.MigrateKey(context.Background(), attrs, opts)
 	require.NoError(t, err)
 
 	// Verify key exists in destination
-	_, err = dest.GetKey(attrs)
+	_, err = dest.GetKey(context.Background(), attrs)
 	assert.NoError(t, err)
 
 	// Verify export and import were called
@@ -364,7 +365,7 @@ func TestMigrateKey_WithVerification(t *testing.T) {
 		SkipVerification: true,
 	}
 
-	err := migrator.MigrateKey(attrs, opts)
+	err := migrator.MigrateKey(context.Background(), attrs, opts)
 	require.NoError(t, err)
 }
 
@@ -390,15 +391,15 @@ func TestMigrateKey_DeleteSourceAfterVerification(t *testing.T) {
 		SkipVerification:              true,
 	}
 
-	err := migrator.MigrateKey(attrs, opts)
+	err := migrator.MigrateKey(context.Background(), attrs, opts)
 	require.NoError(t, err)
 
 	// Verify key is removed from source
-	_, err = source.GetKey(attrs)
+	_, err = source.GetKey(context.Background(), attrs)
 	assert.Error(t, err)
 
 	// Verify key exists in destination
-	_, err = dest.GetKey(attrs)
+	_, err = dest.GetKey(context.Background(), attrs)
 	assert.NoError(t, err)
 }
 
@@ -428,9 +429,9 @@ func TestMigrateKey_VerificationFailure(t *testing.T) {
 		SkipVerification: false,
 	}
 
-	err := migrator.MigrateKey(attrs, opts)
+	err := migrator.MigrateKey(context.Background(), attrs, opts)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "validation failed")
+	assert.ErrorIs(t, err, ErrVerificationFailed)
 }
 
 // TestMigrateKey_ExportFailure tests migration when export fails
@@ -453,7 +454,7 @@ func TestMigrateKey_ExportFailure(t *testing.T) {
 	key := generateTestKey(t, x509.RSA)
 	source.keys[attrs.CN] = key
 
-	err := migrator.MigrateKey(attrs, nil)
+	err := migrator.MigrateKey(context.Background(), attrs, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to export key")
 }
@@ -478,7 +479,7 @@ func TestMigrateKey_ImportFailure(t *testing.T) {
 		return fmt.Errorf("import failed")
 	}
 
-	err := migrator.MigrateKey(attrs, nil)
+	err := migrator.MigrateKey(context.Background(), attrs, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to import key")
 }
@@ -504,7 +505,7 @@ func TestMigrateKey_CustomWrappingAlgorithm(t *testing.T) {
 		SkipVerification:  true,
 	}
 
-	err := migrator.MigrateKey(attrs, opts)
+	err := migrator.MigrateKey(context.Background(), attrs, opts)
 	require.NoError(t, err)
 
 	// Verify the custom algorithm was used
@@ -544,7 +545,7 @@ func TestMigrateAll_Success(t *testing.T) {
 		SkipVerification: true,
 	}
 
-	result, err := migrator.MigrateAll(nil, opts)
+	result, err := migrator.MigrateAll(context.Background(), nil, opts)
 	require.NoError(t, err)
 	assert.Equal(t, 3, result.SuccessCount)
 	assert.Equal(t, 0, result.FailureCount)
@@ -559,7 +560,7 @@ func TestMigrateAll_Success(t *testing.T) {
 			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: k.algorithm,
 		}
-		_, err := dest.GetKey(attrs)
+		_, err := dest.GetKey(context.Background(), attrs)
 		assert.NoError(t, err, "key %s should exist in destination", k.cn)
 	}
 }
@@ -619,7 +620,7 @@ func TestMigrateAll_WithFilter(t *testing.T) {
 		SkipVerification: true,
 	}
 
-	result, err := migrator.MigrateAll(filter, opts)
+	result, err := migrator.MigrateAll(context.Background(), filter, opts)
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.SuccessCount)
 	assert.Equal(t, 0, result.FailureCount)
@@ -675,7 +676,7 @@ func TestMigrateAll_StopOnError(t *testing.T) {
 		SkipVerification: true,
 	}
 
-	result, err := migrator.MigrateAll(nil, opts)
+	result, err := migrator.MigrateAll(context.Background(), nil, opts)
 	require.NoError(t, err)
 
 	// Should have some successes and at least one failure
@@ -708,7 +709,7 @@ func TestMigrateAll_Parallel(t *testing.T) {
 		SkipVerification: true,
 	}
 
-	result, err := migrator.MigrateAll(nil, opts)
+	result, err := migrator.MigrateAll(context.Background(), nil, opts)
 	require.NoError(t, err)
 	assert.Equal(t, numKeys, result.SuccessCount)
 	assert.Equal(t, 0, result.FailureCount)
@@ -764,7 +765,7 @@ func TestMigrateAll_WithFailures(t *testing.T) {
 		SkipVerification: true,
 	}
 
-	result, err := migrator.MigrateAll(nil, opts)
+	result, err := migrator.MigrateAll(context.Background(), nil, opts)
 	require.NoError(t, err)
 	assert.Equal(t, 3, result.SuccessCount)
 	assert.Equal(t, 2, result.FailureCount)
@@ -790,7 +791,7 @@ func TestMigrationPlan(t *testing.T) {
 		source.keys[attrs.CN] = key
 	}
 
-	plan, err := migrator.MigrationPlan(nil)
+	plan, err := migrator.MigrationPlan(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Len(t, plan.Keys, numKeys)
 	assert.Equal(t, types.BackendTypeSoftware, plan.SourceBackendType)
@@ -844,7 +845,7 @@ func TestMigrationPlan_WithFilter(t *testing.T) {
 		KeyAlgorithms: []x509.PublicKeyAlgorithm{x509.RSA},
 	}
 
-	plan, err := migrator.MigrationPlan(filter)
+	plan, err := migrator.MigrationPlan(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, plan.Keys, 2)
 }
@@ -876,7 +877,7 @@ func TestMigrationPlan_CompatibilityWarnings(t *testing.T) {
 	key := generateTestKey(t, x509.RSA)
 	source.keys[attrs.CN] = key
 
-	plan, err := migrator.MigrationPlan(nil)
+	plan, err := migrator.MigrationPlan(context.Background(), nil)
 	require.NoError(t, err)
 	assert.True(t, len(plan.Warnings) > 0, "Expected compatibility warnings")
 }
@@ -898,7 +899,7 @@ func TestValidateMigration_Success(t *testing.T) {
 	key := []byte("test-symmetric-key-data-32-bytes")
 	dest.keys[attrs.CN] = key
 
-	result, err := migrator.ValidateMigration(attrs)
+	result, err := migrator.ValidateMigration(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.True(t, result.IsValid)
 	assert.Contains(t, result.Message, "successful")
@@ -916,7 +917,7 @@ func TestValidateMigration_KeyNotFound(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	result, err := migrator.ValidateMigration(attrs)
+	result, err := migrator.ValidateMigration(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.False(t, result.IsValid)
 	assert.Contains(t, result.Message, "not found")
@@ -945,7 +946,7 @@ func TestValidateMigration_SignerFailure(t *testing.T) {
 		return nil, fmt.Errorf("signer not available")
 	}
 
-	result, err := migrator.ValidateMigration(attrs)
+	result, err := migrator.ValidateMigration(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.False(t, result.IsValid)
 	assert.Contains(t, result.Message, "failed to get signer")
@@ -972,7 +973,7 @@ func TestValidateMigration_SignFailure(t *testing.T) {
 		return &mockFailingSigner{}, nil
 	}
 
-	result, err := migrator.ValidateMigration(attrs)
+	result, err := migrator.ValidateMigration(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.False(t, result.IsValid)
 	assert.Contains(t, result.Message, "sign validation failed")
@@ -1322,7 +1323,7 @@ func TestExportKey(t *testing.T) {
 		WrappingAlgorithm: backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	wrapped, err := migrator.exportKey(source, attrs, opts)
+	wrapped, err := migrator.exportKey(context.Background(), source, attrs, opts)
 	require.NoError(t, err)
 	assert.NotNil(t, wrapped)
 	assert.Equal(t, backend.WrappingAlgorithmRSAES_OAEP_SHA_256, wrapped.Algorithm)
@@ -1350,7 +1351,7 @@ func TestExportKey_AutoSelectAlgorithm(t *testing.T) {
 	// Don't specify wrapping algorithm
 	opts := &MigrateOptions{}
 
-	wrapped, err := migrator.exportKey(source, attrs, opts)
+	wrapped, err := migrator.exportKey(context.Background(), source, attrs, opts)
 	require.NoError(t, err)
 	assert.NotNil(t, wrapped)
 	// RSA keys should use hybrid wrapping
@@ -1381,11 +1382,11 @@ func TestImportKey(t *testing.T) {
 		dest: dest,
 	}
 
-	err := migrator.importKey(dest, attrs, wrapped)
+	err := migrator.importKey(context.Background(), dest, attrs, wrapped)
 	require.NoError(t, err)
 
 	// Verify key was imported
-	_, err = dest.GetKey(attrs)
+	_, err = dest.GetKey(context.Background(), attrs)
 	assert.NoError(t, err)
 }
 
@@ -1416,7 +1417,7 @@ func TestImportKey_GetParametersFailure(t *testing.T) {
 		dest: dest,
 	}
 
-	err := migrator.importKey(dest, attrs, wrapped)
+	err := migrator.importKey(context.Background(), dest, attrs, wrapped)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get import parameters")
 }
@@ -1450,7 +1451,7 @@ func TestMigrateKeysSequential(t *testing.T) {
 		SkipVerification: true,
 	}
 
-	migrator.migrateKeysSequential(keys, opts, result)
+	migrator.migrateKeysSequential(context.Background(), keys, opts, result)
 
 	assert.Equal(t, 3, result.SuccessCount)
 	assert.Equal(t, 0, result.FailureCount)
@@ -1503,7 +1504,7 @@ func TestMigrateKeysSequential_WithStopOnError(t *testing.T) {
 		SkipVerification: true,
 	}
 
-	migrator.migrateKeysSequential(keys, opts, result)
+	migrator.migrateKeysSequential(context.Background(), keys, opts, result)
 
 	// Should stop after first failure
 	assert.Equal(t, 1, result.SuccessCount)
@@ -1540,7 +1541,7 @@ func TestMigrateKeysParallel(t *testing.T) {
 		SkipVerification: true,
 	}
 
-	migrator.migrateKeysParallel(keys, opts, result)
+	migrator.migrateKeysParallel(context.Background(), keys, opts, result)
 
 	assert.Equal(t, 10, result.SuccessCount)
 	assert.Equal(t, 0, result.FailureCount)
@@ -1600,7 +1601,7 @@ func TestMigrateKeysParallel_WithFailures(t *testing.T) {
 		SkipVerification: true,
 	}
 
-	migrator.migrateKeysParallel(keys, opts, result)
+	migrator.migrateKeysParallel(context.Background(), keys, opts, result)
 
 	// Some should succeed, some should fail
 	assert.True(t, result.SuccessCount > 0)
@@ -1617,7 +1618,7 @@ func TestMigrateAll_ListKeysError(t *testing.T) {
 		return nil, fmt.Errorf("list keys failed")
 	}
 
-	result, err := migrator.MigrateAll(nil, nil)
+	result, err := migrator.MigrateAll(context.Background(), nil, nil)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to list keys")
@@ -1632,7 +1633,7 @@ func TestMigrationPlan_ListKeysError(t *testing.T) {
 		return nil, fmt.Errorf("list keys failed")
 	}
 
-	plan, err := migrator.MigrationPlan(nil)
+	plan, err := migrator.MigrationPlan(context.Background(), nil)
 	assert.Error(t, err)
 	assert.Nil(t, plan)
 }
@@ -1719,7 +1720,7 @@ func TestValidateMigration_SymmetricKey(t *testing.T) {
 	key := []byte("test-symmetric-key-data-32byte")
 	dest.keys[attrs.CN] = key
 
-	result, err := migrator.ValidateMigration(attrs)
+	result, err := migrator.ValidateMigration(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.True(t, result.IsValid)
 }
@@ -1745,11 +1746,11 @@ func TestMigrateKey_DefaultOptions(t *testing.T) {
 	opts := &MigrateOptions{
 		SkipVerification: true,
 	}
-	err := migrator.MigrateKey(attrs, opts)
+	err := migrator.MigrateKey(context.Background(), attrs, opts)
 	require.NoError(t, err)
 
 	// Verify key was migrated
-	_, err = dest.GetKey(attrs)
+	_, err = dest.GetKey(context.Background(), attrs)
 	assert.NoError(t, err)
 }
 
@@ -1770,7 +1771,7 @@ func TestMigrateAll_DefaultOptions(t *testing.T) {
 	source.keys[attrs.CN] = key
 
 	// Pass nil options - should use defaults
-	result, err := migrator.MigrateAll(nil, nil)
+	result, err := migrator.MigrateAll(context.Background(), nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.SuccessCount)
 }

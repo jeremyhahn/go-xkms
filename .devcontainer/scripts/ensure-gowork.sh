@@ -44,6 +44,16 @@ detect_repo() {
 
 REPO="$(detect_repo)"
 
+# The workspace go directive must match the modules' required Go version. A
+# stale /tmp/go.work (e.g. left in a long-running devcontainer created before a
+# Go-version bump) is regenerated rather than reused — otherwise `go` rejects it
+# with "go.work lists go X, but module requires go >= Y".
+GOWORK_GO_VERSION="1.26.4"
+if [ -f "$GOWORK_FILE" ] && ! grep -qxF "go ${GOWORK_GO_VERSION}" "$GOWORK_FILE"; then
+	echo "ensure-gowork: ${GOWORK_FILE} go directive is stale; regenerating for go ${GOWORK_GO_VERSION}" >&2
+	rm -f "$GOWORK_FILE" "$GOWORK_FILE.sum"
+fi
+
 if [ ! -f "$GOWORK_FILE" ]; then
 	for dir in /go-codec /go-frost /go-objstore /go-qrdb /go-qrdb/sdk/go \
 		/go-quicraft /go-truststrap "${REPO}/sdk/go" "${REPO}/xkey"; do
@@ -56,7 +66,7 @@ if [ ! -f "$GOWORK_FILE" ]; then
 
 	echo "ensure-gowork: generating ${GOWORK_FILE} (repo=${REPO})"
 	cat > "$GOWORK_FILE" <<EOF
-go 1.26.4
+go ${GOWORK_GO_VERSION}
 
 use (
 	${REPO}

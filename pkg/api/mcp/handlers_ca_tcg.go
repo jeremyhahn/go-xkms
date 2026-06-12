@@ -18,14 +18,13 @@ import (
 	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // handleIssueEKCertificate handles the xkms.ca.tcg.issue-ek method.
 // It issues an Endorsement Key certificate for a TPM device.
 func (s *Server) handleIssueEKCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -40,8 +39,8 @@ func (s *Server) handleIssueEKCertificate(ctx context.Context, req *JSONRPCReque
 // handleIssueAKCertificate handles the xkms.ca.tcg.issue-ak method.
 // It issues an Attestation Key certificate for a TPM device.
 func (s *Server) handleIssueAKCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -56,8 +55,8 @@ func (s *Server) handleIssueAKCertificate(ctx context.Context, req *JSONRPCReque
 // handleSignTCGCSR handles the xkms.ca.tcg.sign-csr method.
 // It signs a TCG-CSR-IDEVID and returns IAK and IDevID certificates.
 func (s *Server) handleSignTCGCSR(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -72,8 +71,8 @@ func (s *Server) handleSignTCGCSR(ctx context.Context, req *JSONRPCRequest) (int
 // handleEnrollDevice handles the xkms.ca.tcg.enroll method.
 // It performs full TCG device enrollment with credential activation challenge.
 func (s *Server) handleEnrollDevice(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 

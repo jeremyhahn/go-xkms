@@ -179,7 +179,7 @@ func runUSBCreate(cmd *cobra.Command, args []string) error {
 			}
 		}
 		binaries = []string{exe}
-		fmt.Fprintf(cmd.OutOrStdout(), "Using current binary: %s\n", exe)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Using current binary: %s\n", exe)
 	}
 
 	// Validate that all binaries exist before prompting for passphrase.
@@ -206,31 +206,31 @@ func runUSBCreate(cmd *cobra.Command, args []string) error {
 		Binaries:   binaries,
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Creating USB image at %s (%s)...\n", targetPath, usb.FormatSize(sizeBytes))
-	fmt.Fprintf(cmd.OutOrStdout(), "  FAT32 partition: %s\n", usb.FormatSize(usb.FAT32PartitionSize))
-	fmt.Fprintf(cmd.OutOrStdout(), "  LUKS2 partition: %s\n", usb.FormatSize(sizeBytes-usb.FAT32PartitionSize))
-	fmt.Fprintf(cmd.OutOrStdout(), "  Binaries: %d\n", len(binaries))
-	fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Creating USB image at %s (%s)...\n", targetPath, usb.FormatSize(sizeBytes))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  FAT32 partition: %s\n", usb.FormatSize(usb.FAT32PartitionSize))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  LUKS2 partition: %s\n", usb.FormatSize(sizeBytes-usb.FAT32PartitionSize))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Binaries: %d\n", len(binaries))
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 
 	if err := usb.CreateImage(cfg); err != nil {
 		return &USBCmdError{Operation: "create_image", Err: err}
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "USB image created successfully!")
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintf(cmd.OutOrStdout(), "  Path:     %s\n", targetPath)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Size:     %s\n", usb.FormatSize(sizeBytes))
-	fmt.Fprintf(cmd.OutOrStdout(), "  Arch:     %s/%s\n", runtime.GOOS, runtime.GOARCH)
-	fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "USB image created successfully!")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Path:     %s\n", targetPath)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Size:     %s\n", usb.FormatSize(sizeBytes))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Arch:     %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 
 	if usb.IsBlockDevice(targetPath) {
-		fmt.Fprintln(cmd.OutOrStdout(), "USB device is ready. Safely eject and boot from it.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "USB device is ready. Safely eject and boot from it.")
 	} else {
-		fmt.Fprintln(cmd.OutOrStdout(), "To write to a USB drive:")
-		fmt.Fprintf(cmd.OutOrStdout(), "  sudo dd if=%s of=/dev/sdX bs=4M status=progress\n", targetPath)
-		fmt.Fprintln(cmd.OutOrStdout())
-		fmt.Fprintln(cmd.OutOrStdout(), "To test with QEMU:")
-		fmt.Fprintf(cmd.OutOrStdout(), "  qemu-system-x86_64 -drive file=%s,format=raw\n", targetPath)
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "To write to a USB drive:")
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  sudo dd if=%s of=/dev/sdX bs=4M status=progress\n", targetPath)
+		_, _ = fmt.Fprintln(cmd.OutOrStdout())
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "To test with QEMU:")
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  qemu-system-x86_64 -drive file=%s,format=raw\n", targetPath)
 	}
 
 	return nil
@@ -244,31 +244,31 @@ func runUSBStatus(cmd *cobra.Command, args []string) error {
 		return &USBCmdError{Operation: "get_status", Err: err}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "USB Image Status: %s\n\n", targetPath)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "USB Image Status: %s\n\n", targetPath)
 
 	deviceType := "Image file"
 	if status.IsBlockDevice {
 		deviceType = "Block device"
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "  Type:           %s\n", deviceType)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Total size:     %s\n", usb.FormatSize(status.TotalSize))
-	fmt.Fprintf(cmd.OutOrStdout(), "  FAT32 size:     %s\n", usb.FormatSize(status.FAT32Size))
-	fmt.Fprintf(cmd.OutOrStdout(), "  LUKS2 size:     %s\n", usb.FormatSize(status.LUKSSize))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Type:           %s\n", deviceType)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Total size:     %s\n", usb.FormatSize(status.TotalSize))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  FAT32 size:     %s\n", usb.FormatSize(status.FAT32Size))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  LUKS2 size:     %s\n", usb.FormatSize(status.LUKSSize))
 
 	mountStatus := "Locked"
 	if status.LUKSMounted {
 		mountStatus = "Unlocked"
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "  LUKS status:    %s\n", mountStatus)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  LUKS status:    %s\n", mountStatus)
 
 	if len(status.Binaries) > 0 {
-		fmt.Fprintln(cmd.OutOrStdout())
-		fmt.Fprintf(cmd.OutOrStdout(), "  Binaries (%d):\n", len(status.Binaries))
+		_, _ = fmt.Fprintln(cmd.OutOrStdout())
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Binaries (%d):\n", len(status.Binaries))
 		for _, bin := range status.Binaries {
-			fmt.Fprintf(cmd.OutOrStdout(), "    - %s\n", bin)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    - %s\n", bin)
 		}
 	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Binaries:       (not detected)\n")
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Binaries:       (not detected)\n")
 	}
 
 	return nil
@@ -289,7 +289,7 @@ func runUSBUpdate(cmd *cobra.Command, args []string) error {
 			}
 		}
 		binaries = []string{exe}
-		fmt.Fprintf(cmd.OutOrStdout(), "Using current binary: %s\n", exe)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Using current binary: %s\n", exe)
 	}
 
 	// Validate binaries.
@@ -303,15 +303,15 @@ func runUSBUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Updating binaries on %s...\n", targetPath)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updating binaries on %s...\n", targetPath)
 
 	if err := usb.UpdateBinaries(targetPath, binaries); err != nil {
 		return &USBCmdError{Operation: "update_binaries", Err: err}
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Binaries updated successfully!")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Binaries updated successfully!")
 	for _, bin := range binaries {
-		fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", bin)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", bin)
 	}
 
 	return nil
@@ -324,16 +324,16 @@ func readUSBPassphrase(cmd *cobra.Command) (string, error) {
 		return readUSBPassphraseFromStdin()
 	}
 
-	fmt.Fprint(cmd.OutOrStdout(), "Enter passphrase for LUKS data partition: ")
+	_, _ = fmt.Fprint(cmd.OutOrStdout(), "Enter passphrase for LUKS data partition: ")
 	pass1, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	if err != nil {
 		return "", &USBCmdError{Operation: "read_passphrase", Err: err}
 	}
 
-	fmt.Fprint(cmd.OutOrStdout(), "Confirm passphrase: ")
+	_, _ = fmt.Fprint(cmd.OutOrStdout(), "Confirm passphrase: ")
 	pass2, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	if err != nil {
 		return "", &USBCmdError{Operation: "read_passphrase", Err: err}
 	}

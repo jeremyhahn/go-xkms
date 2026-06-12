@@ -80,11 +80,6 @@ func (m *faOATHStore) Update(_ *oath.Credential) error { return m.updateErr }
 func (m *faOATHStore) Delete(_ string) error           { return m.deleteErr }
 func (m *faOATHStore) Close() error                    { return nil }
 
-// faKeyCounter implements KeyCounter for admin tests.
-type faKeyCounter int
-
-func (c faKeyCounter) KeyCount() int { return int(c) }
-
 // =========================================================================
 // oidc_service.go tests
 // =========================================================================
@@ -1133,10 +1128,10 @@ func TestFA_BarrierService_Context(t *testing.T) {
 	assert.NotNil(t, ctx)
 
 	// With SetContext, should return the set context.
-	custom := context.WithValue(context.Background(), "key", "value")
+	custom := context.WithValue(context.Background(), testCtxKey("key"), "value")
 	svc.SetContext(custom)
 	ctx = svc.context()
-	assert.Equal(t, "value", ctx.Value("key"))
+	assert.Equal(t, "value", ctx.Value(testCtxKey("key")))
 }
 
 // TestFA_BarrierService_Initialize_MkdirAllFails covers L175-177: when

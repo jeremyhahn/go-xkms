@@ -25,6 +25,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/resolver"
 )
 
 // Config represents the complete server configuration
@@ -50,6 +51,9 @@ type Config struct {
 	Credentials CredentialsConfig         `yaml:"credentials"`
 	CA          *ca.MultiIdentityCAConfig `yaml:"ca,omitempty"`
 	ACME        *ACMEConfig               `yaml:"acme,omitempty"`
+	// Trust configures the ordered strategy-chain trust resolver. When
+	// nil, trust resolution falls back to the OS system trust store.
+	Trust *resolver.Config `yaml:"trust,omitempty"`
 }
 
 // BarrierConfig configures the barrier (seal/unseal) subsystem.
@@ -658,6 +662,14 @@ func applyEnvOverrides(cfg *Config) {
 		if port, err := strconv.Atoi(mcpPort); err == nil && port >= 1 && port <= 65535 {
 			cfg.Server.MCPPort = port
 		}
+	}
+
+	// Storage settings
+	if v := os.Getenv("XKMS_STORAGE_BACKEND"); v != "" {
+		cfg.Storage.Backend = v
+	}
+	if v := os.Getenv("XKMS_STORAGE_PATH"); v != "" {
+		cfg.Storage.Path = v
 	}
 
 	// Clustering settings

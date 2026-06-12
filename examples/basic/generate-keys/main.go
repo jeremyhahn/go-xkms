@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto/elliptic"
 	"crypto/x509"
 	"fmt"
@@ -73,7 +74,7 @@ func main() {
 		},
 	}
 
-	rsaKey, err := ks.GenerateRSA(rsaAttrs)
+	rsaKey, err := ks.GenerateRSA(context.Background(), rsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate RSA key: %v", err)
 	}
@@ -91,7 +92,7 @@ func main() {
 		},
 	}
 
-	_, err = ks.GenerateRSA(rsa4096Attrs)
+	_, err = ks.GenerateRSA(context.Background(), rsa4096Attrs)
 	if err != nil {
 		log.Fatalf("Failed to generate RSA-4096 key: %v", err)
 	}
@@ -109,7 +110,7 @@ func main() {
 		},
 	}
 
-	ecdsaKey, err := ks.GenerateECDSA(ecdsaP256Attrs)
+	ecdsaKey, err := ks.GenerateECDSA(context.Background(), ecdsaP256Attrs)
 	if err != nil {
 		log.Fatalf("Failed to generate ECDSA P-256 key: %v", err)
 	}
@@ -127,7 +128,7 @@ func main() {
 		},
 	}
 
-	_, err = ks.GenerateECDSA(ecdsaP384Attrs)
+	_, err = ks.GenerateECDSA(context.Background(), ecdsaP384Attrs)
 	if err != nil {
 		log.Fatalf("Failed to generate ECDSA P-384 key: %v", err)
 	}
@@ -142,7 +143,7 @@ func main() {
 		KeyAlgorithm: x509.Ed25519,
 	}
 
-	ed25519Key, err := ks.GenerateEd25519(ed25519Attrs)
+	ed25519Key, err := ks.GenerateEd25519(context.Background(), ed25519Attrs)
 	if err != nil {
 		log.Fatalf("Failed to generate Ed25519 key: %v", err)
 	}
@@ -150,7 +151,7 @@ func main() {
 
 	// List all generated keys
 	fmt.Println("6. Listing all keys...")
-	keys, err := ks.ListKeys()
+	keys, err := ks.ListKeys(context.Background())
 	if err != nil {
 		log.Fatalf("Failed to list keys: %v", err)
 	}

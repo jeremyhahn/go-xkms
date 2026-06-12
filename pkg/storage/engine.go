@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
@@ -63,6 +64,12 @@ func mapErr(op, key string, err error) error {
 // requires no data migration.
 type engineBackend struct {
 	eng qrdbsdk.Storage
+
+	// putIfAbsentMu serializes the check-then-write performed by PutIfAbsent.
+	// The underlying engine is a single-writer process-local store, so holding
+	// this mutex across Exists+Set makes PutIfAbsent genuinely atomic for this
+	// process; there is no other writer to race with.
+	putIfAbsentMu sync.Mutex
 }
 
 // Compile-time assertion that engineBackend satisfies Backend.
@@ -93,6 +100,31 @@ func (b *engineBackend) Put(_ context.Context, key string, value []byte) error {
 		return mapErr("put", key, err)
 	}
 	return nil
+}
+
+// PutIfAbsent atomically stores value under key only if key is absent.
+//
+// Atomicity guarantee: the underlying go-qrdb engine is a single-writer,
+// process-local store. Holding putIfAbsentMu across the Exists check and the
+// Set makes this check-then-write linearizable for this process — there is no
+// other writer to interleave with — so the guarantee is genuine, not a
+// best-effort fallback. (A clustered/replicated Backend must instead implement
+// this via a consensus compare-and-swap.)
+func (b *engineBackend) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
+	b.putIfAbsentMu.Lock()
+	defer b.putIfAbsentMu.Unlock()
+
+	exists, err := b.eng.Exists([]byte(key))
+	if err != nil {
+		return false, mapErr("put-if-absent", key, err)
+	}
+	if exists {
+		return false, nil
+	}
+	if err := b.eng.Set([]byte(key), value); err != nil {
+		return false, mapErr("put-if-absent", key, err)
+	}
+	return true, nil
 }
 
 // Delete removes key. The go-qrdb engine deletes idempotently (no error on a

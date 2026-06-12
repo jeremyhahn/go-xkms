@@ -363,8 +363,8 @@ func runSSHKeysImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Imported SSH key: %s/%s/%s\n", out.Scope, out.Owner, out.Name)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Fingerprint: %s\n", out.Fingerprint)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Imported SSH key: %s/%s/%s\n", out.Scope, out.Owner, out.Name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Fingerprint: %s\n", out.Fingerprint)
 	return nil
 }
 
@@ -386,11 +386,11 @@ func runSSHKeysList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if len(list) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No SSH keys found.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No SSH keys found.")
 		return nil
 	}
 	for _, k := range list {
-		fmt.Fprintf(cmd.OutOrStdout(), "  %s/%s/%s  %s  %s\n",
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s/%s/%s  %s  %s\n",
 			k.Scope, k.Owner, k.Name, k.Algorithm, k.Fingerprint)
 	}
 	return nil
@@ -431,7 +431,7 @@ func runSSHKeysDelete(cmd *cobra.Command, _ []string) error {
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Deleted %s/%s/%s\n", scope, owner, name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Deleted %s/%s/%s\n", scope, owner, name)
 	return nil
 }
 
@@ -451,7 +451,7 @@ func runSSHKeysExport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), out.Line)
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), out.Line)
 	return nil
 }
 
@@ -491,7 +491,7 @@ func runSSHHostKeysAdd(cmd *cobra.Command, _ []string) error {
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Pinned %s -> %s\n", host, fp)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pinned %s -> %s\n", host, fp)
 	return nil
 }
 
@@ -511,11 +511,11 @@ func runSSHHostKeysList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if len(list) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No host-key pins found.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No host-key pins found.")
 		return nil
 	}
 	for _, p := range list {
-		fmt.Fprintf(cmd.OutOrStdout(), "  %s/%s  %s  %s  %s\n", p.Scope, p.Owner, p.Host, p.Fingerprint, p.Algorithm)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s/%s  %s  %s  %s\n", p.Scope, p.Owner, p.Host, p.Fingerprint, p.Algorithm)
 	}
 	return nil
 }
@@ -543,7 +543,7 @@ func runSSHHostKeysRemove(cmd *cobra.Command, _ []string) error {
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Removed pin for %s\n", host)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed pin for %s\n", host)
 	return nil
 }
 
@@ -574,7 +574,7 @@ func runSSHAuthorizedAdd(cmd *cobra.Command, args []string) error {
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Added authorized entry %s/%s/%s\n", scope, owner, name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added authorized entry %s/%s/%s\n", scope, owner, name)
 	return nil
 }
 
@@ -593,11 +593,11 @@ func runSSHAuthorizedList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if len(list) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No authorized entries.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No authorized entries.")
 		return nil
 	}
 	for _, e := range list {
-		fmt.Fprintln(cmd.OutOrStdout(), e.Line)
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), e.Line)
 	}
 	return nil
 }
@@ -623,7 +623,7 @@ func runSSHAuthorizedRemove(cmd *cobra.Command, _ []string) error {
 	if err := client.AuthorizedKeys().Remove(context.Background(), scope, owner, name); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Removed authorized entry %s/%s/%s\n", scope, owner, name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed authorized entry %s/%s/%s\n", scope, owner, name)
 	return nil
 }
 
@@ -667,14 +667,14 @@ func printGeneratedKey(cmd *cobra.Command, k *sshsdk.Key) {
 	if k == nil {
 		return
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Key: %s/%s/%s\n", k.Scope, k.Owner, k.Name)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Algorithm:   %s\n", k.Algorithm)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Fingerprint: %s\n", k.Fingerprint)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Key: %s/%s/%s\n", k.Scope, k.Owner, k.Name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Algorithm:   %s\n", k.Algorithm)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Fingerprint: %s\n", k.Fingerprint)
 	if k.Comment != "" {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Comment:     %s\n", k.Comment)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Comment:     %s\n", k.Comment)
 	}
 	if k.PublicKey != "" {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Public:      %s\n", k.PublicKey)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Public:      %s\n", k.PublicKey)
 	}
 }
 

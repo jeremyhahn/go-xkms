@@ -27,14 +27,14 @@
 //	migrator := migration.NewMigrator(sourceBackend, destBackend)
 //
 //	// Perform a dry-run to see what would be migrated
-//	plan, err := migrator.MigrationPlan(filter)
+//	plan, err := migrator.MigrationPlan(ctx, filter)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //	fmt.Printf("Will migrate %d keys\n", len(plan.Keys))
 //
 //	// Execute the migration
-//	result, err := migrator.MigrateAll(filter, &MigrateOptions{})
+//	result, err := migrator.MigrateAll(ctx, filter, &MigrateOptions{})
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -42,6 +42,7 @@
 package migration
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"time"
@@ -193,24 +194,24 @@ type Migrator interface {
 	// Returns an error if the migration fails.
 	// The options parameter controls the migration behavior.
 	// If opts is nil, default options are used.
-	MigrateKey(attrs *types.KeyAttributes, opts *MigrateOptions) error
+	MigrateKey(ctx context.Context, attrs *types.KeyAttributes, opts *MigrateOptions) error
 
 	// MigrateAll migrates all keys matching the filter from source to destination backend.
 	// The filter parameter specifies which keys to migrate. If nil, all keys are migrated.
 	// Returns a MigrationResult with detailed information about success/failure counts.
 	// The options parameter controls the migration behavior.
 	// If opts is nil, default options are used.
-	MigrateAll(filter *KeyFilter, opts *MigrateOptions) (*MigrationResult, error)
+	MigrateAll(ctx context.Context, filter *KeyFilter, opts *MigrateOptions) (*MigrationResult, error)
 
 	// MigrationPlan performs a dry-run analysis without actually migrating any keys.
 	// Returns a MigrationPlan that shows what would be migrated, including any warnings.
 	// The filter parameter specifies which keys would be migrated. If nil, all keys are analyzed.
-	MigrationPlan(filter *KeyFilter) (*MigrationPlan, error)
+	MigrationPlan(ctx context.Context, filter *KeyFilter) (*MigrationPlan, error)
 
 	// ValidateMigration verifies that a key migrated to the destination backend
 	// works correctly by performing a test operation (sign/verify or encrypt/decrypt).
 	// Returns a ValidationResult with details about the validation.
-	ValidateMigration(attrs *types.KeyAttributes) (*ValidationResult, error)
+	ValidateMigration(ctx context.Context, attrs *types.KeyAttributes) (*ValidationResult, error)
 
 	// SourceBackend returns the source backend being migrated from
 	SourceBackend() types.KeyProvider
@@ -236,3 +237,12 @@ var ErrExportNotSupported = errors.New("source backend does not support key expo
 
 // ErrImportNotSupported is returned when the destination backend doesn't support key import
 var ErrImportNotSupported = errors.New("destination backend does not support key import")
+
+// ErrNilBackend is returned when a nil source or destination backend is supplied
+var ErrNilBackend = errors.New("backend cannot be nil")
+
+// ErrMigratorClosed is returned when an operation is attempted on a closed migrator
+var ErrMigratorClosed = errors.New("migrator is closed")
+
+// ErrNilKeyAttributes is returned when nil key attributes are supplied
+var ErrNilKeyAttributes = errors.New("key attributes cannot be nil")

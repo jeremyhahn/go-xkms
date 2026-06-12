@@ -14,6 +14,7 @@
 package opaque
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -37,21 +38,21 @@ type mockKeyStore struct {
 	decrypterFunc func(*types.KeyAttributes) (crypto.Decrypter, error)
 }
 
-func (m *mockKeyStore) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyStore) GetKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if m.getKeyFunc != nil {
 		return m.getKeyFunc(attrs)
 	}
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockKeyStore) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockKeyStore) Signer(_ context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	if m.signerFunc != nil {
 		return m.signerFunc(attrs)
 	}
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockKeyStore) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockKeyStore) Decrypter(_ context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	if m.decrypterFunc != nil {
 		return m.decrypterFunc(attrs)
 	}
@@ -979,19 +980,19 @@ func TestMockKeyStore_NotImplemented(t *testing.T) {
 	}
 
 	// Test GetKey returns error when not implemented
-	_, err := mock.GetKey(attrs)
+	_, err := mock.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("expected error from unimplemented GetKey")
 	}
 
 	// Test Signer returns error when not implemented
-	_, err = mock.Signer(attrs)
+	_, err = mock.Signer(context.Background(), attrs)
 	if err == nil {
 		t.Error("expected error from unimplemented Signer")
 	}
 
 	// Test Decrypter returns error when not implemented
-	_, err = mock.Decrypter(attrs)
+	_, err = mock.Decrypter(context.Background(), attrs)
 	if err == nil {
 		t.Error("expected error from unimplemented Decrypter")
 	}

@@ -15,6 +15,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -894,6 +895,11 @@ func TestMigrateExecuteCmd_WithParallel(t *testing.T) {
 	_ = migrateExecuteCmd.Flags().Set("parallel", "2")
 	_ = migrateExecuteCmd.Flags().Set("skip-verify", "true")
 
+	// Run() is invoked directly (not via Execute()), so cobra never seeds the
+	// command context; the parallel migrator selects on ctx.Done() and needs
+	// a non-nil context.
+	migrateExecuteCmd.SetContext(context.Background())
+
 	code := captureExit(t, func() {
 		migrateExecuteCmd.Run(migrateExecuteCmd, []string{})
 	})
@@ -1416,7 +1422,7 @@ func TestMigratePlanCmd_ConcurrentAccess(t *testing.T) {
 
 			migrator, err := migration.NewMigrator(sourceBe, destBe)
 			if err == nil {
-				_, _ = migrator.MigrationPlan(nil)
+				_, _ = migrator.MigrationPlan(context.Background(), nil)
 				_ = migrator.Close()
 			}
 		}()

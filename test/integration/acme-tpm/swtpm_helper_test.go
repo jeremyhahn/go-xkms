@@ -163,7 +163,7 @@ func (s *SwtpmConnection) InitializeTPM() error {
 
 	// Initialize TPM
 	tpmModule, err := xkmssdk.NewTPM2(params)
-	if err != nil && err != xkmssdk.ErrNotInitialized {
+	if err != nil && err != xkmssdk.ErrTPMNotInitialized {
 		return caerrors.TPMErr("failed to initialize TPM: %v", err)
 	}
 
@@ -241,7 +241,7 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 
 	// Initialize TPM
 	tpmModule, err := xkmssdk.NewTPM2(params)
-	if err != nil && err != xkmssdk.ErrNotInitialized {
+	if err != nil && err != xkmssdk.ErrTPMNotInitialized {
 		return caerrors.TPMErr("failed to initialize TPM: %v", err)
 	}
 

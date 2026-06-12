@@ -68,8 +68,8 @@ func (s *Server) handleGetInitStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}
@@ -102,8 +102,8 @@ func (s *Server) handleClaimCertBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}
@@ -137,8 +137,8 @@ func (s *Server) handleClaimCertComplete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}
@@ -171,8 +171,8 @@ func (s *Server) handleClaimShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}
@@ -205,8 +205,8 @@ func (s *Server) handleSignCSRInit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}
@@ -239,8 +239,8 @@ func (s *Server) handleCredentialSubmit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}
@@ -267,8 +267,8 @@ func (s *Server) handleCredentialStrategy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}

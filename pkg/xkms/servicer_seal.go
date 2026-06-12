@@ -95,9 +95,9 @@ func defaultSealingKeyAttributes(backendType types.BackendType) *types.KeyAttrib
 // attempts to load the key via GetKey; if the key does not exist it generates
 // a new one. This is a no-op for TPM2 backends which handle sealing keys
 // internally via the SRK.
-func ensureSealingKey(kp types.KeyProvider, attrs *types.KeyAttributes) error {
-	if _, err := kp.GetKey(attrs); err != nil {
-		if _, genErr := kp.GenerateKey(attrs); genErr != nil {
+func ensureSealingKey(ctx context.Context, kp types.KeyProvider, attrs *types.KeyAttributes) error {
+	if _, err := kp.GetKey(ctx, attrs); err != nil {
+		if _, genErr := kp.GenerateKey(ctx, attrs); genErr != nil {
 			return &ErrSealOperation{
 				Operation: "auto-generate sealing key",
 				Err:       genErr,
@@ -148,7 +148,7 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 		kp := b.KeyProvider()
 		if kp != nil && kp.Type() != types.BackendTypeTPM2 {
 			attrs := defaultSealingKeyAttributes(kp.Type())
-			if sealErr := ensureSealingKey(kp, attrs); sealErr != nil {
+			if sealErr := ensureSealingKey(ctx, kp, attrs); sealErr != nil {
 				return nil, sealErr
 			}
 			opts.KeyAttributes = attrs

@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
@@ -520,6 +521,92 @@ type testJWTGenerator struct {
 
 func (g *testJWTGenerator) GenerateToken(ctx context.Context, user User) (string, error) {
 	return g.prefix + string(user.WebAuthnID()), nil
+}
+
+// TestIntegration_UserIdentifiedLogin_PopulatesAllowCredentials is the
+// authoritative regression for the email-first (non-discoverable) login
+// ceremony. When BeginLogin is called with a known user's WebAuthn handle the
+// returned assertion MUST enumerate that user's registered credential(s) in
+// allowCredentials. An empty allowCredentials list is the discoverable-ceremony
+// signature that triggers the browser's native passkey account-picker — wrong
+// for an email-identified login (see the quicbaas XKMSWebAuthnManager bug where
+// BeginLogin was dispatched with a nil user handle). The test also drives the
+// assertion through FinishLogin with the same handle to prove the user-identified
+// begin→finish pair completes, and asserts the unknown-user begin fails closed.
+func TestIntegration_UserIdentifiedLogin_PopulatesAllowCredentials(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := &Config{
+		RPID:          "example.com",
+		RPDisplayName: "Example Corp",
+		RPOrigins:     []string{"https://example.com"},
+	}
+	svc, err := NewService(ServiceParams{
+		Config:          cfg,
+		UserStore:       NewMemoryUserStore(),
+		SessionStore:    NewMemorySessionStore(),
+		CredentialStore: NewMemoryCredentialStore(),
+	})
+	require.NoError(t, err)
+
+	rp := virtualwebauthn.RelyingParty{
+		Name:   cfg.RPDisplayName,
+		ID:     cfg.RPID,
+		Origin: cfg.RPOrigins[0],
+	}
+	authenticator := virtualwebauthn.NewAuthenticator()
+	credential := newEC2Credential(t)
+
+	// Register a credential for the user.
+	regOptions, regSessionID, err := svc.BeginRegistration(ctx, "picker@example.com", "Picker User")
+	require.NoError(t, err)
+	regOptionsJSON, err := json.Marshal(regOptions.Response)
+	require.NoError(t, err)
+	parsedRegOptions, err := virtualwebauthn.ParseAttestationOptions(string(regOptionsJSON))
+	require.NoError(t, err)
+	attestationResponse := virtualwebauthn.CreateAttestationResponse(rp, authenticator, credential, *parsedRegOptions)
+	parsedAttResponse, err := parseAttestationResponse(attestationResponse)
+	require.NoError(t, err)
+	_, user, err := svc.FinishRegistration(ctx, regSessionID, parsedAttResponse)
+	require.NoError(t, err)
+	authenticator.AddCredential(credential)
+
+	// Resolve the registered credential id the begin response MUST advertise.
+	storedCreds, err := svc.GetCredentials(ctx, user.WebAuthnID())
+	require.NoError(t, err)
+	require.Len(t, storedCreds, 1)
+	wantCredID := base64.RawURLEncoding.EncodeToString(storedCreds[0].ID)
+
+	// User-identified begin: allowCredentials MUST be non-empty and list the
+	// registered credential. This is the picker-bug guard.
+	loginOptions, loginSessionID, err := svc.BeginLogin(ctx, user.WebAuthnID())
+	require.NoError(t, err)
+	require.NotEmpty(t, loginOptions.Response.AllowedCredentials,
+		"user-identified BeginLogin must populate allowCredentials; an empty list triggers the native passkey picker")
+
+	gotIDs := make([]string, 0, len(loginOptions.Response.AllowedCredentials))
+	for _, desc := range loginOptions.Response.AllowedCredentials {
+		gotIDs = append(gotIDs, base64.RawURLEncoding.EncodeToString(desc.CredentialID))
+	}
+	assert.Contains(t, gotIDs, wantCredID,
+		"allowCredentials must contain the user's registered credential id")
+
+	// The user-identified begin→finish pair completes against the SAME handle.
+	loginOptionsJSON, err := json.Marshal(loginOptions.Response)
+	require.NoError(t, err)
+	parsedLoginOptions, err := virtualwebauthn.ParseAssertionOptions(string(loginOptionsJSON))
+	require.NoError(t, err)
+	assertionResponse := virtualwebauthn.CreateAssertionResponse(rp, authenticator, credential, *parsedLoginOptions)
+	parsedAssertResponse, err := parseAssertionResponse(assertionResponse)
+	require.NoError(t, err)
+	token, loggedInUser, err := svc.FinishLogin(ctx, loginSessionID, user.WebAuthnID(), parsedAssertResponse)
+	require.NoError(t, err)
+	require.NotEmpty(t, token)
+	assert.Equal(t, user.WebAuthnID(), loggedInUser.WebAuthnID())
+
+	// Unknown user handle fails closed before emitting a ceremony.
+	_, _, err = svc.BeginLogin(ctx, []byte("no-such-user-handle"))
+	require.Error(t, err, "BeginLogin for an unknown user must fail closed")
 }
 
 // parseAttestationResponse parses a virtual authenticator attestation response

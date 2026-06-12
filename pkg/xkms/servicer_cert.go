@@ -36,7 +36,7 @@ func (s *XKMSService) GetCertificate(ctx context.Context, backendName, keyID str
 		return nil, &ErrKeyIDParse{Err: err}
 	}
 
-	cert, err := b.GetCert(keyID)
+	cert, err := b.GetCert(ctx, keyID)
 	if err != nil {
 		return nil, &ErrCertOperation{Operation: "get certificate", Err: err}
 	}
@@ -68,7 +68,7 @@ func (s *XKMSService) SaveCertificate(ctx context.Context, req *transport.SaveCe
 		return &ErrCertOperation{Operation: "parse certificate PEM", Err: err}
 	}
 
-	return b.SaveCert(req.KeyID, cert)
+	return b.SaveCert(ctx, req.KeyID, cert)
 }
 
 // DeleteCertificate deletes a certificate by key ID from the specified backend.
@@ -84,7 +84,7 @@ func (s *XKMSService) DeleteCertificate(ctx context.Context, backendName, keyID 
 		return &ErrKeyIDParse{Err: err}
 	}
 
-	return b.DeleteCert(keyID)
+	return b.DeleteCert(ctx, keyID)
 }
 
 // CertificateExists checks if a certificate exists for the given key ID.
@@ -100,7 +100,7 @@ func (s *XKMSService) CertificateExists(ctx context.Context, backendName, keyID 
 		return false, &ErrKeyIDParse{Err: err}
 	}
 
-	return b.CertExists(keyID)
+	return b.CertExists(ctx, keyID)
 }
 
 // ListCertificates lists all certificates from the specified backend.
@@ -112,7 +112,7 @@ func (s *XKMSService) ListCertificates(ctx context.Context, backendName string, 
 		return nil, err
 	}
 
-	certIDs, err := b.ListCerts()
+	certIDs, err := b.ListCerts(ctx)
 	if err != nil {
 		return nil, &ErrCertOperation{Operation: "list certificates", Err: err}
 	}
@@ -125,7 +125,7 @@ func (s *XKMSService) ListCertificates(ctx context.Context, backendName string, 
 
 		// Attempt to retrieve full certificate details for richer response.
 		// If retrieval fails, include the entry with just the key ID.
-		cert, certErr := b.GetCert(id)
+		cert, certErr := b.GetCert(ctx, id)
 		if certErr == nil && cert != nil {
 			info.CertificatePEM = certToPEM(cert)
 			info.Subject = cert.Subject.String()
@@ -172,7 +172,7 @@ func (s *XKMSService) SaveCertificateChain(ctx context.Context, req *transport.S
 		chain = append(chain, cert)
 	}
 
-	return b.SaveCertChain(req.KeyID, chain)
+	return b.SaveCertChain(ctx, req.KeyID, chain)
 }
 
 // GetCertificateChain retrieves a certificate chain by key ID from the specified backend.
@@ -188,7 +188,7 @@ func (s *XKMSService) GetCertificateChain(ctx context.Context, backendName, keyI
 		return nil, &ErrKeyIDParse{Err: err}
 	}
 
-	chain, err := b.GetCertChain(keyID)
+	chain, err := b.GetCertChain(ctx, keyID)
 	if err != nil {
 		return nil, &ErrCertOperation{Operation: "get certificate chain", Err: err}
 	}
@@ -218,7 +218,7 @@ func (s *XKMSService) GetTLSCertificate(ctx context.Context, backendName, keyID 
 	}
 
 	// Get the leaf certificate
-	leafCert, err := b.GetCert(keyID)
+	leafCert, err := b.GetCert(ctx, keyID)
 	if err != nil {
 		return nil, &ErrCertOperation{Operation: "get leaf certificate", Err: err}
 	}
@@ -229,7 +229,7 @@ func (s *XKMSService) GetTLSCertificate(ctx context.Context, backendName, keyID 
 	}
 
 	// Attempt to get the chain; chain is optional for TLS bundles
-	chain, chainErr := b.GetCertChain(keyID)
+	chain, chainErr := b.GetCertChain(ctx, keyID)
 	if chainErr == nil && len(chain) > 0 {
 		var chainBuilder strings.Builder
 		for _, cert := range chain {

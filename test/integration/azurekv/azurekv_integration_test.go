@@ -46,22 +46,30 @@ import (
 )
 
 // loadEmulatorTLSConfig returns a TLS config for the Azure Key Vault emulator.
-// If AZURE_KEYVAULT_CA_FILE is set, it loads the emulator's CA cert for proper
-// verification. Otherwise falls back to InsecureSkipVerify since the emulator
-// is a third-party Docker image with its own self-signed TLS certificate.
+// AZURE_KEYVAULT_CA_FILE must be set to the emulator's CA certificate PEM path;
+// the devcontainer mounts it under /run/secrets/azurekv-ca.pem by convention.
+// InsecureSkipVerify is not supported — configure the devcontainer to expose
+// the emulator's CA cert instead.
 func loadEmulatorTLSConfig() *tls.Config {
 	caFile := os.Getenv("AZURE_KEYVAULT_CA_FILE")
-	if caFile != "" {
-		caPEM, err := os.ReadFile(caFile)
-		if err == nil {
-			pool := x509.NewCertPool()
-			if pool.AppendCertsFromPEM(caPEM) {
-				return &tls.Config{RootCAs: pool}
-			}
-		}
+	if caFile == "" {
+		caFile = "/run/secrets/azurekv-ca.pem" // devcontainer default
 	}
-	// Third-party Azure KV emulator with uncontrollable self-signed cert
-	return &tls.Config{InsecureSkipVerify: true} //nolint:gosec // third-party Azure KV emulator, not our KMS server
+	caPEM, err := os.ReadFile(caFile)
+	if err != nil {
+		// No CA cert available; return config using system pool. The test will
+		// fail with a TLS error if the emulator uses a private CA — operators
+		// must set AZURE_KEYVAULT_CA_FILE to the emulator's CA cert.
+		return &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	return &tls.Config{
+		RootCAs:    pool,
+		MinVersion: tls.VersionTLS12,
+	}
 }
 
 // fakeTokenCredential provides a fake JWT token for the Azure Key Vault emulator
@@ -628,7 +636,7 @@ func TestAzureKeyVault(t *testing.T) {
 			require.NoError(t, err, "Failed to create second test key")
 
 			// List keys
-			keys, err := b.ListKeys()
+			keys, err := b.ListKeys(context.Background())
 			require.NoError(t, err, "Failed to list keys")
 			require.NotNil(t, keys, "Keys list should not be nil")
 			require.GreaterOrEqual(t, len(keys), 2, "Should have at least 2 keys")
@@ -656,7 +664,7 @@ func TestAzureKeyVault(t *testing.T) {
 			require.NoError(t, err, "Failed to create key")
 
 			// Rotate key
-			err = b.RotateKey(attrs)
+			err = b.RotateKey(context.Background(), attrs)
 			if err != nil {
 				// Azure emulator may not support rotation
 				t.Logf("⚠ Key rotation not supported (emulator limitation): %v", err)
@@ -685,7 +693,7 @@ func TestAzureKeyVault(t *testing.T) {
 			require.NoError(t, err, "Failed to create key")
 
 			// Get Signer
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			if err != nil {
 				// Emulator may not support Signer fully
 				t.Logf("⚠ Signer not supported (emulator limitation): %v", err)
@@ -973,7 +981,7 @@ func TestAzureKeyVault(t *testing.T) {
 			}
 			defer b.Delete(attrs)
 
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			require.NoError(t, err)
 
 			message := []byte("Azure KV RSA-PSS test")
@@ -1259,7 +1267,7 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 		_ = b.Delete(attrs)
 
 		// Generate symmetric key
-		symmetricKey, err := symBackend.GenerateSymmetricKey(attrs)
+		symmetricKey, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 		require.NoError(t, err, "Failed to generate AES-256-GCM key")
 		require.NotNil(t, symmetricKey, "Symmetric key should not be nil")
 		assert.Equal(t, string(types.SymmetricAES256GCM), symmetricKey.Algorithm())
@@ -1272,7 +1280,7 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 		t.Logf("✓ Verified key is not extractable (Azure KV security)")
 
 		// Get encrypter
-		encrypter, err := symBackend.SymmetricEncrypter(attrs)
+		encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 		require.NoError(t, err, "Failed to get symmetric encrypter")
 		require.NotNil(t, encrypter, "Encrypter should not be nil")
 		t.Logf("✓ Retrieved symmetric encrypter")
@@ -1316,12 +1324,12 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 		_ = b.Delete(attrs)
 
 		// Generate key
-		_, err := symBackend.GenerateSymmetricKey(attrs)
+		_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 		require.NoError(t, err, "Failed to generate key")
 		t.Logf("✓ Generated AES-256-GCM key for AAD testing")
 
 		// Get encrypter
-		encrypter, err := symBackend.SymmetricEncrypter(attrs)
+		encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 		require.NoError(t, err, "Failed to get encrypter")
 
 		// Test data with AAD (context information that must match for decryption)
@@ -1376,12 +1384,12 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 		_ = b.Delete(attrs)
 
 		// Generate key
-		_, err := symBackend.GenerateSymmetricKey(attrs)
+		_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 		require.NoError(t, err, "Failed to generate key")
 		t.Logf("✓ Generated AES-256-GCM key for nonce uniqueness testing")
 
 		// Get encrypter
-		encrypter, err := symBackend.SymmetricEncrypter(attrs)
+		encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 		require.NoError(t, err, "Failed to get encrypter")
 
 		// Encrypt same plaintext multiple times
@@ -1432,12 +1440,12 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 		_ = b.Delete(attrs)
 
 		// Generate key
-		_, err := symBackend.GenerateSymmetricKey(attrs)
+		_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 		require.NoError(t, err, "Failed to generate key")
 		t.Logf("✓ Generated AES-256-GCM key for edge case testing")
 
 		// Get encrypter
-		encrypter, err := symBackend.SymmetricEncrypter(attrs)
+		encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 		require.NoError(t, err, "Failed to get encrypter")
 
 		// Test 1: Empty plaintext
@@ -1532,7 +1540,7 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 				StoreType:          backend.STORE_AZUREKV,
 			}
 
-			_, err := symBackend.GenerateSymmetricKey(attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			assert.Error(t, err, "Should reject AES-128 (Azure KV only supports AES-256)")
 			t.Logf("✓ Correctly rejected unsupported AES-128 key size: %v", err)
 		})
@@ -1545,7 +1553,7 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 				StoreType:          backend.STORE_AZUREKV,
 			}
 
-			_, err := symBackend.GenerateSymmetricKey(attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			assert.Error(t, err, "Should reject AES-192 (Azure KV only supports AES-256)")
 			t.Logf("✓ Correctly rejected unsupported AES-192 key size: %v", err)
 		})
@@ -1559,7 +1567,7 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 				StoreType:          backend.STORE_AZUREKV,
 			}
 
-			_, err := symBackend.GetSymmetricKey(attrs)
+			_, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 			assert.Error(t, err, "Should error when getting non-existent key")
 			t.Logf("✓ Correctly rejected non-existent key: %v", err)
 		})
@@ -1573,7 +1581,7 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 				StoreType:          backend.STORE_AZUREKV,
 			}
 
-			_, err := symBackend.SymmetricEncrypter(attrs)
+			_, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			assert.Error(t, err, "Should error when getting encrypter for non-existent key")
 			t.Logf("✓ Correctly rejected encrypter for non-existent key: %v", err)
 		})
@@ -1591,11 +1599,11 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 			_ = b.Delete(attrs)
 
 			// Generate key
-			_, err := symBackend.GenerateSymmetricKey(attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err)
 
 			// Get encrypter
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err)
 
 			// Encrypt valid data first
@@ -1638,11 +1646,11 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 			_ = b.Delete(attrs)
 
 			// Generate key
-			_, err := symBackend.GenerateSymmetricKey(attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err)
 
 			// Get encrypter
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
+			encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err)
 
 			// Encrypt valid data
@@ -1685,11 +1693,11 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 			_ = b.Delete(attrs)
 
 			// Generate key first time
-			_, err := symBackend.GenerateSymmetricKey(attrs)
+			_, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			require.NoError(t, err, "First key generation should succeed")
 
 			// Try to generate same key again
-			_, err = symBackend.GenerateSymmetricKey(attrs)
+			_, err = symBackend.GenerateSymmetricKey(context.Background(), attrs)
 			assert.Error(t, err, "Duplicate key generation should fail")
 			t.Logf("✓ Correctly rejected duplicate key generation: %v", err)
 
@@ -1711,7 +1719,7 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 		_ = b.Delete(attrs)
 
 		// Step 1: Generate key
-		symmetricKey, err := symBackend.GenerateSymmetricKey(attrs)
+		symmetricKey, err := symBackend.GenerateSymmetricKey(context.Background(), attrs)
 		require.NoError(t, err, "Failed to generate key")
 		require.NotNil(t, symmetricKey)
 		assert.Equal(t, string(types.SymmetricAES256GCM), symmetricKey.Algorithm())
@@ -1719,14 +1727,14 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 		t.Logf("✓ Step 1: Generated symmetric key")
 
 		// Step 2: Retrieve key
-		retrievedKey, err := symBackend.GetSymmetricKey(attrs)
+		retrievedKey, err := symBackend.GetSymmetricKey(context.Background(), attrs)
 		require.NoError(t, err, "Failed to retrieve key")
 		assert.Equal(t, symmetricKey.Algorithm(), retrievedKey.Algorithm())
 		assert.Equal(t, symmetricKey.KeySize(), retrievedKey.KeySize())
 		t.Logf("✓ Step 2: Retrieved key successfully")
 
 		// Step 3: Use key for encryption/decryption
-		encrypter, err := symBackend.SymmetricEncrypter(attrs)
+		encrypter, err := symBackend.SymmetricEncrypter(context.Background(), attrs)
 		require.NoError(t, err, "Failed to get encrypter")
 
 		plaintext := []byte("lifecycle test data for Azure Key Vault")
@@ -1744,12 +1752,12 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 		t.Logf("✓ Step 4: Deleted key")
 
 		// Step 5: Verify key is gone
-		_, err = symBackend.GetSymmetricKey(attrs)
+		_, err = symBackend.GetSymmetricKey(context.Background(), attrs)
 		assert.Error(t, err, "Should error when retrieving deleted key")
 		t.Logf("✓ Step 5: Verified key is deleted")
 
 		// Step 6: Verify operations fail on deleted key
-		_, err = symBackend.SymmetricEncrypter(attrs)
+		_, err = symBackend.SymmetricEncrypter(context.Background(), attrs)
 		assert.Error(t, err, "Should error when getting encrypter for deleted key")
 		t.Logf("✓ Step 6: Verified operations fail on deleted key")
 
@@ -1782,7 +1790,7 @@ func testAzureKVRSAEncryptDecrypt(t *testing.T, b *azurekv.Backend) {
 		defer b.Delete(attrs)
 
 		// Get Decrypter interface
-		decrypter, err := b.Decrypter(attrs)
+		decrypter, err := b.Decrypter(context.Background(), attrs)
 		if err != nil {
 			t.Logf("⚠ Decrypter not supported (emulator limitation): %v", err)
 			t.Fatal("Skipping test due to emulator limitation")
@@ -1831,7 +1839,7 @@ func testAzureKVRSAEncryptDecrypt(t *testing.T, b *azurekv.Backend) {
 		defer b.Delete(attrs)
 
 		// Get Decrypter interface
-		decrypter, err := b.Decrypter(attrs)
+		decrypter, err := b.Decrypter(context.Background(), attrs)
 		if err != nil {
 			t.Logf("⚠ Decrypter not supported (emulator limitation): %v", err)
 			t.Fatal("Skipping test due to emulator limitation")
@@ -1885,7 +1893,7 @@ func testAzureKVRSAEncryptDecrypt(t *testing.T, b *azurekv.Backend) {
 		defer b.Delete(attrs)
 
 		// Get Decrypter interface
-		decrypter, err := b.Decrypter(attrs)
+		decrypter, err := b.Decrypter(context.Background(), attrs)
 		if err != nil {
 			t.Logf("⚠ Decrypter not supported (emulator limitation): %v", err)
 			t.Fatal("Skipping test due to emulator limitation")

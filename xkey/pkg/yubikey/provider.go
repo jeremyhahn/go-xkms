@@ -21,6 +21,7 @@
 package yubikey
 
 import (
+	"context"
 	"crypto"
 	"crypto/elliptic"
 	"crypto/x509"
@@ -63,10 +64,10 @@ func (p *Provider) Capabilities() xkms.Capabilities {
 //
 // Once the key is generated on the hardware, GetKey retrieves the standard
 // PKCS#11 signer for the newly-created key.
-func (p *Provider) GenerateKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
+func (p *Provider) GenerateKey(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	cfg := p.inner.Config()
 	if cfg.SOPIN == "" {
-		return p.inner.GenerateKey(attrs)
+		return p.inner.GenerateKey(ctx, attrs)
 	}
 
 	pool := p.inner.Pool()
@@ -81,7 +82,7 @@ func (p *Provider) GenerateKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, er
 		}
 		// Key now exists on the YubiKey. Use the standard PKCS#11 path
 		// to obtain a properly initialized signer bound to the hardware key.
-		return p.inner.GetKey(attrs)
+		return p.inner.GetKey(ctx, attrs)
 
 	default:
 		return nil, fmt.Errorf("yubikey: unsupported algorithm: %s", attrs.KeyAlgorithm)
@@ -89,33 +90,33 @@ func (p *Provider) GenerateKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, er
 }
 
 // GetKey retrieves an existing key from the YubiKey.
-func (p *Provider) GetKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
-	return p.inner.GetKey(attrs)
+func (p *Provider) GetKey(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
+	return p.inner.GetKey(ctx, attrs)
 }
 
 // DeleteKey removes a key from the YubiKey.
-func (p *Provider) DeleteKey(attrs *xkms.KeyAttributes) error {
-	return p.inner.DeleteKey(attrs)
+func (p *Provider) DeleteKey(ctx context.Context, attrs *xkms.KeyAttributes) error {
+	return p.inner.DeleteKey(ctx, attrs)
 }
 
 // ListKeys returns all keys managed by the inner backend.
-func (p *Provider) ListKeys() ([]*xkms.KeyAttributes, error) {
-	return p.inner.ListKeys()
+func (p *Provider) ListKeys(ctx context.Context) ([]*xkms.KeyAttributes, error) {
+	return p.inner.ListKeys(ctx)
 }
 
 // Signer returns a crypto.Signer for the key identified by attrs.
-func (p *Provider) Signer(attrs *xkms.KeyAttributes) (crypto.Signer, error) {
-	return p.inner.Signer(attrs)
+func (p *Provider) Signer(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.Signer, error) {
+	return p.inner.Signer(ctx, attrs)
 }
 
 // Decrypter returns a crypto.Decrypter for the key identified by attrs.
-func (p *Provider) Decrypter(attrs *xkms.KeyAttributes) (crypto.Decrypter, error) {
-	return p.inner.Decrypter(attrs)
+func (p *Provider) Decrypter(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.Decrypter, error) {
+	return p.inner.Decrypter(ctx, attrs)
 }
 
 // RotateKey delegates to the inner backend.
-func (p *Provider) RotateKey(attrs *xkms.KeyAttributes) error {
-	return p.inner.RotateKey(attrs)
+func (p *Provider) RotateKey(ctx context.Context, attrs *xkms.KeyAttributes) error {
+	return p.inner.RotateKey(ctx, attrs)
 }
 
 // Close delegates to the inner backend.

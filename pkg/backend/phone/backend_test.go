@@ -245,7 +245,7 @@ func TestBackend_GenerateKey_Success(t *testing.T) {
 	b := newTestBackend(t, sender)
 	attrs := ecdsaP256Attrs("test-key")
 
-	privKey, err := b.GenerateKey(attrs)
+	privKey, err := b.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -284,7 +284,7 @@ func TestBackend_GenerateKey_RSA_WithAttributes(t *testing.T) {
 		},
 	}
 
-	privKey, err := b.GenerateKey(attrs)
+	privKey, err := b.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -303,7 +303,7 @@ func TestBackend_GenerateKey_InvalidDecodeResult(t *testing.T) {
 	b := newTestBackend(t, sender)
 	attrs := ecdsaP256Attrs("test-key")
 
-	_, err := b.GenerateKey(attrs)
+	_, err := b.GenerateKey(context.Background(), attrs)
 	if err != ErrInvalidResponse {
 		t.Errorf("expected ErrInvalidResponse for invalid decode, got %v", err)
 	}
@@ -315,7 +315,7 @@ func TestBackend_GenerateKey_Closed(t *testing.T) {
 	_ = b.Close()
 
 	attrs := ecdsaP256Attrs("test-key")
-	_, err := b.GenerateKey(attrs)
+	_, err := b.GenerateKey(context.Background(), attrs)
 	if err != ErrBackendClosed {
 		t.Errorf("expected ErrBackendClosed, got %v", err)
 	}
@@ -325,7 +325,7 @@ func TestBackend_GenerateKey_NilAttrs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.GenerateKey(nil)
+	_, err := b.GenerateKey(context.Background(), nil)
 	if err != ErrInvalidConfig {
 		t.Errorf("expected ErrInvalidConfig for nil attrs, got %v", err)
 	}
@@ -341,7 +341,7 @@ func TestBackend_GenerateKey_RPCError(t *testing.T) {
 	b := newTestBackend(t, sender)
 	attrs := ecdsaP256Attrs("existing-key")
 
-	_, err := b.GenerateKey(attrs)
+	_, err := b.GenerateKey(context.Background(), attrs)
 	if err != ErrKeyExists {
 		t.Errorf("expected ErrKeyExists, got %v", err)
 	}
@@ -358,7 +358,7 @@ func TestBackend_GenerateKey_TransportError(t *testing.T) {
 	b := newTestBackend(t, sender)
 	attrs := ecdsaP256Attrs("test-key")
 
-	_, err := b.GenerateKey(attrs)
+	_, err := b.GenerateKey(context.Background(), attrs)
 	if err != transportErr {
 		t.Errorf("expected transport error, got %v", err)
 	}
@@ -373,7 +373,7 @@ func TestBackend_GenerateKey_UnsupportedAlgorithm(t *testing.T) {
 		KeyAlgorithm: x509.PublicKeyAlgorithm(99),
 	}
 
-	_, err := b.GenerateKey(attrs)
+	_, err := b.GenerateKey(context.Background(), attrs)
 	if err != ErrUnsupportedAlgorithm {
 		t.Errorf("expected ErrUnsupportedAlgorithm, got %v", err)
 	}
@@ -389,7 +389,7 @@ func TestBackend_GenerateKey_ECDSANilCurve(t *testing.T) {
 		ECCAttributes: nil,
 	}
 
-	_, err := b.GenerateKey(attrs)
+	_, err := b.GenerateKey(context.Background(), attrs)
 	if err != ErrUnsupportedAlgorithm {
 		t.Errorf("expected ErrUnsupportedAlgorithm for nil ECCAttributes, got %v", err)
 	}
@@ -409,7 +409,7 @@ func TestBackend_GenerateKey_InvalidPublicKeyDER(t *testing.T) {
 	b := newTestBackend(t, sender)
 	attrs := ecdsaP256Attrs("test-key")
 
-	_, err := b.GenerateKey(attrs)
+	_, err := b.GenerateKey(context.Background(), attrs)
 	if err != ErrInvalidPublicKey {
 		t.Errorf("expected ErrInvalidPublicKey, got %v", err)
 	}
@@ -429,7 +429,7 @@ func TestBackend_GenerateKey_EmptyPublicKeyDER(t *testing.T) {
 	b := newTestBackend(t, sender)
 	attrs := ecdsaP256Attrs("test-key")
 
-	_, err := b.GenerateKey(attrs)
+	_, err := b.GenerateKey(context.Background(), attrs)
 	if err != ErrInvalidPublicKey {
 		t.Errorf("expected ErrInvalidPublicKey for empty DER, got %v", err)
 	}
@@ -469,7 +469,7 @@ func TestBackend_GetKey_Success(t *testing.T) {
 	b := newTestBackend(t, sender)
 	attrs := ecdsaP256Attrs("test-key")
 
-	privKey, err := b.GetKey(attrs)
+	privKey, err := b.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -491,7 +491,7 @@ func TestBackend_GetKey_NotFound(t *testing.T) {
 	b := newTestBackend(t, sender)
 	attrs := ecdsaP256Attrs("nonexistent")
 
-	_, err := b.GetKey(attrs)
+	_, err := b.GetKey(context.Background(), attrs)
 	if err != ErrKeyNotFound {
 		t.Errorf("expected ErrKeyNotFound, got %v", err)
 	}
@@ -501,7 +501,7 @@ func TestBackend_GetKey_NilAttrs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.GetKey(nil)
+	_, err := b.GetKey(context.Background(), nil)
 	if err != ErrInvalidConfig {
 		t.Errorf("expected ErrInvalidConfig, got %v", err)
 	}
@@ -512,7 +512,7 @@ func TestBackend_GetKey_Closed(t *testing.T) {
 	b := newTestBackend(t, sender)
 	_ = b.Close()
 
-	_, err := b.GetKey(ecdsaP256Attrs("test-key"))
+	_, err := b.GetKey(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrBackendClosed {
 		t.Errorf("expected ErrBackendClosed, got %v", err)
 	}
@@ -530,7 +530,7 @@ func TestBackend_GetKey_InvalidKeyInfoDecode(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.GetKey(ecdsaP256Attrs("test-key"))
+	_, err := b.GetKey(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrInvalidResponse {
 		t.Errorf("expected ErrInvalidResponse for invalid getKeyInfo decode, got %v", err)
 	}
@@ -557,7 +557,7 @@ func TestBackend_GetKey_GetPublicKeyRPCError(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.GetKey(ecdsaP256Attrs("test-key"))
+	_, err := b.GetKey(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrInvalidResponse {
 		t.Errorf("expected ErrInvalidResponse for getPublicKey RPC error, got %v", err)
 	}
@@ -584,7 +584,7 @@ func TestBackend_GetKey_InvalidPublicKeyDecode(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.GetKey(ecdsaP256Attrs("test-key"))
+	_, err := b.GetKey(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrInvalidResponse {
 		t.Errorf("expected ErrInvalidResponse for invalid publicKey decode, got %v", err)
 	}
@@ -615,7 +615,7 @@ func TestBackend_GetKey_InvalidPublicKeyParse(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.GetKey(ecdsaP256Attrs("test-key"))
+	_, err := b.GetKey(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrInvalidPublicKey {
 		t.Errorf("expected ErrInvalidPublicKey for bad DER, got %v", err)
 	}
@@ -635,7 +635,7 @@ func TestBackend_DeleteKey_Success(t *testing.T) {
 	b := newTestBackend(t, sender)
 	attrs := ecdsaP256Attrs("test-key")
 
-	err := b.DeleteKey(attrs)
+	err := b.DeleteKey(context.Background(), attrs)
 	if err != nil {
 		t.Errorf("expected nil error, got %v", err)
 	}
@@ -646,7 +646,7 @@ func TestBackend_DeleteKey_Closed(t *testing.T) {
 	b := newTestBackend(t, sender)
 	_ = b.Close()
 
-	err := b.DeleteKey(ecdsaP256Attrs("test-key"))
+	err := b.DeleteKey(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrBackendClosed {
 		t.Errorf("expected ErrBackendClosed, got %v", err)
 	}
@@ -656,7 +656,7 @@ func TestBackend_DeleteKey_NilAttrs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	err := b.DeleteKey(nil)
+	err := b.DeleteKey(context.Background(), nil)
 	if err != ErrInvalidConfig {
 		t.Errorf("expected ErrInvalidConfig, got %v", err)
 	}
@@ -673,7 +673,7 @@ func TestBackend_DeleteKey_NotDeleted(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	err := b.DeleteKey(ecdsaP256Attrs("missing-key"))
+	err := b.DeleteKey(context.Background(), ecdsaP256Attrs("missing-key"))
 	if err != ErrKeyNotFound {
 		t.Errorf("expected ErrKeyNotFound when Deleted is false, got %v", err)
 	}
@@ -688,7 +688,7 @@ func TestBackend_DeleteKey_RPCError(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	err := b.DeleteKey(ecdsaP256Attrs("missing-key"))
+	err := b.DeleteKey(context.Background(), ecdsaP256Attrs("missing-key"))
 	if err != ErrKeyNotFound {
 		t.Errorf("expected ErrKeyNotFound, got %v", err)
 	}
@@ -703,7 +703,7 @@ func TestBackend_DeleteKey_InvalidDecodeResult(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	err := b.DeleteKey(ecdsaP256Attrs("test-key"))
+	err := b.DeleteKey(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrInvalidResponse {
 		t.Errorf("expected ErrInvalidResponse for invalid decode, got %v", err)
 	}
@@ -726,7 +726,7 @@ func TestBackend_ListKeys_Success(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	keys, err := b.ListKeys()
+	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -762,7 +762,7 @@ func TestBackend_ListKeys_Empty(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	keys, err := b.ListKeys()
+	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -776,7 +776,7 @@ func TestBackend_ListKeys_Closed(t *testing.T) {
 	b := newTestBackend(t, sender)
 	_ = b.Close()
 
-	_, err := b.ListKeys()
+	_, err := b.ListKeys(context.Background())
 	if err != ErrBackendClosed {
 		t.Errorf("expected ErrBackendClosed, got %v", err)
 	}
@@ -791,7 +791,7 @@ func TestBackend_ListKeys_RPCError(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.ListKeys()
+	_, err := b.ListKeys(context.Background())
 	if err != ErrInvalidResponse {
 		t.Errorf("expected ErrInvalidResponse, got %v", err)
 	}
@@ -806,7 +806,7 @@ func TestBackend_ListKeys_InvalidDecodeResult(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.ListKeys()
+	_, err := b.ListKeys(context.Background())
 	if err != ErrInvalidResponse {
 		t.Errorf("expected ErrInvalidResponse for corrupt result, got %v", err)
 	}
@@ -841,7 +841,7 @@ func TestBackend_Signer_Success(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	signer, err := b.Signer(ecdsaP256Attrs("test-key"))
+	signer, err := b.Signer(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -858,7 +858,7 @@ func TestBackend_Signer_Closed(t *testing.T) {
 	b := newTestBackend(t, sender)
 	_ = b.Close()
 
-	_, err := b.Signer(ecdsaP256Attrs("test-key"))
+	_, err := b.Signer(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrBackendClosed {
 		t.Errorf("expected ErrBackendClosed, got %v", err)
 	}
@@ -868,7 +868,7 @@ func TestBackend_Signer_NilAttrs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.Signer(nil)
+	_, err := b.Signer(context.Background(), nil)
 	if err != ErrInvalidConfig {
 		t.Errorf("expected ErrInvalidConfig, got %v", err)
 	}
@@ -883,7 +883,7 @@ func TestBackend_Signer_GetKeyError(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.Signer(ecdsaP256Attrs("missing"))
+	_, err := b.Signer(context.Background(), ecdsaP256Attrs("missing"))
 	if err != ErrKeyNotFound {
 		t.Errorf("expected ErrKeyNotFound, got %v", err)
 	}
@@ -918,7 +918,7 @@ func TestBackend_Decrypter_Success(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	decrypter, err := b.Decrypter(ecdsaP256Attrs("test-key"))
+	decrypter, err := b.Decrypter(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -935,7 +935,7 @@ func TestBackend_Decrypter_Closed(t *testing.T) {
 	b := newTestBackend(t, sender)
 	_ = b.Close()
 
-	_, err := b.Decrypter(ecdsaP256Attrs("test-key"))
+	_, err := b.Decrypter(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrBackendClosed {
 		t.Errorf("expected ErrBackendClosed, got %v", err)
 	}
@@ -945,7 +945,7 @@ func TestBackend_Decrypter_NilAttrs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.Decrypter(nil)
+	_, err := b.Decrypter(context.Background(), nil)
 	if err != ErrInvalidConfig {
 		t.Errorf("expected ErrInvalidConfig, got %v", err)
 	}
@@ -960,7 +960,7 @@ func TestBackend_Decrypter_GetKeyInfoError(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.Decrypter(ecdsaP256Attrs("missing"))
+	_, err := b.Decrypter(context.Background(), ecdsaP256Attrs("missing"))
 	if err != ErrKeyNotFound {
 		t.Errorf("expected ErrKeyNotFound, got %v", err)
 	}
@@ -978,7 +978,7 @@ func TestBackend_Decrypter_InvalidKeyInfoDecode(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.Decrypter(ecdsaP256Attrs("test-key"))
+	_, err := b.Decrypter(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrInvalidResponse {
 		t.Errorf("expected ErrInvalidResponse for invalid decode, got %v", err)
 	}
@@ -1005,7 +1005,7 @@ func TestBackend_Decrypter_GetPublicKeyRPCError(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.Decrypter(ecdsaP256Attrs("test-key"))
+	_, err := b.Decrypter(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrKeyNotFound {
 		t.Errorf("expected ErrKeyNotFound for public key RPC error, got %v", err)
 	}
@@ -1032,7 +1032,7 @@ func TestBackend_Decrypter_InvalidPublicKeyDecode(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.Decrypter(ecdsaP256Attrs("test-key"))
+	_, err := b.Decrypter(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrInvalidResponse {
 		t.Errorf("expected ErrInvalidResponse for invalid decode, got %v", err)
 	}
@@ -1063,7 +1063,7 @@ func TestBackend_Decrypter_InvalidPublicKeyParse(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.Decrypter(ecdsaP256Attrs("test-key"))
+	_, err := b.Decrypter(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrInvalidPublicKey {
 		t.Errorf("expected ErrInvalidPublicKey for bad DER, got %v", err)
 	}
@@ -1075,7 +1075,7 @@ func TestBackend_RotateKey_NotSupported(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	err := b.RotateKey(ecdsaP256Attrs("test-key"))
+	err := b.RotateKey(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrRotationNotSupported {
 		t.Errorf("expected ErrRotationNotSupported, got %v", err)
 	}
@@ -1093,7 +1093,7 @@ func TestBackend_Close(t *testing.T) {
 	}
 
 	// Operations after close should return ErrBackendClosed.
-	_, err = b.GenerateKey(ecdsaP256Attrs("test-key"))
+	_, err = b.GenerateKey(context.Background(), ecdsaP256Attrs("test-key"))
 	if err != ErrBackendClosed {
 		t.Errorf("expected ErrBackendClosed after close, got %v", err)
 	}

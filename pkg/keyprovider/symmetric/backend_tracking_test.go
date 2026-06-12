@@ -14,6 +14,7 @@
 package symmetric
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"testing"
@@ -45,13 +46,13 @@ func TestBackend_TrackingEnabled(t *testing.T) {
 		AEADOptions:        nil, // Use defaults
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -127,13 +128,13 @@ func TestBackend_NonceReuse(t *testing.T) {
 		},
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -194,13 +195,13 @@ func TestBackend_BytesLimit(t *testing.T) {
 		},
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -259,13 +260,13 @@ func TestBackend_TrackingDisabled(t *testing.T) {
 		},
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -319,13 +320,13 @@ func TestBackend_KeyRotation(t *testing.T) {
 		},
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Get encrypter and encrypt some data
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -349,7 +350,7 @@ func TestBackend_KeyRotation(t *testing.T) {
 	}
 
 	// Rotate the key
-	err = b.RotateKey(attrs)
+	err = b.RotateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Key rotation failed: %v", err)
 	}
@@ -361,7 +362,7 @@ func TestBackend_KeyRotation(t *testing.T) {
 	}
 
 	// Verify we can encrypt with the new key
-	encrypter, err = b.SymmetricEncrypter(attrs)
+	encrypter, err = b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter after rotation: %v", err)
 	}
@@ -409,13 +410,13 @@ func TestBackend_CustomTracker(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Encrypt data
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -457,12 +458,12 @@ func BenchmarkBackend_EncryptWithTracking(b *testing.B) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = symmetricBackend.GenerateSymmetricKey(attrs)
+	_, err = symmetricBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		b.Fatalf("Failed to generate key: %v", err)
 	}
 
-	encrypter, err := symmetricBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symmetricBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		b.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -503,12 +504,12 @@ func BenchmarkBackend_EncryptWithoutTracking(b *testing.B) {
 		},
 	}
 
-	_, err = symmetricBackend.GenerateSymmetricKey(attrs)
+	_, err = symmetricBackend.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		b.Fatalf("Failed to generate key: %v", err)
 	}
 
-	encrypter, err := symmetricBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symmetricBackend.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
 		b.Fatalf("Failed to get encrypter: %v", err)
 	}

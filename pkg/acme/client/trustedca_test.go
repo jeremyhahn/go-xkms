@@ -997,7 +997,7 @@ func TestTrustedCA_Serve_HealthEndpoints(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	// Build cert pool from the mock CA certificate for proper TLS verification
-	caConfig, err := tca.CA().TLSConfig(nil)
+	caConfig, err := tca.CA().TLSConfig(context.Background(), nil)
 	require.NoError(t, err)
 	certPool := x509.NewCertPool()
 	for _, cert := range caConfig.Certificates {

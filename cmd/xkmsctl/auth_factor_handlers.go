@@ -40,17 +40,19 @@ import (
 // validFactorTypes is the canonical "--type" set per
 // docs/08-bootstrap-auth-architecture.md §5e.
 var validFactorTypes = map[string]struct{}{
-	"mtls":  {},
-	"fido2": {},
-	"piv":   {},
+	"mtls":   {},
+	"fido2":  {},
+	"piv":    {},
+	"pkcs11": {},
 }
 
 // validAuthMethods is the canonical "--method" set per
 // docs/08-bootstrap-auth-architecture.md §5e.
 var validAuthMethods = map[string]struct{}{
-	"mtls":  {},
-	"fido2": {},
-	"piv":   {},
+	"mtls":   {},
+	"fido2":  {},
+	"piv":    {},
+	"pkcs11": {},
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +113,7 @@ type InvalidFactorTypeError struct {
 
 // Error returns a human-readable description.
 func (e *InvalidFactorTypeError) Error() string {
-	return "invalid --type " + e.Type + " (must be one of: mtls, fido2, piv)"
+	return "invalid --type " + e.Type + " (must be one of: mtls, fido2, piv, pkcs11)"
 }
 
 // InvalidAuthMethodError is returned when --method is not one of the
@@ -122,7 +124,7 @@ type InvalidAuthMethodError struct {
 
 // Error returns a human-readable description.
 func (e *InvalidAuthMethodError) Error() string {
-	return "invalid --method " + e.Method + " (must be one of: mtls, fido2, piv)"
+	return "invalid --method " + e.Method + " (must be one of: mtls, fido2, piv, pkcs11)"
 }
 
 // MissingCertPathError is returned when "--type mtls" is selected but
@@ -134,16 +136,16 @@ func (e *MissingCertPathError) Error() string {
 	return "auth factor add --type mtls: --cert <path> is required"
 }
 
-// MissingCredentialError is returned when --type fido2|piv is selected
-// for an operation that requires the credential bytes and no source
-// for them was supplied.
+// MissingCredentialError is returned when --type fido2|piv|pkcs11 is
+// selected for an operation that requires the credential bytes and no
+// source for them was supplied.
 type MissingCredentialError struct {
 	Type string
 }
 
 // Error returns a human-readable description.
 func (e *MissingCredentialError) Error() string {
-	return "auth factor add --type " + e.Type + ": --credential-hex <hex> is required (FIDO2 credentialID / PIV slot cert hash)"
+	return "auth factor add --type " + e.Type + ": --credential-hex <hex> is required (FIDO2 credentialID / PIV slot cert hash / PKCS#11 SPKI SHA-256)"
 }
 
 // CertReadError wraps errors raised while reading or parsing a cert
@@ -244,6 +246,8 @@ type authFactorAddFlags struct {
 	fido2Device   string
 	pivReader     string
 	pivSlot       string
+	pkcs11Slot    string
+	pkcs11Label   string
 }
 
 // ---------------------------------------------------------------------------
@@ -266,9 +270,9 @@ func newAuthLoginRunCmd() *cobra.Command {
 			return runXKMSAuthLogin(cmd.Context(), method, certPath, credHex)
 		},
 	}
-	cmd.Flags().StringVar(&method, "method", "", "Auth method: mtls | fido2 | piv (required)")
+	cmd.Flags().StringVar(&method, "method", "", "Auth method: mtls | fido2 | piv | pkcs11 (required)")
 	cmd.Flags().StringVar(&certPath, "cert", "", "Certificate PEM path (--method mtls)")
-	cmd.Flags().StringVar(&credHex, "credential-hex", "", "Credential bytes as hex (--method fido2|piv)")
+	cmd.Flags().StringVar(&credHex, "credential-hex", "", "Credential bytes as hex (--method fido2|piv|pkcs11)")
 	return cmd
 }
 
@@ -365,15 +369,17 @@ func newAuthFactorRelabelRunCmd() *cobra.Command {
 // bindAuthFactorAddFlags wires the canonical add/rotate flag set onto
 // a cobra command.
 func bindAuthFactorAddFlags(cmd *cobra.Command, f *authFactorAddFlags) {
-	cmd.Flags().StringVar(&f.factorType, "type", "", "Factor type: mtls | fido2 | piv (required)")
+	cmd.Flags().StringVar(&f.factorType, "type", "", "Factor type: mtls | fido2 | piv | pkcs11 (required)")
 	cmd.Flags().StringVar(&f.label, "label", "", "Human-readable factor label (required)")
 	cmd.Flags().StringVar(&f.user, "user", "", "Numeric user id (required for add; inherited for rotate)")
 	cmd.Flags().StringVar(&f.createdBy, "created-by", "self", "Provenance string: self | admin | ceremony")
 	cmd.Flags().StringVar(&f.certPath, "cert", "", "Certificate PEM path (--type mtls)")
-	cmd.Flags().StringVar(&f.credentialHex, "credential-hex", "", "Credential bytes as hex (--type fido2|piv)")
+	cmd.Flags().StringVar(&f.credentialHex, "credential-hex", "", "Credential bytes as hex (--type fido2|piv|pkcs11)")
 	cmd.Flags().StringVar(&f.fido2Device, "device", "", "FIDO2 device id metadata (--type fido2)")
 	cmd.Flags().StringVar(&f.pivReader, "reader", "", "PC/SC reader name metadata (--type piv)")
 	cmd.Flags().StringVar(&f.pivSlot, "slot", "9a", "PIV slot id metadata (--type piv; default 9a)")
+	cmd.Flags().StringVar(&f.pkcs11Slot, "pkcs11-slot", "", "PKCS#11 slot id metadata (--type pkcs11)")
+	cmd.Flags().StringVar(&f.pkcs11Label, "pkcs11-label", "", "PKCS#11 object label metadata (--type pkcs11)")
 }
 
 // ---------------------------------------------------------------------------
@@ -668,6 +674,24 @@ func xkmsCredentialAndMetadata(f *authFactorAddFlags) ([]byte, map[string]string
 			metadata["slot"] = f.pivSlot
 		}
 		return credBytes, metadata, nil
+	case "pkcs11":
+		// The credential is SHA-256(SubjectPublicKeyInfo DER) of the enrolled
+		// public key — 32 bytes encoded as hex, matching the canonical PKCS#11
+		// lookup-key format documented in pkg/auth/factors.go.
+		if f.credentialHex == "" {
+			return nil, nil, &MissingCredentialError{Type: "pkcs11"}
+		}
+		credBytes, err := hex.DecodeString(f.credentialHex)
+		if err != nil {
+			return nil, nil, &InvalidCredentialHexError{Cause: err}
+		}
+		if f.pkcs11Slot != "" {
+			metadata["slot"] = f.pkcs11Slot
+		}
+		if f.pkcs11Label != "" {
+			metadata["label"] = f.pkcs11Label
+		}
+		return credBytes, metadata, nil
 	}
 	return nil, nil, &InvalidFactorTypeError{Type: f.factorType}
 }
@@ -682,7 +706,10 @@ func buildXKMSLoginLookupKey(method, certPath, credHex string) ([]byte, error) {
 		}
 		key, _, err := xkmsLoadCertCredentialAndMetadata(certPath)
 		return key, err
-	case "fido2", "piv":
+	case "fido2", "piv", "pkcs11":
+		// All three methods identify themselves with a hex-encoded credential
+		// blob (FIDO2 credentialID, PIV slot-cert SHA-256, or PKCS#11
+		// SubjectPublicKeyInfo SHA-256).
 		if credHex == "" {
 			return nil, &MissingCredentialError{Type: method}
 		}

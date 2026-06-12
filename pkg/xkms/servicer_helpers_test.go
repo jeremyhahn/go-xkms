@@ -1,6 +1,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -72,13 +73,13 @@ func TestFindKeyAttrs_Found(t *testing.T) {
 	software, _ := setupService(t)
 
 	// Generate a key to populate the mock
-	_, err := software.GenerateECDSA(&types.KeyAttributes{
+	_, err := software.GenerateECDSA(context.Background(), &types.KeyAttributes{
 		CN:           "find-me",
 		KeyAlgorithm: x509.ECDSA,
 	})
 	require.NoError(t, err)
 
-	attrs, err := findKeyAttrs(software, "find-me")
+	attrs, err := findKeyAttrs(context.Background(), software, "find-me")
 	require.NoError(t, err)
 	assert.Equal(t, "find-me", attrs.CN)
 }
@@ -86,7 +87,7 @@ func TestFindKeyAttrs_Found(t *testing.T) {
 func TestFindKeyAttrs_NotFound(t *testing.T) {
 	software, _ := setupService(t)
 
-	_, err := findKeyAttrs(software, "does-not-exist")
+	_, err := findKeyAttrs(context.Background(), software, "does-not-exist")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }

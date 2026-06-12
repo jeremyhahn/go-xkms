@@ -97,27 +97,23 @@ func DefaultServerConfig() *ServerConfig {
 		GRPCUnixPath: getEnvOrDefault("TRUSTED_CA_GRPC_UNIX_PATH", "/run/trusted-ca-grpc.sock"),
 	}
 
-	// Configure mTLS if certificate files are provided
+	// Configure mTLS if certificate files are provided.
+	// TRUSTED_CA_TLS_INSECURE is no longer honoured: all connections must
+	// present a valid CA certificate. Set TRUSTED_CA_TLS_CA to trust the
+	// server's private CA instead.
 	certFile := os.Getenv("TRUSTED_CA_TLS_CERT")
 	keyFile := os.Getenv("TRUSTED_CA_TLS_KEY")
 	caFile := os.Getenv("TRUSTED_CA_TLS_CA")
-	insecure := os.Getenv("TRUSTED_CA_TLS_INSECURE") == "true"
 
 	if certFile != "" && keyFile != "" {
 		config.TLSConfig = &api.TLSConfig{
-			CertFile:           certFile,
-			KeyFile:            keyFile,
-			CAFile:             caFile,
-			InsecureSkipVerify: insecure,
+			CertFile: certFile,
+			KeyFile:  keyFile,
+			CAFile:   caFile,
 		}
 	} else if caFile != "" {
 		config.TLSConfig = &api.TLSConfig{
-			CAFile:             caFile,
-			InsecureSkipVerify: insecure,
-		}
-	} else if insecure {
-		config.TLSConfig = &api.TLSConfig{
-			InsecureSkipVerify: true,
+			CAFile: caFile,
 		}
 	}
 

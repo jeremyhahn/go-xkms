@@ -15,6 +15,7 @@ package mcp
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -44,7 +45,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleUnwrapKey(req)
+		_, err := server.handleUnwrapKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -63,7 +64,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleUnwrapKey(req)
+		_, err := server.handleUnwrapKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "wrapped_key is required")
 	})
@@ -82,7 +83,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleUnwrapKey(req)
+		_, err := server.handleUnwrapKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "wrapping_public_key is required")
 	})
@@ -101,7 +102,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleUnwrapKey(req)
+		_, err := server.handleUnwrapKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "algorithm is required")
 	})
@@ -121,7 +122,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleUnwrapKey(req)
+		_, err := server.handleUnwrapKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid wrapping public key PEM")
 	})
@@ -144,7 +145,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleUnwrapKey(req)
+		_, err := server.handleUnwrapKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse wrapping public key")
 	})
@@ -176,7 +177,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err = server.handleUnwrapKey(req)
+		_, err = server.handleUnwrapKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to unwrap key")
 	})
@@ -184,10 +185,10 @@ func TestHandler_UnwrapKey(t *testing.T) {
 
 // TestServer_SendError tests the sendError method
 func TestServer_SendError(t *testing.T) {
-	setupTestXKMS(t)
+	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0"})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
 	require.NoError(t, err)
 
 	t.Run("sends error response", func(t *testing.T) {
@@ -271,7 +272,7 @@ func TestServer_SendError(t *testing.T) {
 
 // TestServer_HandleConnection_RateLimit tests connection handling when rate limited
 func TestServer_HandleConnection_RateLimit(t *testing.T) {
-	setupTestXKMS(t)
+	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
 	// Create a rate limiter that will block all connections
@@ -285,6 +286,7 @@ func TestServer_HandleConnection_RateLimit(t *testing.T) {
 	config := &Config{
 		Addr:        "localhost:0",
 		RateLimiter: limiter,
+		XKMSService: svc,
 	}
 
 	server, err := NewServer(config)
@@ -339,7 +341,7 @@ func TestHandler_GetTLSCertificate_InvalidBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleGetTLSCertificate(req)
+		_, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid backend")
 	})
@@ -359,7 +361,7 @@ func TestHandler_RotateKey_InvalidBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("fails with invalid backend", func(t *testing.T) {
@@ -376,7 +378,7 @@ func TestHandler_RotateKey_InvalidBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleRotateKey(req)
+		_, err := server.handleRotateKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid backend")
 	})
@@ -396,7 +398,7 @@ func TestHandler_AsymmetricEncrypt_InvalidBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("fails with invalid backend", func(t *testing.T) {
@@ -414,7 +416,7 @@ func TestHandler_AsymmetricEncrypt_InvalidBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleAsymmetricEncrypt(req)
+		_, err := server.handleAsymmetricEncrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid backend")
 	})
@@ -434,7 +436,7 @@ func TestHandler_AsymmetricDecrypt_InvalidBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("fails with invalid backend", func(t *testing.T) {
@@ -452,7 +454,7 @@ func TestHandler_AsymmetricDecrypt_InvalidBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleAsymmetricDecrypt(req)
+		_, err := server.handleAsymmetricDecrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid backend")
 	})
@@ -480,7 +482,7 @@ func TestHandler_CopyKey_AdditionalErrors(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "source backend not found")
 	})
@@ -502,7 +504,7 @@ func TestHandler_CopyKey_AdditionalErrors(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "destination backend not found")
 	})
@@ -546,7 +548,7 @@ func TestHandler_SaveCertChain_InvalidPEM(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err = server.handleSaveCertChain(req)
+		_, err = server.handleSaveCertChain(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid certificate PEM at index 1")
 	})
@@ -571,7 +573,7 @@ func TestHandler_SaveCertChain_InvalidPEM(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleSaveCertChain(req)
+		_, err := server.handleSaveCertChain(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse certificate at index 0")
 	})
@@ -589,7 +591,7 @@ func TestHandler_ListCerts_EmptyResult(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleListCerts(req)
+		result, err := server.handleListCerts(context.Background(), req)
 		require.NoError(t, err)
 
 		listResult, ok := result.(ListCertsResult)
@@ -612,7 +614,7 @@ func TestHandler_DeleteKey_SearchSymmetricBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	t.Run("deletes key from symmetric backend without specifying backend", func(t *testing.T) {
@@ -629,7 +631,7 @@ func TestHandler_DeleteKey_SearchSymmetricBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDeleteKey(req)
+		result, err := server.handleDeleteKey(context.Background(), req)
 		require.NoError(t, err)
 
 		deleteResult, ok := result.(map[string]interface{})
@@ -652,7 +654,7 @@ func TestHandler_Decrypt_SearchSymmetricBackend(t *testing.T) {
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-	_, err := server.handleGenerateKey(genReq)
+	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
 	// Encrypt data
@@ -663,7 +665,7 @@ func TestHandler_Decrypt_SearchSymmetricBackend(t *testing.T) {
 	}
 	encryptParamsJSON, _ := json.Marshal(encryptParams)
 	encryptReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.encrypt", Params: encryptParamsJSON, ID: 1}
-	encryptResult, err := server.handleEncrypt(encryptReq)
+	encryptResult, err := server.handleEncrypt(context.Background(), encryptReq)
 	require.NoError(t, err)
 
 	encResult := encryptResult.(EncryptResult)
@@ -685,7 +687,7 @@ func TestHandler_Decrypt_SearchSymmetricBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleDecrypt(req)
+		result, err := server.handleDecrypt(context.Background(), req)
 		require.NoError(t, err)
 
 		decResult, ok := result.(DecryptResult)
@@ -715,7 +717,7 @@ func TestHandler_Decrypt_NotFoundInAnyBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleDecrypt(req)
+		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})

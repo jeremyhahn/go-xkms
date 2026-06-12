@@ -125,7 +125,7 @@ func runTPMPCRs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Read PCRs
 	banks, err := tpm.ReadPCRs(indices)

@@ -41,3 +41,32 @@ var ErrNoDANEPublisher = pkgdane.ErrNoDANEPublisher
 // BuildRecords derives the common set of DANE TLSA records for cert at the
 // given hostname/port via go-truststrap. See pkg/trust/dane.BuildRecords.
 var BuildRecords = pkgdane.BuildRecords
+
+// RFC 6698 TLSA field constants. See pkg/trust/dane.
+const (
+	// UsageDANETA is Certificate Usage 2 (DANE-TA): trust anchor assertion.
+	UsageDANETA = pkgdane.UsageDANETA
+
+	// UsageDANEEE is Certificate Usage 3 (DANE-EE): end-entity assertion.
+	UsageDANEEE = pkgdane.UsageDANEEE
+
+	// SelectorFullCert is Selector 0: match the full certificate.
+	SelectorFullCert = pkgdane.SelectorFullCert
+
+	// SelectorSPKI is Selector 1: match the SubjectPublicKeyInfo.
+	SelectorSPKI = pkgdane.SelectorSPKI
+
+	// MatchingSHA256 is Matching Type 1: SHA-256 of the selected content.
+	MatchingSHA256 = pkgdane.MatchingSHA256
+
+	// MatchingSHA512 is Matching Type 2: SHA-512 of the selected content.
+	MatchingSHA512 = pkgdane.MatchingSHA512
+)
+
+// ErrInvalidCertificate is returned when a nil or malformed certificate is
+// supplied to a TLSA derivation function.
+var ErrInvalidCertificate = pkgdane.ErrInvalidCertificate
+
+// ComputeTLSAData computes the RFC 6698 Certificate Association Data for
+// cert using the given selector and matching type.
+var ComputeTLSAData = pkgdane.ComputeTLSAData

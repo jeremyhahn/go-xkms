@@ -36,7 +36,7 @@ var _ types.SymmetricKeyProvider = (*Backend)(nil)
 // GenerateSymmetricKey generates a new AES symmetric key and stores it as an Azure Key Vault secret.
 // Azure Key Vault standard tier doesn't support oct (symmetric) keys through the Keys API,
 // so we generate the key locally and store it securely as a secret.
-func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if attrs == nil {
 		return nil, fmt.Errorf("attributes cannot be nil")
 	}
@@ -48,8 +48,6 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	if !attrs.IsSymmetric() {
 		return nil, fmt.Errorf("attributes specify asymmetric algorithm: %s", attrs.KeyAlgorithm)
 	}
-
-	ctx := context.Background()
 
 	// Determine key size in bytes
 	keySize := attrs.SymmetricAlgorithm.KeySize()
@@ -111,12 +109,10 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 }
 
 // GetSymmetricKey retrieves an existing symmetric key from Azure Key Vault.
-func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if attrs == nil {
 		return nil, fmt.Errorf("attributes cannot be nil")
 	}
-
-	ctx := context.Background()
 
 	// Check if metadata exists
 	b.mu.RLock()
@@ -152,12 +148,12 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 }
 
 // SymmetricEncrypter returns an encrypter/decrypter for symmetric operations.
-func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	if attrs == nil {
 		return nil, fmt.Errorf("attributes cannot be nil")
 	}
 
-	key, err := b.GetSymmetricKey(attrs)
+	key, err := b.GetSymmetricKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get symmetric key: %w", err)
 	}

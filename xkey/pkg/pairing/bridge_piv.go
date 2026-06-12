@@ -28,7 +28,7 @@ import (
 // setter on the Bridge.
 func (b *Bridge) handlePIVListSlots(_ context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemotePIVListSlotsParams
-	if params != nil && len(params) > 0 {
+	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, ErrBridgeInvalidParams
 		}

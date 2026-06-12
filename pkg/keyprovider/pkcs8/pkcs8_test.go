@@ -200,7 +200,7 @@ func TestGenerateKey_RSA(t *testing.T) {
 
 			attrs := createRSAAttrs("test-rsa.com", tt.keySize)
 
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(context.Background(), attrs)
 			if tt.wantError {
 				if err == nil {
 					t.Fatal("GenerateKey should have failed")
@@ -223,7 +223,7 @@ func TestGenerateKey_RSA(t *testing.T) {
 			}
 
 			// Verify key can be retrieved
-			retrieved, err := be.GetKey(attrs)
+			retrieved, err := be.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GetKey failed: %v", err)
 			}
@@ -292,7 +292,7 @@ func TestGenerateKey_ECDSA(t *testing.T) {
 
 			attrs := createECDSAAttrs("test-ecdsa.com", tt.curve)
 
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(context.Background(), attrs)
 			if tt.wantError {
 				if err == nil {
 					t.Fatal("GenerateKey should have failed")
@@ -310,7 +310,7 @@ func TestGenerateKey_ECDSA(t *testing.T) {
 			}
 
 			// Verify key can be retrieved
-			retrieved, err := be.GetKey(attrs)
+			retrieved, err := be.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GetKey failed: %v", err)
 			}
@@ -335,7 +335,7 @@ func TestGenerateKey_Ed25519(t *testing.T) {
 
 	attrs := createEd25519Attrs("test-ed25519.com")
 
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestGenerateKey_Ed25519(t *testing.T) {
 	}
 
 	// Verify key can be retrieved
-	retrieved, err := be.GetKey(attrs)
+	retrieved, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -391,13 +391,13 @@ func TestGenerateKey_WithPassword(t *testing.T) {
 			attrs := createRSAAttrs("test-pwd.com", 2048)
 			attrs.Password = tt.password
 
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
 			}
 
 			// Verify key can be retrieved with correct password
-			retrieved, err := be.GetKey(attrs)
+			retrieved, err := be.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GetKey failed: %v", err)
 			}
@@ -420,13 +420,13 @@ func TestGenerateKey_DuplicateKey(t *testing.T) {
 	attrs := createRSAAttrs("duplicate.com", 2048)
 
 	// Generate first key
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("First GenerateKey failed: %v", err)
 	}
 
 	// Attempt to generate duplicate
-	_, err = be.GenerateKey(attrs)
+	_, err = be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GenerateKey should fail for duplicate key")
 	}
@@ -487,7 +487,7 @@ func TestGenerateKey_InvalidAttributes(t *testing.T) {
 			be, _ := createTestBackend(t)
 			defer func() { _ = be.Close() }()
 
-			_, err := be.GenerateKey(tt.attrs)
+			_, err := be.GenerateKey(context.Background(), tt.attrs)
 			if err == nil {
 				t.Fatal("GenerateKey should fail with invalid attributes")
 			}
@@ -502,13 +502,13 @@ func TestGetKey(t *testing.T) {
 
 	// Generate a key
 	attrs := createRSAAttrs("test-get.com", 2048)
-	generated, err := be.GenerateKey(attrs)
+	generated, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// Retrieve the key
-	retrieved, err := be.GetKey(attrs)
+	retrieved, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -529,7 +529,7 @@ func TestGetKey_NotFound(t *testing.T) {
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
-	_, err := be.GetKey(attrs)
+	_, err := be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GetKey should fail for non-existent key")
 	}
@@ -549,7 +549,7 @@ func TestGetKey_InvalidAttributes(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	_, err := be.GetKey(attrs)
+	_, err := be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GetKey should fail with invalid attributes")
 	}
@@ -562,25 +562,25 @@ func TestDeleteKey(t *testing.T) {
 
 	// Generate a key
 	attrs := createRSAAttrs("test-delete.com", 2048)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// Verify key exists
-	_, err = be.GetKey(attrs)
+	_, err = be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed before delete: %v", err)
 	}
 
 	// Delete the key
-	err = be.DeleteKey(attrs)
+	err = be.DeleteKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("DeleteKey failed: %v", err)
 	}
 
 	// Verify key is gone
-	_, err = be.GetKey(attrs)
+	_, err = be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GetKey should fail after delete")
 	}
@@ -596,7 +596,7 @@ func TestDeleteKey_NotFound(t *testing.T) {
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
-	err := be.DeleteKey(attrs)
+	err := be.DeleteKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("DeleteKey should fail for non-existent key")
 	}
@@ -612,7 +612,7 @@ func TestListKeys(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	// Initially empty
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -625,23 +625,23 @@ func TestListKeys(t *testing.T) {
 	attrs2 := createECDSAAttrs("test2.com", "P-256")
 	attrs3 := createEd25519Attrs("test3.com")
 
-	_, err = be.GenerateKey(attrs1)
+	_, err = be.GenerateKey(context.Background(), attrs1)
 	if err != nil {
 		t.Fatalf("GenerateKey 1 failed: %v", err)
 	}
 
-	_, err = be.GenerateKey(attrs2)
+	_, err = be.GenerateKey(context.Background(), attrs2)
 	if err != nil {
 		t.Fatalf("GenerateKey 2 failed: %v", err)
 	}
 
-	_, err = be.GenerateKey(attrs3)
+	_, err = be.GenerateKey(context.Background(), attrs3)
 	if err != nil {
 		t.Fatalf("GenerateKey 3 failed: %v", err)
 	}
 
 	// List keys
-	keys, err = be.ListKeys()
+	keys, err = be.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -651,13 +651,13 @@ func TestListKeys(t *testing.T) {
 	}
 
 	// Delete one key
-	err = be.DeleteKey(attrs2)
+	err = be.DeleteKey(context.Background(), attrs2)
 	if err != nil {
 		t.Fatalf("DeleteKey failed: %v", err)
 	}
 
 	// Verify count
-	keys, err = be.ListKeys()
+	keys, err = be.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -697,13 +697,13 @@ func TestSigner(t *testing.T) {
 			defer func() { _ = be.Close() }()
 
 			// Generate key
-			_, err := be.GenerateKey(tt.attrs)
+			_, err := be.GenerateKey(context.Background(), tt.attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
 			}
 
 			// Get signer
-			signer, err := be.Signer(tt.attrs)
+			signer, err := be.Signer(context.Background(), tt.attrs)
 			if err != nil {
 				t.Fatalf("Signer failed: %v", err)
 			}
@@ -740,7 +740,7 @@ func TestSigner_KeyNotFound(t *testing.T) {
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
-	_, err := be.Signer(attrs)
+	_, err := be.Signer(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("Signer should fail for non-existent key")
 	}
@@ -759,13 +759,13 @@ func TestDecrypter(t *testing.T) {
 	attrs := createRSAAttrs("test-decrypt.com", 2048)
 
 	// Generate key
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// Get decrypter
-	decrypter, err := be.Decrypter(attrs)
+	decrypter, err := be.Decrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Decrypter failed: %v", err)
 	}
@@ -799,13 +799,13 @@ func TestDecrypter_NotSupported(t *testing.T) {
 			defer func() { _ = be.Close() }()
 
 			// Generate key
-			_, err := be.GenerateKey(tt.attrs)
+			_, err := be.GenerateKey(context.Background(), tt.attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
 			}
 
 			// Try to get decrypter
-			_, err = be.Decrypter(tt.attrs)
+			_, err = be.Decrypter(context.Background(), tt.attrs)
 			if err == nil {
 				t.Fatal("Decrypter should fail for non-RSA key")
 			}
@@ -843,13 +843,13 @@ func TestPublic(t *testing.T) {
 			defer func() { _ = be.Close() }()
 
 			// Generate key
-			privateKey, err := be.GenerateKey(tt.attrs)
+			privateKey, err := be.GenerateKey(context.Background(), tt.attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
 			}
 
 			// Get public key
-			publicKey, err := be.Public(tt.attrs)
+			publicKey, err := be.Public(context.Background(), tt.attrs)
 			if err != nil {
 				t.Fatalf("Public failed: %v", err)
 			}
@@ -897,14 +897,14 @@ func TestSign(t *testing.T) {
 	attrs := createRSAAttrs("test-sign.com", 2048)
 
 	// Generate key
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// Sign a digest
 	digest := sha256.Sum256([]byte("test message"))
-	signer, err := be.Signer(attrs)
+	signer, err := be.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer failed: %v", err)
 	}
@@ -925,7 +925,7 @@ func TestClose(t *testing.T) {
 
 	// Generate a key
 	attrs := createRSAAttrs("test-close.com", 2048)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -966,7 +966,7 @@ func TestClosedBackend(t *testing.T) {
 
 	// Test operations on closed backend
 	t.Run("GenerateKey", func(t *testing.T) {
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("GenerateKey should fail on closed backend")
 		}
@@ -976,7 +976,7 @@ func TestClosedBackend(t *testing.T) {
 	})
 
 	t.Run("GetKey", func(t *testing.T) {
-		_, err := be.GetKey(attrs)
+		_, err := be.GetKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("GetKey should fail on closed backend")
 		}
@@ -986,7 +986,7 @@ func TestClosedBackend(t *testing.T) {
 	})
 
 	t.Run("DeleteKey", func(t *testing.T) {
-		err := be.DeleteKey(attrs)
+		err := be.DeleteKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("DeleteKey should fail on closed backend")
 		}
@@ -996,7 +996,7 @@ func TestClosedBackend(t *testing.T) {
 	})
 
 	t.Run("ListKeys", func(t *testing.T) {
-		_, err := be.ListKeys()
+		_, err := be.ListKeys(context.Background())
 		if err == nil {
 			t.Fatal("ListKeys should fail on closed backend")
 		}
@@ -1030,7 +1030,7 @@ func TestConcurrentOperations(t *testing.T) {
 						2048,
 					)
 
-					_, err := be.GenerateKey(attrs)
+					_, err := be.GenerateKey(context.Background(), attrs)
 					if err != nil {
 						errors <- err
 					}
@@ -1047,7 +1047,7 @@ func TestConcurrentOperations(t *testing.T) {
 	})
 
 	// Verify all keys were created
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -1072,7 +1072,7 @@ func TestConcurrentOperations(t *testing.T) {
 						2048,
 					)
 
-					_, err := be.GetKey(attrs)
+					_, err := be.GetKey(context.Background(), attrs)
 					if err != nil {
 						errors <- err
 					}
@@ -1103,7 +1103,7 @@ func TestConcurrentOperations(t *testing.T) {
 						2048,
 					)
 
-					err := be.DeleteKey(attrs)
+					err := be.DeleteKey(context.Background(), attrs)
 					if err != nil {
 						errors <- err
 					}
@@ -1120,7 +1120,7 @@ func TestConcurrentOperations(t *testing.T) {
 	})
 
 	// Verify all keys were deleted
-	keys, err = be.ListKeys()
+	keys, err = be.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -1148,28 +1148,28 @@ func TestConcurrentMixedOperations(t *testing.T) {
 			attrs := createRSAAttrs(cn, 2048)
 
 			// Generate
-			_, err := be.GenerateKey(attrs)
+			_, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				// May fail due to duplicate, that's ok
 				return
 			}
 
 			// Get
-			_, err = be.GetKey(attrs)
+			_, err = be.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Errorf("GetKey failed: %v", err)
 				return
 			}
 
 			// List
-			_, err = be.ListKeys()
+			_, err = be.ListKeys(context.Background())
 			if err != nil {
 				t.Errorf("ListKeys failed: %v", err)
 				return
 			}
 
 			// Delete
-			err = be.DeleteKey(attrs)
+			err = be.DeleteKey(context.Background(), attrs)
 			if err != nil {
 				t.Errorf("DeleteKey failed: %v", err)
 			}
@@ -1189,7 +1189,7 @@ func TestPasswordEncryption(t *testing.T) {
 		attrs := createRSAAttrs("test-pwd.com", 2048)
 		attrs.Password = backend.StaticPassword("correct-password")
 
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
 		}
@@ -1198,7 +1198,7 @@ func TestPasswordEncryption(t *testing.T) {
 		attrsWrong := createRSAAttrs("test-pwd.com", 2048)
 		attrsWrong.Password = backend.StaticPassword("wrong-password")
 
-		_, err = be.GetKey(attrsWrong)
+		_, err = be.GetKey(context.Background(), attrsWrong)
 		if err == nil {
 			t.Fatal("GetKey should fail with wrong password")
 		}
@@ -1212,7 +1212,7 @@ func TestPasswordEncryption(t *testing.T) {
 		attrs := createRSAAttrs("test-pwd2.com", 2048)
 		attrs.Password = backend.StaticPassword("password")
 
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
 		}
@@ -1221,7 +1221,7 @@ func TestPasswordEncryption(t *testing.T) {
 		attrsNoPassword := createRSAAttrs("test-pwd2.com", 2048)
 		attrsNoPassword.Password = nil
 
-		_, err = be.GetKey(attrsNoPassword)
+		_, err = be.GetKey(context.Background(), attrsNoPassword)
 		if err == nil {
 			t.Fatal("GetKey should fail without password on encrypted key")
 		}
@@ -1243,19 +1243,19 @@ func TestKeyPartitions(t *testing.T) {
 		attrs := createRSAAttrs("test.com", 2048)
 		attrs.Partition = partition
 
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey with partition %s failed: %v", partition, err)
 		}
 
-		_, err = be.GetKey(attrs)
+		_, err = be.GetKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GetKey with partition %s failed: %v", partition, err)
 		}
 	}
 
 	// Verify we have 3 keys
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -1281,7 +1281,7 @@ func BenchmarkGenerateRSA(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		attrs := createRSAAttrs(fmt.Sprintf("bench-rsa-%d.com", i), 2048)
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1299,7 +1299,7 @@ func BenchmarkGenerateECDSA(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		attrs := createECDSAAttrs(fmt.Sprintf("bench-ecdsa-%d.com", i), "P-256")
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1314,7 +1314,7 @@ func BenchmarkGetKey(b *testing.B) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("benchmark.com", 2048)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -1322,7 +1322,7 @@ func BenchmarkGetKey(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, err := be.GetKey(attrs)
+		_, err := be.GetKey(context.Background(), attrs)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1337,7 +1337,7 @@ func BenchmarkSign(b *testing.B) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("benchmark.com", 2048)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -1347,7 +1347,7 @@ func BenchmarkSign(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		signer, err := be.Signer(attrs)
+		signer, err := be.Signer(context.Background(), attrs)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1366,14 +1366,14 @@ func TestSign_ConvenienceMethod(t *testing.T) {
 	attrs := createRSAAttrs("test-sign-method.com", 2048)
 
 	// Generate key
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// Use the Sign convenience method
 	digest := sha256.Sum256([]byte("test message"))
-	signature, err := be.Sign(attrs, rand.Reader, digest[:], crypto.SHA256)
+	signature, err := be.Sign(context.Background(), attrs, rand.Reader, digest[:], crypto.SHA256)
 	if err != nil {
 		t.Fatalf("Sign failed: %v", err)
 	}
@@ -1396,7 +1396,7 @@ func TestGenerateKey_RSANilAttributes(t *testing.T) {
 		RSAAttributes: nil, // Nil RSA attributes
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GenerateKey should fail with nil RSA attributes")
 	}
@@ -1415,7 +1415,7 @@ func TestGenerateKey_ECDSANilAttributes(t *testing.T) {
 		ECCAttributes: nil, // Nil ECC attributes
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GenerateKey should fail with nil ECC attributes")
 	}
@@ -1437,7 +1437,7 @@ func TestPublic_UnsupportedKeyType(t *testing.T) {
 	}
 
 	// Try to get public key
-	_, err = be.Public(attrs)
+	_, err = be.Public(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("Public should fail with invalid key data")
 	}
@@ -1455,7 +1455,7 @@ func TestGenerateKey_UnsupportedAlgorithm(t *testing.T) {
 		KeyAlgorithm: x509.PublicKeyAlgorithm(999), // Invalid algorithm
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GenerateKey should fail with unsupported algorithm")
 	}
@@ -1525,7 +1525,7 @@ func TestDeleteKey_StorageError(t *testing.T) {
 
 	attrs := createRSAAttrs("test-delete-error.com", 2048)
 
-	err = be.(*PKCS8Backend).DeleteKey(attrs)
+	err = be.(*PKCS8Backend).DeleteKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("DeleteKey should fail with storage error")
 	}
@@ -1550,7 +1550,7 @@ func TestStoreKey_SaveKeyError(t *testing.T) {
 
 	attrs := createRSAAttrs("test-save-error.com", 2048)
 
-	_, err = be.GenerateKey(attrs)
+	_, err = be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GenerateKey should fail with save error")
 	}
@@ -1582,7 +1582,7 @@ func TestSign_VerifySignature(t *testing.T) {
 			defer func() { _ = be.Close() }()
 
 			// Generate key
-			_, err := be.GenerateKey(tt.attrs)
+			_, err := be.GenerateKey(context.Background(), tt.attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
 			}
@@ -1598,7 +1598,7 @@ func TestSign_VerifySignature(t *testing.T) {
 				opts = crypto.Hash(0)
 			}
 
-			signature, err := be.Sign(tt.attrs, rand.Reader, digest[:], opts)
+			signature, err := be.Sign(context.Background(), tt.attrs, rand.Reader, digest[:], opts)
 			if err != nil {
 				t.Fatalf("Sign failed: %v", err)
 			}
@@ -1618,7 +1618,7 @@ func TestSign_KeyNotFound(t *testing.T) {
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
 	digest := sha256.Sum256([]byte("test message"))
-	_, err := be.Sign(attrs, rand.Reader, digest[:], crypto.SHA256)
+	_, err := be.Sign(context.Background(), attrs, rand.Reader, digest[:], crypto.SHA256)
 	if err == nil {
 		t.Fatal("Sign should fail for non-existent key")
 	}
@@ -1635,13 +1635,13 @@ func TestSigner_UnsupportedKeyType(t *testing.T) {
 
 	// Generate a key
 	attrs := createRSAAttrs("test-signer.com", 2048)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// Get signer
-	signer, err := be.Signer(attrs)
+	signer, err := be.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer failed: %v", err)
 	}
@@ -1659,7 +1659,7 @@ func TestDecrypter_GetKeyError(t *testing.T) {
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
-	_, err := be.Decrypter(attrs)
+	_, err := be.Decrypter(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("Decrypter should fail for non-existent key")
 	}
@@ -1676,7 +1676,7 @@ func TestPublic_GetKeyError(t *testing.T) {
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
-	_, err := be.Public(attrs)
+	_, err := be.Public(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("Public should fail for non-existent key")
 	}
@@ -1697,7 +1697,7 @@ func TestGenerateECDSAKey_AllCurves(t *testing.T) {
 
 			attrs := createECDSAAttrs("test-"+curve+".com", curve)
 
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey for curve %s failed: %v", curve, err)
 			}
@@ -1727,7 +1727,7 @@ func TestListKeys_StorageError(t *testing.T) {
 	}
 	defer func() { _ = be.Close() }()
 
-	_, err = be.ListKeys()
+	_, err = be.ListKeys(context.Background())
 	if err == nil {
 		t.Fatal("ListKeys should fail with storage error")
 	}
@@ -1753,7 +1753,7 @@ func TestGenerateKey_StorageCheckError(t *testing.T) {
 
 	attrs := createRSAAttrs("test-exists-error.com", 2048)
 
-	_, err = be.GenerateKey(attrs)
+	_, err = be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GenerateKey should fail with KeyExists error")
 	}
@@ -1806,7 +1806,7 @@ func TestGetKey_StorageError(t *testing.T) {
 
 	attrs := createRSAAttrs("test-get-error.com", 2048)
 
-	_, err = be.GetKey(attrs)
+	_, err = be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GetKey should fail with storage error")
 	}
@@ -1853,7 +1853,7 @@ func TestGenerateKey_RSAInvalidSize(t *testing.T) {
 		t.Run(fmt.Sprintf("Size-%d", size), func(t *testing.T) {
 			attrs := createRSAAttrs(fmt.Sprintf("test-invalid-%d.com", size), size)
 
-			_, err := be.GenerateKey(attrs)
+			_, err := be.GenerateKey(context.Background(), attrs)
 			if err == nil {
 				t.Fatalf("GenerateKey should fail with key size %d", size)
 			}
@@ -1873,7 +1873,7 @@ func TestGenerateKey_ValidRSASizes(t *testing.T) {
 		t.Run(fmt.Sprintf("Size-%d", size), func(t *testing.T) {
 			attrs := createRSAAttrs(fmt.Sprintf("test-valid-%d.com", size), size)
 
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey with size %d failed: %v", size, err)
 			}
@@ -1898,13 +1898,13 @@ func TestSigner_InvalidKeyData(t *testing.T) {
 
 	// Generate a valid key first
 	attrs := createRSAAttrs("test-signer-invalid.com", 2048)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// The key should be valid and implement crypto.Signer
-	signer, err := be.Signer(attrs)
+	signer, err := be.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer should succeed: %v", err)
 	}
@@ -1944,13 +1944,13 @@ func TestStoreKey_EncryptedPath(t *testing.T) {
 			attrs := createRSAAttrs("test-store-"+tt.name+".com", tt.keySize)
 			attrs.Password = tt.password
 
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
 			}
 
 			// Verify key was stored and can be retrieved
-			retrieved, err := be.GetKey(attrs)
+			retrieved, err := be.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GetKey failed: %v", err)
 			}
@@ -1979,7 +1979,7 @@ func TestGenerateRSAKey_ErrorPaths(t *testing.T) {
 			RSAAttributes: nil,
 		}
 
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("GenerateKey should fail with nil RSA attributes")
 		}
@@ -1988,7 +1988,7 @@ func TestGenerateRSAKey_ErrorPaths(t *testing.T) {
 	t.Run("SmallKeySize", func(t *testing.T) {
 		attrs := createRSAAttrs("test-small.com", 1024)
 
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("GenerateKey should fail with key size < 2048")
 		}
@@ -1997,7 +1997,7 @@ func TestGenerateRSAKey_ErrorPaths(t *testing.T) {
 	t.Run("VerySmallKeySize", func(t *testing.T) {
 		attrs := createRSAAttrs("test-tiny.com", 512)
 
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("GenerateKey should fail with key size = 512")
 		}
@@ -2018,7 +2018,7 @@ func TestGenerateECDSAKey_ErrorPaths(t *testing.T) {
 			ECCAttributes: nil,
 		}
 
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("GenerateKey should fail with nil ECC attributes")
 		}
@@ -2027,7 +2027,7 @@ func TestGenerateECDSAKey_ErrorPaths(t *testing.T) {
 	t.Run("UnsupportedCurve", func(t *testing.T) {
 		attrs := createECDSAAttrs("test-bad-curve.com", "P-999")
 
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("GenerateKey should fail with unsupported curve")
 		}
@@ -2036,7 +2036,7 @@ func TestGenerateECDSAKey_ErrorPaths(t *testing.T) {
 	t.Run("InvalidCurveName", func(t *testing.T) {
 		attrs := createECDSAAttrs("test-invalid-curve.com", "INVALID")
 
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("GenerateKey should fail with invalid curve name")
 		}
@@ -2081,13 +2081,13 @@ func TestPublic_AllKeyTypes(t *testing.T) {
 			defer func() { _ = be.Close() }()
 
 			// Generate key
-			privateKey, err := be.GenerateKey(tt.attrs)
+			privateKey, err := be.GenerateKey(context.Background(), tt.attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
 			}
 
 			// Get public key
-			publicKey, err := be.Public(tt.attrs)
+			publicKey, err := be.Public(context.Background(), tt.attrs)
 			if err != nil {
 				t.Fatalf("Public failed: %v", err)
 			}
@@ -2128,7 +2128,7 @@ func TestDeleteKey_ValidateError(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	err := be.DeleteKey(attrs)
+	err := be.DeleteKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("DeleteKey should fail with invalid attributes")
 	}
@@ -2160,12 +2160,12 @@ func TestSigner_EnsureCoverage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := be.GenerateKey(tt.attrs)
+			_, err := be.GenerateKey(context.Background(), tt.attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
 			}
 
-			signer, err := be.Signer(tt.attrs)
+			signer, err := be.Signer(context.Background(), tt.attrs)
 			if err != nil {
 				t.Fatalf("Signer failed: %v", err)
 			}
@@ -2203,13 +2203,13 @@ func TestStoreKey_EmptyPassword(t *testing.T) {
 	attrs := createRSAAttrs("test-empty-pwd.com", 2048)
 	attrs.Password = emptyPassword
 
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// Verify key was stored without encryption (empty password is treated as no password)
-	retrieved, err := be.GetKey(attrs)
+	retrieved, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -2229,13 +2229,13 @@ func TestGenerateECDSAKey_P256Alias(t *testing.T) {
 
 	// Test that both P-256 and prime256v1 work
 	attrs1 := createECDSAAttrs("test-p256.com", "P-256")
-	key1, err := be.GenerateKey(attrs1)
+	key1, err := be.GenerateKey(context.Background(), attrs1)
 	if err != nil {
 		t.Fatalf("GenerateKey with P-256 failed: %v", err)
 	}
 
 	attrs2 := createECDSAAttrs("test-prime256v1.com", "prime256v1")
-	key2, err := be.GenerateKey(attrs2)
+	key2, err := be.GenerateKey(context.Background(), attrs2)
 	if err != nil {
 		t.Fatalf("GenerateKey with prime256v1 failed: %v", err)
 	}
@@ -2266,7 +2266,7 @@ func TestGenerateECDSAKey_AllAliases(t *testing.T) {
 	for i, a := range aliases {
 		t.Run(a.curve, func(t *testing.T) {
 			attrs := createECDSAAttrs(fmt.Sprintf("test-alias-%d.com", i), a.curve)
-			_, err := be.GenerateKey(attrs)
+			_, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey with %s failed: %v", a.curve, err)
 			}
@@ -2274,7 +2274,7 @@ func TestGenerateECDSAKey_AllAliases(t *testing.T) {
 
 		t.Run(a.alias, func(t *testing.T) {
 			attrs := createECDSAAttrs(fmt.Sprintf("test-alias-alt-%d.com", i), a.alias)
-			_, err := be.GenerateKey(attrs)
+			_, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey with %s failed: %v", a.alias, err)
 			}
@@ -2298,7 +2298,7 @@ func TestGenerateKey_ExhaustiveECDSA(t *testing.T) {
 		t.Run(curve, func(t *testing.T) {
 			attrs := createECDSAAttrs(fmt.Sprintf("test-exhaustive-ecdsa-%d.com", i), curve)
 
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey ECDSA-%s failed: %v", curve, err)
 			}
@@ -2314,7 +2314,7 @@ func TestGenerateKey_ExhaustiveECDSA(t *testing.T) {
 			}
 
 			// Verify key is stored
-			retrieved, err := be.GetKey(attrs)
+			retrieved, err := be.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GetKey failed: %v", err)
 			}
@@ -2336,13 +2336,13 @@ func TestStoreKey_BothPaths(t *testing.T) {
 		attrs := createRSAAttrs("test-store-plain.com", 2048)
 		attrs.Password = nil
 
-		key, err := be.GenerateKey(attrs)
+		key, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
 		}
 
 		// Verify storage worked
-		retrieved, err := be.GetKey(attrs)
+		retrieved, err := be.GetKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GetKey failed: %v", err)
 		}
@@ -2358,13 +2358,13 @@ func TestStoreKey_BothPaths(t *testing.T) {
 		attrs := createRSAAttrs("test-store-encrypted.com", 2048)
 		attrs.Password = backend.StaticPassword("strong-password-123")
 
-		key, err := be.GenerateKey(attrs)
+		key, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
 		}
 
 		// Verify storage worked
-		retrieved, err := be.GetKey(attrs)
+		retrieved, err := be.GetKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GetKey failed: %v", err)
 		}
@@ -2380,13 +2380,13 @@ func TestStoreKey_BothPaths(t *testing.T) {
 		attrs := createECDSAAttrs("test-store-ecdsa-encrypted.com", "P-384")
 		attrs.Password = backend.StaticPassword("ecdsa-password")
 
-		key, err := be.GenerateKey(attrs)
+		key, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
 		}
 
 		// Verify storage worked
-		retrieved, err := be.GetKey(attrs)
+		retrieved, err := be.GetKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GetKey failed: %v", err)
 		}
@@ -2402,13 +2402,13 @@ func TestStoreKey_BothPaths(t *testing.T) {
 		attrs := createEd25519Attrs("test-store-ed25519-encrypted.com")
 		attrs.Password = backend.StaticPassword("ed25519-password")
 
-		key, err := be.GenerateKey(attrs)
+		key, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
 		}
 
 		// Verify storage worked
-		retrieved, err := be.GetKey(attrs)
+		retrieved, err := be.GetKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GetKey failed: %v", err)
 		}
@@ -2429,19 +2429,19 @@ func TestRotateKey(t *testing.T) {
 	t.Run("RotateExistingKey", func(t *testing.T) {
 		// Generate initial key
 		attrs := createRSAAttrs("test-rotate.com", 2048)
-		key1, err := be.GenerateKey(attrs)
+		key1, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
 		}
 
 		// Rotate the key
-		err = be.RotateKey(attrs)
+		err = be.RotateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("RotateKey failed: %v", err)
 		}
 
 		// Get the new key
-		key2, err := be.GetKey(attrs)
+		key2, err := be.GetKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GetKey after rotation failed: %v", err)
 		}
@@ -2460,20 +2460,20 @@ func TestRotateKey(t *testing.T) {
 		// (DeleteKey ignores ErrKeyNotFound, then GenerateKey creates the key)
 		attrs := createRSAAttrs("test-rotate-new.com", 2048)
 
-		err := be.RotateKey(attrs)
+		err := be.RotateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("RotateKey should succeed for non-existent key (creates new key): %v", err)
 		}
 
 		// Verify the key was created
-		_, err = be.GetKey(attrs)
+		_, err = be.GetKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GetKey should succeed after rotation: %v", err)
 		}
 	})
 
 	t.Run("RotateNilAttributes", func(t *testing.T) {
-		err := be.RotateKey(nil)
+		err := be.RotateKey(context.Background(), nil)
 		if err == nil {
 			t.Fatal("RotateKey should fail with nil attributes")
 		}
@@ -2484,19 +2484,19 @@ func TestRotateKey(t *testing.T) {
 		attrs := createRSAAttrs("test-rotate-pwd.com", 2048)
 		attrs.Password = backend.StaticPassword("test-password")
 
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
 		}
 
 		// Rotate the key
-		err = be.RotateKey(attrs)
+		err = be.RotateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("RotateKey failed: %v", err)
 		}
 
 		// Verify new key can be retrieved with password
-		_, err = be.GetKey(attrs)
+		_, err = be.GetKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GetKey after rotation failed: %v", err)
 		}
@@ -2506,19 +2506,19 @@ func TestRotateKey(t *testing.T) {
 		attrs := createECDSAAttrs("test-rotate-ecdsa.com", "P-256")
 
 		// Generate initial key
-		key1, err := be.GenerateKey(attrs)
+		key1, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
 		}
 
 		// Rotate
-		err = be.RotateKey(attrs)
+		err = be.RotateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("RotateKey failed: %v", err)
 		}
 
 		// Get new key
-		key2, err := be.GetKey(attrs)
+		key2, err := be.GetKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GetKey after rotation failed: %v", err)
 		}
@@ -2536,19 +2536,19 @@ func TestRotateKey(t *testing.T) {
 		attrs := createEd25519Attrs("test-rotate-ed25519.com")
 
 		// Generate initial key
-		key1, err := be.GenerateKey(attrs)
+		key1, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
 		}
 
 		// Rotate
-		err = be.RotateKey(attrs)
+		err = be.RotateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("RotateKey failed: %v", err)
 		}
 
 		// Get new key
-		key2, err := be.GetKey(attrs)
+		key2, err := be.GetKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GetKey after rotation failed: %v", err)
 		}
@@ -2576,7 +2576,7 @@ func TestGenerateKey_X25519(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -2586,7 +2586,7 @@ func TestGenerateKey_X25519(t *testing.T) {
 	}
 
 	// Verify key can be retrieved
-	retrieved, err := be.GetKey(attrs)
+	retrieved, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -2618,34 +2618,34 @@ func TestDeriveSharedSecret_X25519(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	key1, err := be.GenerateKey(attrs1)
+	key1, err := be.GenerateKey(context.Background(), attrs1)
 	if err != nil {
 		t.Fatalf("GenerateKey 1 failed: %v", err)
 	}
 
-	key2, err := be.GenerateKey(attrs2)
+	key2, err := be.GenerateKey(context.Background(), attrs2)
 	if err != nil {
 		t.Fatalf("GenerateKey 2 failed: %v", err)
 	}
 
 	// Get public keys
-	pub1, err := be.Public(attrs1)
+	pub1, err := be.Public(context.Background(), attrs1)
 	if err != nil {
 		t.Fatalf("Public 1 failed: %v", err)
 	}
 
-	pub2, err := be.Public(attrs2)
+	pub2, err := be.Public(context.Background(), attrs2)
 	if err != nil {
 		t.Fatalf("Public 2 failed: %v", err)
 	}
 
 	// Derive shared secrets
-	secret1, err := be.DeriveSharedSecret(attrs1, pub2)
+	secret1, err := be.DeriveSharedSecret(context.Background(), attrs1, pub2)
 	if err != nil {
 		t.Fatalf("DeriveSharedSecret 1 failed: %v", err)
 	}
 
-	secret2, err := be.DeriveSharedSecret(attrs2, pub1)
+	secret2, err := be.DeriveSharedSecret(context.Background(), attrs2, pub1)
 	if err != nil {
 		t.Fatalf("DeriveSharedSecret 2 failed: %v", err)
 	}
@@ -2685,34 +2685,34 @@ func TestDeriveSharedSecret_ECDSA(t *testing.T) {
 			attrs1 := createECDSAAttrs("test-ecdh-1.com", curve)
 			attrs2 := createECDSAAttrs("test-ecdh-2.com", curve)
 
-			_, err := be.GenerateKey(attrs1)
+			_, err := be.GenerateKey(context.Background(), attrs1)
 			if err != nil {
 				t.Fatalf("GenerateKey 1 failed: %v", err)
 			}
 
-			_, err = be.GenerateKey(attrs2)
+			_, err = be.GenerateKey(context.Background(), attrs2)
 			if err != nil {
 				t.Fatalf("GenerateKey 2 failed: %v", err)
 			}
 
 			// Get public keys
-			pub1, err := be.Public(attrs1)
+			pub1, err := be.Public(context.Background(), attrs1)
 			if err != nil {
 				t.Fatalf("Public 1 failed: %v", err)
 			}
 
-			pub2, err := be.Public(attrs2)
+			pub2, err := be.Public(context.Background(), attrs2)
 			if err != nil {
 				t.Fatalf("Public 2 failed: %v", err)
 			}
 
 			// Derive shared secrets
-			secret1, err := be.DeriveSharedSecret(attrs1, pub2)
+			secret1, err := be.DeriveSharedSecret(context.Background(), attrs1, pub2)
 			if err != nil {
 				t.Fatalf("DeriveSharedSecret 1 failed: %v", err)
 			}
 
-			secret2, err := be.DeriveSharedSecret(attrs2, pub1)
+			secret2, err := be.DeriveSharedSecret(context.Background(), attrs2, pub1)
 			if err != nil {
 				t.Fatalf("DeriveSharedSecret 2 failed: %v", err)
 			}
@@ -2745,30 +2745,30 @@ func TestDeriveSharedSecret_ErrorCases(t *testing.T) {
 	rsaAttrs := createRSAAttrs("test-rsa-ecdh.com", 2048)
 	ecdsaAttrs := createECDSAAttrs("test-ecdsa-ecdh.com", "P-256")
 
-	_, err := be.GenerateKey(rsaAttrs)
+	_, err := be.GenerateKey(context.Background(), rsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey RSA failed: %v", err)
 	}
 
-	_, err = be.GenerateKey(ecdsaAttrs)
+	_, err = be.GenerateKey(context.Background(), ecdsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey ECDSA failed: %v", err)
 	}
 
-	rsaPub, err := be.Public(rsaAttrs)
+	rsaPub, err := be.Public(context.Background(), rsaAttrs)
 	if err != nil {
 		t.Fatalf("Public RSA failed: %v", err)
 	}
 
 	t.Run("NilAttributes", func(t *testing.T) {
-		_, err := be.DeriveSharedSecret(nil, rsaPub)
+		_, err := be.DeriveSharedSecret(context.Background(), nil, rsaPub)
 		if err == nil {
 			t.Fatal("DeriveSharedSecret should fail with nil attributes")
 		}
 	})
 
 	t.Run("NilPublicKey", func(t *testing.T) {
-		_, err := be.DeriveSharedSecret(ecdsaAttrs, nil)
+		_, err := be.DeriveSharedSecret(context.Background(), ecdsaAttrs, nil)
 		if err == nil {
 			t.Fatal("DeriveSharedSecret should fail with nil public key")
 		}
@@ -2776,7 +2776,7 @@ func TestDeriveSharedSecret_ErrorCases(t *testing.T) {
 
 	t.Run("KeyNotFound", func(t *testing.T) {
 		nonExistentAttrs := createECDSAAttrs("nonexistent-ecdh.com", "P-256")
-		_, err := be.DeriveSharedSecret(nonExistentAttrs, rsaPub)
+		_, err := be.DeriveSharedSecret(context.Background(), nonExistentAttrs, rsaPub)
 		if err == nil {
 			t.Fatal("DeriveSharedSecret should fail with non-existent key")
 		}
@@ -2784,7 +2784,7 @@ func TestDeriveSharedSecret_ErrorCases(t *testing.T) {
 
 	t.Run("UnsupportedKeyType", func(t *testing.T) {
 		// RSA doesn't support key agreement
-		_, err := be.DeriveSharedSecret(rsaAttrs, rsaPub)
+		_, err := be.DeriveSharedSecret(context.Background(), rsaAttrs, rsaPub)
 		if err == nil {
 			t.Fatal("DeriveSharedSecret should fail with RSA key")
 		}
@@ -2795,23 +2795,23 @@ func TestDeriveSharedSecret_ErrorCases(t *testing.T) {
 		attrs1 := createECDSAAttrs("test-p256-mismatch.com", "P-256")
 		attrs2 := createECDSAAttrs("test-p384-mismatch.com", "P-384")
 
-		_, err := be.GenerateKey(attrs1)
+		_, err := be.GenerateKey(context.Background(), attrs1)
 		if err != nil {
 			t.Fatalf("GenerateKey P-256 failed: %v", err)
 		}
 
-		_, err = be.GenerateKey(attrs2)
+		_, err = be.GenerateKey(context.Background(), attrs2)
 		if err != nil {
 			t.Fatalf("GenerateKey P-384 failed: %v", err)
 		}
 
-		pub2, err := be.Public(attrs2)
+		pub2, err := be.Public(context.Background(), attrs2)
 		if err != nil {
 			t.Fatalf("Public failed: %v", err)
 		}
 
 		// Try to derive shared secret with mismatched curves
-		_, err = be.DeriveSharedSecret(attrs1, pub2)
+		_, err = be.DeriveSharedSecret(context.Background(), attrs1, pub2)
 		if err == nil {
 			t.Fatal("DeriveSharedSecret should fail with mismatched curves")
 		}
@@ -2820,19 +2820,19 @@ func TestDeriveSharedSecret_ErrorCases(t *testing.T) {
 	t.Run("ClosedBackend", func(t *testing.T) {
 		be2, _ := createTestBackend(t)
 		attrs := createECDSAAttrs("test-closed-ecdh.com", "P-256")
-		_, err := be2.GenerateKey(attrs)
+		_, err := be2.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
 		}
 
-		pub, err := be2.Public(attrs)
+		pub, err := be2.Public(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("Public failed: %v", err)
 		}
 
 		_ = be2.Close()
 
-		_, err = be2.DeriveSharedSecret(attrs, pub)
+		_, err = be2.DeriveSharedSecret(context.Background(), attrs, pub)
 		if err == nil {
 			t.Fatal("DeriveSharedSecret should fail on closed backend")
 		}
@@ -2858,7 +2858,7 @@ func TestGenerateECDSAKey_NilCurve(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GenerateKey should fail with nil curve")
 	}
@@ -2877,7 +2877,7 @@ func TestListKeys_EdgeCases(t *testing.T) {
 			t.Fatalf("SaveKey failed: %v", err)
 		}
 
-		keys, err := be.ListKeys()
+		keys, err := be.ListKeys(context.Background())
 		if err != nil {
 			t.Fatalf("ListKeys failed: %v", err)
 		}
@@ -2899,12 +2899,12 @@ func TestListKeys_EdgeCases(t *testing.T) {
 	t.Run("ComplexKeyID", func(t *testing.T) {
 		// Test with a properly formatted key ID
 		attrs := createRSAAttrs("test-complex.com", 2048)
-		_, err := be.GenerateKey(attrs)
+		_, err := be.GenerateKey(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
 		}
 
-		keys, err := be.ListKeys()
+		keys, err := be.ListKeys(context.Background())
 		if err != nil {
 			t.Fatalf("ListKeys failed: %v", err)
 		}
@@ -2937,12 +2937,12 @@ func TestPublic_X25519(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
-	pub, err := be.Public(attrs)
+	pub, err := be.Public(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Public failed: %v", err)
 	}
@@ -2966,13 +2966,13 @@ func TestDecodeKey_X25519Wrapping(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// Retrieve the key, which should trigger decodeKey with X25519 wrapping
-	retrieved, err := be.GetKey(attrs)
+	retrieved, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -2997,7 +2997,7 @@ func TestStoreKey_X25519Unwrapping(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -3007,7 +3007,7 @@ func TestStoreKey_X25519Unwrapping(t *testing.T) {
 	}
 
 	// Verify key was stored and can be retrieved
-	retrieved, err := be.GetKey(attrs)
+	retrieved, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -3031,25 +3031,25 @@ func TestDeriveSharedSecret_X25519_WrongPublicKeyType(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(x25519Attrs)
+	_, err := be.GenerateKey(context.Background(), x25519Attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// Generate RSA key to get wrong public key type
 	rsaAttrs := createRSAAttrs("test-rsa-wrong.com", 2048)
-	_, err = be.GenerateKey(rsaAttrs)
+	_, err = be.GenerateKey(context.Background(), rsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey RSA failed: %v", err)
 	}
 
-	rsaPub, err := be.Public(rsaAttrs)
+	rsaPub, err := be.Public(context.Background(), rsaAttrs)
 	if err != nil {
 		t.Fatalf("Public failed: %v", err)
 	}
 
 	// Try to derive shared secret with wrong public key type
-	_, err = be.DeriveSharedSecret(x25519Attrs, rsaPub)
+	_, err = be.DeriveSharedSecret(context.Background(), x25519Attrs, rsaPub)
 	if err == nil {
 		t.Fatal("DeriveSharedSecret should fail with wrong public key type for X25519")
 	}
@@ -3062,25 +3062,25 @@ func TestDeriveSharedSecret_ECDSA_WrongPublicKeyType(t *testing.T) {
 
 	// Generate ECDSA key
 	ecdsaAttrs := createECDSAAttrs("test-ecdsa-wrong.com", "P-256")
-	_, err := be.GenerateKey(ecdsaAttrs)
+	_, err := be.GenerateKey(context.Background(), ecdsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// Generate RSA key to get wrong public key type
 	rsaAttrs := createRSAAttrs("test-rsa-wrong2.com", 2048)
-	_, err = be.GenerateKey(rsaAttrs)
+	_, err = be.GenerateKey(context.Background(), rsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey RSA failed: %v", err)
 	}
 
-	rsaPub, err := be.Public(rsaAttrs)
+	rsaPub, err := be.Public(context.Background(), rsaAttrs)
 	if err != nil {
 		t.Fatalf("Public failed: %v", err)
 	}
 
 	// Try to derive shared secret with wrong public key type
-	_, err = be.DeriveSharedSecret(ecdsaAttrs, rsaPub)
+	_, err = be.DeriveSharedSecret(context.Background(), ecdsaAttrs, rsaPub)
 	if err == nil {
 		t.Fatal("DeriveSharedSecret should fail with wrong public key type for ECDSA")
 	}
@@ -3103,7 +3103,7 @@ func TestGenerateRSAKey_ErrorGeneration(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GenerateKey should fail with zero key size")
 	}
@@ -3117,7 +3117,7 @@ func TestGenerateECDSAKey_EmptyCurve(t *testing.T) {
 	// Empty string for curve - will result in nil curve
 	attrs := createECDSAAttrs("test-empty-curve.com", "")
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GenerateKey should fail with empty curve")
 	}

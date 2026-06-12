@@ -931,35 +931,6 @@ type storeCredentialParams struct {
 	backendID       xkms.BackendType
 }
 
-// storeCredential persists a newly created credential.
-// privateKeyBytes may be nil for non-exportable backends (e.g., TPM2).
-func (a *Authenticator) storeCredential(
-	credentialID []byte,
-	rp RelyingParty,
-	user User,
-	privateKeyBytes []byte,
-	publicKeyCOSE []byte,
-	algorithm int,
-	discoverable bool,
-	hmacSecretKey []byte,
-	credProtect uint8,
-	backendID xkms.BackendType,
-) error {
-	return a.storeCredentialWithPolicy(&storeCredentialParams{
-		credentialID:    credentialID,
-		rp:              rp,
-		user:            user,
-		privateKeyBytes: privateKeyBytes,
-		publicKeyCOSE:   publicKeyCOSE,
-		algorithm:       algorithm,
-		discoverable:    discoverable,
-		hmacSecretKey:   hmacSecretKey,
-		credProtect:     credProtect,
-		rpUPPolicy:      true, // Default per CTAP2 spec
-		backendID:       backendID,
-	})
-}
-
 // storeCredentialWithPolicy persists a credential with RP policy fields.
 func (a *Authenticator) storeCredentialWithPolicy(p *storeCredentialParams) error {
 	storedCred := &StoredCredential{

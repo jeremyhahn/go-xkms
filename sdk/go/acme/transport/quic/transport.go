@@ -106,7 +106,6 @@ type Transport struct {
 	dirMu      sync.RWMutex
 	healthy    atomic.Bool
 	lastNonce  atomic.Value
-	nonceMu    sync.Mutex
 	closedOnce sync.Once
 	closed     atomic.Bool
 }
@@ -345,7 +344,7 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 		t.healthy.Store(false)
 		return nil, errors.Wrap(err, errors.CodeConnection, op, "HTTP/3 request failed")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	t.healthy.Store(true)
 
@@ -487,7 +486,7 @@ func (t *Transport) parseACMEError(op string, statusCode int, body []byte) error
 
 			caErr := errors.NewACMEError(code, op, detail)
 			if acmeErr.Instance != "" {
-				caErr.WithInstance(acmeErr.Instance)
+				_ = caErr.WithInstance(acmeErr.Instance)
 			}
 
 			for _, sp := range acmeErr.Subproblems {
@@ -501,7 +500,7 @@ func (t *Transport) parseACMEError(op string, statusCode int, body []byte) error
 						Value: sp.Identifier.Value,
 					}
 				}
-				caErr.AddSubproblem(subproblem)
+				_ = caErr.AddSubproblem(subproblem)
 			}
 
 			return caErr

@@ -65,7 +65,7 @@ func IsLUKSVolume(path string) bool {
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Read the first 6 bytes (LUKS magic)
 	magic := make([]byte, 6)

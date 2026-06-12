@@ -219,7 +219,7 @@ func TestGetCABundle_NoBundlerConfigured(t *testing.T) {
 	SetCABundler(nil)
 	defer SetCABundler(nil)
 
-	service := NewService(nil, nil)
+	service := NewService(nil, nil, nil)
 
 	_, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{})
 	if err == nil {
@@ -247,7 +247,7 @@ func TestGetCABundle_EmptyBundle(t *testing.T) {
 	}
 	SetCABundler(mockBundler)
 
-	service := NewService(nil, nil)
+	service := NewService(nil, nil, nil)
 
 	_, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{})
 	if err == nil {
@@ -276,7 +276,7 @@ func TestGetCABundle_BundlerError(t *testing.T) {
 	}
 	SetCABundler(mockBundler)
 
-	service := NewService(nil, nil)
+	service := NewService(nil, nil, nil)
 
 	_, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{})
 	if err == nil {
@@ -305,7 +305,7 @@ func TestGetCABundle_Success(t *testing.T) {
 	}
 	SetCABundler(mockBundler)
 
-	service := NewService(nil, nil)
+	service := NewService(nil, nil, nil)
 
 	resp, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{})
 	if err != nil {
@@ -345,7 +345,7 @@ func TestGetCABundle_MultipleCertificates(t *testing.T) {
 	}
 	SetCABundler(mockBundler)
 
-	service := NewService(nil, nil)
+	service := NewService(nil, nil, nil)
 
 	resp, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{})
 	if err != nil {
@@ -373,7 +373,7 @@ func TestGetCABundle_WithStoreTypeFilter(t *testing.T) {
 	}
 	SetCABundler(mockBundler)
 
-	service := NewService(nil, nil)
+	service := NewService(nil, nil, nil)
 
 	testCases := []struct {
 		name          string
@@ -434,7 +434,7 @@ func TestGetCABundle_WithAlgorithmFilter(t *testing.T) {
 	}
 	SetCABundler(mockBundler)
 
-	service := NewService(nil, nil)
+	service := NewService(nil, nil, nil)
 
 	testCases := []struct {
 		name          string
@@ -486,7 +486,7 @@ func TestGetCABundle_FilterNoMatch(t *testing.T) {
 	}
 	SetCABundler(mockBundler)
 
-	service := NewService(nil, nil)
+	service := NewService(nil, nil, nil)
 
 	t.Run("unknown store type returns empty", func(t *testing.T) {
 		_, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{
@@ -557,7 +557,7 @@ func TestGetCABundle_CombinedFilters(t *testing.T) {
 	}
 	SetCABundler(mockBundler)
 
-	service := NewService(nil, nil)
+	service := NewService(nil, nil, nil)
 
 	t.Run("filter root + RSA returns RSA root", func(t *testing.T) {
 		resp, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{

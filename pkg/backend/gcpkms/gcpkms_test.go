@@ -247,7 +247,7 @@ func TestBackend_GenerateRSA(t *testing.T) {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
 
-			signer, err := b.GenerateRSA(tt.attrs)
+			signer, err := b.GenerateRSA(context.Background(), tt.attrs)
 
 			if tt.wantErr {
 				if err == nil {
@@ -353,7 +353,7 @@ C18ScRb4Z6poMBgJtYlVtd9ly63URv57ZW0Ncs1LiZB7WATb3svu+1c7HQ==
 				t.Fatalf("Failed to create backend: %v", err)
 			}
 
-			signer, err := b.GenerateECDSA(tt.attrs)
+			signer, err := b.GenerateECDSA(context.Background(), tt.attrs)
 
 			if tt.wantErr {
 				if err == nil {
@@ -434,7 +434,7 @@ func TestBackend_GenerateKey(t *testing.T) {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
 
-			_, err = b.GenerateKey(tt.attrs)
+			_, err = b.GenerateKey(context.Background(), tt.attrs)
 
 			if tt.wantErr {
 				if err == nil {
@@ -903,7 +903,7 @@ func TestBackend_Signer(t *testing.T) {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
 
-			signer, err := b.Signer(tt.attrs)
+			signer, err := b.Signer(context.Background(), tt.attrs)
 
 			if tt.wantErr {
 				if err == nil {
@@ -995,7 +995,7 @@ func TestBackend_NotInitialized(t *testing.T) {
 	}
 
 	// Test Signer with uninitialized client
-	_, err = b.Signer(attrs)
+	_, err = b.Signer(context.Background(), attrs)
 	if !errors.Is(err, ErrNotInitialized) {
 		t.Errorf("Signer() with nil client error = %v, want %v", err, ErrNotInitialized)
 	}
@@ -1005,7 +1005,7 @@ func TestBackend_NotInitialized(t *testing.T) {
 		CN:           "test-key",
 		KeyAlgorithm: x509.RSA,
 	}
-	_, err = b.GenerateRSA(rsaAttrs)
+	_, err = b.GenerateRSA(context.Background(), rsaAttrs)
 	if !errors.Is(err, ErrNotInitialized) {
 		t.Errorf("GenerateRSA() with nil client error = %v, want %v", err, ErrNotInitialized)
 	}
@@ -1015,7 +1015,7 @@ func TestBackend_NotInitialized(t *testing.T) {
 		CN:           "test-key",
 		KeyAlgorithm: x509.ECDSA,
 	}
-	_, err = b.GenerateECDSA(ecdsaAttrs)
+	_, err = b.GenerateECDSA(context.Background(), ecdsaAttrs)
 	if !errors.Is(err, ErrNotInitialized) {
 		t.Errorf("GenerateECDSA() with nil client error = %v, want %v", err, ErrNotInitialized)
 	}
@@ -1089,7 +1089,7 @@ func TestKMSSigner(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	signer, err := b.Signer(attrs)
+	signer, err := b.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to create signer: %v", err)
 	}

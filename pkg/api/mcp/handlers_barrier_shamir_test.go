@@ -16,18 +16,65 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"sync"
 	"testing"
 
+	quicraftShamir "github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// testCaptureDistributor implements seal.CeremonyDistributor for use in unit
+// tests. It splits the secret using the real Shamir library and records the
+// share strings so tests can later call UnsealWithShare / UnsealWithShares /
+// RecoverWithKeys with actual share values.
+type testCaptureDistributor struct {
+	mu     sync.Mutex
+	shares []string
+}
+
+// SealAndDistribute splits secret into total shares with the given threshold,
+// records them, and returns the count.
+func (c *testCaptureDistributor) SealAndDistribute(_ context.Context, secret []byte, threshold, total int) (int, error) {
+	raw, err := quicraftShamir.Split(secret, threshold, total)
+	if err != nil {
+		return 0, fmt.Errorf("shamir split failed: %w", err)
+	}
+	c.mu.Lock()
+	c.shares = make([]string, len(raw))
+	for i, s := range raw {
+		c.shares[i] = s.Value
+	}
+	c.mu.Unlock()
+	return len(raw), nil
+}
+
+// RekeyAndDistribute destroys the prior round and produces fresh shares.
+func (c *testCaptureDistributor) RekeyAndDistribute(ctx context.Context, newSecret []byte, newThreshold, newTotal int) (int, error) {
+	c.mu.Lock()
+	c.shares = nil
+	c.mu.Unlock()
+	return c.SealAndDistribute(ctx, newSecret, newThreshold, newTotal)
+}
+
+// Shares returns the share strings captured by the last SealAndDistribute call.
+func (c *testCaptureDistributor) Shares() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, len(c.shares))
+	copy(out, c.shares)
+	return out
+}
+
 // createTestBarrier creates a barrier with ShamirStrategy for testing.
-// It returns the barrier with a 2-of-3 Shamir configuration.
-func createTestBarrier(t *testing.T) *seal.Barrier {
+// It wires ceremony and recovery distributors, initializes the barrier,
+// and returns the barrier, ceremony distributor, and recovery distributor
+// so tests can retrieve share values.
+func createTestBarrier(t *testing.T) (*seal.Barrier, *testCaptureDistributor, *testCaptureDistributor) {
 	t.Helper()
 
 	barrierStore := storage.New()
@@ -49,24 +96,33 @@ func createTestBarrier(t *testing.T) *seal.Barrier {
 	)
 	require.NoError(t, err)
 
-	return barrier
+	dist := &testCaptureDistributor{}
+	recoveryDist := &testCaptureDistributor{}
+	barrier.SetCeremonyDistributor(dist)
+	barrier.SetRecoveryDistributor(recoveryDist)
+
+	return barrier, dist, recoveryDist
 }
 
 // createTestBarrierServer creates a test server with a barrier attached.
-func createTestBarrierServer(t *testing.T) (*Server, *seal.Barrier) {
+// It injects the XKMSService into Config so the server has full DI.
+// Returns the server, ceremony distributor, recovery distributor, and barrier.
+func createTestBarrierServer(t *testing.T) (*Server, *testCaptureDistributor, *testCaptureDistributor, *seal.Barrier) {
 	t.Helper()
 
-	setupTestXKMS(t)
+	svc := setupTestXKMS(t)
+	t.Cleanup(cleanupXKMS)
 
-	barrier := createTestBarrier(t)
+	barrier, dist, recoveryDist := createTestBarrier(t)
 
 	server, err := NewServer(&Config{
-		Addr:    "localhost:0",
-		Barrier: barrier,
+		Addr:        "localhost:0",
+		Barrier:     barrier,
+		XKMSService: svc,
 	})
 	require.NoError(t, err)
 
-	return server, barrier
+	return server, dist, recoveryDist, barrier
 }
 
 // makeReq creates a JSONRPCRequest with the given method and params.
@@ -97,7 +153,7 @@ func TestBarrierInitialize(t *testing.T) {
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := &JSONRPCRequest{
@@ -112,7 +168,7 @@ func TestBarrierInitialize(t *testing.T) {
 	})
 
 	t.Run("returns error with empty secret", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.initialize", BarrierInitializeParams{Secret: ""})
@@ -122,7 +178,7 @@ func TestBarrierInitialize(t *testing.T) {
 	})
 
 	t.Run("succeeds with valid secret", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.initialize", BarrierInitializeParams{Secret: "my-secret"})
@@ -148,7 +204,7 @@ func TestBarrierInitializeShamir(t *testing.T) {
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := &JSONRPCRequest{
@@ -161,8 +217,8 @@ func TestBarrierInitializeShamir(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid params")
 	})
 
-	t.Run("succeeds and returns shares", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+	t.Run("succeeds and returns share_count", func(t *testing.T) {
+		server, dist, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.initializeShamir", BarrierInitializeShamirParams{})
@@ -171,12 +227,13 @@ func TestBarrierInitializeShamir(t *testing.T) {
 
 		resultMap := result.(map[string]interface{})
 		assert.True(t, resultMap["success"].(bool))
-
-		shares, ok := resultMap["shares"].([]string)
-		require.True(t, ok)
-		assert.Len(t, shares, 3)
 		assert.Equal(t, 2, resultMap["threshold"])
 		assert.Equal(t, 3, resultMap["total_shares"])
+		assert.Equal(t, 3, resultMap["share_count"])
+
+		// Shares are distributed via the ceremony distributor, not returned in response.
+		shares := dist.Shares()
+		assert.Len(t, shares, 3)
 	})
 }
 
@@ -193,7 +250,7 @@ func TestBarrierUnseal(t *testing.T) {
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := &JSONRPCRequest{
@@ -207,7 +264,7 @@ func TestBarrierUnseal(t *testing.T) {
 	})
 
 	t.Run("returns error with empty secret", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.unseal", BarrierUnsealParams{Secret: ""})
@@ -217,7 +274,7 @@ func TestBarrierUnseal(t *testing.T) {
 	})
 
 	t.Run("returns error when barrier not initialized", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.unseal", BarrierUnsealParams{Secret: "secret"})
@@ -239,7 +296,7 @@ func TestBarrierUnsealShare(t *testing.T) {
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := &JSONRPCRequest{
@@ -253,7 +310,7 @@ func TestBarrierUnsealShare(t *testing.T) {
 	})
 
 	t.Run("returns error with empty share", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.unsealShare", BarrierUnsealShareParams{Share: ""})
@@ -263,21 +320,18 @@ func TestBarrierUnsealShare(t *testing.T) {
 	})
 
 	t.Run("submits share and tracks progress", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, dist, _, barrier := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
-		// First initialize with Shamir
+		// Initialize with Shamir
 		initReq := makeReq("barrier.initializeShamir", BarrierInitializeShamirParams{})
-		initResult, err := server.handleBarrierInitializeShamir(context.Background(), initReq)
+		_, err := server.handleBarrierInitializeShamir(context.Background(), initReq)
 		require.NoError(t, err)
-
-		resultMap := initResult.(map[string]interface{})
-		shares := resultMap["shares"].([]string)
+		shares := dist.Shares()
+		require.Len(t, shares, 3)
 
 		// Seal the barrier so we can unseal with shares
-		sealReq := makeReq("barrier.seal", nil)
-		_, err = server.handleBarrierSeal(sealReq)
-		require.NoError(t, err)
+		require.NoError(t, barrier.Seal())
 
 		// Submit first share
 		req := makeReq("barrier.unsealShare", BarrierUnsealShareParams{Share: shares[0]})
@@ -314,7 +368,7 @@ func TestBarrierUnsealShares(t *testing.T) {
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := &JSONRPCRequest{
@@ -328,7 +382,7 @@ func TestBarrierUnsealShares(t *testing.T) {
 	})
 
 	t.Run("returns error with empty shares", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.unsealShares", BarrierUnsealSharesParams{Shares: []string{}})
@@ -338,29 +392,26 @@ func TestBarrierUnsealShares(t *testing.T) {
 	})
 
 	t.Run("succeeds with valid shares", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, dist, _, barrier := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		// Initialize with Shamir
 		initReq := makeReq("barrier.initializeShamir", BarrierInitializeShamirParams{})
-		initResult, err := server.handleBarrierInitializeShamir(context.Background(), initReq)
+		_, err := server.handleBarrierInitializeShamir(context.Background(), initReq)
 		require.NoError(t, err)
-
-		resultMap := initResult.(map[string]interface{})
-		shares := resultMap["shares"].([]string)
+		shares := dist.Shares()
+		require.Len(t, shares, 3)
 
 		// Seal the barrier
-		sealReq := makeReq("barrier.seal", nil)
-		_, err = server.handleBarrierSeal(sealReq)
-		require.NoError(t, err)
+		require.NoError(t, barrier.Seal())
 
-		// Batch unseal with all shares
+		// Batch unseal with threshold shares
 		req := makeReq("barrier.unsealShares", BarrierUnsealSharesParams{Shares: shares[:2]})
 		result, err := server.handleBarrierUnsealShares(context.Background(), req)
 		require.NoError(t, err)
 
-		resultMap2 := result.(map[string]interface{})
-		assert.True(t, resultMap2["success"].(bool))
+		resultMap := result.(map[string]interface{})
+		assert.True(t, resultMap["success"].(bool))
 	})
 }
 
@@ -371,13 +422,13 @@ func TestBarrierSeal(t *testing.T) {
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.seal", nil)
-		_, err := server.handleBarrierSeal(req)
+		_, err := server.handleBarrierSeal(context.Background(), req)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
 	})
 
 	t.Run("succeeds on unsealed barrier", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		// Initialize first
@@ -387,7 +438,7 @@ func TestBarrierSeal(t *testing.T) {
 
 		// Seal
 		req := makeReq("barrier.seal", nil)
-		result, err := server.handleBarrierSeal(req)
+		result, err := server.handleBarrierSeal(context.Background(), req)
 		require.NoError(t, err)
 
 		resultMap := result.(map[string]interface{})
@@ -396,12 +447,12 @@ func TestBarrierSeal(t *testing.T) {
 	})
 
 	t.Run("idempotent on already sealed barrier", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		// Barrier starts sealed -- sealing again should succeed
 		req := makeReq("barrier.seal", nil)
-		result, err := server.handleBarrierSeal(req)
+		result, err := server.handleBarrierSeal(context.Background(), req)
 		require.NoError(t, err)
 
 		resultMap := result.(map[string]interface{})
@@ -416,17 +467,17 @@ func TestBarrierStatus(t *testing.T) {
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.status", nil)
-		_, err := server.handleBarrierStatus(req)
+		_, err := server.handleBarrierStatus(context.Background(), req)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
 	})
 
 	t.Run("returns sealed status before initialization", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.status", nil)
-		result, err := server.handleBarrierStatus(req)
+		result, err := server.handleBarrierStatus(context.Background(), req)
 		require.NoError(t, err)
 
 		resultMap := result.(map[string]interface{})
@@ -434,7 +485,7 @@ func TestBarrierStatus(t *testing.T) {
 	})
 
 	t.Run("returns unsealed status after initialization", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		// Initialize
@@ -443,7 +494,7 @@ func TestBarrierStatus(t *testing.T) {
 		require.NoError(t, err)
 
 		req := makeReq("barrier.status", nil)
-		result, err := server.handleBarrierStatus(req)
+		result, err := server.handleBarrierStatus(context.Background(), req)
 		require.NoError(t, err)
 
 		resultMap := result.(map[string]interface{})
@@ -466,7 +517,7 @@ func TestBarrierRekey(t *testing.T) {
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := &JSONRPCRequest{
@@ -480,7 +531,7 @@ func TestBarrierRekey(t *testing.T) {
 	})
 
 	t.Run("returns error with threshold less than 2", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.rekey", BarrierRekeyParams{Threshold: 1, Total: 3})
@@ -490,7 +541,7 @@ func TestBarrierRekey(t *testing.T) {
 	})
 
 	t.Run("returns error with total less than threshold", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.rekey", BarrierRekeyParams{Threshold: 3, Total: 2})
@@ -500,7 +551,7 @@ func TestBarrierRekey(t *testing.T) {
 	})
 
 	t.Run("succeeds with valid params after initialization", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, dist, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		// Initialize first
@@ -515,10 +566,13 @@ func TestBarrierRekey(t *testing.T) {
 
 		resultMap := result.(map[string]interface{})
 		assert.True(t, resultMap["success"].(bool))
-		shares := resultMap["shares"].([]string)
-		assert.Len(t, shares, 5)
 		assert.Equal(t, 3, resultMap["threshold"])
 		assert.Equal(t, 5, resultMap["total_shares"])
+		assert.Equal(t, 5, resultMap["share_count"])
+
+		// Shares are distributed via ceremony distributor, not returned in response.
+		newShares := dist.Shares()
+		assert.Len(t, newShares, 5)
 	})
 }
 
@@ -535,7 +589,7 @@ func TestBarrierGenerateRecoveryKeys(t *testing.T) {
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := &JSONRPCRequest{
@@ -549,7 +603,7 @@ func TestBarrierGenerateRecoveryKeys(t *testing.T) {
 	})
 
 	t.Run("returns error with threshold less than 2", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.generateRecoveryKeys", BarrierGenerateRecoveryKeysParams{Threshold: 1, Total: 3})
@@ -559,7 +613,7 @@ func TestBarrierGenerateRecoveryKeys(t *testing.T) {
 	})
 
 	t.Run("returns error with total less than threshold", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.generateRecoveryKeys", BarrierGenerateRecoveryKeysParams{Threshold: 3, Total: 2})
@@ -569,7 +623,7 @@ func TestBarrierGenerateRecoveryKeys(t *testing.T) {
 	})
 
 	t.Run("succeeds after barrier is unsealed", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, recoveryDist, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		// Initialize first
@@ -584,10 +638,13 @@ func TestBarrierGenerateRecoveryKeys(t *testing.T) {
 
 		resultMap := result.(map[string]interface{})
 		assert.True(t, resultMap["success"].(bool))
-		shares := resultMap["shares"].([]string)
-		assert.Len(t, shares, 3)
 		assert.Equal(t, 2, resultMap["threshold"])
 		assert.Equal(t, 3, resultMap["total_shares"])
+		assert.Equal(t, 3, resultMap["share_count"])
+
+		// Recovery shares are distributed via the recovery distributor, not returned in response.
+		recoveryShares := recoveryDist.Shares()
+		assert.Len(t, recoveryShares, 3)
 	})
 }
 
@@ -604,7 +661,7 @@ func TestBarrierRecoverWithKeys(t *testing.T) {
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := &JSONRPCRequest{
@@ -618,7 +675,7 @@ func TestBarrierRecoverWithKeys(t *testing.T) {
 	})
 
 	t.Run("returns error with empty keys", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.recoverWithKeys", BarrierRecoverWithKeysParams{Keys: []string{}})
@@ -628,7 +685,7 @@ func TestBarrierRecoverWithKeys(t *testing.T) {
 	})
 
 	t.Run("succeeds with valid recovery keys", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, recoveryDist, barrier := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		// Initialize
@@ -636,18 +693,15 @@ func TestBarrierRecoverWithKeys(t *testing.T) {
 		_, err := server.handleBarrierInitializeShamir(context.Background(), initReq)
 		require.NoError(t, err)
 
-		// Generate recovery keys
+		// Generate recovery keys; shares captured by recoveryDist
 		genReq := makeReq("barrier.generateRecoveryKeys", BarrierGenerateRecoveryKeysParams{Threshold: 2, Total: 3})
-		genResult, err := server.handleBarrierGenerateRecoveryKeys(context.Background(), genReq)
+		_, err = server.handleBarrierGenerateRecoveryKeys(context.Background(), genReq)
 		require.NoError(t, err)
-
-		genMap := genResult.(map[string]interface{})
-		recoveryShares := genMap["shares"].([]string)
+		recoveryShares := recoveryDist.Shares()
+		require.Len(t, recoveryShares, 3)
 
 		// Seal the barrier
-		sealReq := makeReq("barrier.seal", nil)
-		_, err = server.handleBarrierSeal(sealReq)
-		require.NoError(t, err)
+		require.NoError(t, barrier.Seal())
 
 		// Recover with recovery keys
 		req := makeReq("barrier.recoverWithKeys", BarrierRecoverWithKeysParams{Keys: recoveryShares[:2]})
@@ -672,7 +726,7 @@ func TestBarrierDeleteRecoveryKeys(t *testing.T) {
 	})
 
 	t.Run("succeeds after generating recovery keys", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		// Initialize
@@ -709,7 +763,7 @@ func TestBarrierGenerateRootToken(t *testing.T) {
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := &JSONRPCRequest{
@@ -723,7 +777,7 @@ func TestBarrierGenerateRootToken(t *testing.T) {
 	})
 
 	t.Run("returns error with empty shares", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, _, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
 		req := makeReq("barrier.generateRootToken", BarrierGenerateRootTokenParams{Shares: []string{}})
@@ -733,18 +787,17 @@ func TestBarrierGenerateRootToken(t *testing.T) {
 	})
 
 	t.Run("succeeds with valid shares", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
+		server, dist, _, _ := createTestBarrierServer(t)
 		defer cleanupXKMS()
 
-		// Initialize with Shamir
+		// Initialize with Shamir; shares captured by dist
 		initReq := makeReq("barrier.initializeShamir", BarrierInitializeShamirParams{})
-		initResult, err := server.handleBarrierInitializeShamir(context.Background(), initReq)
+		_, err := server.handleBarrierInitializeShamir(context.Background(), initReq)
 		require.NoError(t, err)
+		shares := dist.Shares()
+		require.Len(t, shares, 3)
 
-		resultMap := initResult.(map[string]interface{})
-		shares := resultMap["shares"].([]string)
-
-		// Generate root token
+		// Generate root token using threshold shares
 		req := makeReq("barrier.generateRootToken", BarrierGenerateRootTokenParams{Shares: shares[:2]})
 		result, err := server.handleBarrierGenerateRootToken(context.Background(), req)
 		require.NoError(t, err)
@@ -759,7 +812,7 @@ func TestBarrierGenerateRootToken(t *testing.T) {
 // TestBarrierMethodRouting tests that barrier methods are properly routed
 // through handleRequest.
 func TestBarrierMethodRouting(t *testing.T) {
-	server, _ := createTestBarrierServer(t)
+	server, _, _, _ := createTestBarrierServer(t)
 	defer cleanupXKMS()
 
 	ctx := context.Background()
@@ -805,23 +858,23 @@ func TestBarrierMethodRouting(t *testing.T) {
 
 // TestBarrierSetBarrier tests the SetBarrier method.
 func TestBarrierSetBarrier(t *testing.T) {
-	setupTestXKMS(t)
+	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0"})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
 	require.NoError(t, err)
 
 	// Initially no barrier
 	assert.Nil(t, server.barrier)
 
 	// Set barrier
-	barrier := createTestBarrier(t)
+	barrier, _, _ := createTestBarrier(t)
 	server.SetBarrier(barrier)
 	assert.NotNil(t, server.barrier)
 
 	// Barrier operations should now work
 	req := makeReq("barrier.status", nil)
-	result, err := server.handleBarrierStatus(req)
+	result, err := server.handleBarrierStatus(context.Background(), req)
 	require.NoError(t, err)
 
 	resultMap := result.(map[string]interface{})
@@ -830,13 +883,14 @@ func TestBarrierSetBarrier(t *testing.T) {
 
 // TestBarrierConfigPassthrough tests that barrier is passed through Config.
 func TestBarrierConfigPassthrough(t *testing.T) {
-	setupTestXKMS(t)
+	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	barrier := createTestBarrier(t)
+	barrier, _, _ := createTestBarrier(t)
 	server, err := NewServer(&Config{
-		Addr:    "localhost:0",
-		Barrier: barrier,
+		Addr:        "localhost:0",
+		Barrier:     barrier,
+		XKMSService: svc,
 	})
 	require.NoError(t, err)
 	assert.NotNil(t, server.barrier)
@@ -845,85 +899,102 @@ func TestBarrierConfigPassthrough(t *testing.T) {
 // TestBarrierFullLifecycle tests the complete barrier lifecycle through MCP handlers:
 // initialize -> status -> seal -> unsealShares -> status -> generate recovery -> seal -> recover
 func TestBarrierFullLifecycle(t *testing.T) {
-	server, _ := createTestBarrierServer(t)
+	server, dist, recoveryDist, barrier := createTestBarrierServer(t)
 	defer cleanupXKMS()
 
 	ctx := context.Background()
 
 	// 1. Check initial status (sealed)
 	statusReq := makeReq("barrier.status", nil)
-	statusResult, err := server.handleBarrierStatus(statusReq)
+	statusResult, err := server.handleBarrierStatus(context.Background(), statusReq)
 	require.NoError(t, err)
 	assert.True(t, statusResult.(map[string]interface{})["sealed"].(bool))
 
-	// 2. Initialize with Shamir
+	// 2. Initialize with Shamir; shares captured by dist
 	initReq := makeReq("barrier.initializeShamir", BarrierInitializeShamirParams{})
 	initResult, err := server.handleBarrierInitializeShamir(ctx, initReq)
 	require.NoError(t, err)
 	initMap := initResult.(map[string]interface{})
-	shares := initMap["shares"].([]string)
+	assert.Equal(t, 3, initMap["share_count"])
+	shares := dist.Shares()
 	assert.Len(t, shares, 3)
 
 	// 3. Check status (should be unsealed after init)
-	statusResult, err = server.handleBarrierStatus(statusReq)
+	statusResult, err = server.handleBarrierStatus(context.Background(), statusReq)
 	require.NoError(t, err)
 	assert.False(t, statusResult.(map[string]interface{})["sealed"].(bool))
 
-	// 4. Generate recovery keys
+	// 4. Generate recovery keys; recovery shares captured by recoveryDist
 	recoveryReq := makeReq("barrier.generateRecoveryKeys", BarrierGenerateRecoveryKeysParams{Threshold: 2, Total: 3})
-	recoveryResult, err := server.handleBarrierGenerateRecoveryKeys(ctx, recoveryReq)
+	_, err = server.handleBarrierGenerateRecoveryKeys(ctx, recoveryReq)
 	require.NoError(t, err)
-	recoveryShares := recoveryResult.(map[string]interface{})["shares"].([]string)
+	recoveryShares := recoveryDist.Shares()
+	require.Len(t, recoveryShares, 3)
 
-	// 7. Seal the barrier
+	// 5. Seal the barrier
 	sealReq := makeReq("barrier.seal", nil)
-	_, err = server.handleBarrierSeal(sealReq)
+	_, err = server.handleBarrierSeal(context.Background(), sealReq)
 	require.NoError(t, err)
 
-	// 8. Verify sealed
-	statusResult, err = server.handleBarrierStatus(statusReq)
+	// 6. Verify sealed
+	statusResult, err = server.handleBarrierStatus(context.Background(), statusReq)
 	require.NoError(t, err)
 	assert.True(t, statusResult.(map[string]interface{})["sealed"].(bool))
 
-	// 9. Unseal with shares
+	// 7. Unseal with shares
 	unsealReq := makeReq("barrier.unsealShares", BarrierUnsealSharesParams{Shares: shares[:2]})
 	_, err = server.handleBarrierUnsealShares(ctx, unsealReq)
 	require.NoError(t, err)
 
-	// 10. Verify unsealed
-	statusResult, err = server.handleBarrierStatus(statusReq)
+	// 8. Verify unsealed
+	statusResult, err = server.handleBarrierStatus(context.Background(), statusReq)
 	require.NoError(t, err)
 	assert.False(t, statusResult.(map[string]interface{})["sealed"].(bool))
 
-	// 11. Rekey with new parameters
+	// 9. Rekey with new parameters; new shares captured by dist
 	rekeyReq := makeReq("barrier.rekey", BarrierRekeyParams{Threshold: 2, Total: 5})
 	rekeyResult, err := server.handleBarrierRekey(ctx, rekeyReq)
 	require.NoError(t, err)
-	newShares := rekeyResult.(map[string]interface{})["shares"].([]string)
+	rekeyMap := rekeyResult.(map[string]interface{})
+	assert.Equal(t, 5, rekeyMap["share_count"])
+	newShares := dist.Shares()
 	assert.Len(t, newShares, 5)
 
-	// 12. Seal again
-	_, err = server.handleBarrierSeal(sealReq)
+	// 10. Seal again
+	_, err = server.handleBarrierSeal(context.Background(), sealReq)
 	require.NoError(t, err)
 
-	// 13. Recover with recovery keys
+	// 11. Recover with recovery keys
 	recoverReq := makeReq("barrier.recoverWithKeys", BarrierRecoverWithKeysParams{Keys: recoveryShares[:2]})
 	_, err = server.handleBarrierRecoverWithKeys(ctx, recoverReq)
 	require.NoError(t, err)
 
-	// 14. Verify unsealed after recovery
-	statusResult, err = server.handleBarrierStatus(statusReq)
+	// 12. Verify unsealed after recovery
+	statusResult, err = server.handleBarrierStatus(context.Background(), statusReq)
 	require.NoError(t, err)
 	assert.False(t, statusResult.(map[string]interface{})["sealed"].(bool))
 
-	// 15. Delete recovery keys
+	// 13. Delete recovery keys
 	delRecoveryReq := makeReq("barrier.deleteRecoveryKeys", nil)
 	_, err = server.handleBarrierDeleteRecoveryKeys(ctx, delRecoveryReq)
 	require.NoError(t, err)
 
-	// 16. Generate root token
+	// 14. Seal and unseal once more with new shares to confirm rekey took effect
+	_, err = server.handleBarrierSeal(context.Background(), sealReq)
+	require.NoError(t, err)
+
+	unsealNewReq := makeReq("barrier.unsealShares", BarrierUnsealSharesParams{Shares: newShares[:2]})
+	_, err = server.handleBarrierUnsealShares(ctx, unsealNewReq)
+	require.NoError(t, err)
+
+	// 15. Generate root token using new shares
 	tokenReq := makeReq("barrier.generateRootToken", BarrierGenerateRootTokenParams{Shares: newShares[:2]})
 	tokenResult, err := server.handleBarrierGenerateRootToken(ctx, tokenReq)
 	require.NoError(t, err)
+
+	// Re-seal so the barrier is unsealed for the GenerateRootToken operation —
+	// GenerateRootToken reconstructs the master key from shares but does NOT
+	// require the barrier to be sealed first.
+	_ = barrier
 	assert.NotEmpty(t, tokenResult.(map[string]interface{})["token"])
 }

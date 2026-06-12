@@ -20,11 +20,17 @@ import pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
 
 // Re-exported types.
 type (
+	Authenticator                 = pkgfido2.Authenticator
 	Config                        = pkgfido2.Config
+	CTAPHIDDevice                 = pkgfido2.CTAPHIDDevice
 	Device                        = pkgfido2.Device
+	EnrollmentResult              = pkgfido2.EnrollmentResult
 	Handler                       = pkgfido2.Handler
 	FIDO2Handler                  = pkgfido2.FIDO2Handler
+	HIDDevice                     = pkgfido2.HIDDevice
 	HIDDeviceEnumerator           = pkgfido2.HIDDeviceEnumerator
+	RelyingParty                  = pkgfido2.RelyingParty
+	User                          = pkgfido2.User
 	WebAuthnAttestation           = pkgfido2.WebAuthnAttestation
 	WebAuthnAuthenticationOptions = pkgfido2.WebAuthnAuthenticationOptions
 	WebAuthnRegistrationOptions   = pkgfido2.WebAuthnRegistrationOptions
@@ -35,6 +41,8 @@ type (
 // Re-exported constructors, defaults, and helpers.
 var (
 	DefaultConfig               = pkgfido2.DefaultConfig
+	NewAuthenticator            = pkgfido2.NewAuthenticator
+	NewCTAPHIDDevice            = pkgfido2.NewCTAPHIDDevice
 	NewDefaultEnumerator        = pkgfido2.NewDefaultEnumerator
 	NewHandler                  = pkgfido2.NewHandler
 	DefaultEnrollmentConfig     = pkgfido2.DefaultEnrollmentConfig

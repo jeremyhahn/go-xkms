@@ -18,14 +18,13 @@ import (
 	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // handleGetCABundle handles the xkms.ca.bundle method.
 // It retrieves the CA certificate bundle in PEM format.
 func (s *Server) handleGetCABundle(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -40,8 +39,8 @@ func (s *Server) handleGetCABundle(ctx context.Context, req *JSONRPCRequest) (in
 // handleGetCACertificate handles the xkms.ca.certificate method.
 // It retrieves the CA certificate with metadata (subject, issuer, serial, validity).
 func (s *Server) handleGetCACertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -56,8 +55,8 @@ func (s *Server) handleGetCACertificate(ctx context.Context, req *JSONRPCRequest
 // handleSignCSR handles the xkms.ca.sign-csr method.
 // It signs a PKCS#10 certificate signing request using the CA.
 func (s *Server) handleSignCSR(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -72,8 +71,8 @@ func (s *Server) handleSignCSR(ctx context.Context, req *JSONRPCRequest) (interf
 // handleIssueCertificate handles the xkms.ca.issue method.
 // It issues a new certificate from the CA with the specified profile and parameters.
 func (s *Server) handleIssueCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -88,8 +87,8 @@ func (s *Server) handleIssueCertificate(ctx context.Context, req *JSONRPCRequest
 // handleRevokeCertificate handles the xkms.ca.revoke method.
 // It revokes a certificate by serial number with an RFC 5280 reason code.
 func (s *Server) handleRevokeCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -104,8 +103,8 @@ func (s *Server) handleRevokeCertificate(ctx context.Context, req *JSONRPCReques
 // handleGenerateCRL handles the xkms.ca.crl method.
 // It generates a certificate revocation list (CRL) from the CA.
 func (s *Server) handleGenerateCRL(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
@@ -120,8 +119,8 @@ func (s *Server) handleGenerateCRL(ctx context.Context, req *JSONRPCRequest) (in
 // handleIsRevoked handles the xkms.ca.is-revoked method.
 // It checks whether a certificate has been revoked by its serial number.
 func (s *Server) handleIsRevoked(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 

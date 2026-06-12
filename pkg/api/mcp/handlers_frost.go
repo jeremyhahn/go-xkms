@@ -16,6 +16,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -24,7 +25,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // FROST request/response types
@@ -190,7 +190,7 @@ type FrostVerifyResult struct {
 }
 
 // handleFrostGenerateKey handles the frost.generateKey method
-func (s *Server) handleFrostGenerateKey(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleFrostGenerateKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostGenerateKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -285,7 +285,7 @@ func (s *Server) handleFrostGenerateKey(req *JSONRPCRequest) (interface{}, error
 		},
 	}
 
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate FROST key: %w", err)
 	}
@@ -304,7 +304,7 @@ func (s *Server) handleFrostGenerateKey(req *JSONRPCRequest) (interface{}, error
 }
 
 // handleFrostImportKey handles the frost.importKey method
-func (s *Server) handleFrostImportKey(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleFrostImportKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostImportKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -362,7 +362,7 @@ func (s *Server) handleFrostImportKey(req *JSONRPCRequest) (interface{}, error) 
 	}
 
 	ks := be.KeyStore()
-	if err := ks.StoreKeyPackage(pkg.KeyID, keyPackage, metadata); err != nil {
+	if err := ks.StoreKeyPackage(ctx, pkg.KeyID, keyPackage, metadata); err != nil {
 		return nil, fmt.Errorf("failed to store key package: %w", err)
 	}
 
@@ -376,13 +376,13 @@ func (s *Server) handleFrostImportKey(req *JSONRPCRequest) (interface{}, error) 
 }
 
 // handleFrostListKeys handles the frost.listKeys method
-func (s *Server) handleFrostListKeys(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleFrostListKeys(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	be, err := s.getFrostBackend()
 	if err != nil {
 		return nil, err
 	}
 
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
@@ -391,7 +391,7 @@ func (s *Server) handleFrostListKeys(req *JSONRPCRequest) (interface{}, error) {
 	for _, k := range keys {
 		if k.FrostAttributes != nil {
 			var groupPubKey string
-			handle, err := be.GetKey(k)
+			handle, err := be.GetKey(ctx, k)
 			if err == nil {
 				if h, ok := handle.(*frost.FrostKeyHandle); ok {
 					groupPubKey = hex.EncodeToString(h.GroupPublicKey)
@@ -418,7 +418,7 @@ func (s *Server) handleFrostListKeys(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleFrostGetKey handles the frost.getKey method
-func (s *Server) handleFrostGetKey(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleFrostGetKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostGetKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -439,14 +439,14 @@ func (s *Server) handleFrostGetKey(req *JSONRPCRequest) (interface{}, error) {
 		StoreType: types.StoreFrost,
 	}
 
-	key, err := be.GetKey(attrs)
+	key, err := be.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("key not found: %w", err)
 	}
 
 	handle := key.(*frost.FrostKeyHandle)
 
-	keys, _ := be.ListKeys()
+	keys, _ := be.ListKeys(ctx)
 	var keyInfo FrostKeyInfo
 	for _, k := range keys {
 		if k.CN == params.KeyID && k.FrostAttributes != nil {
@@ -478,7 +478,7 @@ func (s *Server) handleFrostGetKey(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleFrostDeleteKey handles the frost.deleteKey method
-func (s *Server) handleFrostDeleteKey(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleFrostDeleteKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostDeleteKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -499,7 +499,7 @@ func (s *Server) handleFrostDeleteKey(req *JSONRPCRequest) (interface{}, error) 
 		StoreType: types.StoreFrost,
 	}
 
-	if err := be.DeleteKey(attrs); err != nil {
+	if err := be.DeleteKey(ctx, attrs); err != nil {
 		return nil, fmt.Errorf("failed to delete key: %w", err)
 	}
 
@@ -510,7 +510,7 @@ func (s *Server) handleFrostDeleteKey(req *JSONRPCRequest) (interface{}, error) 
 }
 
 // handleFrostGenerateNonces handles the frost.generateNonces method
-func (s *Server) handleFrostGenerateNonces(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleFrostGenerateNonces(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostGenerateNoncesParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -541,7 +541,7 @@ func (s *Server) handleFrostGenerateNonces(req *JSONRPCRequest) (interface{}, er
 }
 
 // handleFrostSignRound handles the frost.signRound method
-func (s *Server) handleFrostSignRound(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleFrostSignRound(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostSignRoundParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -587,7 +587,7 @@ func (s *Server) handleFrostSignRound(req *JSONRPCRequest) (interface{}, error) 
 		KeyType:   types.KeyTypeSigning,
 		StoreType: types.StoreFrost,
 	}
-	key, err := be.GetKey(attrs)
+	key, err := be.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("key not found: %w", err)
 	}
@@ -640,7 +640,7 @@ func (s *Server) handleFrostSignRound(req *JSONRPCRequest) (interface{}, error) 
 }
 
 // handleFrostAggregate handles the frost.aggregate method
-func (s *Server) handleFrostAggregate(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleFrostAggregate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostAggregateParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -712,7 +712,7 @@ func (s *Server) handleFrostAggregate(req *JSONRPCRequest) (interface{}, error) 
 }
 
 // handleFrostVerify handles the frost.verify method
-func (s *Server) handleFrostVerify(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleFrostVerify(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostVerifyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -752,9 +752,9 @@ func (s *Server) handleFrostVerify(req *JSONRPCRequest) (interface{}, error) {
 
 // getFrostBackend retrieves the FROST backend from the xkms service
 func (s *Server) getFrostBackend() (*frost.FrostBackend, error) {
-	backends := xkms.Backends()
+	backends := s.xkmsService.BackendNames()
 	for _, name := range backends {
-		ks, err := xkms.GetBackend(name)
+		ks, err := s.xkmsService.LookupBackend(name)
 		if err != nil {
 			continue
 		}
@@ -769,34 +769,34 @@ func (s *Server) getFrostBackend() (*frost.FrostBackend, error) {
 }
 
 // routeFrostMethods routes FROST-related MCP methods
-func (s *Server) routeFrostMethods(req *JSONRPCRequest) (interface{}, error, bool) {
+func (s *Server) routeFrostMethods(ctx context.Context, req *JSONRPCRequest) (interface{}, error, bool) {
 	switch req.Method {
 	case "frost.generateKey":
-		result, err := s.handleFrostGenerateKey(req)
+		result, err := s.handleFrostGenerateKey(ctx, req)
 		return result, err, true
 	case "frost.importKey":
-		result, err := s.handleFrostImportKey(req)
+		result, err := s.handleFrostImportKey(ctx, req)
 		return result, err, true
 	case "frost.listKeys":
-		result, err := s.handleFrostListKeys(req)
+		result, err := s.handleFrostListKeys(ctx, req)
 		return result, err, true
 	case "frost.getKey":
-		result, err := s.handleFrostGetKey(req)
+		result, err := s.handleFrostGetKey(ctx, req)
 		return result, err, true
 	case "frost.deleteKey":
-		result, err := s.handleFrostDeleteKey(req)
+		result, err := s.handleFrostDeleteKey(ctx, req)
 		return result, err, true
 	case "frost.generateNonces":
-		result, err := s.handleFrostGenerateNonces(req)
+		result, err := s.handleFrostGenerateNonces(ctx, req)
 		return result, err, true
 	case "frost.signRound":
-		result, err := s.handleFrostSignRound(req)
+		result, err := s.handleFrostSignRound(ctx, req)
 		return result, err, true
 	case "frost.aggregate":
-		result, err := s.handleFrostAggregate(req)
+		result, err := s.handleFrostAggregate(ctx, req)
 		return result, err, true
 	case "frost.verify":
-		result, err := s.handleFrostVerify(req)
+		result, err := s.handleFrostVerify(ctx, req)
 		return result, err, true
 	}
 	return nil, nil, false

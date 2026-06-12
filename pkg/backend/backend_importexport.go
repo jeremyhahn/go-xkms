@@ -14,6 +14,7 @@
 package backend
 
 import (
+	"context"
 	"crypto"
 	"time"
 
@@ -114,7 +115,7 @@ type ImportExportBackend interface {
 	// may be required for different key types (e.g., hybrid algorithms for RSA private keys).
 	//
 	// Returns an error if the backend doesn't support import or the algorithm is not supported.
-	GetImportParameters(attrs *types.KeyAttributes, algorithm WrappingAlgorithm) (*ImportParameters, error)
+	GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm WrappingAlgorithm) (*ImportParameters, error)
 
 	// WrapKey wraps key material for secure transport using the specified parameters.
 	// This operation is typically performed locally (outside the backend) before
@@ -130,7 +131,7 @@ type ImportExportBackend interface {
 	//   4. Concatenate the wrapped AES key and wrapped target key
 	//
 	// Returns WrappedKeyMaterial that can be passed to ImportKey.
-	WrapKey(keyMaterial []byte, params *ImportParameters) (*WrappedKeyMaterial, error)
+	WrapKey(ctx context.Context, keyMaterial []byte, params *ImportParameters) (*WrappedKeyMaterial, error)
 
 	// UnwrapKey unwraps key material that was previously wrapped with WrapKey.
 	// This operation is typically performed by the backend's HSM using the
@@ -142,7 +143,7 @@ type ImportExportBackend interface {
 	//
 	// Returns the unwrapped (plaintext) key material.
 	// Returns an error if unwrapping fails (e.g., due to incorrect parameters or corruption).
-	UnwrapKey(wrapped *WrappedKeyMaterial, params *ImportParameters) ([]byte, error)
+	UnwrapKey(ctx context.Context, wrapped *WrappedKeyMaterial, params *ImportParameters) ([]byte, error)
 
 	// ImportKey imports externally generated key material into the backend.
 	// The key material must be wrapped using parameters obtained from GetImportParameters.
@@ -164,7 +165,7 @@ type ImportExportBackend interface {
 	//   - Unwrapping fails (wrong algorithm, corrupted data, etc.)
 	//   - A key with the same attributes already exists
 	//   - The backend doesn't support import
-	ImportKey(attrs *types.KeyAttributes, wrapped *WrappedKeyMaterial) error
+	ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *WrappedKeyMaterial) error
 
 	// ExportKey exports a key in wrapped form for secure transport.
 	// This allows migrating keys from one backend to another while maintaining security.
@@ -181,7 +182,7 @@ type ImportExportBackend interface {
 	// Returns WrappedKeyMaterial that can be unwrapped by the recipient.
 	// Returns ErrNotSupported if the backend doesn't support key export.
 	// Returns ErrOperationNotPermitted if the key's policy prevents export.
-	ExportKey(attrs *types.KeyAttributes, algorithm WrappingAlgorithm) (*WrappedKeyMaterial, error)
+	ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm WrappingAlgorithm) (*WrappedKeyMaterial, error)
 
 	// ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
 	// This method provides direct access to the plaintext key bytes without wrapping.
@@ -198,5 +199,5 @@ type ImportExportBackend interface {
 	//   - Testing and development environments
 	//
 	// For secure key transport between backends, prefer ExportKey which wraps the material.
-	ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error)
+	ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error)
 }

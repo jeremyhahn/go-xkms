@@ -146,7 +146,7 @@ func (h *AWSCredentialsHandler) readCredentialsFile(path string) (map[string]map
 	if err != nil {
 		return sections, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	currentSection := ""
@@ -195,7 +195,7 @@ func (h *AWSCredentialsHandler) writeCredentialsFile(path string, sections map[s
 		return err
 	}
 	tempPath := tempFile.Name()
-	defer os.Remove(tempPath) // Clean up if we fail
+	defer func() { _ = os.Remove(tempPath) }() // Clean up if we fail
 
 	writer := bufio.NewWriter(tempFile)
 
@@ -211,17 +211,17 @@ func (h *AWSCredentialsHandler) writeCredentialsFile(path string, sections map[s
 	first := true
 	for profile, section := range sections {
 		if !first {
-			writer.WriteString("\n")
+			_, _ = writer.WriteString("\n")
 		}
 		first = false
 
-		fmt.Fprintf(writer, "[%s]\n", profile)
+		_, _ = fmt.Fprintf(writer, "[%s]\n", profile)
 
 		// Write keys in order
 		written := make(map[string]bool)
 		for _, key := range keyOrder {
 			if value, exists := section[key]; exists {
-				fmt.Fprintf(writer, "%s = %s\n", key, value)
+				_, _ = fmt.Fprintf(writer, "%s = %s\n", key, value)
 				written[key] = true
 			}
 		}
@@ -229,13 +229,13 @@ func (h *AWSCredentialsHandler) writeCredentialsFile(path string, sections map[s
 		// Write any remaining keys not in our predefined order
 		for key, value := range section {
 			if !written[key] {
-				fmt.Fprintf(writer, "%s = %s\n", key, value)
+				_, _ = fmt.Fprintf(writer, "%s = %s\n", key, value)
 			}
 		}
 	}
 
 	if err := writer.Flush(); err != nil {
-		tempFile.Close()
+		_ = tempFile.Close()
 		return err
 	}
 

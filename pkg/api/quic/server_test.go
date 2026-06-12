@@ -64,9 +64,12 @@ func TestNewServer_Success(t *testing.T) {
 	defer cleanupXKMS()
 	_ = mockKS
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
-		Addr:   "localhost:8444",
-		Logger: testLogger(),
+		Addr:        "localhost:8444",
+		Logger:      testLogger(),
+		XKMSService: svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -82,9 +85,12 @@ func TestNewServer_DefaultAddr(t *testing.T) {
 	defer cleanupXKMS()
 	_ = mockKS
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
-		Addr:   "",
-		Logger: testLogger(),
+		Addr:        "",
+		Logger:      testLogger(),
+		XKMSService: svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -104,10 +110,13 @@ func TestNewServer_WithTLSConfig(t *testing.T) {
 		NextProtos: []string{"h3"},
 	}
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
-		Addr:      "localhost:8444",
-		TLSConfig: tlsCfg,
-		Logger:    testLogger(),
+		Addr:        "localhost:8444",
+		TLSConfig:   tlsCfg,
+		Logger:      testLogger(),
+		XKMSService: svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -124,10 +133,13 @@ func TestNewServer_WithAuthenticator(t *testing.T) {
 
 	authenticator := auth.NewNoOpAuthenticator()
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: authenticator,
 		Logger:        testLogger(),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -149,10 +161,13 @@ func TestNewServer_WithRateLimiter(t *testing.T) {
 	})
 	defer rateLimiter.Stop()
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:        "localhost:8444",
 		RateLimiter: rateLimiter,
 		Logger:      testLogger(),
+		XKMSService: svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -182,9 +197,12 @@ func TestNewServer_DefaultLogger(t *testing.T) {
 	defer cleanupXKMS()
 	_ = mockKS
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
-		Addr:   "localhost:8444",
-		Logger: nil, // Should use default
+		Addr:        "localhost:8444",
+		Logger:      nil, // Should use default
+		XKMSService: svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -199,10 +217,13 @@ func TestNewServer_DefaultAuthenticator(t *testing.T) {
 	defer cleanupXKMS()
 	_ = mockKS
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: nil, // Should use NoOp
 		Logger:        testLogger(),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -218,9 +239,12 @@ func TestServer_Stop_NotStarted(t *testing.T) {
 	defer cleanupXKMS()
 	_ = mockKS
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
-		Addr:   "localhost:8444",
-		Logger: testLogger(),
+		Addr:        "localhost:8444",
+		Logger:      testLogger(),
+		XKMSService: svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -238,9 +262,12 @@ func TestServerMiddleware_CorrelationID(t *testing.T) {
 	defer cleanupXKMS()
 	_ = mockKS
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
-		Addr:   "localhost:8444",
-		Logger: testLogger(),
+		Addr:        "localhost:8444",
+		Logger:      testLogger(),
+		XKMSService: svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -287,10 +314,13 @@ func TestServerMiddleware_Authentication(t *testing.T) {
 	// Create a test authenticator that requires valid token
 	testAuth := &testAuthenticator{validToken: "valid-token"}
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: testAuth,
 		Logger:        testLogger(),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)

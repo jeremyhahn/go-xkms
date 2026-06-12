@@ -239,6 +239,30 @@ func (b *baseSDKClient) ListUserCredentials(ctx context.Context, username string
 	return nil, errNotImplemented
 }
 
+func (b *baseSDKClient) BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error {
+	return errNotImplemented
+}
+
+func (b *baseSDKClient) CreateUser(ctx context.Context, req *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) IssueEKCertificate(ctx context.Context, req *transport.IssueEKCertificateRequest) (*transport.IssueEKCertificateResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) IssueAKCertificate(ctx context.Context, req *transport.IssueAKCertificateRequest) (*transport.IssueAKCertificateResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) SignTCGCSR(ctx context.Context, req *transport.SignTCGCSRRequest) (*transport.SignTCGCSRResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) EnrollDevice(ctx context.Context, req *transport.EnrollDeviceRequest) (*transport.EnrollDeviceResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (b *baseSDKClient) BeginRegistration(ctx context.Context, req *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
 	return nil, errNotImplemented
 }

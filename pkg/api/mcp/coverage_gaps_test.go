@@ -18,21 +18,22 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestServiceUnavailable exercises the xkms.Get() error path for all handlers
-// that depend on the global xkms service singleton.
+// TestServiceUnavailable exercises the nil xkmsService error path for all handlers
+// that depend on the injected XKMS service.
 func TestServiceUnavailable(t *testing.T) {
-	setupTestXKMS(t)
+	svc := setupTestXKMS(t)
+	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0"})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
 	require.NoError(t, err)
 
-	xkms.Reset()
-	defer cleanupXKMS()
+	// Simulate a not-initialized service by nilling the injected field directly.
+	// xkms.Reset() no longer affects s.xkmsService since DI is now constructor-based.
+	server.xkmsService = nil
 
 	ctx := context.Background()
 	emptyParams, _ := json.Marshal(map[string]string{})
@@ -69,17 +70,18 @@ func TestServiceUnavailable(t *testing.T) {
 
 // TestPIV_InvalidParams exercises the invalid JSON error path for PIV handlers.
 func TestPIV_InvalidParams(t *testing.T) {
-	setupTestXKMS(t)
+	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0"})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
 	require.NoError(t, err)
 
+	ctx := context.Background()
 	badReq := &JSONRPCRequest{JSONRPC: "2.0", Params: json.RawMessage(`{bad`), ID: 1}
 
 	handlers := []struct {
 		name string
-		fn   func(*JSONRPCRequest) (interface{}, error)
+		fn   func(context.Context, *JSONRPCRequest) (interface{}, error)
 	}{
 		{"handleListPIVSlots", server.handleListPIVSlots},
 		{"handleGetPIVCertificate", server.handleGetPIVCertificate},
@@ -93,7 +95,7 @@ func TestPIV_InvalidParams(t *testing.T) {
 
 	for _, h := range handlers {
 		t.Run(h.name, func(t *testing.T) {
-			_, err := h.fn(badReq)
+			_, err := h.fn(ctx, badReq)
 			assert.Error(t, err)
 		})
 	}
@@ -103,6 +105,8 @@ func TestPIV_InvalidParams(t *testing.T) {
 func TestHandlers_CopyKey_MissingFields(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
+
+	ctx := context.Background()
 
 	tests := []struct {
 		name   string
@@ -120,7 +124,7 @@ func TestHandlers_CopyKey_MissingFields(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			paramsJSON, _ := json.Marshal(tt.params)
 			req := &JSONRPCRequest{JSONRPC: "2.0", Params: paramsJSON, ID: 1}
-			_, err := server.handleCopyKey(req)
+			_, err := server.handleCopyKey(ctx, req)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errMsg)
 		})
@@ -128,7 +132,7 @@ func TestHandlers_CopyKey_MissingFields(t *testing.T) {
 
 	t.Run("invalid JSON", func(t *testing.T) {
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: json.RawMessage(`{bad`), ID: 1}
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(ctx, req)
 		assert.Error(t, err)
 	})
 
@@ -142,7 +146,7 @@ func TestHandlers_CopyKey_MissingFields(t *testing.T) {
 		}
 		paramsJSON, _ := json.Marshal(params)
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: paramsJSON, ID: 1}
-		_, err := server.handleCopyKey(req)
+		_, err := server.handleCopyKey(ctx, req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "source backend not found")
 	})
@@ -153,9 +157,11 @@ func TestHandlers_ImportKeyMaterial_Validation(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
 
+	ctx := context.Background()
+
 	t.Run("invalid JSON", func(t *testing.T) {
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: json.RawMessage(`{bad`), ID: 1}
-		_, err := server.handleImportKeyMaterial(req)
+		_, err := server.handleImportKeyMaterial(ctx, req)
 		assert.Error(t, err)
 	})
 
@@ -163,7 +169,7 @@ func TestHandlers_ImportKeyMaterial_Validation(t *testing.T) {
 		params := map[string]string{"backend": "software"}
 		paramsJSON, _ := json.Marshal(params)
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: paramsJSON, ID: 1}
-		_, err := server.handleImportKeyMaterial(req)
+		_, err := server.handleImportKeyMaterial(ctx, req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -172,7 +178,7 @@ func TestHandlers_ImportKeyMaterial_Validation(t *testing.T) {
 		params := map[string]string{"key_id": "test-key", "backend": "nonexistent-backend-xyz"}
 		paramsJSON, _ := json.Marshal(params)
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: paramsJSON, ID: 1}
-		_, err := server.handleImportKeyMaterial(req)
+		_, err := server.handleImportKeyMaterial(ctx, req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid backend")
 	})
@@ -183,9 +189,11 @@ func TestHandlers_ExportKeyMaterial_Validation(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
 
+	ctx := context.Background()
+
 	t.Run("invalid JSON", func(t *testing.T) {
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: json.RawMessage(`{bad`), ID: 1}
-		_, err := server.handleExportKeyMaterial(req)
+		_, err := server.handleExportKeyMaterial(ctx, req)
 		assert.Error(t, err)
 	})
 
@@ -193,7 +201,7 @@ func TestHandlers_ExportKeyMaterial_Validation(t *testing.T) {
 		params := map[string]string{"backend": "software"}
 		paramsJSON, _ := json.Marshal(params)
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: paramsJSON, ID: 1}
-		_, err := server.handleExportKeyMaterial(req)
+		_, err := server.handleExportKeyMaterial(ctx, req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -202,7 +210,7 @@ func TestHandlers_ExportKeyMaterial_Validation(t *testing.T) {
 		params := map[string]string{"key_id": "nonexistent-key-xyz", "backend": "software"}
 		paramsJSON, _ := json.Marshal(params)
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: paramsJSON, ID: 1}
-		_, err := server.handleExportKeyMaterial(req)
+		_, err := server.handleExportKeyMaterial(ctx, req)
 		assert.Error(t, err)
 	})
 }
@@ -212,9 +220,11 @@ func TestHandlers_HandleDecrypt_Validation(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
 
+	ctx := context.Background()
+
 	t.Run("invalid JSON", func(t *testing.T) {
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: json.RawMessage(`{bad`), ID: 1}
-		_, err := server.handleDecrypt(req)
+		_, err := server.handleDecrypt(ctx, req)
 		assert.Error(t, err)
 	})
 
@@ -222,7 +232,7 @@ func TestHandlers_HandleDecrypt_Validation(t *testing.T) {
 		params := map[string]string{"backend": "software"}
 		paramsJSON, _ := json.Marshal(params)
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: paramsJSON, ID: 1}
-		_, err := server.handleDecrypt(req)
+		_, err := server.handleDecrypt(ctx, req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -231,7 +241,7 @@ func TestHandlers_HandleDecrypt_Validation(t *testing.T) {
 		params := map[string]string{"key_id": "nonexistent-key-xyz"}
 		paramsJSON, _ := json.Marshal(params)
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: paramsJSON, ID: 1}
-		_, err := server.handleDecrypt(req)
+		_, err := server.handleDecrypt(ctx, req)
 		assert.Error(t, err)
 	})
 
@@ -239,7 +249,7 @@ func TestHandlers_HandleDecrypt_Validation(t *testing.T) {
 		params := map[string]string{"key_id": "nonexistent-key-xyz", "backend": "software"}
 		paramsJSON, _ := json.Marshal(params)
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: paramsJSON, ID: 1}
-		_, err := server.handleDecrypt(req)
+		_, err := server.handleDecrypt(ctx, req)
 		assert.Error(t, err)
 	})
 }
@@ -253,7 +263,7 @@ func TestHandlers_HandleListCerts_EmptyStore(t *testing.T) {
 	paramsJSON, _ := json.Marshal(params)
 	req := &JSONRPCRequest{JSONRPC: "2.0", Params: paramsJSON, ID: 1}
 
-	result, err := server.handleListCerts(req)
+	result, err := server.handleListCerts(context.Background(), req)
 	require.NoError(t, err)
 
 	listResult, ok := result.(ListCertsResult)

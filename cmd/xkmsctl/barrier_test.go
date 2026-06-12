@@ -559,9 +559,9 @@ func TestRunBarrierInitShamirCmd_Success(t *testing.T) {
 
 	mock := &mockBarrierClient{
 		initShamirResp: &transport.BarrierInitializeShamirResponse{
-			Shares:      []string{"s1", "s2", "s3"},
 			Threshold:   2,
 			TotalShares: 3,
+			ShareCount:  3,
 		},
 	}
 	withGlobalConfig(t, newBarrierMockConfig(mock))
@@ -578,8 +578,12 @@ func TestRunBarrierInitShamirCmd_Success(t *testing.T) {
 	if mock.initShamirReq.Threshold != 2 || mock.initShamirReq.TotalShares != 3 {
 		t.Errorf("request = %+v, want threshold=2 total=3", mock.initShamirReq)
 	}
-	if !strings.Contains(out.String(), "s1") {
-		t.Errorf("output should include the shares; got %q", out.String())
+	// Share-free contract: output reports metadata only, never share material.
+	if !strings.Contains(out.String(), "\"share_count\": 3") {
+		t.Errorf("output should include the share-count metadata; got %q", out.String())
+	}
+	if strings.Contains(out.String(), "\"shares\"") {
+		t.Errorf("output must not include share material; got %q", out.String())
 	}
 }
 
@@ -593,9 +597,9 @@ func TestRunBarrierInitShamirCmd_PINPairDispatched(t *testing.T) {
 
 	mock := &mockBarrierClient{
 		initShamirResp: &transport.BarrierInitializeShamirResponse{
-			Shares:      []string{"s1", "s2"},
 			Threshold:   2,
 			TotalShares: 3,
+			ShareCount:  3,
 		},
 	}
 	withGlobalConfig(t, newBarrierMockConfig(mock))
@@ -896,25 +900,24 @@ func TestRunBarrierSealCmd_SOPinVerifyErrorAborts(t *testing.T) {
 // validateRekeyFlags / runBarrierRekeyCmd
 // -----------------------------------------------------------------------------
 
-func TestValidateRekeyFlags_PassphraseOnlyUnsupported(t *testing.T) {
-	err := validateRekeyFlags("new-pp", 0, 0)
-	var typed *XKMSPassphraseRekeyUnsupportedError
+func TestValidateRekeyFlags_ShamirParamsRequired(t *testing.T) {
+	err := validateRekeyFlags(0, 0)
+	var typed *XKMSRekeyShamirParamsRequiredError
 	if !errors.As(err, &typed) {
-		t.Fatalf("expected XKMSPassphraseRekeyUnsupportedError, got %T: %v", err, err)
+		t.Fatalf("expected XKMSRekeyShamirParamsRequiredError, got %T: %v", err, err)
 	}
 }
 
 func TestValidateRekeyFlags_ShamirSuccess(t *testing.T) {
-	if err := validateRekeyFlags("new-pp", 3, 5); err != nil {
+	if err := validateRekeyFlags(3, 5); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestValidateRekeyFlags_SecretRequired(t *testing.T) {
-	err := validateRekeyFlags("", 3, 5)
-	var typed *BarrierSecretRequiredError
-	if !errors.As(err, &typed) {
-		t.Fatalf("expected BarrierSecretRequiredError, got %T", err)
+func TestBarrierRekeyCmd_PassphraseFlagRemoved(t *testing.T) {
+	if barrierRekeyCmd.Flags().Lookup("passphrase") != nil {
+		t.Fatal("barrier rekey must not expose --passphrase: the server " +
+			"generates the fresh secret material itself (no secret on the wire)")
 	}
 }
 
@@ -926,7 +929,7 @@ func TestValidateRekeyFlags_UnpairedShamirFlags(t *testing.T) {
 		{0, 5},
 	}
 	for _, tc := range cases {
-		err := validateRekeyFlags("new-pp", tc.threshold, tc.total)
+		err := validateRekeyFlags(tc.threshold, tc.total)
 		var typed *BarrierShamirParamsError
 		if !errors.As(err, &typed) {
 			t.Fatalf("expected BarrierShamirParamsError for threshold=%d total=%d, got %T", tc.threshold, tc.total, err)
@@ -935,7 +938,7 @@ func TestValidateRekeyFlags_UnpairedShamirFlags(t *testing.T) {
 }
 
 func TestValidateRekeyFlags_ThresholdExceedsTotal(t *testing.T) {
-	err := validateRekeyFlags("new-pp", 5, 3)
+	err := validateRekeyFlags(5, 3)
 	var typed *BarrierShamirParamsError
 	if !errors.As(err, &typed) {
 		t.Fatalf("expected BarrierShamirParamsError, got %T", err)
@@ -944,15 +947,14 @@ func TestValidateRekeyFlags_ThresholdExceedsTotal(t *testing.T) {
 
 func TestRunBarrierRekeyCmd_Success(t *testing.T) {
 	resetBarrierFlags(t)
-	barrierSecret = "new-pp"
 	barrierThreshold = 3
 	barrierTotal = 5
 
 	mock := &mockBarrierClient{
 		rekeyResp: &transport.BarrierRekeyResponse{
-			Shares:      []string{"n1", "n2", "n3", "n4", "n5"},
 			Threshold:   3,
 			TotalShares: 5,
+			ShareCount:  5,
 		},
 	}
 	withGlobalConfig(t, newBarrierMockConfig(mock))
@@ -969,16 +971,15 @@ func TestRunBarrierRekeyCmd_Success(t *testing.T) {
 
 func TestRunBarrierRekeyCmd_SOPinVerified(t *testing.T) {
 	resetBarrierFlags(t)
-	barrierSecret = "new-pp"
 	barrierThreshold = 3
 	barrierTotal = 5
 	barrierFlagSOPin = "SO"
 
 	mock := &mockBarrierClient{
 		rekeyResp: &transport.BarrierRekeyResponse{
-			Shares:      []string{"n1", "n2"},
 			Threshold:   3,
 			TotalShares: 5,
+			ShareCount:  5,
 		},
 	}
 	withGlobalConfig(t, newBarrierMockConfig(mock))
@@ -1026,9 +1027,9 @@ func TestRunBarrierRecoveryGenerateCmd_Success(t *testing.T) {
 
 	mock := &mockBarrierClient{
 		genKeysResp: &transport.BarrierRecoveryKeysResponse{
-			Keys:      []string{"rk-1", "rk-2", "rk-3"},
-			Threshold: 2,
-			Total:     3,
+			Threshold:   2,
+			TotalShares: 3,
+			ShareCount:  3,
 		},
 	}
 	withGlobalConfig(t, newBarrierMockConfig(mock))
@@ -1042,8 +1043,12 @@ func TestRunBarrierRecoveryGenerateCmd_Success(t *testing.T) {
 	if mock.genKeysReq == nil || mock.genKeysReq.Threshold != 2 || mock.genKeysReq.Total != 3 {
 		t.Errorf("gen-keys req = %+v, want threshold=2 total=3", mock.genKeysReq)
 	}
-	if !strings.Contains(out.String(), "rk-1") {
-		t.Errorf("expected recovery keys in output; got %q", out.String())
+	// Share-free contract: output reports metadata only, never key material.
+	if !strings.Contains(out.String(), "\"share_count\": 3") {
+		t.Errorf("expected recovery metadata in output; got %q", out.String())
+	}
+	if strings.Contains(out.String(), "\"recovery_keys\"") {
+		t.Errorf("output must not include recovery key material; got %q", out.String())
 	}
 }
 
@@ -1144,7 +1149,7 @@ func TestTypedErrorMessages(t *testing.T) {
 		{&BarrierShareInputError{Reason: "one of"}, "unseal-shares"},
 		{&BarrierSharesFileError{Path: "/x", Err: errors.New("oops")}, "/x"},
 		{&BarrierSharesFileEmptyError{Path: "/x"}, "/x"},
-		{&XKMSPassphraseRekeyUnsupportedError{}, "Shamir"},
+		{&XKMSRekeyShamirParamsRequiredError{}, "Shamir"},
 		{&BarrierRecoverySharesRequiredError{}, "--share is required"},
 		{&BarrierSealConfirmationError{Err: errors.New("eof")}, "eof"},
 	}

@@ -32,6 +32,7 @@ package ca
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -77,7 +78,7 @@ var (
 // Requires the object store to be configured.
 //
 // Thread-safe: Yes
-func (ca *CA) ImportAttestation(akAttrs *types.KeyAttributes, blobType string, data []byte) error {
+func (ca *CA) ImportAttestation(ctx context.Context, akAttrs *types.KeyAttributes, blobType string, data []byte) error {
 	if akAttrs == nil {
 		return ErrInvalidRequest
 	}
@@ -95,7 +96,7 @@ func (ca *CA) ImportAttestation(akAttrs *types.KeyAttributes, blobType string, d
 
 	digest := sha256.Sum256(data)
 
-	signer, err := ca.Signer()
+	signer, err := ca.Signer(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: failed to get CA signer: %v", ErrSigningFailed, err)
 	}
@@ -126,7 +127,7 @@ func (ca *CA) ImportAttestation(akAttrs *types.KeyAttributes, blobType string, d
 // certificate store so it participates in chain building operations.
 //
 // Thread-safe: Yes
-func (ca *CA) ImportAttestationKeyCertificate(attrs *types.KeyAttributes, akDER []byte) error {
+func (ca *CA) ImportAttestationKeyCertificate(ctx context.Context, attrs *types.KeyAttributes, akDER []byte) error {
 	if attrs == nil {
 		return ErrInvalidRequest
 	}
@@ -153,7 +154,7 @@ func (ca *CA) ImportAttestationKeyCertificate(attrs *types.KeyAttributes, akDER 
 		return fmt.Errorf("%w: failed to store AK certificate digest: %v", ErrStorageError, err)
 	}
 
-	signer, err := ca.Signer()
+	signer, err := ca.Signer(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: failed to get CA signer: %v", ErrSigningFailed, err)
 	}
@@ -167,25 +168,25 @@ func (ca *CA) ImportAttestationKeyCertificate(attrs *types.KeyAttributes, akDER 
 		return fmt.Errorf("%w: failed to store AK certificate signature: %v", ErrStorageError, err)
 	}
 
-	return ca.ImportCertificate(cert)
+	return ca.ImportCertificate(ctx, cert)
 }
 
 // ImportAttestationEventLog is a convenience wrapper around ImportAttestation
 // for event-log blobs.
-func (ca *CA) ImportAttestationEventLog(akAttrs *types.KeyAttributes, eventLog []byte) error {
-	return ca.ImportAttestation(akAttrs, AttestBlobEventLog, eventLog)
+func (ca *CA) ImportAttestationEventLog(ctx context.Context, akAttrs *types.KeyAttributes, eventLog []byte) error {
+	return ca.ImportAttestation(ctx, akAttrs, AttestBlobEventLog, eventLog)
 }
 
 // ImportAttestationPCRs is a convenience wrapper around ImportAttestation
 // for PCR-snapshot blobs.
-func (ca *CA) ImportAttestationPCRs(akAttrs *types.KeyAttributes, pcrs []byte) error {
-	return ca.ImportAttestation(akAttrs, AttestBlobPCRs, pcrs)
+func (ca *CA) ImportAttestationPCRs(ctx context.Context, akAttrs *types.KeyAttributes, pcrs []byte) error {
+	return ca.ImportAttestation(ctx, akAttrs, AttestBlobPCRs, pcrs)
 }
 
 // ImportAttestationQuote is a convenience wrapper around ImportAttestation
 // for quote blobs.
-func (ca *CA) ImportAttestationQuote(akAttrs *types.KeyAttributes, quote []byte) error {
-	return ca.ImportAttestation(akAttrs, AttestBlobQuote, quote)
+func (ca *CA) ImportAttestationQuote(ctx context.Context, akAttrs *types.KeyAttributes, quote []byte) error {
+	return ca.ImportAttestation(ctx, akAttrs, AttestBlobQuote, quote)
 }
 
 // ImportLocalAttestation imports every component of a complete TPM quote
@@ -194,19 +195,19 @@ func (ca *CA) ImportAttestationQuote(akAttrs *types.KeyAttributes, quote []byte)
 // surface a valid event log to the kernel.
 //
 // Thread-safe: Yes
-func (ca *CA) ImportLocalAttestation(akAttrs *types.KeyAttributes, quote *tpm2.Quote) error {
+func (ca *CA) ImportLocalAttestation(ctx context.Context, akAttrs *types.KeyAttributes, quote *tpm2.Quote) error {
 	if quote == nil {
 		return ErrInvalidRequest
 	}
-	if err := ca.ImportAttestationQuote(akAttrs, quote.Quoted); err != nil {
+	if err := ca.ImportAttestationQuote(ctx, akAttrs, quote.Quoted); err != nil {
 		return fmt.Errorf("failed to import quote: %w", err)
 	}
 	if len(quote.EventLog) > 0 {
-		if err := ca.ImportAttestationEventLog(akAttrs, quote.EventLog); err != nil {
+		if err := ca.ImportAttestationEventLog(ctx, akAttrs, quote.EventLog); err != nil {
 			return fmt.Errorf("failed to import event log: %w", err)
 		}
 	}
-	if err := ca.ImportAttestationPCRs(akAttrs, quote.PCRs); err != nil {
+	if err := ca.ImportAttestationPCRs(ctx, akAttrs, quote.PCRs); err != nil {
 		return fmt.Errorf("failed to import PCRs: %w", err)
 	}
 	return nil

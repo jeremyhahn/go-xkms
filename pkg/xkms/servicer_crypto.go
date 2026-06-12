@@ -51,12 +51,12 @@ func (s *XKMSService) Sign(ctx context.Context, req *transport.SignRequest) (*tr
 		return nil, err
 	}
 
-	attrs, err := findKeyAttrs(b, req.KeyID)
+	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
 
-	signer, err := b.Signer(attrs)
+	signer, err := b.Signer(ctx, attrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrSigningFailed, Detail: "failed to get signer", Err: err}
 	}
@@ -105,13 +105,13 @@ func (s *XKMSService) Verify(ctx context.Context, req *transport.VerifyRequest) 
 		return nil, err
 	}
 
-	attrs, err := findKeyAttrs(b, req.KeyID)
+	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get the key and extract public key
-	privKey, err := b.GetKey(attrs)
+	privKey, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrVerificationFailed, Detail: "failed to get key", Err: err}
 	}
@@ -174,7 +174,7 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 		return nil, err
 	}
 
-	attrs, err := findKeyAttrs(b, req.KeyID)
+	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 		return nil, &ErrOperationWrap{Sentinel: ErrEncryptionFailed, Detail: "backend does not support symmetric encryption"}
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrEncryptionFailed, Detail: "failed to get symmetric encrypter", Err: err}
 	}
@@ -217,14 +217,14 @@ func (s *XKMSService) Decrypt(ctx context.Context, req *transport.DecryptRequest
 		return nil, err
 	}
 
-	attrs, err := findKeyAttrs(b, req.KeyID)
+	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Try symmetric decryption first
 	if symBackend, ok := b.KeyProvider().(types.SymmetricKeyProvider); ok {
-		encrypter, symErr := symBackend.SymmetricEncrypter(attrs)
+		encrypter, symErr := symBackend.SymmetricEncrypter(ctx, attrs)
 		if symErr == nil {
 			plaintext, decErr := encrypter.Decrypt(&types.EncryptedData{
 				Ciphertext: req.Ciphertext,
@@ -241,7 +241,7 @@ func (s *XKMSService) Decrypt(ctx context.Context, req *transport.DecryptRequest
 	}
 
 	// Fall back to asymmetric decryption
-	decrypter, err := b.Decrypter(attrs)
+	decrypter, err := b.Decrypter(ctx, attrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrDecryptionFailed, Detail: "failed to get decrypter", Err: err}
 	}
@@ -266,13 +266,13 @@ func (s *XKMSService) EncryptAsym(ctx context.Context, req *transport.EncryptAsy
 		return nil, err
 	}
 
-	attrs, err := findKeyAttrs(b, req.KeyID)
+	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get the key and extract the RSA public key
-	privKey, err := b.GetKey(attrs)
+	privKey, err := b.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrEncryptionFailed, Detail: "failed to get key", Err: err}
 	}
@@ -287,8 +287,14 @@ func (s *XKMSService) EncryptAsym(ctx context.Context, req *transport.EncryptAsy
 		return nil, &ErrOperationWrap{Sentinel: ErrEncryptionFailed, Detail: "key is not RSA, asymmetric encryption requires RSA"}
 	}
 
-	// Use the specified hash or default to SHA-256 for OAEP
+	// Use the specified hash or default to SHA-256 for OAEP.
+	// SHA-1 OAEP is rejected: no blobs have ever been persisted with SHA-1
+	// OAEP in this codebase (the wrap path has always defaulted to SHA-256),
+	// so there is no compatibility requirement to accept it on either side.
 	h := parseHash(req.Hash)
+	if h == crypto.SHA1 || h == crypto.MD5 {
+		return nil, &ErrOperationWrap{Sentinel: ErrWeakOAEPHash, Detail: "RSA-OAEP hash must be SHA-256 or stronger"}
+	}
 
 	ciphertext, err := rsa.EncryptOAEP(h.New(), rand.Reader, rsaPub, req.Plaintext, nil)
 	if err != nil {

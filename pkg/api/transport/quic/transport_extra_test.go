@@ -64,15 +64,16 @@ func fullMockHandler() http.Handler {
 
 		// Barrier ops
 		case strings.Contains(path, "/barrier/initialize-shamir"):
-			respond(transport.BarrierInitializeShamirResponse{Shares: []string{"s1", "s2"}, Threshold: 2, TotalShares: 3})
+			respond(transport.BarrierInitializeShamirResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
 		case strings.Contains(path, "/barrier/unseal-share") && !strings.HasSuffix(path, "s"):
 			respond(map[string]interface{}{"required": 2, "submitted": 1, "complete": false})
 		case strings.Contains(path, "/barrier/unseal-shares"):
 			w.WriteHeader(http.StatusOK)
 		case strings.Contains(path, "/barrier/rekey"):
-			respond(transport.BarrierRekeyResponse{Shares: []string{"s1"}, Threshold: 2})
+			respond(transport.BarrierRekeyResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
 		case strings.Contains(path, "/barrier/recovery-keys") && r.Method == http.MethodPost:
-			respond(map[string]interface{}{"shares": []string{"r1"}, "threshold": 2})
+			// Share-free contract: only metadata crosses the wire.
+			respond(map[string]interface{}{"threshold": 2, "total_shares": 3, "share_count": 3})
 		case strings.Contains(path, "/barrier/recovery-keys") && r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusOK)
 		case strings.Contains(path, "/barrier/recovery-keys") && r.Method == http.MethodGet:
@@ -403,6 +404,8 @@ func TestBarrierInitializeShamir_Connected(t *testing.T) {
 	resp, err := tr.BarrierInitializeShamir(context.Background(), &transport.BarrierInitializeShamirRequest{Threshold: 2, TotalShares: 3})
 	require.NoError(t, err)
 	assert.Equal(t, 2, resp.Threshold)
+	assert.Equal(t, 3, resp.TotalShares)
+	assert.Equal(t, 3, resp.ShareCount)
 }
 
 func TestBarrierUnsealWithShare_Connected(t *testing.T) {
@@ -433,7 +436,10 @@ func TestBarrierGenerateRecoveryKeys_Connected(t *testing.T) {
 	defer cleanup()
 	resp, err := tr.BarrierGenerateRecoveryKeys(context.Background(), &transport.BarrierGenerateRecoveryKeysRequest{Threshold: 2, Total: 3})
 	require.NoError(t, err)
-	assert.NotNil(t, resp)
+	require.NotNil(t, resp)
+	assert.Equal(t, 2, resp.Threshold)
+	assert.Equal(t, 3, resp.TotalShares)
+	assert.Equal(t, 3, resp.ShareCount)
 }
 
 func TestBarrierRecoverWithKeys_Connected(t *testing.T) {

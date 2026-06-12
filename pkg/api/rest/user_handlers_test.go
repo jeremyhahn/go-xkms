@@ -166,7 +166,7 @@ func setupUserHandlerTest(t *testing.T, users qrdbtransport.UserClient, roles qr
 	}
 	t.Cleanup(func() { xkms.Reset() })
 
-	s := &Server{}
+	s := &Server{xkmsService: svc}
 	r := chi.NewRouter()
 	r.Route("/users", func(r chi.Router) {
 		r.Post("/", s.handleCreateUser)

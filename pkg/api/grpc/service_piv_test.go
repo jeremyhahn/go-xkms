@@ -62,7 +62,7 @@ func TestListPIVSlots_Success(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()
 
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	resp, err := svc.ListPIVSlots(context.Background(), &pb.ListPIVSlotsRequest{
 		Backend: "software",
 	})
@@ -78,7 +78,7 @@ func TestListPIVSlots_Success(t *testing.T) {
 }
 
 func TestListPIVSlots_MissingBackend(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.ListPIVSlots(context.Background(), &pb.ListPIVSlotsRequest{
 		Backend: "",
 	})
@@ -99,7 +99,7 @@ func TestListPIVSlots_BackendNotFound(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()
 
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.ListPIVSlots(context.Background(), &pb.ListPIVSlotsRequest{
 		Backend: "nonexistent",
 	})
@@ -117,7 +117,7 @@ func TestListPIVSlots_BackendNotFound(t *testing.T) {
 }
 
 func TestGetPIVCertificate_MissingBackend(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.GetPIVCertificate(context.Background(), &pb.GetPIVCertificateRequest{
 		Backend: "",
 		Slot:    "9a",
@@ -134,7 +134,7 @@ func TestGetPIVCertificate_MissingBackend(t *testing.T) {
 }
 
 func TestGetPIVCertificate_MissingSlot(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.GetPIVCertificate(context.Background(), &pb.GetPIVCertificateRequest{
 		Backend: "software",
 		Slot:    "",
@@ -151,7 +151,7 @@ func TestGetPIVCertificate_MissingSlot(t *testing.T) {
 }
 
 func TestGetPIVCertificate_MissingFormat(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.GetPIVCertificate(context.Background(), &pb.GetPIVCertificateRequest{
 		Backend: "software",
 		Slot:    "9a",
@@ -168,7 +168,7 @@ func TestGetPIVCertificate_MissingFormat(t *testing.T) {
 }
 
 func TestStorePIVCertificate_MissingBackend(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.StorePIVCertificate(context.Background(), &pb.StorePIVCertificateRequest{
 		Backend:     "",
 		Slot:        "9a",
@@ -186,7 +186,7 @@ func TestStorePIVCertificate_MissingBackend(t *testing.T) {
 }
 
 func TestStorePIVCertificate_MissingSlot(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.StorePIVCertificate(context.Background(), &pb.StorePIVCertificateRequest{
 		Backend:     "software",
 		Slot:        "",
@@ -204,7 +204,7 @@ func TestStorePIVCertificate_MissingSlot(t *testing.T) {
 }
 
 func TestStorePIVCertificate_MissingFormat(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.StorePIVCertificate(context.Background(), &pb.StorePIVCertificateRequest{
 		Backend:     "software",
 		Slot:        "9a",
@@ -222,7 +222,7 @@ func TestStorePIVCertificate_MissingFormat(t *testing.T) {
 }
 
 func TestStorePIVCertificate_MissingCertificate(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.StorePIVCertificate(context.Background(), &pb.StorePIVCertificateRequest{
 		Backend:     "software",
 		Slot:        "9a",
@@ -240,7 +240,7 @@ func TestStorePIVCertificate_MissingCertificate(t *testing.T) {
 }
 
 func TestDeletePIVCertificate_MissingBackend(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.DeletePIVCertificate(context.Background(), &pb.DeletePIVCertificateRequest{
 		Backend: "",
 		Slot:    "9a",
@@ -256,7 +256,7 @@ func TestDeletePIVCertificate_MissingBackend(t *testing.T) {
 }
 
 func TestDeletePIVCertificate_MissingSlot(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.DeletePIVCertificate(context.Background(), &pb.DeletePIVCertificateRequest{
 		Backend: "software",
 		Slot:    "",
@@ -275,7 +275,7 @@ func TestGeneratePIVKey_Success(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()
 
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	resp, err := svc.GeneratePIVKey(context.Background(), &pb.GeneratePIVKeyRequest{
 		Backend: "software",
 		Slot:    "9a",
@@ -299,7 +299,7 @@ func TestGeneratePIVKey_Success(t *testing.T) {
 }
 
 func TestGeneratePIVKey_MissingBackend(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.GeneratePIVKey(context.Background(), &pb.GeneratePIVKeyRequest{
 		Backend: "",
 		Slot:    "9a",
@@ -315,7 +315,7 @@ func TestGeneratePIVKey_MissingBackend(t *testing.T) {
 }
 
 func TestGeneratePIVKey_MissingSlot(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.GeneratePIVKey(context.Background(), &pb.GeneratePIVKeyRequest{
 		Backend: "software",
 		Slot:    "",
@@ -334,7 +334,7 @@ func TestGeneratePIVKey_InvalidSlot(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()
 
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.GeneratePIVKey(context.Background(), &pb.GeneratePIVKeyRequest{
 		Backend: "software",
 		Slot:    "invalid-slot",
@@ -350,7 +350,7 @@ func TestGeneratePIVKey_InvalidSlot(t *testing.T) {
 }
 
 func TestImportPIVCertificate_MissingBackend(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.ImportPIVCertificate(context.Background(), &pb.StorePIVCertificateRequest{
 		Backend:     "",
 		Slot:        "9a",
@@ -368,7 +368,7 @@ func TestImportPIVCertificate_MissingBackend(t *testing.T) {
 }
 
 func TestImportPIVCertificate_MissingSlot(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.ImportPIVCertificate(context.Background(), &pb.StorePIVCertificateRequest{
 		Backend:     "software",
 		Slot:        "",
@@ -386,7 +386,7 @@ func TestImportPIVCertificate_MissingSlot(t *testing.T) {
 }
 
 func TestImportPIVCertificate_MissingFormat(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.ImportPIVCertificate(context.Background(), &pb.StorePIVCertificateRequest{
 		Backend:     "software",
 		Slot:        "9a",
@@ -404,7 +404,7 @@ func TestImportPIVCertificate_MissingFormat(t *testing.T) {
 }
 
 func TestImportPIVCertificate_MissingCertificate(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.ImportPIVCertificate(context.Background(), &pb.StorePIVCertificateRequest{
 		Backend: "software",
 		Slot:    "9a",
@@ -421,7 +421,7 @@ func TestImportPIVCertificate_MissingCertificate(t *testing.T) {
 }
 
 func TestExportPIVCertificate_MissingBackend(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.ExportPIVCertificate(context.Background(), &pb.GetPIVCertificateRequest{
 		Backend: "",
 		Slot:    "9a",
@@ -438,7 +438,7 @@ func TestExportPIVCertificate_MissingBackend(t *testing.T) {
 }
 
 func TestExportPIVCertificate_MissingSlot(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.ExportPIVCertificate(context.Background(), &pb.GetPIVCertificateRequest{
 		Backend: "software",
 		Slot:    "",
@@ -455,7 +455,7 @@ func TestExportPIVCertificate_MissingSlot(t *testing.T) {
 }
 
 func TestExportPIVCertificate_MissingFormat(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.ExportPIVCertificate(context.Background(), &pb.GetPIVCertificateRequest{
 		Backend: "software",
 		Slot:    "9a",
@@ -475,7 +475,7 @@ func TestGeneratePIVCSR_Success(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()
 
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	// A key must exist in the slot before a CSR can be generated.
 	_, err := svc.GeneratePIVKey(context.Background(), &pb.GeneratePIVKeyRequest{
@@ -507,7 +507,7 @@ func TestGeneratePIVCSR_Success(t *testing.T) {
 }
 
 func TestGeneratePIVCSR_MissingBackend(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.GeneratePIVCSR(context.Background(), &pb.GeneratePIVCSRRequest{
 		Backend: "",
 		Slot:    "9a",
@@ -523,7 +523,7 @@ func TestGeneratePIVCSR_MissingBackend(t *testing.T) {
 }
 
 func TestGeneratePIVCSR_MissingSlot(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.GeneratePIVCSR(context.Background(), &pb.GeneratePIVCSRRequest{
 		Backend: "software",
 		Slot:    "",
@@ -542,7 +542,7 @@ func TestGeneratePIVCSR_BackendNotFound(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()
 
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	_, err := svc.GeneratePIVCSR(context.Background(), &pb.GeneratePIVCSRRequest{
 		Backend: "nonexistent",
 		Slot:    "9a",
@@ -561,7 +561,7 @@ func TestGeneratePIVKey_GenerateAndExport(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()
 
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	// Generate a key in slot 9a
 	genResp, err := svc.GeneratePIVKey(context.Background(), &pb.GeneratePIVKeyRequest{
@@ -597,7 +597,7 @@ func TestDeletePIVCertificate_Success(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()
 
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	// Generate a key first
 	_, err := svc.GeneratePIVKey(context.Background(), &pb.GeneratePIVKeyRequest{
@@ -623,7 +623,7 @@ func TestDeletePIVCertificate_NotFound(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()
 
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	// Try to delete from an empty slot
 	_, err := svc.DeletePIVCertificate(context.Background(), &pb.DeletePIVCertificateRequest{
@@ -719,7 +719,7 @@ func TestPIVNotInitialized(t *testing.T) {
 	// Ensure PIV manager is reset (not initialized)
 	xkms.ResetPIV()
 
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	_, err := svc.ListPIVSlots(context.Background(), &pb.ListPIVSlotsRequest{
 		Backend: "software",

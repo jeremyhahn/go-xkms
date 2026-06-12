@@ -16,6 +16,7 @@
 package frost
 
 import (
+	"context"
 	"crypto"
 	"fmt"
 	"sync"
@@ -122,7 +123,7 @@ func (b *FrostBackend) Capabilities() types.Capabilities {
 }
 
 // GenerateKey generates a new FROST key with the given attributes.
-func (b *FrostBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *FrostBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -176,7 +177,7 @@ func (b *FrostBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKe
 	}
 
 	// Check if key already exists
-	exists, err := b.keystore.KeyExists(keyID)
+	exists, err := b.keystore.KeyExists(ctx, keyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check key existence: %w", err)
 	}
@@ -222,7 +223,7 @@ func (b *FrostBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKe
 	}
 
 	// Store key package
-	if err := b.keystore.StoreKeyPackage(keyID, pkg, metadata); err != nil {
+	if err := b.keystore.StoreKeyPackage(ctx, keyID, pkg, metadata); err != nil {
 		return nil, fmt.Errorf("failed to store key package: %w", err)
 	}
 
@@ -239,7 +240,7 @@ func (b *FrostBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKe
 }
 
 // GetKey retrieves an existing FROST key by its attributes.
-func (b *FrostBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *FrostBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -265,7 +266,7 @@ func (b *FrostBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 	}
 
 	// Load key package
-	pkg, metadata, err := b.keystore.LoadKeyPackage(keyID, participantID)
+	pkg, metadata, err := b.keystore.LoadKeyPackage(ctx, keyID, participantID)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +281,7 @@ func (b *FrostBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 }
 
 // DeleteKey removes a FROST key identified by its attributes.
-func (b *FrostBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *FrostBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -299,11 +300,11 @@ func (b *FrostBackend) DeleteKey(attrs *types.KeyAttributes) error {
 	}
 
 	// Delete key package
-	return b.keystore.DeleteKey(keyID)
+	return b.keystore.DeleteKey(ctx, keyID)
 }
 
 // ListKeys returns attributes for all FROST keys managed by this backend.
-func (b *FrostBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *FrostBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -311,7 +312,7 @@ func (b *FrostBackend) ListKeys() ([]*types.KeyAttributes, error) {
 	}
 	b.mu.RUnlock()
 
-	metadataList, err := b.keystore.ListKeysWithMetadata()
+	metadataList, err := b.keystore.ListKeysWithMetadata(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +338,7 @@ func (b *FrostBackend) ListKeys() ([]*types.KeyAttributes, error) {
 
 // Signer returns a crypto.Signer for the key identified by attrs.
 // This provides orchestrated signing that coordinates with other participants.
-func (b *FrostBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *FrostBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -363,7 +364,7 @@ func (b *FrostBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error)
 	}
 
 	// Load key package
-	pkg, _, err := b.keystore.LoadKeyPackage(keyID, participantID)
+	pkg, _, err := b.keystore.LoadKeyPackage(ctx, keyID, participantID)
 	if err != nil {
 		return nil, err
 	}
@@ -377,13 +378,13 @@ func (b *FrostBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error)
 
 // Decrypter returns a crypto.Decrypter for the key identified by attrs.
 // FROST does not support decryption (it's signing-only per RFC 9591).
-func (b *FrostBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *FrostBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, ErrDecryptionNotSupported
 }
 
 // RotateKey rotates a FROST key by generating new key shares.
 // This preserves the key ID but generates new key material.
-func (b *FrostBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *FrostBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -397,13 +398,13 @@ func (b *FrostBackend) RotateKey(attrs *types.KeyAttributes) error {
 	}
 
 	// Load existing metadata
-	_, metadata, err := b.keystore.LoadPublicKeyPackage(keyID)
+	_, metadata, err := b.keystore.LoadPublicKeyPackage(ctx, keyID)
 	if err != nil {
 		return err
 	}
 
 	// Delete existing key
-	if err := b.keystore.DeleteKey(keyID); err != nil {
+	if err := b.keystore.DeleteKey(ctx, keyID); err != nil {
 		return fmt.Errorf("failed to delete old key: %w", err)
 	}
 
@@ -436,7 +437,7 @@ func (b *FrostBackend) RotateKey(attrs *types.KeyAttributes) error {
 	}
 
 	// Store new key package
-	if err := b.keystore.StoreKeyPackage(keyID, pkg, newMetadata); err != nil {
+	if err := b.keystore.StoreKeyPackage(ctx, keyID, pkg, newMetadata); err != nil {
 		return fmt.Errorf("failed to store rotated key: %w", err)
 	}
 

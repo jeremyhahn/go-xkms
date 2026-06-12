@@ -106,8 +106,12 @@ func (m *TenantPasswordStoreManager) StoreForTenant(tenantID string) (Store, err
 		return nil, err
 	}
 
-	// Create new shared tenant store backed by TenantBarrier.
-	shared, err := NewSharedTenantStore(tb, tenantID)
+	// Wrap the tenant barrier so it satisfies storage.Backend (adding the
+	// atomic PutIfAbsent primitive on top of the barrier's operations).
+	backend := seal.NewBarrierBackend(tb.Barrier())
+
+	// Create new shared tenant store backed by the tenant barrier.
+	shared, err := NewSharedTenantStore(backend, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +119,7 @@ func (m *TenantPasswordStoreManager) StoreForTenant(tenantID string) (Store, err
 	state := &tenantPasswordState{
 		shared:   shared,
 		store:    shared,
-		backend:  tb,
+		backend:  backend,
 		tenantID: tenantID,
 	}
 	state.locked.Store(true) // starts locked
@@ -170,8 +174,11 @@ func (m *TenantPasswordStoreManager) UnlockTenant(tenantID string) error {
 	// Get or create the tenant state.
 	val, ok := m.tenants.Load(tenantID)
 	if !ok {
+		// Wrap the tenant barrier so it satisfies storage.Backend.
+		backend := seal.NewBarrierBackend(tb.Barrier())
+
 		// Create the shared store now that we know the barrier is unsealed.
-		shared, storeErr := NewSharedTenantStore(tb, tenantID)
+		shared, storeErr := NewSharedTenantStore(backend, tenantID)
 		if storeErr != nil {
 			return storeErr
 		}
@@ -179,7 +186,7 @@ func (m *TenantPasswordStoreManager) UnlockTenant(tenantID string) error {
 		state := &tenantPasswordState{
 			shared:   shared,
 			store:    shared,
-			backend:  tb,
+			backend:  backend,
 			tenantID: tenantID,
 		}
 		state.locked.Store(false) // unlock immediately

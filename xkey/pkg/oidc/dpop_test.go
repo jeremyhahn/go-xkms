@@ -14,6 +14,7 @@
 package oidc
 
 import (
+	"crypto/ecdsa"
 	"crypto/elliptic"
 	"encoding/base64"
 	"encoding/json"
@@ -55,7 +56,7 @@ func TestGenerateDPoPKey_Uniqueness(t *testing.T) {
 	}
 
 	// Keys should be different
-	if key1.PrivateKey.D.Cmp(key2.PrivateKey.D) == 0 {
+	if key1.PrivateKey.Equal(key2.PrivateKey) {
 		t.Error("Generated keys should be unique")
 	}
 }
@@ -359,14 +360,11 @@ func TestDPoPKey_SerializeDeserialize(t *testing.T) {
 	}
 
 	// Verify key is equivalent
-	if key.PrivateKey.D.Cmp(restored.PrivateKey.D) != 0 {
-		t.Error("Restored key has different D value")
+	if !key.PrivateKey.Equal(restored.PrivateKey) {
+		t.Error("Restored key does not match original")
 	}
-	if key.PrivateKey.PublicKey.X.Cmp(restored.PrivateKey.PublicKey.X) != 0 {
-		t.Error("Restored key has different X value")
-	}
-	if key.PrivateKey.PublicKey.Y.Cmp(restored.PrivateKey.PublicKey.Y) != 0 {
-		t.Error("Restored key has different Y value")
+	if !key.PrivateKey.PublicKey.Equal(&restored.PrivateKey.PublicKey) {
+		t.Error("Restored public key does not match original")
 	}
 }
 
@@ -458,9 +456,11 @@ func TestDPoPKeyFromCoordinates(t *testing.T) {
 	}
 
 	// Extract coordinates
-	x := original.PrivateKey.PublicKey.X.Bytes()
-	y := original.PrivateKey.PublicKey.Y.Bytes()
-	d := original.PrivateKey.D.Bytes()
+	x, y := dpopCoordinates(&original.PrivateKey.PublicKey)
+	d, err := original.PrivateKey.Bytes()
+	if err != nil {
+		t.Fatalf("PrivateKey.Bytes() error = %v", err)
+	}
 
 	// Reconstruct key
 	reconstructed, err := DPoPKeyFromCoordinates(x, y, d)
@@ -469,8 +469,8 @@ func TestDPoPKeyFromCoordinates(t *testing.T) {
 	}
 
 	// Verify keys match
-	if original.PrivateKey.D.Cmp(reconstructed.PrivateKey.D) != 0 {
-		t.Error("D values don't match")
+	if !original.PrivateKey.Equal(reconstructed.PrivateKey) {
+		t.Error("Reconstructed key does not match original")
 	}
 }
 
@@ -629,9 +629,14 @@ func TestDPoPKey_PublicKeyInterop(t *testing.T) {
 	// Get public key
 	pub := &key.PrivateKey.PublicKey
 
-	// Verify it's a valid EC public key
-	if !pub.Curve.IsOnCurve(pub.X, pub.Y) {
-		t.Error("Public key point not on curve")
+	// Verify it encodes to a valid on-curve P-256 point by round-tripping
+	// through the uncompressed SEC1 encoding.
+	encoded, err := pub.Bytes()
+	if err != nil {
+		t.Fatalf("PublicKey.Bytes() error = %v", err)
+	}
+	if _, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), encoded); err != nil {
+		t.Errorf("public key point not on curve: %v", err)
 	}
 
 	// Verify it's P-256

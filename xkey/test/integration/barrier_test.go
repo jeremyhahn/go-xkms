@@ -50,7 +50,7 @@ func TestCLI_BarrierInit_Software_Success(t *testing.T) {
 	}
 
 	// Verify root key file was created on disk.
-	rootKeyPath := filepath.Join(dataDir, "store", "seal", "root.key")
+	rootKeyPath := filepath.Join(dataDir, "barrier", "root_key")
 	if _, err := os.Stat(rootKeyPath); os.IsNotExist(err) {
 		t.Errorf("Expected root key file at %s, but it does not exist", rootKeyPath)
 	}
@@ -72,7 +72,7 @@ func TestCLI_BarrierInit_Software_EmptyPassword(t *testing.T) {
 	}
 
 	// Root key should NOT have been created.
-	rootKeyPath := filepath.Join(dataDir, "store", "seal", "root.key")
+	rootKeyPath := filepath.Join(dataDir, "barrier", "root_key")
 	if _, err := os.Stat(rootKeyPath); err == nil {
 		t.Error("Root key file should not exist after failed init with empty password")
 	}
@@ -94,7 +94,7 @@ func TestCLI_BarrierInit_Software_MismatchPassword(t *testing.T) {
 	}
 
 	// Root key should NOT have been created.
-	rootKeyPath := filepath.Join(dataDir, "store", "seal", "root.key")
+	rootKeyPath := filepath.Join(dataDir, "barrier", "root_key")
 	if _, err := os.Stat(rootKeyPath); err == nil {
 		t.Error("Root key file should not exist after failed init with mismatched passwords")
 	}
@@ -505,7 +505,7 @@ func TestCLI_BarrierInit_Software_PasswordEncryptsData(t *testing.T) {
 	// Step 3: Verify the root key blob is NOT stored as cleartext.
 	// The root key file should contain a JSON-serialized SealedRootKey blob
 	// with encrypted ciphertext, not raw key material.
-	rootKeyPath := filepath.Join(dataDir, "store", "seal", "root.key")
+	rootKeyPath := filepath.Join(dataDir, "barrier", "root_key")
 	rootKeyData, err := os.ReadFile(rootKeyPath)
 	if err != nil {
 		t.Fatalf("Failed to read root key file: %v", err)
@@ -583,8 +583,9 @@ func TestCLI_BarrierStatus_HumanReadable_NotHardwareBacked(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestCLI_BarrierInit_AutoDetect verifies that omitting the --strategy flag
-// auto-selects the software strategy (since TPM2 and PKCS#11 are not
-// available in the standard test environment).
+// auto-selects the best available strategy: tpm2 when a TPM 2.0 device is
+// present (hardware-first, matching the GUI and the documented preference
+// order), otherwise software.
 func TestCLI_BarrierInit_AutoDetect(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
@@ -596,9 +597,14 @@ func TestCLI_BarrierInit_AutoDetect(t *testing.T) {
 	if !strings.Contains(stdout, "Barrier initialized successfully") {
 		t.Errorf("Expected success message, got: %s", stdout)
 	}
-	// Without hardware, auto-detect should fall back to software.
-	if !strings.Contains(stdout, "software") {
-		t.Errorf("Expected auto-detect to select 'software' strategy, got: %s", stdout)
+
+	// Hardware-first: a usable TPM selects tpm2; otherwise software.
+	expected := "software"
+	if _, err := os.Stat("/dev/tpmrm0"); err == nil {
+		expected = "tpm2"
+	}
+	if !strings.Contains(stdout, expected) {
+		t.Errorf("Expected auto-detect to select %q strategy, got: %s", expected, stdout)
 	}
 }
 

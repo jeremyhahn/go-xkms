@@ -481,7 +481,7 @@ func TestAWSKMSLocalStack(t *testing.T) {
 			require.NoError(t, err, "Failed to create second test key")
 
 			// List keys
-			keys, err := b.ListKeys()
+			keys, err := b.ListKeys(context.Background())
 			require.NoError(t, err, "Failed to list keys")
 			require.NotNil(t, keys, "Keys list should not be nil")
 			require.GreaterOrEqual(t, len(keys), 2, "Should have at least 2 keys")
@@ -509,7 +509,7 @@ func TestAWSKMSLocalStack(t *testing.T) {
 			require.NoError(t, err, "Failed to create key")
 
 			// Rotate key
-			err = b.RotateKey(attrs)
+			err = b.RotateKey(context.Background(), attrs)
 			if err != nil {
 				// AWS KMS may not support on-demand rotation in LocalStack
 				t.Logf("⚠ Key rotation not supported (LocalStack limitation): %v", err)
@@ -538,7 +538,7 @@ func TestAWSKMSLocalStack(t *testing.T) {
 			require.NoError(t, err, "Failed to create key")
 
 			// Get Signer
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get Signer")
 			require.NotNil(t, signer, "Signer should not be nil")
 
@@ -575,7 +575,7 @@ func TestAWSKMSLocalStack(t *testing.T) {
 			require.NoError(t, err, "Failed to create key")
 
 			// Get Signer
-			signer, err := b.Signer(attrs)
+			signer, err := b.Signer(context.Background(), attrs)
 			require.NoError(t, err, "Failed to get Signer")
 			require.NotNil(t, signer, "Signer should not be nil")
 
@@ -631,7 +631,7 @@ func TestAWSKMSLocalStack(t *testing.T) {
 				defer b.Delete(attrs)
 
 				// Get Decrypter
-				decrypter, err := b.Decrypter(attrs)
+				decrypter, err := b.Decrypter(context.Background(), attrs)
 				if err != nil {
 					t.Logf("⚠ Decrypter not supported (LocalStack limitation): %v", err)
 					return
@@ -684,7 +684,7 @@ func TestAWSKMSLocalStack(t *testing.T) {
 				}
 				defer b.Delete(attrs)
 
-				decrypter, err := b.Decrypter(attrs)
+				decrypter, err := b.Decrypter(context.Background(), attrs)
 				if err != nil {
 					t.Logf("⚠ Decrypter not supported (LocalStack limitation): %v", err)
 					return
@@ -739,7 +739,7 @@ func TestAWSKMSLocalStack(t *testing.T) {
 				}
 				defer b.Delete(attrs)
 
-				decrypter, err := b.Decrypter(attrs)
+				decrypter, err := b.Decrypter(context.Background(), attrs)
 				if err != nil {
 					t.Logf("⚠ Decrypter not supported (LocalStack limitation): %v", err)
 					return

@@ -161,7 +161,7 @@ func TestDecrypter(t *testing.T) {
 			b, err := NewBackendWithClient(config, mockClient)
 			require.NoError(t, err, "Failed to create backend")
 
-			decrypter, err := b.Decrypter(tt.attrs)
+			decrypter, err := b.Decrypter(context.Background(), tt.attrs)
 			if tt.wantErr {
 				assert.Error(t, err, "Expected error but got none")
 				if tt.expectedErr != nil {
@@ -348,7 +348,7 @@ func TestRSADecrypt_OAEP(t *testing.T) {
 			require.NoError(t, err, "Failed to create backend")
 
 			// Get the decrypter
-			decrypter, err := b.Decrypter(tt.attrs)
+			decrypter, err := b.Decrypter(context.Background(), tt.attrs)
 			require.NoError(t, err, "Failed to get Decrypter")
 
 			// Create test ciphertext (in real scenario, this would be encrypted data)
@@ -475,7 +475,7 @@ func TestDecrypterRoundTrip(t *testing.T) {
 			require.NoError(t, err, "Failed to create backend")
 
 			// Get the decrypter
-			decrypter, err := b.Decrypter(tt.attrs)
+			decrypter, err := b.Decrypter(context.Background(), tt.attrs)
 			require.NoError(t, err, "Failed to get Decrypter")
 
 			// Get the public key from the decrypter
@@ -557,7 +557,7 @@ func TestDecrypterWithInvalidChecksum(t *testing.T) {
 		StoreType:    backend.STORE_GCPKMS,
 	}
 
-	decrypter, err := b.Decrypter(attrs)
+	decrypter, err := b.Decrypter(context.Background(), attrs)
 	require.NoError(t, err, "Failed to get Decrypter")
 
 	ciphertext := []byte("mock ciphertext")

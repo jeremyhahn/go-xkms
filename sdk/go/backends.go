@@ -183,6 +183,11 @@ type TPM2BackendConfig = tpm2backend.Config
 // NewTPM2Backend creates a new TPM 2.0 crypto backend from a TPM2BackendConfig.
 var NewTPM2Backend = tpm2backend.NewBackend
 
+// ErrTPM2BackendNotInitialized is returned when the TPM 2.0 backend is used
+// before initialization. Distinct from ErrTPMNotInitialized (pkg/tpm2), which
+// covers the low-level TPM device wrapper.
+var ErrTPM2BackendNotInitialized = tpm2backend.ErrNotInitialized
+
 // ---------------------------------------------------------------------------
 // Quantum backend (from pkg/backend/quantum/)
 //

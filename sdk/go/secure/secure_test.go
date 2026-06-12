@@ -24,44 +24,25 @@ import (
 	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 )
 
-// TestTypeIdentityWithQRDB verifies every re-exported type is an alias
-// of its qrdb counterpart (not a new type), so values cross the module
-// boundary without copies or adapters.
-func TestTypeIdentityWithQRDB(t *testing.T) {
-	// Aliases share the underlying type. A *xkmssecure.Secret value is
-	// assignable to a *qrdbsecure.Secret variable with no conversion, and
-	// vice-versa. If someone redefines one of these as a new named type,
-	// these assignments stop compiling and this test fails to build.
-	var sx *xkmssecure.Secret
-	var sq *qrdbsecure.Secret = sx
-	sx = sq
-	_ = sx
-
-	var bx *xkmssecure.Buffer
-	var bq *qrdbsecure.Buffer = bx
-	bx = bq
-	_ = bx
-
-	var px xkmssecure.PassphraseProvider
-	var pq qrdbsecure.PassphraseProvider = px
-	px = pq
-	_ = px
-
-	var tx *xkmssecure.TerminalProvider
-	var tq *qrdbsecure.TerminalProvider = tx
-	tx = tq
-	_ = tx
-
-	var stx *xkmssecure.StdinProvider
-	var stq *qrdbsecure.StdinProvider = stx
-	stx = stq
-	_ = stx
-
-	var cx *xkmssecure.CallbackProvider
-	var cq *qrdbsecure.CallbackProvider = cx
-	cx = cq
-	_ = cx
-}
+// Package-level conformance assertions verify every re-exported type is an
+// alias of its qrdb counterpart (not a new type), so values cross the module
+// boundary without copies or adapters. Each pair asserts assignability in both
+// directions; if someone redefines one of these as a new named type the
+// assignment stops compiling and this package fails to build.
+var (
+	_ *qrdbsecure.Secret            = (*xkmssecure.Secret)(nil)
+	_ *xkmssecure.Secret            = (*qrdbsecure.Secret)(nil)
+	_ *qrdbsecure.Buffer            = (*xkmssecure.Buffer)(nil)
+	_ *xkmssecure.Buffer            = (*qrdbsecure.Buffer)(nil)
+	_ qrdbsecure.PassphraseProvider = xkmssecure.PassphraseProvider(nil)
+	_ xkmssecure.PassphraseProvider = qrdbsecure.PassphraseProvider(nil)
+	_ *qrdbsecure.TerminalProvider  = (*xkmssecure.TerminalProvider)(nil)
+	_ *xkmssecure.TerminalProvider  = (*qrdbsecure.TerminalProvider)(nil)
+	_ *qrdbsecure.StdinProvider     = (*xkmssecure.StdinProvider)(nil)
+	_ *xkmssecure.StdinProvider     = (*qrdbsecure.StdinProvider)(nil)
+	_ *qrdbsecure.CallbackProvider  = (*xkmssecure.CallbackProvider)(nil)
+	_ *xkmssecure.CallbackProvider  = (*qrdbsecure.CallbackProvider)(nil)
+)
 
 // TestNewBufferRoundTrip writes a known plaintext into a Buffer, reads
 // it back, destroys, and verifies Bytes() returns nil after destroy.

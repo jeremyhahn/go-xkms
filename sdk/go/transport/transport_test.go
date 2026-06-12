@@ -241,12 +241,14 @@ func TestConfigValidate(t *testing.T) {
 				if err == nil {
 					t.Error("expected error but got nil")
 				} else if tt.errorMsg != "" {
-					if _, ok := err.(*ConfigError); ok {
-						if ce := err.(*ConfigError); ce.Field != tt.errorMsg {
-							// For config errors, check field name
+					if ce, ok := err.(*ConfigError); ok {
+						if ce.Field != tt.errorMsg {
+							t.Errorf("expected ConfigError field %q, got %q", tt.errorMsg, ce.Field)
 						}
-					} else if err != ErrInvalidConfig && tt.errorMsg == "invalid configuration" {
-						// For nil config, check sentinel error
+					} else if tt.errorMsg == "invalid configuration" {
+						if err != ErrInvalidConfig {
+							t.Errorf("expected ErrInvalidConfig sentinel, got %v", err)
+						}
 					}
 				}
 			} else {

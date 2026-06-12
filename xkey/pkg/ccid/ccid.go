@@ -120,7 +120,6 @@ type CCIDDevice struct {
 	running   atomic.Bool
 	iccPower  atomic.Bool
 	done      chan struct{}
-	seqNum    atomic.Uint32
 }
 
 // NewCCIDDevice creates a new virtual CCID device backed by the given

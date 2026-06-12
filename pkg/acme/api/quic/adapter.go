@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -71,12 +70,6 @@ func NewAdapter(config *api.AdapterConfig) (*Adapter, error) {
 	}
 
 	if config.TLSConfig != nil {
-		if config.TLSConfig.InsecureSkipVerify { //nolint:staticcheck // config-driven passthrough for self-signed integration testing; production leaves it false
-			slog.Warn("acme/quic: TLS certificate verification disabled via InsecureSkipVerify; do not use in production",
-				"address", config.QUICAddr)
-		}
-		tlsConfig.InsecureSkipVerify = config.TLSConfig.InsecureSkipVerify //nolint:staticcheck // config-driven passthrough for self-signed integration testing; production leaves it false
-
 		// Load client certificate if provided
 		if config.TLSConfig.CertFile != "" && config.TLSConfig.KeyFile != "" {
 			cert, err := tls.LoadX509KeyPair(config.TLSConfig.CertFile, config.TLSConfig.KeyFile)

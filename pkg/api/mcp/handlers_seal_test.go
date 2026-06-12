@@ -147,7 +147,7 @@ func TestHandler_Seal(t *testing.T) {
 			Params:  genParamsJSON,
 			ID:      1,
 		}
-		_, err = server.handleGenerateKey(genReq)
+		_, err = server.handleGenerateKey(context.Background(), genReq)
 		require.NoError(t, err)
 
 		// Seal should succeed because handler now looks up full KeyAttributes
@@ -378,7 +378,7 @@ func TestHandler_CanSeal(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleCanSeal(req)
+		result, err := server.handleCanSeal(context.Background(), req)
 		require.NoError(t, err)
 
 		canSealResult, ok := result.(CanSealResult)
@@ -400,7 +400,7 @@ func TestHandler_CanSeal(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleCanSeal(req)
+		result, err := server.handleCanSeal(context.Background(), req)
 		require.NoError(t, err)
 
 		canSealResult, ok := result.(CanSealResult)
@@ -417,7 +417,7 @@ func TestHandler_CanSeal(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleCanSeal(req)
+		result, err := server.handleCanSeal(context.Background(), req)
 		require.NoError(t, err)
 
 		canSealResult, ok := result.(CanSealResult)
@@ -434,7 +434,7 @@ func TestHandler_CanSeal(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleCanSeal(req)
+		_, err := server.handleCanSeal(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -453,7 +453,7 @@ func TestHandler_CanSeal(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleCanSeal(req)
+		result, err := server.handleCanSeal(context.Background(), req)
 		require.NoError(t, err)
 
 		canSealResult, ok := result.(CanSealResult)
@@ -477,7 +477,7 @@ func TestHandler_CanSeal(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleCanSeal(req)
+		result, err := server.handleCanSeal(context.Background(), req)
 		require.NoError(t, err)
 
 		canSealResult, ok := result.(CanSealResult)
@@ -653,7 +653,7 @@ func TestHandler_CanSeal_Idempotent(t *testing.T) {
 		// Call multiple times
 		var results []bool
 		for i := 0; i < 5; i++ {
-			result, err := server.handleCanSeal(req)
+			result, err := server.handleCanSeal(context.Background(), req)
 			require.NoError(t, err)
 
 			canSealResult, ok := result.(CanSealResult)

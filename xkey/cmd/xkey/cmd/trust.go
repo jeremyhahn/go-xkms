@@ -380,7 +380,7 @@ func runTrustList(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Trusted Certificates (%d):\n\n", len(certs))
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "FINGERPRINT\tSUBJECT\tPURPOSE\tSOURCE\tALGORITHM\tNOT BEFORE\tNOT AFTER\n")
+	_, _ = fmt.Fprintf(w, "FINGERPRINT\tSUBJECT\tPURPOSE\tSOURCE\tALGORITHM\tNOT BEFORE\tNOT AFTER\n")
 
 	for _, cert := range certs {
 		fp := truststore.Fingerprint(cert)
@@ -397,7 +397,7 @@ func runTrustList(cmd *cobra.Command, args []string) error {
 			source = meta.Source
 		}
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			displayFP,
 			cert.Subject.CommonName,
 			purpose,

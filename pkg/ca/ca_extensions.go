@@ -44,11 +44,11 @@ import (
 // ErrInvalidConfig when no issuing identity has been configured.
 //
 // Thread-safe: Yes
-func (ca *CA) Signer() (crypto.Signer, error) {
+func (ca *CA) Signer(ctx context.Context) (crypto.Signer, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
-	return ca.getSigner()
+	return ca.getSigner(ctx)
 }
 
 // PrivateKey retrieves a key handle from the CA's keystore.
@@ -61,11 +61,11 @@ func (ca *CA) Signer() (crypto.Signer, error) {
 // Returns an error if attrs is nil or the keystore cannot locate the key.
 //
 // Thread-safe: Yes
-func (ca *CA) PrivateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (ca *CA) PrivateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
 		return nil, fmt.Errorf("%w: key attributes required", ErrInvalidConfig)
 	}
-	key, err := ca.keyStore.GetKey(attrs)
+	key, err := ca.keyStore.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to retrieve key: %v", ErrKeyNotFound, err)
 	}
@@ -77,11 +77,11 @@ func (ca *CA) PrivateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) 
 // crypto.Signer.Public().
 //
 // Thread-safe: Yes
-func (ca *CA) PubKey(attrs *types.KeyAttributes) (crypto.PublicKey, error) {
+func (ca *CA) PubKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PublicKey, error) {
 	if attrs == nil {
 		return nil, fmt.Errorf("%w: key attributes required", ErrInvalidConfig)
 	}
-	key, err := ca.keyStore.GetKey(attrs)
+	key, err := ca.keyStore.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to retrieve key: %v", ErrKeyNotFound, err)
 	}
@@ -97,11 +97,11 @@ func (ca *CA) PubKey(attrs *types.KeyAttributes) (crypto.PublicKey, error) {
 // for RSA/ECDSA, unhashed for Ed25519).
 //
 // Thread-safe: Yes
-func (ca *CA) SignedBlob(data []byte) ([]byte, error) {
+func (ca *CA) SignedBlob(ctx context.Context, data []byte) ([]byte, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
-	signer, err := ca.getSigner()
+	signer, err := ca.getSigner(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
 	}
@@ -132,7 +132,7 @@ func (ca *CA) SignedBlob(data []byte) ([]byte, error) {
 // behaviour of the ACME wrapper's dual-storage model.
 //
 // Thread-safe: Yes
-func (ca *CA) Issued(cn string) (bool, error) {
+func (ca *CA) Issued(ctx context.Context, cn string) (bool, error) {
 	if cn == "" {
 		return false, fmt.Errorf("%w: common name required", ErrInvalidCertificate)
 	}
@@ -143,7 +143,7 @@ func (ca *CA) Issued(cn string) (bool, error) {
 		}
 	}
 	if ca.keyStore != nil {
-		if cert, err := ca.keyStore.GetCert(cn); err == nil && cert != nil {
+		if cert, err := ca.keyStore.GetCert(ctx, cn); err == nil && cert != nil {
 			return true, nil
 		}
 	}
@@ -155,7 +155,7 @@ func (ca *CA) Issued(cn string) (bool, error) {
 // when the algorithm does not match.
 //
 // Thread-safe: Yes
-func (ca *CA) Exists(cn string, algo x509.PublicKeyAlgorithm) (bool, error) {
+func (ca *CA) Exists(ctx context.Context, cn string, algo x509.PublicKeyAlgorithm) (bool, error) {
 	if cn == "" {
 		return false, fmt.Errorf("%w: common name required", ErrInvalidCertificate)
 	}
@@ -166,7 +166,7 @@ func (ca *CA) Exists(cn string, algo x509.PublicKeyAlgorithm) (bool, error) {
 		cert, err = ca.certStore.GetCertificate(cn)
 	}
 	if cert == nil && ca.keyStore != nil {
-		cert, err = ca.keyStore.GetCert(cn)
+		cert, err = ca.keyStore.GetCert(ctx, cn)
 	}
 	if cert == nil || err != nil {
 		return false, nil
@@ -178,7 +178,7 @@ func (ca *CA) Exists(cn string, algo x509.PublicKeyAlgorithm) (bool, error) {
 // the cached CA certificates, then the keystore, and finally the certStore.
 //
 // Thread-safe: Yes
-func (ca *CA) Certificate(attrs *types.KeyAttributes) (*x509.Certificate, error) {
+func (ca *CA) Certificate(ctx context.Context, attrs *types.KeyAttributes) (*x509.Certificate, error) {
 	if attrs == nil {
 		return nil, fmt.Errorf("%w: key attributes required", ErrInvalidCertificate)
 	}
@@ -196,7 +196,7 @@ func (ca *CA) Certificate(attrs *types.KeyAttributes) (*x509.Certificate, error)
 	}
 
 	if ca.keyStore != nil {
-		if cert, err := ca.keyStore.GetCert(attrs.CN); err == nil && cert != nil {
+		if cert, err := ca.keyStore.GetCert(ctx, attrs.CN); err == nil && cert != nil {
 			return cert, nil
 		}
 	}
@@ -211,8 +211,8 @@ func (ca *CA) Certificate(attrs *types.KeyAttributes) (*x509.Certificate, error)
 // CertificatePEM returns the certificate identified by cn in PEM form.
 //
 // Thread-safe: Yes
-func (ca *CA) CertificatePEM(cn string) ([]byte, error) {
-	cert, err := ca.Certificate(&types.KeyAttributes{CN: cn})
+func (ca *CA) CertificatePEM(ctx context.Context, cn string) ([]byte, error) {
+	cert, err := ca.Certificate(ctx, &types.KeyAttributes{CN: cn})
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +227,7 @@ func (ca *CA) CertificatePEM(cn string) ([]byte, error) {
 // lookups via either storage surface succeed.
 //
 // Thread-safe: Yes
-func (ca *CA) ImportCertificate(cert *x509.Certificate) error {
+func (ca *CA) ImportCertificate(ctx context.Context, cert *x509.Certificate) error {
 	if cert == nil {
 		return ErrInvalidCertificate
 	}
@@ -240,7 +240,7 @@ func (ca *CA) ImportCertificate(cert *x509.Certificate) error {
 	// will surface errors that we can't reliably handle here. In all cases
 	// the authoritative write is to certStore.
 	if ca.keyStore != nil {
-		_ = ca.keyStore.SaveCert(cn, cert)
+		_ = ca.keyStore.SaveCert(ctx, cn, cert)
 	}
 	if ca.certStore == nil {
 		return ErrCertStoreRequired
@@ -255,7 +255,7 @@ func (ca *CA) ImportCertificate(cert *x509.Certificate) error {
 // cn (overriding the certificate's own Subject.CommonName when they differ).
 //
 // Thread-safe: Yes
-func (ca *CA) ImportCertificatePEM(cn string, pemBytes []byte) error {
+func (ca *CA) ImportCertificatePEM(ctx context.Context, cn string, pemBytes []byte) error {
 	if cn == "" {
 		return fmt.Errorf("%w: common name required", ErrInvalidCertificate)
 	}
@@ -269,7 +269,7 @@ func (ca *CA) ImportCertificatePEM(cn string, pemBytes []byte) error {
 	}
 
 	if ca.keyStore != nil {
-		_ = ca.keyStore.SaveCert(cn, cert)
+		_ = ca.keyStore.SaveCert(ctx, cn, cert)
 	}
 	if ca.certStore == nil {
 		return ErrCertStoreRequired
@@ -284,11 +284,11 @@ func (ca *CA) ImportCertificatePEM(cn string, pemBytes []byte) error {
 // bare common name, matching the wrapper's method signature.
 //
 // Thread-safe: Yes
-func (ca *CA) PEM(attrs *types.KeyAttributes) ([]byte, error) {
+func (ca *CA) PEM(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	if attrs == nil {
 		return nil, fmt.Errorf("%w: key attributes required", ErrInvalidCertificate)
 	}
-	return ca.CertificatePEM(attrs.CN)
+	return ca.CertificatePEM(ctx, attrs.CN)
 }
 
 // =============================================================================
@@ -462,7 +462,7 @@ func (ca *CA) CAKeyAttributes(storeType types.StoreType) (*types.KeyAttributes, 
 // combination before delegating.
 //
 // Thread-safe: Yes
-func (ca *CA) CASigner(storeType types.StoreType, algo x509.PublicKeyAlgorithm) (crypto.Signer, error) {
+func (ca *CA) CASigner(ctx context.Context, storeType types.StoreType, algo x509.PublicKeyAlgorithm) (crypto.Signer, error) {
 	attrs, err := ca.CAKeyAttributes(storeType)
 	if err != nil {
 		return nil, err
@@ -471,7 +471,7 @@ func (ca *CA) CASigner(storeType types.StoreType, algo x509.PublicKeyAlgorithm) 
 		return nil, fmt.Errorf("%w: CA key algorithm %v does not match requested %v",
 			ErrInvalidKeyAlgorithm, attrs.KeyAlgorithm, algo)
 	}
-	return ca.keyStore.Signer(attrs)
+	return ca.keyStore.Signer(ctx, attrs)
 }
 
 // =============================================================================
@@ -549,7 +549,7 @@ func (ca *CA) CABundleFiltered(storeType types.StoreType, keyAlgorithm x509.Publ
 // store the revocation is held in memory only and a warning is logged.
 //
 // Thread-safe: Yes
-func (ca *CA) RevokeCert(cert *x509.Certificate, opts RevokeOptions) error {
+func (ca *CA) RevokeCert(ctx context.Context, cert *x509.Certificate, opts RevokeOptions) error {
 	if cert == nil {
 		return ErrInvalidCertificate
 	}
@@ -557,7 +557,7 @@ func (ca *CA) RevokeCert(cert *x509.Certificate, opts RevokeOptions) error {
 		return ErrNotInitialized
 	}
 
-	if err := ca.recordRevocation(cert.SerialNumber, opts.Reason, opts.DeleteKeys); err != nil {
+	if err := ca.recordRevocation(ctx, cert.SerialNumber, opts.Reason, opts.DeleteKeys); err != nil {
 		return err
 	}
 
@@ -570,8 +570,8 @@ func (ca *CA) RevokeCert(cert *x509.Certificate, opts RevokeOptions) error {
 			KeyAlgorithm: cert.PublicKeyAlgorithm,
 		}
 		if ca.keyStore != nil {
-			_ = ca.keyStore.DeleteKey(attrs)
-			_ = ca.keyStore.DeleteCert(cert.Subject.CommonName)
+			_ = ca.keyStore.DeleteKey(ctx, attrs)
+			_ = ca.keyStore.DeleteCert(ctx, cert.Subject.CommonName)
 		}
 		if ca.certStore != nil {
 			_ = ca.certStore.DeleteCertificate(cert.Subject.CommonName)
@@ -607,7 +607,7 @@ func revocationKey(serial *big.Int) string {
 // object store is configured, persists the record. It is shared by Revoke
 // (serial-based) and RevokeCert (certificate-based) to keep behaviour
 // consistent.
-func (ca *CA) recordRevocation(serial *big.Int, reason int, deletedKeys bool) error {
+func (ca *CA) recordRevocation(ctx context.Context, serial *big.Int, reason int, deletedKeys bool) error {
 	if serial == nil {
 		return ErrInvalidCertificate
 	}
@@ -637,7 +637,7 @@ func (ca *CA) recordRevocation(serial *big.Int, reason int, deletedKeys bool) er
 	if err != nil {
 		return fmt.Errorf("%w: marshal revocation: %v", ErrStorageError, err)
 	}
-	persisted, err := ca.putRevocationBlob(serial, buf)
+	persisted, err := ca.putRevocationBlob(ctx, serial, buf)
 	if err != nil {
 		return fmt.Errorf("%w: persist revocation: %v", ErrStorageError, err)
 	}
@@ -651,10 +651,10 @@ func (ca *CA) recordRevocation(serial *big.Int, reason int, deletedKeys bool) er
 // putRevocationBlob persists a serialized revocation record, preferring the
 // datastore-backed revocation store and falling back to the legacy object
 // store. Returns false when neither is configured (no persistence).
-func (ca *CA) putRevocationBlob(serial *big.Int, buf []byte) (bool, error) {
+func (ca *CA) putRevocationBlob(ctx context.Context, serial *big.Int, buf []byte) (bool, error) {
 	key := revocationKey(serial) + ".json"
 	if ca.revocationStore != nil {
-		if err := ca.revocationStore.Put(context.Background(), key, buf); err != nil {
+		if err := ca.revocationStore.Put(ctx, key, buf); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -671,10 +671,10 @@ func (ca *CA) putRevocationBlob(serial *big.Int, buf []byte) (bool, error) {
 // listRevocationBlobs reads all persisted revocation records (key -> JSON
 // payload) from the configured store, preferring the datastore-backed
 // revocation store and falling back to the legacy object store.
-func (ca *CA) listRevocationBlobs() (map[string][]byte, error) {
+func (ca *CA) listRevocationBlobs(ctx context.Context) (map[string][]byte, error) {
 	out := make(map[string][]byte)
 	if ca.revocationStore != nil {
-		err := ca.revocationStore.Scan(context.Background(), revocationKeyPrefix, func(k string, v []byte) error {
+		err := ca.revocationStore.Scan(ctx, revocationKeyPrefix, func(k string, v []byte) error {
 			out[k] = append([]byte(nil), v...)
 			return nil
 		})
@@ -714,8 +714,8 @@ func (ca *CA) listRevocationBlobs() (map[string][]byte, error) {
 //
 // Missing or corrupt records are logged and skipped rather than aborting
 // Load(); a single bad record should not render the CA inoperable.
-func (ca *CA) loadPersistedRevocations() error {
-	blobs, err := ca.listRevocationBlobs()
+func (ca *CA) loadPersistedRevocations(ctx context.Context) error {
+	blobs, err := ca.listRevocationBlobs(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: list revocations: %v", ErrStorageError, err)
 	}

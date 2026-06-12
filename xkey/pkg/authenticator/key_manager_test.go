@@ -875,7 +875,7 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		require.NotNil(t, attestKey)
 
 		// Keys should have same values
-		require.Equal(t, originalKey.D.Bytes(), attestKey.D.Bytes())
+		require.Equal(t, originalKey.D.Bytes(), attestKey.D.Bytes()) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 	})
 
 	t.Run("corrupted wrapped attest SO returns error", func(t *testing.T) {
@@ -1677,7 +1677,7 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify the cached key matches
-		require.Equal(t, newKey.D, state.AttestationKey.D)
+		require.Equal(t, newKey.D, state.AttestationKey.D) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 		require.Equal(t, newKey.X, state.AttestationKey.X)
 		require.Equal(t, newKey.Y, state.AttestationKey.Y)
 	})
@@ -2089,7 +2089,7 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 
 		ecKey, ok := key.(*ecdsa.PrivateKey)
 		require.True(t, ok)
-		require.Equal(t, originalKey.D, ecKey.D)
+		require.Equal(t, originalKey.D, ecKey.D) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 	})
 
 	t.Run("wrapped keys have correct sizes", func(t *testing.T) {
@@ -2302,7 +2302,7 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 
 		// Verify keys match
 		require.True(t, bytes.Equal(cmkBefore, cmkAfter))
-		require.Equal(t, attestBefore.D, attestAfter.D)
+		require.Equal(t, attestBefore.D, attestAfter.D) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 	})
 
 	t.Run("wrapped user attestation key can be unwrapped with CMK", func(t *testing.T) {
@@ -2330,6 +2330,6 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 
 		ecKey, ok := key.(*ecdsa.PrivateKey)
 		require.True(t, ok)
-		require.Equal(t, state.AttestationKey.D, ecKey.D)
+		require.Equal(t, state.AttestationKey.D, ecKey.D) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 	})
 }

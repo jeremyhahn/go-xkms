@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -58,14 +59,14 @@ type mockTrustedCA struct {
 
 func (m *mockTrustedCA) IsInitialized() bool { return m.initialized }
 
-func (m *mockTrustedCA) TLSCertificate(_ *types.KeyAttributes) (tls.Certificate, error) {
+func (m *mockTrustedCA) TLSCertificate(_ context.Context, _ *types.KeyAttributes) (tls.Certificate, error) {
 	return m.tlsCert, m.tlsCertErr
 }
 
 // Stubs for the rest of the ca.TrustedCA interface — not exercised in these tests.
 
-func (m *mockTrustedCA) Init() error { return nil }
-func (m *mockTrustedCA) Load() error { return nil }
+func (m *mockTrustedCA) Init(_ context.Context) error { return nil }
+func (m *mockTrustedCA) Load(_ context.Context) error { return nil }
 func (m *mockTrustedCA) Public() crypto.PublicKey {
 	if m.caCert != nil {
 		return m.caCert.PublicKey
@@ -75,14 +76,16 @@ func (m *mockTrustedCA) Public() crypto.PublicKey {
 func (m *mockTrustedCA) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
 	return nil, nil
 }
-func (m *mockTrustedCA) SignCSR(_ []byte, _ *ca.SignOptions) (*x509.Certificate, error) {
+func (m *mockTrustedCA) SignCSR(_ context.Context, _ []byte, _ *ca.SignOptions) (*x509.Certificate, error) {
 	return nil, nil
 }
-func (m *mockTrustedCA) CreateCSR(_ *ca.CertificateRequest) ([]byte, error) { return nil, nil }
-func (m *mockTrustedCA) IssueCertificate(_ *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
+func (m *mockTrustedCA) CreateCSR(_ context.Context, _ *ca.CertificateRequest) ([]byte, error) {
 	return nil, nil
 }
-func (m *mockTrustedCA) IssueCertificateWithProfile(_ *ca.CertificateRequest, _ string) (*ca.IssuedCertificate, error) {
+func (m *mockTrustedCA) IssueCertificate(_ context.Context, _ *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
+	return nil, nil
+}
+func (m *mockTrustedCA) IssueCertificateWithProfile(_ context.Context, _ *ca.CertificateRequest, _ string) (*ca.IssuedCertificate, error) {
 	return nil, nil
 }
 func (m *mockTrustedCA) CACertificate() (*x509.Certificate, error) { return m.caCert, nil }
@@ -90,13 +93,13 @@ func (m *mockTrustedCA) CABundle() ([]byte, error)                 { return nil,
 func (m *mockTrustedCA) Verify(_ *x509.Certificate, _ ...crypto.Signer) ([][]*x509.Certificate, error) {
 	return nil, nil
 }
-func (m *mockTrustedCA) Revoke(_ *big.Int, _ int) error     { return nil }
-func (m *mockTrustedCA) GenerateCRL() ([]byte, error)       { return nil, nil }
-func (m *mockTrustedCA) IsRevoked(_ *big.Int) (bool, error) { return false, nil }
-func (m *mockTrustedCA) TLSConfig(_ *types.KeyAttributes) (*tls.Config, error) {
+func (m *mockTrustedCA) Revoke(_ context.Context, _ *big.Int, _ int) error { return nil }
+func (m *mockTrustedCA) GenerateCRL(_ context.Context) ([]byte, error)     { return nil, nil }
+func (m *mockTrustedCA) IsRevoked(_ *big.Int) (bool, error)                { return false, nil }
+func (m *mockTrustedCA) TLSConfig(_ context.Context, _ *types.KeyAttributes) (*tls.Config, error) {
 	return nil, nil
 }
-func (m *mockTrustedCA) QuantumSafeTLSConfig(_ *types.KeyAttributes) (*tls.Config, error) {
+func (m *mockTrustedCA) QuantumSafeTLSConfig(_ context.Context, _ *types.KeyAttributes) (*tls.Config, error) {
 	return nil, nil
 }
 func (m *mockTrustedCA) CABundleCertPool() (*x509.CertPool, error) { return nil, nil }
@@ -278,6 +281,7 @@ func TestBuildTLSConfig_CABacked(t *testing.T) {
 	}
 	if tlsConfig == nil {
 		t.Fatal("expected non-nil TLS config")
+		return
 	}
 	if len(tlsConfig.Certificates) != 1 {
 		t.Fatalf("expected 1 certificate, got %d", len(tlsConfig.Certificates))
@@ -311,6 +315,7 @@ func TestBuildTLSConfig_CANotInitialized_FallbackToFile(t *testing.T) {
 	}
 	if tlsConfig == nil {
 		t.Fatal("expected non-nil TLS config")
+		return
 	}
 	if len(tlsConfig.Certificates) != 1 {
 		t.Fatalf("expected 1 certificate, got %d", len(tlsConfig.Certificates))
@@ -377,6 +382,7 @@ func TestBuildTLSConfig_FileBased(t *testing.T) {
 	}
 	if tlsConfig == nil {
 		t.Fatal("expected non-nil TLS config")
+		return
 	}
 	if len(tlsConfig.Certificates) != 1 {
 		t.Fatalf("expected 1 certificate, got %d", len(tlsConfig.Certificates))
@@ -716,5 +722,52 @@ func TestCredentialService_SetThenGet(t *testing.T) {
 	got := s.CredentialService()
 	if got != svc {
 		t.Fatal("CredentialService() should return the service set via SetCredentialService()")
+	}
+}
+
+// ============================================================================
+// Tests — initializeFactorRegistry
+// ============================================================================
+
+func TestInitializeFactorRegistry_Initializes(t *testing.T) {
+	cfg := &config.Config{}
+	s := newMinimalServer(t, cfg)
+
+	if s.factorRegistry != nil {
+		t.Fatal("expected factorRegistry to be nil before initialization")
+	}
+
+	if err := s.initializeFactorRegistry(); err != nil {
+		t.Fatalf("initializeFactorRegistry: %v", err)
+	}
+
+	if s.factorRegistry == nil {
+		t.Fatal("expected factorRegistry to be non-nil after initialization")
+	}
+	if got := len(s.factorRegistry.List()); got != 4 {
+		t.Fatalf("expected 4 factors registered, got %d: %v", got, s.factorRegistry.List())
+	}
+}
+
+func TestInitializeFactorRegistry_Idempotent(t *testing.T) {
+	// The second call must not replace the existing registry instance. This
+	// matters because initEmbeddedQRDBNode injects s.factorRegistry into the
+	// qrdb node; a replacement after injection would leave the node pointing
+	// at a different registry than the server field.
+	cfg := &config.Config{}
+	s := newMinimalServer(t, cfg)
+
+	if err := s.initializeFactorRegistry(); err != nil {
+		t.Fatalf("first initializeFactorRegistry: %v", err)
+	}
+
+	first := s.factorRegistry
+
+	if err := s.initializeFactorRegistry(); err != nil {
+		t.Fatalf("second initializeFactorRegistry: %v", err)
+	}
+
+	if s.factorRegistry != first {
+		t.Fatal("initializeFactorRegistry must be idempotent: second call replaced registry instance")
 	}
 }

@@ -8,6 +8,7 @@
 package frost
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -57,7 +58,7 @@ func createMultiParticipantBackends(t *testing.T) []*FrostBackend {
 			Total:         3,
 			ParticipantID: uint32(i + 1),
 		}
-		err = backend.keystore.StoreKeyPackage(keyID, pkg, metadata)
+		err = backend.keystore.StoreKeyPackage(context.Background(), keyID, pkg, metadata)
 		require.NoError(t, err)
 
 		backends = append(backends, backend)

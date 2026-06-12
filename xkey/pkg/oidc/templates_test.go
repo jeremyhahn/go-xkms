@@ -270,7 +270,7 @@ func TestNewExtendedProviderConfig(t *testing.T) {
 		t.Errorf("AutoRefresh = %d, want 840", config.AutoRefresh)
 	}
 
-	if config.ProviderConfig.ClientID == "" {
+	if config.ClientID == "" {
 		t.Error("ClientID should be set from template")
 	}
 }
@@ -298,7 +298,7 @@ func TestExtendedProviderConfig_ApplyTemplate(t *testing.T) {
 	config.ApplyTemplate(template)
 
 	// ClientID should remain as custom (not overwritten)
-	if config.ProviderConfig.ClientID != "custom-client-id" {
+	if config.ClientID != "custom-client-id" {
 		t.Error("ApplyTemplate should not overwrite existing ClientID")
 	}
 
@@ -308,7 +308,7 @@ func TestExtendedProviderConfig_ApplyTemplate(t *testing.T) {
 	}
 
 	// Scopes should be set from template
-	if len(config.ProviderConfig.Scopes) == 0 {
+	if len(config.Scopes) == 0 {
 		t.Error("Scopes should be set from template")
 	}
 }
@@ -418,8 +418,8 @@ func TestExtendedProviderConfig_ResolveEndpoints_RemoteFlow(t *testing.T) {
 	config.ResolveEndpoints(template, "us-east-1")
 
 	// ClientID should be updated to cross-device
-	if config.ProviderConfig.ClientID != "arn:aws:signin:::devtools/cross-device" {
-		t.Errorf("ClientID = %s, want cross-device client", config.ProviderConfig.ClientID)
+	if config.ClientID != "arn:aws:signin:::devtools/cross-device" {
+		t.Errorf("ClientID = %s, want cross-device client", config.ClientID)
 	}
 }
 

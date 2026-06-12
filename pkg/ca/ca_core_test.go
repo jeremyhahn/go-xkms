@@ -6,6 +6,7 @@
 package ca
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rand"
@@ -110,7 +111,7 @@ func TestCA_Sign_NotInitialized(t *testing.T) {
 
 func TestCA_Load_AlreadyInitialized(t *testing.T) {
 	ca := setupTestCA(t)
-	err := ca.Load()
+	err := ca.Load(context.Background())
 	assert.ErrorIs(t, err, ErrAlreadyInitialized)
 }
 
@@ -122,7 +123,7 @@ func TestCA_Load_AfterInit(t *testing.T) {
 		config:      ca1.config,
 		revocations: make(map[string]*RevocationInfo),
 	}
-	err := ca2.Load()
+	err := ca2.Load(context.Background())
 	require.NoError(t, err)
 	assert.True(t, ca2.IsInitialized())
 }
@@ -134,7 +135,7 @@ func TestCA_Load_AfterInit(t *testing.T) {
 func TestCA_Revoke(t *testing.T) {
 	ca := setupTestCA(t)
 	serial := big.NewInt(12345)
-	require.NoError(t, ca.Revoke(serial, 1))
+	require.NoError(t, ca.Revoke(context.Background(), serial, 1))
 	revoked, err := ca.IsRevoked(serial)
 	require.NoError(t, err)
 	assert.True(t, revoked)
@@ -142,21 +143,21 @@ func TestCA_Revoke(t *testing.T) {
 
 func TestCA_Revoke_NilSerial(t *testing.T) {
 	ca := setupTestCA(t)
-	err := ca.Revoke(nil, 1)
+	err := ca.Revoke(context.Background(), nil, 1)
 	assert.ErrorIs(t, err, ErrInvalidCertificate)
 }
 
 func TestCA_Revoke_AlreadyRevoked(t *testing.T) {
 	ca := setupTestCA(t)
 	serial := big.NewInt(99999)
-	require.NoError(t, ca.Revoke(serial, 1))
-	err := ca.Revoke(serial, 1)
+	require.NoError(t, ca.Revoke(context.Background(), serial, 1))
+	err := ca.Revoke(context.Background(), serial, 1)
 	assert.ErrorIs(t, err, ErrAlreadyRevoked)
 }
 
 func TestCA_Revoke_NotInitialized(t *testing.T) {
 	ca := &CA{}
-	err := ca.Revoke(big.NewInt(1), 1)
+	err := ca.Revoke(context.Background(), big.NewInt(1), 1)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -166,10 +167,10 @@ func TestCA_Revoke_NotInitialized(t *testing.T) {
 
 func TestCA_GenerateCRL(t *testing.T) {
 	ca := setupTestCA(t)
-	require.NoError(t, ca.Revoke(big.NewInt(111), 1))
-	require.NoError(t, ca.Revoke(big.NewInt(222), 4))
+	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(111), 1))
+	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(222), 4))
 
-	crlDER, err := ca.GenerateCRL()
+	crlDER, err := ca.GenerateCRL(context.Background())
 	require.NoError(t, err)
 	assert.NotEmpty(t, crlDER)
 
@@ -180,13 +181,13 @@ func TestCA_GenerateCRL(t *testing.T) {
 
 func TestCA_GenerateCRL_NotInitialized(t *testing.T) {
 	ca := &CA{}
-	_, err := ca.GenerateCRL()
+	_, err := ca.GenerateCRL(context.Background())
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestCA_GenerateCRL_Empty(t *testing.T) {
 	ca := setupTestCA(t)
-	crlDER, err := ca.GenerateCRL()
+	crlDER, err := ca.GenerateCRL(context.Background())
 	require.NoError(t, err)
 
 	crl, err := x509.ParseRevocationList(crlDER)
@@ -211,7 +212,7 @@ func TestCA_IssueCertificate(t *testing.T) {
 		Valid: 365,
 	}
 
-	issued, err := ca.IssueCertificate(request)
+	issued, err := ca.IssueCertificate(context.Background(), request)
 	require.NoError(t, err)
 	require.NotNil(t, issued)
 	assert.NotNil(t, issued.Certificate)
@@ -223,7 +224,7 @@ func TestCA_IssueCertificate_NotInitialized(t *testing.T) {
 	request := &CertificateRequest{
 		Subject: Subject{CommonName: "test"},
 	}
-	_, err := ca.IssueCertificate(request)
+	_, err := ca.IssueCertificate(context.Background(), request)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -240,10 +241,10 @@ func TestCA_IssueCertificate_DuplicateCN(t *testing.T) {
 		Valid: 365,
 	}
 
-	_, err := ca.IssueCertificate(request)
+	_, err := ca.IssueCertificate(context.Background(), request)
 	require.NoError(t, err)
 
-	_, err = ca.IssueCertificate(request)
+	_, err = ca.IssueCertificate(context.Background(), request)
 	assert.ErrorIs(t, err, ErrCertificateAlreadyExists)
 }
 

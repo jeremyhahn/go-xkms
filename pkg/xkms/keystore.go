@@ -41,30 +41,30 @@ type Backend interface {
 	// GenerateRSA generates a new RSA key pair.
 	// The key size must be specified in attrs.RSAAttributes.KeySize.
 	// Common sizes are 2048, 3072, and 4096 bits.
-	GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error)
+	GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error)
 
 	// GenerateECDSA generates a new ECDSA key pair.
 	// The elliptic curve must be specified in attrs.ECCAttributes.Curve.
 	// Common curves include P-256, P-384, and P-521.
-	GenerateECDSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error)
+	GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error)
 
 	// GenerateEd25519 generates a new Ed25519 key pair.
 	// Ed25519 keys have a fixed size and do not require additional parameters.
-	GenerateEd25519(attrs *types.KeyAttributes) (crypto.PrivateKey, error)
+	GenerateEd25519(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error)
 
 	// GetKey retrieves an existing private key by its attributes.
-	GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error)
+	GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error)
 
 	// DeleteKey removes a key identified by its attributes.
-	DeleteKey(attrs *types.KeyAttributes) error
+	DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error
 
 	// ListKeys returns attributes for all keys managed by this xkms.
-	ListKeys() ([]*types.KeyAttributes, error)
+	ListKeys(ctx context.Context) ([]*types.KeyAttributes, error)
 
 	// RotateKey replaces an existing key with a newly generated key.
 	// This operation atomically deletes the old key and generates a new one
 	// with the same attributes.
-	RotateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error)
+	RotateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error)
 
 	// ========================================================================
 	// Crypto Operations (delegated to key provider)
@@ -73,12 +73,12 @@ type Backend interface {
 	// Signer returns a crypto.Signer for the specified key.
 	// The returned signer can be used for signing operations without
 	// exposing the private key material.
-	Signer(attrs *types.KeyAttributes) (crypto.Signer, error)
+	Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error)
 
 	// Decrypter returns a crypto.Decrypter for the specified key.
 	// The returned decrypter can be used for decryption operations without
 	// exposing the private key material.
-	Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error)
+	Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error)
 
 	// ========================================================================
 	// Certificate Operations (uses CertificateStorage)
@@ -86,26 +86,26 @@ type Backend interface {
 
 	// SaveCert stores a certificate for the given key ID.
 	// The keyID typically matches the key's identifier/CN.
-	SaveCert(keyID string, cert *x509.Certificate) error
+	SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error
 
 	// GetCert retrieves a certificate by key ID.
-	GetCert(keyID string) (*x509.Certificate, error)
+	GetCert(ctx context.Context, keyID string) (*x509.Certificate, error)
 
 	// DeleteCert removes a certificate by key ID.
-	DeleteCert(keyID string) error
+	DeleteCert(ctx context.Context, keyID string) error
 
 	// SaveCertChain stores a certificate chain for the given key ID.
 	// The chain should be ordered from leaf to root.
-	SaveCertChain(keyID string, chain []*x509.Certificate) error
+	SaveCertChain(ctx context.Context, keyID string, chain []*x509.Certificate) error
 
 	// GetCertChain retrieves a certificate chain by key ID.
-	GetCertChain(keyID string) ([]*x509.Certificate, error)
+	GetCertChain(ctx context.Context, keyID string) ([]*x509.Certificate, error)
 
 	// ListCerts returns all certificate IDs currently stored.
-	ListCerts() ([]string, error)
+	ListCerts(ctx context.Context) ([]string, error)
 
 	// CertExists checks if a certificate exists for the given key ID.
-	CertExists(keyID string) (bool, error)
+	CertExists(ctx context.Context, keyID string) (bool, error)
 
 	// ========================================================================
 	// TLS Helpers (convenience methods)
@@ -116,7 +116,7 @@ type Backend interface {
 	// from storage into a single tls.Certificate structure.
 	//
 	// The keyID is used to locate both the key (via attrs) and certificate.
-	GetTLSCertificate(keyID string, attrs *types.KeyAttributes) (tls.Certificate, error)
+	GetTLSCertificate(ctx context.Context, keyID string, attrs *types.KeyAttributes) (tls.Certificate, error)
 
 	// ========================================================================
 	// Unified Key ID Methods
@@ -129,25 +129,25 @@ type Backend interface {
 	// Format: backend:keyname
 	//
 	// Example:
-	//   key, err := backend.GetKeyByID("pkcs11:my-signing-key")
-	GetKeyByID(keyID string) (crypto.PrivateKey, error)
+	//   key, err := backend.GetKeyByID(ctx, "pkcs11:my-signing-key")
+	GetKeyByID(ctx context.Context, keyID string) (crypto.PrivateKey, error)
 
 	// GetSignerByID retrieves a crypto.Signer using the unified Key ID format.
 	// This is a convenience method that calls GetKeyByID and returns the
 	// crypto.Signer interface for signing operations.
 	//
 	// Example:
-	//   signer, err := backend.GetSignerByID("tpm2:attestation-key")
+	//   signer, err := backend.GetSignerByID(ctx, "tpm2:attestation-key")
 	//   signature, _ := signer.Sign(rand.Reader, digest, crypto.SHA256)
-	GetSignerByID(keyID string) (crypto.Signer, error)
+	GetSignerByID(ctx context.Context, keyID string) (crypto.Signer, error)
 
 	// GetDecrypterByID retrieves a crypto.Decrypter using the unified Key ID format.
 	// This is a convenience method for RSA decryption operations.
 	//
 	// Example:
-	//   decrypter, err := backend.GetDecrypterByID("awskms:rsa-key")
+	//   decrypter, err := backend.GetDecrypterByID(ctx, "awskms:rsa-key")
 	//   plaintext, _ := decrypter.Decrypt(rand.Reader, ciphertext, opts)
-	GetDecrypterByID(keyID string) (crypto.Decrypter, error)
+	GetDecrypterByID(ctx context.Context, keyID string) (crypto.Decrypter, error)
 
 	// ========================================================================
 	// Sealing Operations (delegated to key provider)

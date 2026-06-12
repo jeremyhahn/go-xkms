@@ -30,13 +30,12 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // findKeyByCN searches for a key by its common name and returns the full attributes.
 // It uses ListKeys to find all keys and matches by CN.
-func (s *Server) findKeyByCN(keyID string) (*types.KeyAttributes, error) {
-	keys, err := s.keystore.ListKeys()
+func (s *Server) findKeyByCN(ctx context.Context, keyID string) (*types.KeyAttributes, error) {
+	keys, err := s.keystore.ListKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
@@ -51,13 +50,13 @@ func (s *Server) findKeyByCN(keyID string) (*types.KeyAttributes, error) {
 }
 
 // findKeyInBackend searches for a key by CN in a specific backend
-func (s *Server) findKeyInBackend(keyID string, backendName string) (*types.KeyAttributes, error) {
-	ks, err := xkms.GetBackend(backendName)
+func (s *Server) findKeyInBackend(ctx context.Context, keyID string, backendName string) (*types.KeyAttributes, error) {
+	ks, err := s.xkmsService.LookupBackend(backendName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
 	}
 
-	keys, err := ks.ListKeys()
+	keys, err := ks.ListKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
@@ -72,17 +71,17 @@ func (s *Server) findKeyInBackend(keyID string, backendName string) (*types.KeyA
 }
 
 // handleHealth handles the health check method
-func (s *Server) handleHealth(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleHealth(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	return HealthResult{Status: "healthy"}, nil
 }
 
 // handleListBackends handles the listBackends method
-func (s *Server) handleListBackends(req *JSONRPCRequest) (interface{}, error) {
-	backendNames := xkms.Backends()
+func (s *Server) handleListBackends(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	backendNames := s.xkmsService.BackendNames()
 
 	backends := make([]BackendInfo, 0, len(backendNames))
 	for _, name := range backendNames {
-		ks, err := xkms.GetBackend(name)
+		ks, err := s.xkmsService.LookupBackend(name)
 		if err != nil {
 			continue
 		}
@@ -112,7 +111,7 @@ func (s *Server) handleListBackends(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleGenerateKey handles the generateKey method
-func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GenerateKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -168,7 +167,7 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 		if attrs.RSAAttributes.KeySize == 0 {
 			attrs.RSAAttributes.KeySize = types.RSAKeySize2048 // Default
 		}
-		privKey, err = s.keystore.GenerateRSA(attrs)
+		privKey, err = s.keystore.GenerateRSA(ctx, attrs)
 
 	case types.AlgorithmECDSA.Equals(algorithmDiscriminator) || types.AlgorithmECDSA.Equals(algorithm):
 		attrs.KeyType = keyPurposeType
@@ -182,11 +181,11 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 		} else {
 			attrs.ECCAttributes.Curve, _ = types.ParseCurve(string(types.CurveP256))
 		}
-		privKey, err = s.keystore.GenerateECDSA(attrs)
+		privKey, err = s.keystore.GenerateECDSA(ctx, attrs)
 
 	case types.AlgorithmEd25519.Equals(algorithmDiscriminator) || types.AlgorithmEd25519.Equals(algorithm):
 		attrs.KeyType = keyPurposeType
-		privKey, err = s.keystore.GenerateEd25519(attrs)
+		privKey, err = s.keystore.GenerateEd25519(ctx, attrs)
 
 	case types.AlgorithmSymmetric.Equals(algorithmDiscriminator) || types.AlgorithmSymmetric.Equals(algorithm):
 		// Get the correct backend for symmetric operations
@@ -194,7 +193,7 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 		if backendName == "" {
 			backendName = "symmetric" // Default to symmetric backend
 		}
-		ks, ksErr := xkms.GetBackend(backendName)
+		ks, ksErr := s.xkmsService.LookupBackend(backendName)
 		if ksErr != nil {
 			return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
 		}
@@ -214,7 +213,7 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 		attrs.KeyType = types.KeyTypeSecret // Symmetric keys use KeyTypeSecret
 
 		// Generate symmetric key
-		_, err = symBackend.GenerateSymmetricKey(attrs)
+		_, err = symBackend.GenerateSymmetricKey(ctx, attrs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate symmetric key: %w", err)
 		}
@@ -273,7 +272,7 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleGetKey handles the getKey method
-func (s *Server) handleGetKey(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleGetKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -284,12 +283,12 @@ func (s *Server) handleGetKey(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(params.KeyID)
+	attrs, err := s.findKeyByCN(ctx, params.KeyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
-	privKey, err := s.keystore.GetKey(attrs)
+	privKey, err := s.keystore.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get key: %w", err)
 	}
@@ -316,7 +315,7 @@ func (s *Server) handleGetKey(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleDeleteKey handles the deleteKey method
-func (s *Server) handleDeleteKey(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleDeleteKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params DeleteKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -333,12 +332,12 @@ func (s *Server) handleDeleteKey(req *JSONRPCRequest) (interface{}, error) {
 
 	if backendName != "" {
 		// Search in specified backend
-		attrs, err = s.findKeyInBackend(params.KeyID, backendName)
+		attrs, err = s.findKeyInBackend(ctx, params.KeyID, backendName)
 	} else {
 		// Try software backend first, then symmetric
-		attrs, err = s.findKeyInBackend(params.KeyID, "software")
+		attrs, err = s.findKeyInBackend(ctx, params.KeyID, "software")
 		if err != nil {
-			attrs, err = s.findKeyInBackend(params.KeyID, "symmetric")
+			attrs, err = s.findKeyInBackend(ctx, params.KeyID, "symmetric")
 			if err == nil {
 				backendName = "symmetric"
 			}
@@ -354,13 +353,13 @@ func (s *Server) handleDeleteKey(req *JSONRPCRequest) (interface{}, error) {
 	// Get the correct keystore
 	ks := s.keystore
 	if backendName != "" {
-		ks, err = xkms.GetBackend(backendName)
+		ks, err = s.xkmsService.LookupBackend(backendName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
 		}
 	}
 
-	if err := ks.DeleteKey(attrs); err != nil {
+	if err := ks.DeleteKey(ctx, attrs); err != nil {
 		return nil, fmt.Errorf("failed to delete key: %w", err)
 	}
 
@@ -379,7 +378,7 @@ func (s *Server) handleDeleteKey(req *JSONRPCRequest) (interface{}, error) {
 // When params include a backend name, only keys from that backend are returned.
 // When no backend is specified, keys from all registered backends are returned.
 // The response format matches the REST API's ListKeysHandler for cross-protocol parity.
-func (s *Server) handleListKeys(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleListKeys(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	// Parse optional params for backend filtering
 	var params ListKeysParams
 	if len(req.Params) > 0 {
@@ -392,7 +391,7 @@ func (s *Server) handleListKeys(req *JSONRPCRequest) (interface{}, error) {
 
 	if params.Backend != "" {
 		// Single-backend listing
-		backendKeys, err := s.listKeysFromBackend(params.Backend)
+		backendKeys, err := s.listKeysFromBackend(ctx, params.Backend)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list keys from backend %s: %w", params.Backend, err)
 		}
@@ -400,8 +399,8 @@ func (s *Server) handleListKeys(req *JSONRPCRequest) (interface{}, error) {
 	} else {
 		// All-backends listing
 		keys = make([]KeyInfo, 0)
-		for _, backendName := range xkms.Backends() {
-			backendKeys, err := s.listKeysFromBackend(backendName)
+		for _, backendName := range s.xkmsService.BackendNames() {
+			backendKeys, err := s.listKeysFromBackend(ctx, backendName)
 			if err != nil {
 				// Skip backends that fail to list keys (e.g., not initialized)
 				continue
@@ -425,13 +424,13 @@ func (s *Server) handleListKeys(req *JSONRPCRequest) (interface{}, error) {
 
 // listKeysFromBackend lists keys from a single backend, converting each
 // KeyAttributes into the rich KeyInfo format that matches the REST API.
-func (s *Server) listKeysFromBackend(backendName string) ([]KeyInfo, error) {
-	ks, err := xkms.GetBackend(backendName)
+func (s *Server) listKeysFromBackend(ctx context.Context, backendName string) ([]KeyInfo, error) {
+	ks, err := s.xkmsService.LookupBackend(backendName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
 	}
 
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
@@ -446,7 +445,7 @@ func (s *Server) listKeysFromBackend(backendName string) ([]KeyInfo, error) {
 		}
 
 		// Try to get the public key PEM for asymmetric keys
-		privKey, err := ks.GetKey(attr)
+		privKey, err := ks.GetKey(ctx, attr)
 		if err == nil {
 			pubKey := getPublicKey(privKey)
 			if pubKey != nil {
@@ -464,7 +463,7 @@ func (s *Server) listKeysFromBackend(backendName string) ([]KeyInfo, error) {
 }
 
 // handleSign handles the sign method
-func (s *Server) handleSign(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleSign(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params SignParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -478,15 +477,15 @@ func (s *Server) handleSign(req *JSONRPCRequest) (interface{}, error) {
 	var attrs *types.KeyAttributes
 	var err error
 	if params.Backend != "" {
-		attrs, err = s.findKeyInBackend(params.KeyID, params.Backend)
+		attrs, err = s.findKeyInBackend(ctx, params.KeyID, params.Backend)
 	} else {
-		attrs, err = s.findKeyByCN(params.KeyID)
+		attrs, err = s.findKeyByCN(ctx, params.KeyID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
-	signer, err := s.keystore.Signer(attrs)
+	signer, err := s.keystore.Signer(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get signer: %w", err)
 	}
@@ -524,7 +523,7 @@ func (s *Server) handleSign(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleVerify handles the verify method
-func (s *Server) handleVerify(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleVerify(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params VerifyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -538,16 +537,16 @@ func (s *Server) handleVerify(req *JSONRPCRequest) (interface{}, error) {
 	var attrs *types.KeyAttributes
 	var err error
 	if params.Backend != "" {
-		attrs, err = s.findKeyInBackend(params.KeyID, params.Backend)
+		attrs, err = s.findKeyInBackend(ctx, params.KeyID, params.Backend)
 	} else {
-		attrs, err = s.findKeyByCN(params.KeyID)
+		attrs, err = s.findKeyByCN(ctx, params.KeyID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
 	// Get the key
-	privKey, err := s.keystore.GetKey(attrs)
+	privKey, err := s.keystore.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get key: %w", err)
 	}
@@ -616,7 +615,7 @@ func (s *Server) handleVerify(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleSubscribe handles the subscribe method
-func (s *Server) handleSubscribe(req *JSONRPCRequest, conn net.Conn) (interface{}, error) {
+func (s *Server) handleSubscribe(ctx context.Context, req *JSONRPCRequest, conn net.Conn) (interface{}, error) {
 	var params SubscribeParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -649,7 +648,7 @@ func (s *Server) handleSubscribe(req *JSONRPCRequest, conn net.Conn) (interface{
 }
 
 // handleRotateKey handles the rotateKey method
-func (s *Server) handleRotateKey(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleRotateKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params RotateKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -660,7 +659,7 @@ func (s *Server) handleRotateKey(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(params.KeyID)
+	attrs, err := s.findKeyByCN(ctx, params.KeyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
@@ -674,7 +673,7 @@ func (s *Server) handleRotateKey(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Rotate the key
-	privKey, err := s.keystore.RotateKey(attrs)
+	privKey, err := s.keystore.RotateKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to rotate key: %w", err)
 	}
@@ -708,7 +707,7 @@ func (s *Server) handleRotateKey(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleDecrypt handles the decrypt method
-func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params DecryptParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -725,15 +724,15 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 
 	if backendName != "" {
 		// Backend specified, look up key in that backend
-		attrs, err = s.findKeyInBackend(params.KeyID, backendName)
+		attrs, err = s.findKeyInBackend(ctx, params.KeyID, backendName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find key: %w", err)
 		}
 	} else {
 		// No backend specified, search both symmetric and software backends
-		attrs, err = s.findKeyInBackend(params.KeyID, "symmetric")
+		attrs, err = s.findKeyInBackend(ctx, params.KeyID, "symmetric")
 		if err != nil {
-			attrs, err = s.findKeyInBackend(params.KeyID, "software")
+			attrs, err = s.findKeyInBackend(ctx, params.KeyID, "software")
 			if err != nil {
 				return nil, fmt.Errorf("failed to find key: %w", err)
 			}
@@ -743,7 +742,7 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 		}
 	}
 
-	ks, ksErr := xkms.GetBackend(backendName)
+	ks, ksErr := s.xkmsService.LookupBackend(backendName)
 	if ksErr != nil {
 		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
 	}
@@ -761,7 +760,7 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 			return nil, fmt.Errorf("backend %s does not support symmetric operations", backendName)
 		}
 
-		encrypter, err := symBackend.SymmetricEncrypter(attrs)
+		encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get symmetric encrypter: %w", err)
 		}
@@ -787,7 +786,7 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Asymmetric decryption
-	decrypter, err := ks.Decrypter(attrs)
+	decrypter, err := ks.Decrypter(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get decrypter: %w", err)
 	}
@@ -803,7 +802,7 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleEncrypt handles the encrypt method
-func (s *Server) handleEncrypt(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleEncrypt(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params EncryptParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -824,12 +823,12 @@ func (s *Server) handleEncrypt(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Look up the key in the symmetric backend to get full attributes
-	attrs, err := s.findKeyInBackend(params.KeyID, backendName)
+	attrs, err := s.findKeyInBackend(ctx, params.KeyID, backendName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
-	ks, ksErr := xkms.GetBackend(backendName)
+	ks, ksErr := s.xkmsService.LookupBackend(backendName)
 	if ksErr != nil {
 		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
 	}
@@ -846,7 +845,7 @@ func (s *Server) handleEncrypt(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Get encrypter
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get symmetric encrypter: %w", err)
 	}
@@ -870,7 +869,7 @@ func (s *Server) handleEncrypt(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleSaveCert handles the saveCert method
-func (s *Server) handleSaveCert(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleSaveCert(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params SaveCertParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -895,7 +894,7 @@ func (s *Server) handleSaveCert(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("failed to parse certificate: %w", err)
 	}
 
-	if err := s.keystore.SaveCert(params.KeyID, cert); err != nil {
+	if err := s.keystore.SaveCert(ctx, params.KeyID, cert); err != nil {
 		return nil, fmt.Errorf("failed to save certificate: %w", err)
 	}
 
@@ -910,7 +909,7 @@ func (s *Server) handleSaveCert(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleGetCert handles the getCert method
-func (s *Server) handleGetCert(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleGetCert(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetCertParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -920,7 +919,7 @@ func (s *Server) handleGetCert(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	cert, err := s.keystore.GetCert(params.KeyID)
+	cert, err := s.keystore.GetCert(ctx, params.KeyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get certificate: %w", err)
 	}
@@ -939,7 +938,7 @@ func (s *Server) handleGetCert(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleDeleteCert handles the deleteCert method
-func (s *Server) handleDeleteCert(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleDeleteCert(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params DeleteCertParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -949,7 +948,7 @@ func (s *Server) handleDeleteCert(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	if err := s.keystore.DeleteCert(params.KeyID); err != nil {
+	if err := s.keystore.DeleteCert(ctx, params.KeyID); err != nil {
 		return nil, fmt.Errorf("failed to delete certificate: %w", err)
 	}
 
@@ -964,8 +963,8 @@ func (s *Server) handleDeleteCert(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleListCerts handles the listCerts method
-func (s *Server) handleListCerts(req *JSONRPCRequest) (interface{}, error) {
-	keyIDs, err := s.keystore.ListCerts()
+func (s *Server) handleListCerts(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	keyIDs, err := s.keystore.ListCerts(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list certificates: %w", err)
 	}
@@ -984,7 +983,7 @@ func (s *Server) handleListCerts(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleCertExists handles the certExists method
-func (s *Server) handleCertExists(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleCertExists(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params CertExistsParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -994,7 +993,7 @@ func (s *Server) handleCertExists(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	exists, err := s.keystore.CertExists(params.KeyID)
+	exists, err := s.keystore.CertExists(ctx, params.KeyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check certificate existence: %w", err)
 	}
@@ -1005,7 +1004,7 @@ func (s *Server) handleCertExists(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleSaveCertChain handles the saveCertChain method
-func (s *Server) handleSaveCertChain(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleSaveCertChain(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params SaveCertChainParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1035,7 +1034,7 @@ func (s *Server) handleSaveCertChain(req *JSONRPCRequest) (interface{}, error) {
 		chain = append(chain, cert)
 	}
 
-	if err := s.keystore.SaveCertChain(params.KeyID, chain); err != nil {
+	if err := s.keystore.SaveCertChain(ctx, params.KeyID, chain); err != nil {
 		return nil, fmt.Errorf("failed to save certificate chain: %w", err)
 	}
 
@@ -1051,7 +1050,7 @@ func (s *Server) handleSaveCertChain(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleGetCertChain handles the getCertChain method
-func (s *Server) handleGetCertChain(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleGetCertChain(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetCertChainParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1061,7 +1060,7 @@ func (s *Server) handleGetCertChain(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	chain, err := s.keystore.GetCertChain(params.KeyID)
+	chain, err := s.keystore.GetCertChain(ctx, params.KeyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get certificate chain: %w", err)
 	}
@@ -1083,7 +1082,7 @@ func (s *Server) handleGetCertChain(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleGetTLSCertificate handles the getTLSCertificate method
-func (s *Server) handleGetTLSCertificate(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleGetTLSCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetTLSCertificateParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1103,7 +1102,7 @@ func (s *Server) handleGetTLSCertificate(req *JSONRPCRequest) (interface{}, erro
 	}
 
 	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(params.KeyID)
+	attrs, err := s.findKeyByCN(ctx, params.KeyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
@@ -1113,7 +1112,7 @@ func (s *Server) handleGetTLSCertificate(req *JSONRPCRequest) (interface{}, erro
 		attrs.StoreType = storeType
 	}
 
-	tlsCert, err := s.keystore.GetTLSCertificate(params.KeyID, attrs)
+	tlsCert, err := s.keystore.GetTLSCertificate(ctx, params.KeyID, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get TLS certificate: %w", err)
 	}
@@ -1152,7 +1151,7 @@ func (s *Server) handleGetTLSCertificate(req *JSONRPCRequest) (interface{}, erro
 }
 
 // handleGetImportParameters handles getting import parameters for key import
-func (s *Server) handleGetImportParameters(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleGetImportParameters(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetImportParametersParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1184,7 +1183,7 @@ func (s *Server) handleGetImportParameters(req *JSONRPCRequest) (interface{}, er
 	algorithm := backend.WrappingAlgorithm(params.Algorithm)
 
 	// Get import parameters
-	importParams, err := importExportBackend.GetImportParameters(attrs, algorithm)
+	importParams, err := importExportBackend.GetImportParameters(ctx, attrs, algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get import parameters: %w", err)
 	}
@@ -1218,7 +1217,7 @@ func (s *Server) handleGetImportParameters(req *JSONRPCRequest) (interface{}, er
 }
 
 // handleWrapKey handles wrapping key material for secure transport
-func (s *Server) handleWrapKey(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params WrapKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1249,7 +1248,7 @@ func (s *Server) handleWrapKey(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Wrap the key material
-	wrapped, err := importExportBackend.WrapKey(params.KeyMaterial, importParams)
+	wrapped, err := importExportBackend.WrapKey(ctx, params.KeyMaterial, importParams)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wrap key: %w", err)
 	}
@@ -1263,7 +1262,7 @@ func (s *Server) handleWrapKey(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleUnwrapKey handles unwrapping key material
-func (s *Server) handleUnwrapKey(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UnwrapKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1311,7 +1310,7 @@ func (s *Server) handleUnwrapKey(req *JSONRPCRequest) (interface{}, error) {
 		ImportToken:       params.ImportToken,
 	}
 
-	keyMaterial, err := importExportBackend.UnwrapKey(wrapped, importParams)
+	keyMaterial, err := importExportBackend.UnwrapKey(ctx, wrapped, importParams)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unwrap key: %w", err)
 	}
@@ -1322,7 +1321,7 @@ func (s *Server) handleUnwrapKey(req *JSONRPCRequest) (interface{}, error) {
 }
 
 // handleImportKeyMaterial handles importing externally generated key material
-func (s *Server) handleImportKeyMaterial(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params ImportKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1359,7 +1358,7 @@ func (s *Server) handleImportKeyMaterial(req *JSONRPCRequest) (interface{}, erro
 	}
 
 	// Import the key
-	if err := importExportBackend.ImportKey(attrs, wrapped); err != nil {
+	if err := importExportBackend.ImportKey(ctx, attrs, wrapped); err != nil {
 		return nil, fmt.Errorf("failed to import key: %w", err)
 	}
 
@@ -1375,7 +1374,7 @@ func (s *Server) handleImportKeyMaterial(req *JSONRPCRequest) (interface{}, erro
 }
 
 // handleExportKeyMaterial handles exporting a key in wrapped form
-func (s *Server) handleExportKeyMaterial(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleExportKeyMaterial(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params ExportKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1392,7 +1391,7 @@ func (s *Server) handleExportKeyMaterial(req *JSONRPCRequest) (interface{}, erro
 	}
 
 	// Look up the key in the correct backend
-	attrs, err := s.findKeyInBackend(params.KeyID, backendName)
+	attrs, err := s.findKeyInBackend(ctx, params.KeyID, backendName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
@@ -1403,7 +1402,7 @@ func (s *Server) handleExportKeyMaterial(req *JSONRPCRequest) (interface{}, erro
 	}
 
 	// Get the correct keystore
-	ks, err := xkms.GetBackend(backendName)
+	ks, err := s.xkmsService.LookupBackend(backendName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
 	}
@@ -1418,7 +1417,7 @@ func (s *Server) handleExportKeyMaterial(req *JSONRPCRequest) (interface{}, erro
 	algorithm := backend.WrappingAlgorithm(params.Algorithm)
 
 	// Export the key
-	wrapped, err := importExportBackend.ExportKey(attrs, algorithm)
+	wrapped, err := importExportBackend.ExportKey(ctx, attrs, algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to export key: %w", err)
 	}
@@ -1438,7 +1437,7 @@ func (s *Server) handleExportKeyMaterial(req *JSONRPCRequest) (interface{}, erro
 }
 
 // handleAsymmetricEncrypt handles asymmetric (RSA) encryption
-func (s *Server) handleAsymmetricEncrypt(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleAsymmetricEncrypt(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params AsymmetricEncryptParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1449,7 +1448,7 @@ func (s *Server) handleAsymmetricEncrypt(req *JSONRPCRequest) (interface{}, erro
 	}
 
 	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(params.KeyID)
+	attrs, err := s.findKeyByCN(ctx, params.KeyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
@@ -1463,7 +1462,7 @@ func (s *Server) handleAsymmetricEncrypt(req *JSONRPCRequest) (interface{}, erro
 	}
 
 	// Get the key
-	privKey, err := s.keystore.GetKey(attrs)
+	privKey, err := s.keystore.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get key: %w", err)
 	}
@@ -1492,7 +1491,7 @@ func (s *Server) handleAsymmetricEncrypt(req *JSONRPCRequest) (interface{}, erro
 }
 
 // handleAsymmetricDecrypt handles asymmetric (RSA) decryption
-func (s *Server) handleAsymmetricDecrypt(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleAsymmetricDecrypt(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params AsymmetricDecryptParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1503,7 +1502,7 @@ func (s *Server) handleAsymmetricDecrypt(req *JSONRPCRequest) (interface{}, erro
 	}
 
 	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(params.KeyID)
+	attrs, err := s.findKeyByCN(ctx, params.KeyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
@@ -1517,7 +1516,7 @@ func (s *Server) handleAsymmetricDecrypt(req *JSONRPCRequest) (interface{}, erro
 	}
 
 	// Get decrypter
-	decrypter, err := s.keystore.Decrypter(attrs)
+	decrypter, err := s.keystore.Decrypter(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get decrypter: %w", err)
 	}
@@ -1534,7 +1533,7 @@ func (s *Server) handleAsymmetricDecrypt(req *JSONRPCRequest) (interface{}, erro
 }
 
 // handleCopyKey handles copying a key from one backend to another
-func (s *Server) handleCopyKey(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params CopyKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1558,7 +1557,7 @@ func (s *Server) handleCopyKey(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Get source and destination backends
-	sourceKS, err := xkms.GetBackend(params.SourceBackend)
+	sourceKS, err := s.xkmsService.LookupBackend(params.SourceBackend)
 	if err != nil {
 		return nil, fmt.Errorf("source backend not found: %w", err)
 	}
@@ -1567,7 +1566,7 @@ func (s *Server) handleCopyKey(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("source backend does not support import/export operations")
 	}
 
-	destKS, err := xkms.GetBackend(params.DestBackend)
+	destKS, err := s.xkmsService.LookupBackend(params.DestBackend)
 	if err != nil {
 		return nil, fmt.Errorf("destination backend not found: %w", err)
 	}
@@ -1604,13 +1603,13 @@ func (s *Server) handleCopyKey(req *JSONRPCRequest) (interface{}, error) {
 	algorithm := backend.WrappingAlgorithm(params.Algorithm)
 
 	// Export from source backend
-	wrapped, err := sourceBackend.ExportKey(sourceAttrs, algorithm)
+	wrapped, err := sourceBackend.ExportKey(ctx, sourceAttrs, algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to export key: %w", err)
 	}
 
 	// Import to destination backend
-	if err := destBackend.ImportKey(destAttrs, wrapped); err != nil {
+	if err := destBackend.ImportKey(ctx, destAttrs, wrapped); err != nil {
 		return nil, fmt.Errorf("failed to import key: %w", err)
 	}
 
@@ -1651,13 +1650,13 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 	// If KeyID is provided, look up the key to get its actual attributes
 	if params.KeyID != "" {
 		// Get the backend to look up the key
-		ks, err := xkms.GetBackend(backendName)
+		ks, err := s.xkmsService.LookupBackend(backendName)
 		if err != nil {
 			return nil, fmt.Errorf("backend not found: %w", err)
 		}
 
 		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys()
+		keyAttrs, err := ks.ListKeys(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list keys: %w", err)
 		}
@@ -1678,7 +1677,7 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 	}
 
 	// Call the xkms service to seal the data
-	sealed, err := xkms.SealWithBackend(ctx, backendName, params.Data, opts)
+	sealed, err := s.xkmsService.SealWithBackend(ctx, backendName, params.Data, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to seal data: %w", err)
 	}
@@ -1718,7 +1717,7 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 	backendName := params.Backend
 
 	// Get backend to determine backend type for sealed data
-	ks, err := xkms.GetBackend(backendName)
+	ks, err := s.xkmsService.LookupBackend(backendName)
 	if err != nil {
 		return nil, fmt.Errorf("backend not found: %w", err)
 	}
@@ -1739,7 +1738,7 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 	// If KeyID is provided, look up the key to get its actual attributes
 	if params.KeyID != "" {
 		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys()
+		keyAttrs, err := ks.ListKeys(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list keys: %w", err)
 		}
@@ -1761,7 +1760,7 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 	}
 
 	// Call the xkms service to unseal the data
-	plaintext, err := xkms.UnsealWithBackend(ctx, backendName, sealed, opts)
+	plaintext, err := s.xkmsService.UnsealWithBackend(ctx, backendName, sealed, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unseal data: %w", err)
 	}
@@ -1772,7 +1771,7 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 }
 
 // handleCanSeal handles the canSeal method to check if a backend supports sealing
-func (s *Server) handleCanSeal(req *JSONRPCRequest) (interface{}, error) {
+func (s *Server) handleCanSeal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params CanSealParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1781,9 +1780,9 @@ func (s *Server) handleCanSeal(req *JSONRPCRequest) (interface{}, error) {
 	// Check sealing capability
 	var canSeal bool
 	if params.Backend != "" {
-		canSeal = xkms.CanSeal(params.Backend)
+		canSeal = s.xkmsService.CanSealDirect(params.Backend)
 	} else {
-		canSeal = xkms.CanSeal()
+		canSeal = s.xkmsService.CanSealDirect()
 	}
 
 	return CanSealResult{

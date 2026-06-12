@@ -14,6 +14,7 @@
 package keybackend
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -130,7 +131,9 @@ func (a *BackendAdapter) GenerateCredentialKey(algorithm int, credentialID []byt
 		return nil, nil, err
 	}
 
-	privKey, err := a.provider.GenerateKey(attrs)
+	// CTAP2 authenticator operations carry no request context; the key
+	// provider storage call is bounded by context.Background() at this boundary.
+	privKey, err := a.provider.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		a.logger.Error("FIDO2 adapter: provider.GenerateKey failed",
 			"backend", a.backendType,
@@ -195,7 +198,7 @@ func (a *BackendAdapter) Sign(handle KeyHandle, algorithm int, data []byte) ([]b
 		return nil, err
 	}
 
-	signer, err := a.provider.Signer(attrs)
+	signer, err := a.provider.Signer(context.Background(), attrs)
 	if err != nil {
 		a.logger.Error("FIDO2 adapter: provider.Signer failed",
 			"backend", a.backendType,
@@ -253,7 +256,7 @@ func (a *BackendAdapter) LoadKey(credentialID []byte, algorithm int) (KeyHandle,
 	}
 
 	// Verify the key exists by attempting to get a Signer.
-	if _, err := a.provider.Signer(attrs); err != nil {
+	if _, err := a.provider.Signer(context.Background(), attrs); err != nil {
 		return nil, ErrKeyNotFound
 	}
 
@@ -278,7 +281,7 @@ func (a *BackendAdapter) DeleteKey(handle KeyHandle) error {
 		return err
 	}
 
-	return a.provider.DeleteKey(attrs)
+	return a.provider.DeleteKey(context.Background(), attrs)
 }
 
 // ExportPrivateKey exports the private key in PKCS#8 format.
@@ -296,7 +299,7 @@ func (a *BackendAdapter) ExportPrivateKey(handle KeyHandle) ([]byte, error) {
 		return nil, err
 	}
 
-	privKey, err := a.provider.GetKey(attrs)
+	privKey, err := a.provider.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, ErrKeyNotFound
 	}

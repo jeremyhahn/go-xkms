@@ -1231,11 +1231,14 @@ type BarrierInitializeShamirRequest struct {
 	TotalShares int    `json:"total_shares"`
 }
 
-// BarrierInitializeShamirResponse contains the generated Shamir shares.
+// BarrierInitializeShamirResponse reports the Shamir initialization
+// parameters. Share material is never returned (qrdb share-free contract):
+// shares are sealed to enrolled Security Officers and claimed through the
+// identity-gated claim endpoints.
 type BarrierInitializeShamirResponse struct {
-	Shares      []string `json:"shares"`
-	Threshold   int      `json:"threshold"`
-	TotalShares int      `json:"total_shares"`
+	Threshold   int `json:"threshold"`
+	TotalShares int `json:"total_shares"`
+	ShareCount  int `json:"share_count"`
 }
 
 // BarrierUnsealShareRequest contains a single Shamir share for unsealing.
@@ -1263,11 +1266,14 @@ type BarrierRekeyRequest struct {
 	Total     int `json:"total"`
 }
 
-// BarrierRekeyResponse contains the new Shamir shares after rekeying.
+// BarrierRekeyResponse reports the new Shamir parameters after rekeying.
+// Share material is never returned (qrdb share-free contract): new shares
+// are sealed to enrolled Security Officers and claimed through the
+// identity-gated claim endpoints.
 type BarrierRekeyResponse struct {
-	Shares      []string `json:"shares"`
-	Threshold   int      `json:"threshold"`
-	TotalShares int      `json:"total_shares"`
+	Threshold   int `json:"threshold"`
+	TotalShares int `json:"total_shares"`
+	ShareCount  int `json:"share_count"`
 }
 
 // BarrierGenerateRecoveryKeysRequest contains parameters for generating
@@ -1277,11 +1283,13 @@ type BarrierGenerateRecoveryKeysRequest struct {
 	Total     int `json:"total"`
 }
 
-// BarrierRecoveryKeysResponse contains the generated recovery keys.
+// BarrierRecoveryKeysResponse reports the recovery key generation
+// parameters. Recovery key material is never returned (qrdb share-free
+// contract): recovery shares are sealed to enrolled recovery officers.
 type BarrierRecoveryKeysResponse struct {
-	Keys      []string `json:"keys"`
-	Threshold int      `json:"threshold"`
-	Total     int      `json:"total"`
+	Threshold   int `json:"threshold"`
+	TotalShares int `json:"total_shares"`
+	ShareCount  int `json:"share_count"`
 }
 
 // BarrierRecoverWithKeysRequest contains recovery keys for unsealing.

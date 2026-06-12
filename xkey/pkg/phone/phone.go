@@ -26,7 +26,6 @@ package phone
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -71,9 +70,6 @@ const (
 
 	// OperationTimeout is the default timeout for operations (includes biometric wait).
 	OperationTimeout = 60 * time.Second
-
-	// prologueVersion is the version string appended to prologue computation.
-	prologueVersion = "xkey-v1"
 )
 
 // PhoneKeyBackendConfig configures the phone key backend.
@@ -174,29 +170,6 @@ type PhoneKeyBackend struct {
 	closed    atomic.Bool
 }
 
-// computePrologue computes the Noise prologue for trusted device binding.
-// The prologue binds the handshake to expected device fingerprints.
-// Both sides must use the same prologue or the handshake fails.
-// For new/unknown devices, returns nil to allow pairing.
-//
-// IMPORTANT: The key order is always initiator || responder to ensure both
-// sides compute the same hash. Go is always the initiator, Android is always
-// the responder. Since this function is called from the Go (initiator) side,
-// local = initiator and remote = responder.
-func computePrologue(localPublicKeyHex, expectedRemotePublicKeyHex string) []byte {
-	if expectedRemotePublicKeyHex == "" {
-		return nil // Empty prologue for new device pairing
-	}
-
-	// Build prologue: SHA-256(initiator_key || responder_key || version)
-	// Go is initiator (local), Android is responder (remote)
-	h := sha256.New()
-	h.Write([]byte(localPublicKeyHex))          // initiator (Go)
-	h.Write([]byte(expectedRemotePublicKeyHex)) // responder (Android)
-	h.Write([]byte(prologueVersion))
-	return h.Sum(nil)
-}
-
 // NewPhoneKeyBackend creates a new phone key backend using BLE transport.
 // On platforms without BLE support (built without the "ble" tag), this
 // returns ErrBLEUnavailable.
@@ -249,7 +222,7 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport Transport) (*Phone
 	// Validate trust settings: if no expected remote key and trust-new-devices is false,
 	// reject the connection to prevent connecting to unknown devices.
 	if len(cfg.ExpectedRemoteStatic) == 0 && !cfg.TrustNewDevices {
-		transport.Close()
+		_ = transport.Close()
 		return nil, ErrUntrustedDevice
 	}
 
@@ -265,7 +238,7 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport Transport) (*Phone
 		Prologue:             nil, // Set during identity exchange
 	})
 	if err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, err
 	}
 
@@ -397,7 +370,7 @@ func (b *PhoneKeyBackend) connectBLE(ctx context.Context, bleTransport BLECapabl
 			// Other errors: force-remove and retry with fresh scan
 			// Force-remove to clear stale D-Bus state from failed connection
 			if attempt < maxRetries {
-				bleTransport.DisconnectAndRemove()
+				_ = bleTransport.DisconnectAndRemove()
 				b.log.Info("will retry with fresh scan after disconnect")
 				continue
 			}
@@ -413,7 +386,7 @@ func (b *PhoneKeyBackend) connectBLE(ctx context.Context, bleTransport BLECapabl
 			// D-Bus operation that blocks all future writes with "In Progress".
 			// Removing the device from BlueZ invalidates all cached GATT handles
 			// and stale D-Bus state, allowing a fresh connection with clean objects.
-			bleTransport.DisconnectAndRemove()
+			_ = bleTransport.DisconnectAndRemove()
 			lastErr = err
 
 			if attempt < maxRetries {
@@ -882,7 +855,7 @@ func (b *PhoneKeyBackend) Close() error {
 	}
 
 	if b.transport != nil {
-		b.transport.Close()
+		_ = b.transport.Close()
 		b.transport = nil
 	}
 

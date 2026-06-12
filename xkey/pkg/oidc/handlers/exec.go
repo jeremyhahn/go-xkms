@@ -98,8 +98,8 @@ func (h *ExecHandler) Handle(ctx context.Context, data *TokenData) error {
 			return fmt.Errorf("%w: %v", ErrExecCommandFailed, err)
 		}
 		go func() {
-			defer stdin.Close()
-			stdin.Write(jsonData)
+			defer func() { _ = stdin.Close() }()
+			_, _ = stdin.Write(jsonData)
 		}()
 	} else if h.Stdin != nil {
 		cmd.Stdin = h.Stdin

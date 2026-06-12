@@ -73,6 +73,13 @@ var (
 
 	// Trusted Platform Enterprise OIDs
 	OIDTPTenantID = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 29377, 101, 20}
+
+	// OIDTPNetworkZone is tp-networkZone (1.3.6.1.4.1.29377.101.21).
+	// It carries the platform network zone (e.g. "trusted", "provisioning",
+	// "quarantine") assigned to the certificate subject. The value is
+	// evaluated by the platform SDN policy engine at enforcement time to
+	// determine which network segments the subject is permitted to access.
+	OIDTPNetworkZone = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 29377, 101, 21}
 )
 
 // x509.OID versions for use with certificate Policies field (Go 1.24+).
@@ -124,6 +131,13 @@ type TCGAttribute struct {
 // This extension binds a device identity certificate to a specific tenant.
 type TCGTenantID struct {
 	ID string `asn1:"utf8"`
+}
+
+// TCGNetworkZone represents the platform network zone assigned to the
+// certificate subject. The zone label is evaluated by the platform SDN
+// policy engine at enforcement time.
+type TCGNetworkZone struct {
+	Zone string `asn1:"utf8"`
 }
 
 // CreateTPMManufacturerExtension creates an X.509 extension for TPM manufacturer.
@@ -363,4 +377,38 @@ func CreateTenantIDExtension(tenantID string) (pkix.Extension, error) {
 		Critical: false,
 		Value:    value,
 	}, nil
+}
+
+// CreateNetworkZoneExtension creates a certificate extension binding the certificate
+// to a platform network zone. The zone label (e.g. "trusted", "provisioning",
+// "quarantine") is evaluated by the platform SDN policy engine at enforcement
+// time to determine which network segments the subject may access.
+// An empty zone is rejected with ErrTCGNetworkZoneEmpty.
+func CreateNetworkZoneExtension(zone string) (pkix.Extension, error) {
+	if zone == "" {
+		return pkix.Extension{}, ErrTCGNetworkZoneEmpty
+	}
+	value, err := asn1.Marshal(TCGNetworkZone{Zone: zone})
+	if err != nil {
+		return pkix.Extension{}, ErrTCGExtensionEncoding
+	}
+	return pkix.Extension{
+		Id:       OIDTPNetworkZone,
+		Critical: false,
+		Value:    value,
+	}, nil
+}
+
+// ParseNetworkZoneExtension parses a network zone extension from a pkix.Extension.
+// Returns ErrTCGExtensionParsing if the OID does not match OIDTPNetworkZone or the
+// ASN.1 value cannot be decoded.
+func ParseNetworkZoneExtension(ext pkix.Extension) (string, error) {
+	if !ext.Id.Equal(OIDTPNetworkZone) {
+		return "", ErrTCGExtensionParsing
+	}
+	var nz TCGNetworkZone
+	if _, err := asn1.Unmarshal(ext.Value, &nz); err != nil {
+		return "", ErrTCGExtensionParsing
+	}
+	return nz.Zone, nil
 }

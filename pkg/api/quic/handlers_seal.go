@@ -19,7 +19,6 @@ import (
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // SealRequest represents a request to seal data
@@ -99,14 +98,14 @@ func (s *Server) handleSeal(w http.ResponseWriter, r *http.Request) {
 	// If KeyID is provided, look up the key to get its actual attributes
 	if req.KeyID != "" {
 		// Get the backend to look up the key
-		ks, err := xkms.GetBackend(req.Backend)
+		ks, err := s.lookupBackend(req.Backend)
 		if err != nil {
 			s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %v", err))
 			return
 		}
 
 		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys()
+		keyAttrs, err := ks.ListKeys(r.Context())
 		if err != nil {
 			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list keys: %v", err))
 			return
@@ -130,7 +129,7 @@ func (s *Server) handleSeal(w http.ResponseWriter, r *http.Request) {
 
 	// Seal the data using the xkms service
 	ctx := r.Context()
-	sealed, err := xkms.SealWithBackend(ctx, req.Backend, req.Data, opts)
+	sealed, err := s.sealWithBackend(ctx, req.Backend, req.Data, opts)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to seal data: %v", err))
 		return
@@ -173,7 +172,7 @@ func (s *Server) handleUnseal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get backend to determine backend type for sealed data
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %v", err))
 		return
@@ -195,7 +194,7 @@ func (s *Server) handleUnseal(w http.ResponseWriter, r *http.Request) {
 	// If KeyID is provided, look up the key to get its actual attributes
 	if req.KeyID != "" {
 		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys()
+		keyAttrs, err := ks.ListKeys(r.Context())
 		if err != nil {
 			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list keys: %v", err))
 			return
@@ -220,7 +219,7 @@ func (s *Server) handleUnseal(w http.ResponseWriter, r *http.Request) {
 
 	// Unseal the data using the xkms service
 	ctx := r.Context()
-	plaintext, err := xkms.UnsealWithBackend(ctx, req.Backend, sealed, opts)
+	plaintext, err := s.unsealWithBackend(ctx, req.Backend, sealed, opts)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unseal data: %v", err))
 		return
@@ -258,9 +257,9 @@ func (s *Server) handleCanSeal(w http.ResponseWriter, r *http.Request) {
 
 	var canSeal bool
 	if backendName != "" {
-		canSeal = xkms.CanSeal(backendName)
+		canSeal = s.canSeal(backendName)
 	} else {
-		canSeal = xkms.CanSeal()
+		canSeal = s.canSeal()
 	}
 
 	s.sendJSON(w, http.StatusOK, CanSealResponse{

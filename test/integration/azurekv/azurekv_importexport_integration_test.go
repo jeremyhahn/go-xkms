@@ -16,6 +16,7 @@
 package integration
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -137,7 +138,7 @@ func TestAzureKVImportExport(t *testing.T) {
 			},
 		}
 
-		params, err := importExportBackend.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_1)
+		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_1)
 		require.NoError(t, err, "GetImportParameters should succeed")
 		require.NotNil(t, params, "Import parameters should not be nil")
 
@@ -174,7 +175,7 @@ func TestAzureKVImportExport(t *testing.T) {
 			},
 		}
 
-		params, err := importExportBackend.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		require.NoError(t, err, "GetImportParameters should succeed")
 		require.NotNil(t, params, "Import parameters should not be nil")
 
@@ -198,7 +199,7 @@ func TestAzureKVImportExport(t *testing.T) {
 			},
 		}
 
-		params, err := importExportBackend.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
+		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
 		require.NoError(t, err, "GetImportParameters should succeed")
 		require.NotNil(t, params, "Import parameters should not be nil")
 
@@ -222,7 +223,7 @@ func TestAzureKVImportExport(t *testing.T) {
 			},
 		}
 
-		params, err := importExportBackend.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		require.NoError(t, err, "GetImportParameters should succeed")
 		require.NotNil(t, params, "Import parameters should not be nil")
 
@@ -260,7 +261,7 @@ func TestAzureKVImportExport(t *testing.T) {
 		// RSA-OAEP alone can only handle up to (key_size - 2*hash_size - 2) bytes
 		// For RSA-2048 with SHA-256: max is 256 - 2*32 - 2 = 190 bytes
 		t.Log("Step 2: Getting import parameters from Azure Key Vault...")
-		params, err := importExportBackend.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		require.NoError(t, err, "GetImportParameters failed")
 		require.NotNil(t, params, "Import parameters should not be nil")
 		t.Logf("✓ Received import parameters")
@@ -273,7 +274,7 @@ func TestAzureKVImportExport(t *testing.T) {
 
 		// Step 4: Wrap key material
 		t.Log("Step 4: Wrapping key material with RSA-AES Key Wrap SHA-256 (hybrid)...")
-		wrapped, err := importExportBackend.WrapKey(keyMaterial, params)
+		wrapped, err := importExportBackend.WrapKey(context.Background(), keyMaterial, params)
 		require.NoError(t, err, "WrapKey failed")
 		require.NotNil(t, wrapped, "Wrapped key material should not be nil")
 		require.NotEmpty(t, wrapped.WrappedKey, "Wrapped key should not be empty")
@@ -282,14 +283,14 @@ func TestAzureKVImportExport(t *testing.T) {
 
 		// Step 5: Verify unwrap works (local test)
 		t.Log("Step 5: Testing local unwrap...")
-		unwrapped, err := importExportBackend.UnwrapKey(wrapped, params)
+		unwrapped, err := importExportBackend.UnwrapKey(context.Background(), wrapped, params)
 		require.NoError(t, err, "UnwrapKey failed")
 		assert.Equal(t, keyMaterial, unwrapped, "Unwrapped key material should match original")
 		t.Logf("✓ Successfully unwrapped and verified key material locally")
 
 		// Step 6: Import key into Azure Key Vault
 		t.Log("Step 6: Importing key into Azure Key Vault...")
-		err = importExportBackend.ImportKey(attrs, wrapped)
+		err = importExportBackend.ImportKey(context.Background(), attrs, wrapped)
 		if err != nil {
 			// Azure KV emulator may not support ImportKey
 			t.Logf("⚠ ImportKey not supported by emulator (Azure KV production supports this): %v", err)
@@ -347,7 +348,7 @@ func TestAzureKVImportExport(t *testing.T) {
 
 		// Step 2: Get import parameters
 		t.Log("Step 2: Getting import parameters from Azure Key Vault...")
-		params, err := importExportBackend.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		require.NoError(t, err, "GetImportParameters failed")
 		t.Logf("✓ Received import parameters")
 
@@ -359,14 +360,14 @@ func TestAzureKVImportExport(t *testing.T) {
 
 		// Step 4: Wrap key material
 		t.Log("Step 4: Wrapping key material...")
-		wrapped, err := importExportBackend.WrapKey(keyMaterial, params)
+		wrapped, err := importExportBackend.WrapKey(context.Background(), keyMaterial, params)
 		require.NoError(t, err, "WrapKey failed")
 		require.NotNil(t, wrapped, "Wrapped key material should not be nil")
 		t.Logf("✓ Wrapped key material (%d bytes)", len(wrapped.WrappedKey))
 
 		// Step 5: Import key into Azure Key Vault
 		t.Log("Step 5: Importing ECDSA key into Azure Key Vault...")
-		err = importExportBackend.ImportKey(attrs, wrapped)
+		err = importExportBackend.ImportKey(context.Background(), attrs, wrapped)
 		if err != nil {
 			// Azure KV emulator may not support ECDSA or ImportKey
 			t.Logf("⚠ ImportKey not supported by emulator (Azure KV production supports this): %v", err)
@@ -417,7 +418,7 @@ func TestAzureKVImportExport(t *testing.T) {
 		t.Logf("✓ Generated RSA-4096 key locally")
 
 		// Get import parameters with RSA-AES hybrid wrapping
-		params, err := importExportBackend.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		require.NoError(t, err, "GetImportParameters failed")
 		t.Logf("✓ Received import parameters for hybrid wrapping")
 
@@ -427,14 +428,14 @@ func TestAzureKVImportExport(t *testing.T) {
 		t.Logf("✓ Marshaled large key material (%d bytes)", len(keyMaterial))
 
 		// Wrap key material using hybrid RSA+AES
-		wrapped, err := importExportBackend.WrapKey(keyMaterial, params)
+		wrapped, err := importExportBackend.WrapKey(context.Background(), keyMaterial, params)
 		require.NoError(t, err, "WrapKey with hybrid algorithm failed")
 		require.NotNil(t, wrapped, "Wrapped key material should not be nil")
 		assert.Equal(t, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256, wrapped.Algorithm)
 		t.Logf("✓ Wrapped large key with hybrid RSA-AES (%d bytes -> %d bytes)", len(keyMaterial), len(wrapped.WrappedKey))
 
 		// Verify unwrap works
-		unwrapped, err := importExportBackend.UnwrapKey(wrapped, params)
+		unwrapped, err := importExportBackend.UnwrapKey(context.Background(), wrapped, params)
 		require.NoError(t, err, "UnwrapKey failed")
 		assert.Equal(t, keyMaterial, unwrapped, "Unwrapped key material should match original")
 		t.Logf("✓ Successfully unwrapped large key material")
@@ -461,7 +462,7 @@ func TestAzureKVImportExport(t *testing.T) {
 		}
 
 		// Azure Key Vault does not support key export
-		_, err := importExportBackend.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		_, err := importExportBackend.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		require.Error(t, err, "ExportKey should return an error")
 		assert.ErrorIs(t, err, backend.ErrNotSupported, "Should return ErrNotSupported")
 		t.Logf("✓ ExportKey correctly returns ErrNotSupported: %v", err)
@@ -482,7 +483,7 @@ func TestAzureKVImportExport(t *testing.T) {
 		}
 
 		// Try with an unsupported wrapping algorithm
-		_, err := importExportBackend.GetImportParameters(attrs, backend.WrappingAlgorithm("INVALID_ALGORITHM"))
+		_, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithm("INVALID_ALGORITHM"))
 		require.Error(t, err, "Should error with invalid wrapping algorithm")
 		t.Logf("✓ Correctly rejected invalid wrapping algorithm: %v", err)
 	})
@@ -491,7 +492,7 @@ func TestAzureKVImportExport(t *testing.T) {
 	// Test 10: Error Handling - Nil Attributes
 	// ========================================================================
 	t.Run("GetImportParameters_NilAttributes", func(t *testing.T) {
-		_, err := importExportBackend.GetImportParameters(nil, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		_, err := importExportBackend.GetImportParameters(context.Background(), nil, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		require.Error(t, err, "Should error with nil attributes")
 		t.Logf("✓ Correctly rejected nil attributes: %v", err)
 	})
@@ -510,11 +511,11 @@ func TestAzureKVImportExport(t *testing.T) {
 			},
 		}
 
-		params, err := importExportBackend.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		require.NoError(t, err)
 
 		// Try to wrap empty key material
-		_, err = importExportBackend.WrapKey([]byte{}, params)
+		_, err = importExportBackend.WrapKey(context.Background(), []byte{}, params)
 		require.Error(t, err, "Should error with empty key material")
 		t.Logf("✓ Correctly rejected empty key material: %v", err)
 	})
@@ -533,16 +534,16 @@ func TestAzureKVImportExport(t *testing.T) {
 			},
 		}
 
-		params, err := importExportBackend.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		require.NoError(t, err)
 
 		// Wrap invalid key material (random bytes)
 		invalidKeyMaterial := []byte("this is not a valid key")
-		wrapped, err := importExportBackend.WrapKey(invalidKeyMaterial, params)
+		wrapped, err := importExportBackend.WrapKey(context.Background(), invalidKeyMaterial, params)
 		require.NoError(t, err, "Wrapping should succeed even with invalid data")
 
 		// Try to import - should fail during unwrap or import
-		err = importExportBackend.ImportKey(attrs, wrapped)
+		err = importExportBackend.ImportKey(context.Background(), attrs, wrapped)
 		if err == nil {
 			// If it didn't fail during import, it should fail during use
 			t.Log("ImportKey didn't reject invalid key material (may be validated later)")

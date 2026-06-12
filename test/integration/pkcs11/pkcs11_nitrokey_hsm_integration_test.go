@@ -158,7 +158,7 @@ func testNitrokeyRSA_PKCS1v15(t *testing.T, backend *pkcs11.Backend, keySize int
 	}
 
 	// Try to delete existing key (ignore error if it doesn't exist)
-	_ = backend.DeleteKey(attrs)
+	_ = backend.DeleteKey(context.Background(), attrs)
 
 	// Generate RSA key
 	t.Logf("Generating RSA %d key on Nitrokey HSM...", keySize)
@@ -189,7 +189,7 @@ func testNitrokeyRSA_PKCS1v15(t *testing.T, backend *pkcs11.Backend, keySize int
 	t.Logf("✓ RSA %d key generation, signing (PKCS#1 v1.5), and verification successful", keySize)
 
 	// Clean up
-	err = backend.DeleteKey(attrs)
+	err = backend.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err, "Failed to delete key")
 }
 
@@ -204,7 +204,7 @@ func testNitrokeyRSA_PSS(t *testing.T, backend *pkcs11.Backend, keySize int) {
 	}
 
 	// Try to delete existing key (ignore error if it doesn't exist)
-	_ = backend.DeleteKey(attrs)
+	_ = backend.DeleteKey(context.Background(), attrs)
 
 	// Generate RSA key
 	t.Logf("Generating RSA %d key on Nitrokey HSM for PSS testing...", keySize)
@@ -244,7 +244,7 @@ func testNitrokeyRSA_PSS(t *testing.T, backend *pkcs11.Backend, keySize int) {
 	t.Logf("✓ RSA %d key generation, signing (PSS), and verification successful", keySize)
 
 	// Clean up
-	err = backend.DeleteKey(attrs)
+	err = backend.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err, "Failed to delete key")
 }
 
@@ -267,7 +267,7 @@ func testNitrokeyECDSA(t *testing.T, backend *pkcs11.Backend, curve elliptic.Cur
 	}
 
 	// Try to delete existing key (ignore error if it doesn't exist)
-	_ = backend.DeleteKey(attrs)
+	_ = backend.DeleteKey(context.Background(), attrs)
 
 	// Generate ECDSA key
 	t.Logf("Generating ECDSA %s key on Nitrokey HSM...", curveName)
@@ -298,7 +298,7 @@ func testNitrokeyECDSA(t *testing.T, backend *pkcs11.Backend, curve elliptic.Cur
 	t.Logf("✓ ECDSA %s key generation, signing, and verification successful", curveName)
 
 	// Clean up
-	err = backend.DeleteKey(attrs)
+	err = backend.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err, "Failed to delete key")
 }
 
@@ -357,12 +357,12 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		}
 
 		// Clean up any existing key
-		_ = backend.DeleteKey(attrs)
+		_ = backend.DeleteKey(context.Background(), attrs)
 
 		// Generate key
 		key, err := backend.GenerateRSA(attrs)
 		require.NoError(t, err, "Failed to generate RSA key")
-		defer backend.DeleteKey(attrs)
+		defer backend.DeleteKey(context.Background(), attrs)
 
 		// Create self-signed certificate
 		cert := createNitrokeyTestCertificate(t, key, "Nitrokey HSM Test Cert")
@@ -400,12 +400,12 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		}
 
 		// Clean up any existing key
-		_ = backend.DeleteKey(attrs)
+		_ = backend.DeleteKey(context.Background(), attrs)
 
 		// Generate key
 		key, err := backend.GenerateRSA(attrs)
 		require.NoError(t, err, "Failed to generate RSA key")
-		defer backend.DeleteKey(attrs)
+		defer backend.DeleteKey(context.Background(), attrs)
 
 		// Create certificate
 		cert := createNitrokeyTestCertificate(t, key, "Nitrokey Exists Test")
@@ -449,12 +449,12 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		}
 
 		// Clean up any existing key
-		_ = backend.DeleteKey(attrs)
+		_ = backend.DeleteKey(context.Background(), attrs)
 
 		// Generate key
 		key, err := backend.GenerateRSA(attrs)
 		require.NoError(t, err, "Failed to generate RSA key")
-		defer backend.DeleteKey(attrs)
+		defer backend.DeleteKey(context.Background(), attrs)
 
 		// Create certificate
 		cert := createNitrokeyTestCertificate(t, key, "Nitrokey Delete Test")
@@ -505,17 +505,17 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		}
 
 		// Clean up any existing keys
-		_ = backend.DeleteKey(attrs1)
-		_ = backend.DeleteKey(attrs2)
+		_ = backend.DeleteKey(context.Background(), attrs1)
+		_ = backend.DeleteKey(context.Background(), attrs2)
 
 		// Generate keys
 		key1, err := backend.GenerateRSA(attrs1)
 		require.NoError(t, err, "Failed to generate first RSA key")
-		defer backend.DeleteKey(attrs1)
+		defer backend.DeleteKey(context.Background(), attrs1)
 
 		key2, err := backend.GenerateRSA(attrs2)
 		require.NoError(t, err, "Failed to generate second RSA key")
-		defer backend.DeleteKey(attrs2)
+		defer backend.DeleteKey(context.Background(), attrs2)
 
 		// Create two different certificates
 		cert1 := createNitrokeyTestCertificate(t, key1, "Nitrokey Cert 1")
@@ -557,12 +557,12 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		}
 
 		// Clean up any existing key
-		_ = backend.DeleteKey(attrs)
+		_ = backend.DeleteKey(context.Background(), attrs)
 
 		// Generate key
 		key, err := backend.GenerateRSA(attrs)
 		require.NoError(t, err, "Failed to generate RSA key")
-		defer backend.DeleteKey(attrs)
+		defer backend.DeleteKey(context.Background(), attrs)
 
 		// Create and save multiple certificates
 		certIDs := []string{
@@ -629,22 +629,22 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		}
 
 		// Clean up any existing keys
-		_ = backend.DeleteKey(attrs1)
-		_ = backend.DeleteKey(attrs2)
-		_ = backend.DeleteKey(attrs3)
+		_ = backend.DeleteKey(context.Background(), attrs1)
+		_ = backend.DeleteKey(context.Background(), attrs2)
+		_ = backend.DeleteKey(context.Background(), attrs3)
 
 		// Generate keys
 		key1, err := backend.GenerateRSA(attrs1)
 		require.NoError(t, err, "Failed to generate root key")
-		defer backend.DeleteKey(attrs1)
+		defer backend.DeleteKey(context.Background(), attrs1)
 
 		key2, err := backend.GenerateRSA(attrs2)
 		require.NoError(t, err, "Failed to generate intermediate key")
-		defer backend.DeleteKey(attrs2)
+		defer backend.DeleteKey(context.Background(), attrs2)
 
 		key3, err := backend.GenerateRSA(attrs3)
 		require.NoError(t, err, "Failed to generate leaf key")
-		defer backend.DeleteKey(attrs3)
+		defer backend.DeleteKey(context.Background(), attrs3)
 
 		// Create certificate chain
 		rootCert := createNitrokeyTestCertificate(t, key1, "Nitrokey Root CA")
@@ -691,12 +691,12 @@ func testNitrokeyRSAEncryptDecrypt(t *testing.T, backend *pkcs11.Backend) {
 		}
 
 		// Clean up any existing key
-		_ = backend.DeleteKey(attrs)
+		_ = backend.DeleteKey(context.Background(), attrs)
 
 		t.Log("Generating RSA 2048 key on Nitrokey HSM for encryption...")
 		key, err := backend.GenerateRSA(attrs)
 		require.NoError(t, err, "Failed to generate RSA key")
-		defer backend.DeleteKey(attrs)
+		defer backend.DeleteKey(context.Background(), attrs)
 
 		// Get the public key for encryption
 		signer, ok := key.(crypto.Signer)
@@ -712,7 +712,7 @@ func testNitrokeyRSAEncryptDecrypt(t *testing.T, backend *pkcs11.Backend) {
 		t.Logf("✓ Encrypted %d bytes with RSA-2048 PKCS#1 v1.5 (ciphertext: %d bytes)", len(plaintext), len(ciphertext))
 
 		// Get Decrypter interface
-		decrypter, err := backend.Decrypter(attrs)
+		decrypter, err := backend.Decrypter(context.Background(), attrs)
 		require.NoError(t, err, "Failed to get Decrypter")
 
 		// Decrypt using Nitrokey HSM
@@ -735,12 +735,12 @@ func testNitrokeyRSAEncryptDecrypt(t *testing.T, backend *pkcs11.Backend) {
 		}
 
 		// Clean up any existing key
-		_ = backend.DeleteKey(attrs)
+		_ = backend.DeleteKey(context.Background(), attrs)
 
 		t.Log("Generating RSA 2048 key on Nitrokey HSM for OAEP encryption...")
 		key, err := backend.GenerateRSA(attrs)
 		require.NoError(t, err, "Failed to generate RSA key")
-		defer backend.DeleteKey(attrs)
+		defer backend.DeleteKey(context.Background(), attrs)
 
 		// Get the public key for encryption
 		signer, ok := key.(crypto.Signer)
@@ -757,7 +757,7 @@ func testNitrokeyRSAEncryptDecrypt(t *testing.T, backend *pkcs11.Backend) {
 		t.Logf("✓ Encrypted %d bytes with RSA-OAEP SHA256 (ciphertext: %d bytes)", len(plaintext), len(ciphertext))
 
 		// Get Decrypter interface
-		decrypter, err := backend.Decrypter(attrs)
+		decrypter, err := backend.Decrypter(context.Background(), attrs)
 		require.NoError(t, err, "Failed to get Decrypter")
 
 		// Decrypt using Nitrokey HSM with OAEP options
@@ -784,12 +784,12 @@ func testNitrokeyRSAEncryptDecrypt(t *testing.T, backend *pkcs11.Backend) {
 		}
 
 		// Clean up any existing key
-		_ = backend.DeleteKey(attrs)
+		_ = backend.DeleteKey(context.Background(), attrs)
 
 		t.Log("Generating RSA 3072 key on Nitrokey HSM for OAEP encryption...")
 		key, err := backend.GenerateRSA(attrs)
 		require.NoError(t, err, "Failed to generate RSA key")
-		defer backend.DeleteKey(attrs)
+		defer backend.DeleteKey(context.Background(), attrs)
 
 		// Get the public key for encryption
 		signer, ok := key.(crypto.Signer)
@@ -806,7 +806,7 @@ func testNitrokeyRSAEncryptDecrypt(t *testing.T, backend *pkcs11.Backend) {
 		t.Logf("✓ Encrypted %d bytes with RSA-3072-OAEP SHA256 (ciphertext: %d bytes)", len(plaintext), len(ciphertext))
 
 		// Get Decrypter interface
-		decrypter, err := backend.Decrypter(attrs)
+		decrypter, err := backend.Decrypter(context.Background(), attrs)
 		require.NoError(t, err, "Failed to get Decrypter")
 
 		// Decrypt using Nitrokey HSM with OAEP options

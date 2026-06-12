@@ -61,40 +61,40 @@ func (t *TenantScopedBackend) scopeCertKeyID(keyID string) string {
 // ========================================================================
 
 // GenerateRSA generates a new RSA key pair scoped to this tenant.
-func (t *TenantScopedBackend) GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return t.base.GenerateRSA(t.scopeAttrs(attrs))
+func (t *TenantScopedBackend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return t.base.GenerateRSA(ctx, t.scopeAttrs(attrs))
 }
 
 // GenerateECDSA generates a new ECDSA key pair scoped to this tenant.
-func (t *TenantScopedBackend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return t.base.GenerateECDSA(t.scopeAttrs(attrs))
+func (t *TenantScopedBackend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return t.base.GenerateECDSA(ctx, t.scopeAttrs(attrs))
 }
 
 // GenerateEd25519 generates a new Ed25519 key pair scoped to this tenant.
-func (t *TenantScopedBackend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return t.base.GenerateEd25519(t.scopeAttrs(attrs))
+func (t *TenantScopedBackend) GenerateEd25519(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return t.base.GenerateEd25519(ctx, t.scopeAttrs(attrs))
 }
 
 // GetKey retrieves a key scoped to this tenant.
-func (t *TenantScopedBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return t.base.GetKey(t.scopeAttrs(attrs))
+func (t *TenantScopedBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return t.base.GetKey(ctx, t.scopeAttrs(attrs))
 }
 
 // DeleteKey removes a key scoped to this tenant.
-func (t *TenantScopedBackend) DeleteKey(attrs *types.KeyAttributes) error {
-	return t.base.DeleteKey(t.scopeAttrs(attrs))
+func (t *TenantScopedBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
+	return t.base.DeleteKey(ctx, t.scopeAttrs(attrs))
 }
 
 // ListKeys returns all keys managed by the underlying backend.
 // Filtering by tenant is left to the underlying key provider via TenantID on KeyAttributes;
 // here we return the full list as the provider itself handles namespace isolation.
-func (t *TenantScopedBackend) ListKeys() ([]*types.KeyAttributes, error) {
-	return t.base.ListKeys()
+func (t *TenantScopedBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
+	return t.base.ListKeys(ctx)
 }
 
 // RotateKey replaces an existing key scoped to this tenant.
-func (t *TenantScopedBackend) RotateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return t.base.RotateKey(t.scopeAttrs(attrs))
+func (t *TenantScopedBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return t.base.RotateKey(ctx, t.scopeAttrs(attrs))
 }
 
 // ========================================================================
@@ -102,13 +102,13 @@ func (t *TenantScopedBackend) RotateKey(attrs *types.KeyAttributes) (crypto.Priv
 // ========================================================================
 
 // Signer returns a crypto.Signer for the specified key, scoped to this tenant.
-func (t *TenantScopedBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
-	return t.base.Signer(t.scopeAttrs(attrs))
+func (t *TenantScopedBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	return t.base.Signer(ctx, t.scopeAttrs(attrs))
 }
 
 // Decrypter returns a crypto.Decrypter for the specified key, scoped to this tenant.
-func (t *TenantScopedBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
-	return t.base.Decrypter(t.scopeAttrs(attrs))
+func (t *TenantScopedBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+	return t.base.Decrypter(ctx, t.scopeAttrs(attrs))
 }
 
 // ========================================================================
@@ -116,38 +116,38 @@ func (t *TenantScopedBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decr
 // ========================================================================
 
 // SaveCert stores a certificate under the tenant-scoped key ID.
-func (t *TenantScopedBackend) SaveCert(keyID string, cert *x509.Certificate) error {
-	return t.base.SaveCert(t.scopeCertKeyID(keyID), cert)
+func (t *TenantScopedBackend) SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error {
+	return t.base.SaveCert(ctx, t.scopeCertKeyID(keyID), cert)
 }
 
 // GetCert retrieves a certificate by tenant-scoped key ID.
-func (t *TenantScopedBackend) GetCert(keyID string) (*x509.Certificate, error) {
-	return t.base.GetCert(t.scopeCertKeyID(keyID))
+func (t *TenantScopedBackend) GetCert(ctx context.Context, keyID string) (*x509.Certificate, error) {
+	return t.base.GetCert(ctx, t.scopeCertKeyID(keyID))
 }
 
 // DeleteCert removes a certificate by tenant-scoped key ID.
-func (t *TenantScopedBackend) DeleteCert(keyID string) error {
-	return t.base.DeleteCert(t.scopeCertKeyID(keyID))
+func (t *TenantScopedBackend) DeleteCert(ctx context.Context, keyID string) error {
+	return t.base.DeleteCert(ctx, t.scopeCertKeyID(keyID))
 }
 
 // SaveCertChain stores a certificate chain under the tenant-scoped key ID.
-func (t *TenantScopedBackend) SaveCertChain(keyID string, chain []*x509.Certificate) error {
-	return t.base.SaveCertChain(t.scopeCertKeyID(keyID), chain)
+func (t *TenantScopedBackend) SaveCertChain(ctx context.Context, keyID string, chain []*x509.Certificate) error {
+	return t.base.SaveCertChain(ctx, t.scopeCertKeyID(keyID), chain)
 }
 
 // GetCertChain retrieves a certificate chain by tenant-scoped key ID.
-func (t *TenantScopedBackend) GetCertChain(keyID string) ([]*x509.Certificate, error) {
-	return t.base.GetCertChain(t.scopeCertKeyID(keyID))
+func (t *TenantScopedBackend) GetCertChain(ctx context.Context, keyID string) ([]*x509.Certificate, error) {
+	return t.base.GetCertChain(ctx, t.scopeCertKeyID(keyID))
 }
 
 // ListCerts returns all certificate IDs from the underlying backend.
-func (t *TenantScopedBackend) ListCerts() ([]string, error) {
-	return t.base.ListCerts()
+func (t *TenantScopedBackend) ListCerts(ctx context.Context) ([]string, error) {
+	return t.base.ListCerts(ctx)
 }
 
 // CertExists checks if a certificate exists under the tenant-scoped key ID.
-func (t *TenantScopedBackend) CertExists(keyID string) (bool, error) {
-	return t.base.CertExists(t.scopeCertKeyID(keyID))
+func (t *TenantScopedBackend) CertExists(ctx context.Context, keyID string) (bool, error) {
+	return t.base.CertExists(ctx, t.scopeCertKeyID(keyID))
 }
 
 // ========================================================================
@@ -155,8 +155,8 @@ func (t *TenantScopedBackend) CertExists(keyID string) (bool, error) {
 // ========================================================================
 
 // GetTLSCertificate returns a tls.Certificate using the tenant-scoped key ID.
-func (t *TenantScopedBackend) GetTLSCertificate(keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
-	return t.base.GetTLSCertificate(t.scopeCertKeyID(keyID), t.scopeAttrs(attrs))
+func (t *TenantScopedBackend) GetTLSCertificate(ctx context.Context, keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
+	return t.base.GetTLSCertificate(ctx, t.scopeCertKeyID(keyID), t.scopeAttrs(attrs))
 }
 
 // ========================================================================
@@ -164,18 +164,18 @@ func (t *TenantScopedBackend) GetTLSCertificate(keyID string, attrs *types.KeyAt
 // ========================================================================
 
 // GetKeyByID retrieves a key using the unified Key ID format.
-func (t *TenantScopedBackend) GetKeyByID(keyID string) (crypto.PrivateKey, error) {
-	return t.base.GetKeyByID(keyID)
+func (t *TenantScopedBackend) GetKeyByID(ctx context.Context, keyID string) (crypto.PrivateKey, error) {
+	return t.base.GetKeyByID(ctx, keyID)
 }
 
 // GetSignerByID retrieves a crypto.Signer using the unified Key ID format.
-func (t *TenantScopedBackend) GetSignerByID(keyID string) (crypto.Signer, error) {
-	return t.base.GetSignerByID(keyID)
+func (t *TenantScopedBackend) GetSignerByID(ctx context.Context, keyID string) (crypto.Signer, error) {
+	return t.base.GetSignerByID(ctx, keyID)
 }
 
 // GetDecrypterByID retrieves a crypto.Decrypter using the unified Key ID format.
-func (t *TenantScopedBackend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
-	return t.base.GetDecrypterByID(keyID)
+func (t *TenantScopedBackend) GetDecrypterByID(ctx context.Context, keyID string) (crypto.Decrypter, error) {
+	return t.base.GetDecrypterByID(ctx, keyID)
 }
 
 // ========================================================================

@@ -50,19 +50,19 @@ type mockTCGCA struct {
 	enrollErr error
 }
 
-func (m *mockTCGCA) IssueEKCertificateRaw(commonName, organization string, ekPubDER []byte) ([]byte, error) {
+func (m *mockTCGCA) IssueEKCertificateRaw(_ context.Context, commonName, organization string, ekPubDER []byte) ([]byte, error) {
 	return m.ekCertDER, m.ekCertErr
 }
 
-func (m *mockTCGCA) IssueAKCertificateRaw(commonName, organization string, pubDER []byte) ([]byte, error) {
+func (m *mockTCGCA) IssueAKCertificateRaw(_ context.Context, commonName, organization string, pubDER []byte) ([]byte, error) {
 	return m.akCertDER, m.akCertErr
 }
 
-func (m *mockTCGCA) SignTCGCSRIDevIDRaw(commonName, organization string, packedCSR []byte) ([]byte, []byte, error) {
+func (m *mockTCGCA) SignTCGCSRIDevIDRaw(_ context.Context, commonName, organization string, packedCSR []byte) ([]byte, []byte, error) {
 	return m.iakDER, m.idevidDER, m.signErr
 }
 
-func (m *mockTCGCA) EnrollDeviceRaw(commonName, organization string, packedCSR []byte) ([]byte, []byte, []byte, []byte, []byte, error) {
+func (m *mockTCGCA) EnrollDeviceRaw(_ context.Context, commonName, organization string, packedCSR []byte) ([]byte, []byte, []byte, []byte, []byte, error) {
 	return m.enrollIAK, m.enrollDev, m.credBlob, m.encSecret, m.plainSec, m.enrollErr
 }
 

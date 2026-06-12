@@ -5,7 +5,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v4.25.1
-// source: pkg/api/grpc/proto/xkmsv1/xkms.proto
+// source: xkms.proto
 
 package xkmsv1
 
@@ -5437,5 +5437,5 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "pkg/api/grpc/proto/xkmsv1/xkms.proto",
+	Metadata: "xkms.proto",
 }

@@ -77,10 +77,10 @@ func TestVaultBackend_GenerateSymmetricKey(t *testing.T) {
 	}
 
 	// Clean up if key exists from previous test
-	_ = b.DeleteKey(attrs)
+	_ = b.DeleteKey(context.Background(), attrs)
 
 	// Generate symmetric key
-	symmetricKey, err := b.GenerateSymmetricKey(attrs)
+	symmetricKey, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.NotNil(t, symmetricKey)
 	assert.Equal(t, string(types.SymmetricAES256GCM), symmetricKey.Algorithm())
@@ -92,7 +92,7 @@ func TestVaultBackend_GenerateSymmetricKey(t *testing.T) {
 	assert.True(t, exists)
 
 	// Clean up
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 }
 
@@ -110,7 +110,7 @@ func TestVaultBackend_GenerateSymmetricKey_InvalidKeySize(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES128GCM,
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "only supports AES-256")
 }
@@ -132,7 +132,7 @@ func TestVaultBackend_GenerateSymmetricKey_AsymmetricAlgorithm(t *testing.T) {
 		},
 	}
 
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "asymmetric algorithm")
 }
@@ -151,21 +151,21 @@ func TestVaultBackend_GetSymmetricKey(t *testing.T) {
 	}
 
 	// Clean up if exists
-	_ = b.DeleteKey(attrs)
+	_ = b.DeleteKey(context.Background(), attrs)
 
 	// Generate key first
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get the key
-	symmetricKey, err := b.GetSymmetricKey(attrs)
+	symmetricKey, err := b.GetSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.NotNil(t, symmetricKey)
 	assert.Equal(t, string(types.SymmetricAES256GCM), symmetricKey.Algorithm())
 	assert.Equal(t, 256, symmetricKey.KeySize())
 
 	// Clean up
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 }
 
@@ -182,7 +182,7 @@ func TestVaultBackend_GetSymmetricKey_NotFound(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = b.GetSymmetricKey(attrs)
+	_, err = b.GetSymmetricKey(context.Background(), attrs)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyNotFound)
 }
@@ -201,14 +201,14 @@ func TestVaultBackend_SymmetricEncrypter_EncryptDecrypt(t *testing.T) {
 	}
 
 	// Clean up if exists
-	_ = b.DeleteKey(attrs)
+	_ = b.DeleteKey(context.Background(), attrs)
 
 	// Generate key
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.NotNil(t, encrypter)
 
@@ -232,7 +232,7 @@ func TestVaultBackend_SymmetricEncrypter_EncryptDecrypt(t *testing.T) {
 	assert.Equal(t, plaintext, decrypted)
 
 	// Clean up
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 }
 
@@ -250,14 +250,14 @@ func TestVaultBackend_SymmetricEncrypter_WithAAD(t *testing.T) {
 	}
 
 	// Clean up if exists
-	_ = b.DeleteKey(attrs)
+	_ = b.DeleteKey(context.Background(), attrs)
 
 	// Generate key
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Test data with AAD
@@ -288,7 +288,7 @@ func TestVaultBackend_SymmetricEncrypter_WithAAD(t *testing.T) {
 	assert.Error(t, err, "Decryption without AAD when it was used should fail")
 
 	// Clean up
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 }
 
@@ -306,14 +306,14 @@ func TestVaultBackend_SymmetricEncrypter_EmptyPlaintext(t *testing.T) {
 	}
 
 	// Clean up if exists
-	_ = b.DeleteKey(attrs)
+	_ = b.DeleteKey(context.Background(), attrs)
 
 	// Generate key
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Test empty plaintext
@@ -327,7 +327,7 @@ func TestVaultBackend_SymmetricEncrypter_EmptyPlaintext(t *testing.T) {
 	assert.Equal(t, plaintext, decrypted)
 
 	// Clean up
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 }
 
@@ -345,14 +345,14 @@ func TestVaultBackend_SymmetricEncrypter_LargePlaintext(t *testing.T) {
 	}
 
 	// Clean up if exists
-	_ = b.DeleteKey(attrs)
+	_ = b.DeleteKey(context.Background(), attrs)
 
 	// Generate key
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Test with 1MB of data
@@ -369,7 +369,7 @@ func TestVaultBackend_SymmetricEncrypter_LargePlaintext(t *testing.T) {
 	assert.Equal(t, plaintext, decrypted)
 
 	// Clean up
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 }
 
@@ -387,14 +387,14 @@ func TestVaultBackend_SymmetricEncrypter_MultipleRoundTrips(t *testing.T) {
 	}
 
 	// Clean up if exists
-	_ = b.DeleteKey(attrs)
+	_ = b.DeleteKey(context.Background(), attrs)
 
 	// Generate key
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Test multiple round trips with different data
@@ -422,7 +422,7 @@ func TestVaultBackend_SymmetricEncrypter_MultipleRoundTrips(t *testing.T) {
 	}
 
 	// Clean up
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 }
 
@@ -439,7 +439,7 @@ func TestVaultBackend_SymmetricEncrypter_NotFound(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	_, err = b.SymmetricEncrypter(attrs)
+	_, err = b.SymmetricEncrypter(context.Background(), attrs)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyNotFound)
 }
@@ -458,19 +458,19 @@ func TestVaultBackend_SymmetricKey_DuplicateGeneration(t *testing.T) {
 	}
 
 	// Clean up if exists
-	_ = b.DeleteKey(attrs)
+	_ = b.DeleteKey(context.Background(), attrs)
 
 	// Generate key first time - should succeed
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Try to generate same key again - should fail
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
 
 	// Clean up
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 }
 
@@ -497,14 +497,14 @@ func TestVaultBackend_BytesLimit(t *testing.T) {
 	}
 
 	// Clean up if exists
-	_ = b.DeleteKey(attrs)
+	_ = b.DeleteKey(context.Background(), attrs)
 
 	// Generate key
-	_, err = b.GenerateSymmetricKey(attrs)
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(attrs)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Encrypt up to the limit
@@ -528,7 +528,7 @@ func TestVaultBackend_BytesLimit(t *testing.T) {
 		"Expected bytes limit error, got: %v", err)
 
 	// Clean up
-	err = b.DeleteKey(attrs)
+	err = b.DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 }
 

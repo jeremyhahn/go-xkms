@@ -360,10 +360,10 @@ func (e *ACMEError) Unwrap() error {
 // Is reports whether the error matches the target.
 func (e *ACMEError) Is(target error) bool {
 	if t, ok := target.(*ACMEError); ok {
-		return e.CAError.Code == t.CAError.Code
+		return e.Code == t.Code
 	}
 	if t, ok := target.(*CAError); ok {
-		return e.CAError.Code == t.Code
+		return e.Code == t.Code
 	}
 	return false
 }
@@ -397,7 +397,7 @@ func AsACMEError(err error) (*ACMEError, bool) {
 
 // HTTPStatus returns the appropriate HTTP status code for this ACME error.
 func (e *ACMEError) HTTPStatus() int {
-	return ACMEHTTPStatus(e.CAError.Code)
+	return ACMEHTTPStatus(e.Code)
 }
 
 // acmeHTTPStatusMap maps ACME error codes to HTTP status codes per RFC 8555.

@@ -14,6 +14,7 @@
 package quic
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -308,11 +309,11 @@ func (s *Server) handleListBackends(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backendNames := xkms.Backends()
+	backendNames := s.backendNames()
 
 	backends := make([]BackendInfo, 0, len(backendNames))
 	for _, name := range backendNames {
-		ks, err := xkms.GetBackend(name)
+		ks, err := s.lookupBackend(name)
 		if err != nil {
 			continue // Skip backends that can't be retrieved
 		}
@@ -358,7 +359,7 @@ func (s *Server) handleBackendOperations(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Get the backend
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := s.lookupBackend(backendID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendID))
 		return
@@ -405,7 +406,7 @@ func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// List keys from keystore
-	attrs, err := ks.ListKeys()
+	attrs, err := ks.ListKeys(r.Context())
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list keys: %v", err))
 		return
@@ -456,7 +457,7 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the keystore for the specified backend
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := s.lookupBackend(req.Backend)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", req.Backend))
 		return
@@ -501,7 +502,7 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 		if attrs.RSAAttributes.KeySize == 0 {
 			attrs.RSAAttributes.KeySize = types.RSAKeySize2048
 		}
-		privKey, err = ks.GenerateRSA(attrs)
+		privKey, err = ks.GenerateRSA(r.Context(), attrs)
 
 	case types.AlgorithmECDSA.Equals(algorithm):
 		attrs.ECCAttributes = &types.ECCAttributes{}
@@ -515,10 +516,10 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 		} else {
 			attrs.ECCAttributes.Curve, _ = types.ParseCurve(string(types.CurveP256))
 		}
-		privKey, err = ks.GenerateECDSA(attrs)
+		privKey, err = ks.GenerateECDSA(r.Context(), attrs)
 
 	case types.AlgorithmEd25519.Equals(algorithm):
-		privKey, err = ks.GenerateEd25519(attrs)
+		privKey, err = ks.GenerateEd25519(r.Context(), attrs)
 
 	case types.AlgorithmSymmetric.Equals(algorithm):
 		// For AES keys, check if backend supports symmetric operations
@@ -558,7 +559,7 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 		attrs.KeyType = types.KeyTypeSecret
 
 		// Generate the symmetric key
-		_, err = symBackend.GenerateSymmetricKey(attrs)
+		_, err = symBackend.GenerateSymmetricKey(r.Context(), attrs)
 		// For symmetric keys, we don't return the key material
 		privKey = nil
 
@@ -655,15 +656,15 @@ func (s *Server) handleKeyOperations(w http.ResponseWriter, r *http.Request) {
 // getKeystoreForBackend returns the keystore for the specified backend, or the default keystore if empty
 func (s *Server) getKeystoreForBackend(backendParam string) (xkms.Backend, error) {
 	if backendParam != "" {
-		return xkms.GetBackend(backendParam)
+		return s.lookupBackend(backendParam)
 	}
 	return s.keystore, nil
 }
 
 // findKeyByID finds a key's attributes by its ID (CN) in the keystore
 // Returns the full key attributes needed for operations like GetKey, Sign, etc.
-func (s *Server) findKeyByID(ks xkms.Backend, keyID string) (*types.KeyAttributes, error) {
-	keys, err := ks.ListKeys()
+func (s *Server) findKeyByID(ctx context.Context, ks xkms.Backend, keyID string) (*types.KeyAttributes, error) {
+	keys, err := ks.ListKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
@@ -690,13 +691,13 @@ func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request, keyID, bac
 	}
 
 	// Find the key's full attributes
-	attrs, err := s.findKeyByID(ks, keyID)
+	attrs, err := s.findKeyByID(r.Context(), ks, keyID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
 	}
 
-	privKey, err := ks.GetKey(attrs)
+	privKey, err := ks.GetKey(r.Context(), attrs)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
@@ -736,13 +737,13 @@ func (s *Server) handleDeleteKey(w http.ResponseWriter, r *http.Request, keyID, 
 	}
 
 	// Find the key's full attributes
-	attrs, err := s.findKeyByID(ks, keyID)
+	attrs, err := s.findKeyByID(r.Context(), ks, keyID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
 	}
 
-	if err := ks.DeleteKey(attrs); err != nil {
+	if err := ks.DeleteKey(r.Context(), attrs); err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("failed to delete key: %v", err))
 		return
 	}
@@ -774,13 +775,13 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request, keyID, backe
 	}
 
 	// Find the key's full attributes
-	attrs, err := s.findKeyByID(ks, keyID)
+	attrs, err := s.findKeyByID(r.Context(), ks, keyID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
 	}
 
-	signer, err := ks.Signer(attrs)
+	signer, err := ks.Signer(r.Context(), attrs)
 	if err != nil {
 		s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to get signer: %v", err))
 		return
@@ -843,14 +844,14 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request, keyID, bac
 	}
 
 	// Find the key's full attributes
-	attrs, err := s.findKeyByID(ks, keyID)
+	attrs, err := s.findKeyByID(r.Context(), ks, keyID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
 	}
 
 	// Get the key
-	privKey, err := ks.GetKey(attrs)
+	privKey, err := ks.GetKey(r.Context(), attrs)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
@@ -938,13 +939,13 @@ func (s *Server) handleRotateKey(w http.ResponseWriter, r *http.Request, keyID, 
 	}
 
 	// Find the key's full attributes
-	attrs, err := s.findKeyByID(ks, keyID)
+	attrs, err := s.findKeyByID(r.Context(), ks, keyID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
 	}
 
-	privKey, err := ks.RotateKey(attrs)
+	privKey, err := ks.RotateKey(r.Context(), attrs)
 	if err != nil {
 		s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to rotate key: %v", err))
 		return
@@ -1004,7 +1005,7 @@ func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 	}
 
 	// Find the key's full attributes (includes algorithm, key type, etc.)
-	attrs, err := s.findKeyByID(ks, keyID)
+	attrs, err := s.findKeyByID(r.Context(), ks, keyID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
@@ -1018,7 +1019,7 @@ func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 	}
 
 	// Get the symmetric encrypter
-	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symBackend.SymmetricEncrypter(r.Context(), attrs)
 	if err != nil {
 		s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to get encrypter: %v", err))
 		return
@@ -1072,7 +1073,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 			s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
 			return
 		}
-		attrs, err = s.findKeyByID(ks, keyID)
+		attrs, err = s.findKeyByID(r.Context(), ks, keyID)
 		if err != nil {
 			s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 			return
@@ -1081,7 +1082,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 		// No backend specified, search symmetric first, then software
 		ks, err = s.getKeystoreForBackend("symmetric")
 		if err == nil {
-			attrs, err = s.findKeyByID(ks, keyID)
+			attrs, err = s.findKeyByID(r.Context(), ks, keyID)
 		}
 		if err != nil {
 			ks, err = s.getKeystoreForBackend("software")
@@ -1089,7 +1090,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 				s.sendError(w, http.StatusNotFound, "backend not found")
 				return
 			}
-			attrs, err = s.findKeyByID(ks, keyID)
+			attrs, err = s.findKeyByID(r.Context(), ks, keyID)
 			if err != nil {
 				s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 				return
@@ -1106,7 +1107,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 			return
 		}
 
-		encrypter, err := symBackend.SymmetricEncrypter(attrs)
+		encrypter, err := symBackend.SymmetricEncrypter(r.Context(), attrs)
 		if err != nil {
 			s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to get encrypter: %v", err))
 			return
@@ -1134,7 +1135,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 		s.sendJSON(w, http.StatusOK, DecryptResponse{Plaintext: plaintext})
 	} else {
 		// Asymmetric decryption (RSA-OAEP with SHA256)
-		decrypter, err := ks.Decrypter(attrs)
+		decrypter, err := ks.Decrypter(r.Context(), attrs)
 		if err != nil {
 			s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to get decrypter: %v", err))
 			return
@@ -1172,7 +1173,7 @@ func (s *Server) handleListCerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keyIDs, err := s.keystore.ListCerts()
+	keyIDs, err := s.keystore.ListCerts(r.Context())
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list certificates: %v", err))
 		return
@@ -1234,7 +1235,7 @@ func (s *Server) handleSaveCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.keystore.SaveCert(req.KeyID, cert); err != nil {
+	if err := s.keystore.SaveCert(r.Context(), req.KeyID, cert); err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save certificate: %v", err))
 		return
 	}
@@ -1287,7 +1288,7 @@ func (s *Server) handleGetCert(w http.ResponseWriter, r *http.Request, certID st
 		return
 	}
 
-	cert, err := s.keystore.GetCert(certID)
+	cert, err := s.keystore.GetCert(r.Context(), certID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("certificate not found: %v", err))
 		return
@@ -1312,7 +1313,7 @@ func (s *Server) handleDeleteCert(w http.ResponseWriter, r *http.Request, certID
 		return
 	}
 
-	if err := s.keystore.DeleteCert(certID); err != nil {
+	if err := s.keystore.DeleteCert(r.Context(), certID); err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("failed to delete certificate: %v", err))
 		return
 	}
@@ -1326,7 +1327,7 @@ func (s *Server) handleCertExists(w http.ResponseWriter, r *http.Request, certID
 		return
 	}
 
-	exists, err := s.keystore.CertExists(certID)
+	exists, err := s.keystore.CertExists(r.Context(), certID)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to check certificate: %v", err))
 		return
@@ -1386,7 +1387,7 @@ func (s *Server) handleSaveCertChain(w http.ResponseWriter, r *http.Request, cer
 		chain = append(chain, cert)
 	}
 
-	if err := s.keystore.SaveCertChain(certID, chain); err != nil {
+	if err := s.keystore.SaveCertChain(r.Context(), certID, chain); err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save certificate chain: %v", err))
 		return
 	}
@@ -1400,7 +1401,7 @@ func (s *Server) handleGetCertChain(w http.ResponseWriter, r *http.Request, cert
 		return
 	}
 
-	chain, err := s.keystore.GetCertChain(certID)
+	chain, err := s.keystore.GetCertChain(r.Context(), certID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("certificate chain not found: %v", err))
 		return
@@ -1457,7 +1458,7 @@ func (s *Server) handleTLSCertificate(w http.ResponseWriter, r *http.Request) {
 		attrs.StoreType = storeType
 	}
 
-	tlsCert, err := s.keystore.GetTLSCertificate(certID, attrs)
+	tlsCert, err := s.keystore.GetTLSCertificate(r.Context(), certID, attrs)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("TLS certificate not found: %v", err))
 		return
@@ -1564,7 +1565,7 @@ func (s *Server) handleGetImportParameters(w http.ResponseWriter, r *http.Reques
 	algorithm := backend.WrappingAlgorithm(req.Algorithm)
 
 	// Get import parameters
-	params, err := importExportBackend.GetImportParameters(attrs, algorithm)
+	params, err := importExportBackend.GetImportParameters(r.Context(), attrs, algorithm)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get import parameters: %v", err))
 		return
@@ -1717,7 +1718,7 @@ func (s *Server) handleGetImportParams(w http.ResponseWriter, r *http.Request) {
 	algorithm := backend.WrappingAlgorithm(req.Algorithm)
 
 	// Get import parameters
-	params, err := importExportBackend.GetImportParameters(attrs, algorithm)
+	params, err := importExportBackend.GetImportParameters(r.Context(), attrs, algorithm)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get import parameters: %v", err))
 		return
@@ -1804,7 +1805,7 @@ func (s *Server) handleWrapKey(w http.ResponseWriter, r *http.Request, keyID, ba
 	}
 
 	// Wrap the key material
-	wrapped, err := importExportBackend.WrapKey(req.KeyMaterial, params)
+	wrapped, err := importExportBackend.WrapKey(r.Context(), req.KeyMaterial, params)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to wrap key: %v", err))
 		return
@@ -1891,7 +1892,7 @@ func (s *Server) handleUnwrapKey(w http.ResponseWriter, r *http.Request, keyID, 
 	}
 
 	// Unwrap the key material
-	keyMaterial, err := importExportBackend.UnwrapKey(wrapped, params)
+	keyMaterial, err := importExportBackend.UnwrapKey(r.Context(), wrapped, params)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unwrap key: %v", err))
 		return
@@ -1955,7 +1956,7 @@ func (s *Server) handleImportKey(w http.ResponseWriter, r *http.Request, keyID, 
 	}
 
 	// Import the key
-	if err := importExportBackend.ImportKey(attrs, wrapped); err != nil {
+	if err := importExportBackend.ImportKey(r.Context(), attrs, wrapped); err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to import key: %v", err))
 		return
 	}
@@ -1988,7 +1989,7 @@ func (s *Server) handleExportKey(w http.ResponseWriter, r *http.Request, keyID, 
 	}
 
 	// Find the key's full attributes (includes exportable flag, algorithm, etc.)
-	attrs, err := s.findKeyByID(ks, keyID)
+	attrs, err := s.findKeyByID(r.Context(), ks, keyID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
@@ -2014,7 +2015,7 @@ func (s *Server) handleExportKey(w http.ResponseWriter, r *http.Request, keyID, 
 	algorithm := backend.WrappingAlgorithm(req.Algorithm)
 
 	// Export the key
-	wrapped, err := importExportBackend.ExportKey(attrs, algorithm)
+	wrapped, err := importExportBackend.ExportKey(r.Context(), attrs, algorithm)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to export key: %v", err))
 		return
@@ -2053,14 +2054,14 @@ func (s *Server) handleAsymmetricEncrypt(w http.ResponseWriter, r *http.Request,
 	}
 
 	// Find the key's full attributes
-	attrs, err := s.findKeyByID(ks, keyID)
+	attrs, err := s.findKeyByID(r.Context(), ks, keyID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
 	}
 
 	// Get the key
-	privKey, err := ks.GetKey(attrs)
+	privKey, err := ks.GetKey(r.Context(), attrs)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
@@ -2134,7 +2135,7 @@ func (s *Server) handleCopyKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get source and destination backends
-	sourceKS, err := xkms.GetBackend(req.SourceBackend)
+	sourceKS, err := s.lookupBackend(req.SourceBackend)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("source backend not found: %v", err))
 		return
@@ -2145,7 +2146,7 @@ func (s *Server) handleCopyKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	destKS, err := xkms.GetBackend(req.DestBackend)
+	destKS, err := s.lookupBackend(req.DestBackend)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("destination backend not found: %v", err))
 		return
@@ -2157,7 +2158,7 @@ func (s *Server) handleCopyKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find the source key by listing keys from the source backend
-	sourceKeyAttrs, err := sourceKS.ListKeys()
+	sourceKeyAttrs, err := sourceKS.ListKeys(r.Context())
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list keys from source backend: %v", err))
 		return
@@ -2200,14 +2201,14 @@ func (s *Server) handleCopyKey(w http.ResponseWriter, r *http.Request) {
 	algorithm := backend.WrappingAlgorithm(req.Algorithm)
 
 	// Export from source backend
-	wrapped, err := sourceBackend.ExportKey(sourceAttrs, algorithm)
+	wrapped, err := sourceBackend.ExportKey(r.Context(), sourceAttrs, algorithm)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to export key: %v", err))
 		return
 	}
 
 	// Import to destination backend
-	if err := destBackend.ImportKey(destAttrs, wrapped); err != nil {
+	if err := destBackend.ImportKey(r.Context(), destAttrs, wrapped); err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to import key: %v", err))
 		return
 	}

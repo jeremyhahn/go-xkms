@@ -178,6 +178,10 @@ var (
 	OIDQuantumAlgorithm = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 29377, 101, 10}
 	// OIDQuantumSignature is tp-quantumSignature (1.3.6.1.4.1.29377.101.11)
 	OIDQuantumSignature = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 29377, 101, 11}
+	// OIDTPTenantID is tp-tenantID (1.3.6.1.4.1.29377.101.20)
+	OIDTPTenantID = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 29377, 101, 20}
+	// OIDTPNetworkZone is tp-networkZone (1.3.6.1.4.1.29377.101.21)
+	OIDTPNetworkZone = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 29377, 101, 21}
 
 	// OIDSubjectKeyIdentifier is subjectKeyIdentifier (2.5.29.14)
 	OIDSubjectKeyIdentifier = asn1.ObjectIdentifier{2, 5, 29, 14}
@@ -232,6 +236,8 @@ var oidNames = map[string]string{
 	"1.3.6.1.4.1.29377.101.3":  "tp-fips140",
 	"1.3.6.1.4.1.29377.101.10": "tp-quantumAlgorithm",
 	"1.3.6.1.4.1.29377.101.11": "tp-quantumSignature",
+	"1.3.6.1.4.1.29377.101.20": "tp-tenantID",
+	"1.3.6.1.4.1.29377.101.21": "tp-networkZone",
 
 	// Standard X.509 Extensions
 	"2.5.29.9":  "subjectDirectoryAttributes",

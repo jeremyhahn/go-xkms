@@ -14,6 +14,7 @@
 package xkms_test
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -209,7 +210,7 @@ func TestGetKeyByID(t *testing.T) {
 			tt.setupMock(mockBackend)
 
 			// Test GetKeyByID
-			key, err := ks.GetKeyByID(tt.keyID)
+			key, err := ks.GetKeyByID(context.Background(), tt.keyID)
 
 			if tt.expectError {
 				require.Error(t, err, "Expected error for test case: %s", tt.name)
@@ -402,7 +403,7 @@ func TestGetSignerByID(t *testing.T) {
 			tt.setupMock(mockBackend)
 
 			// Test GetSignerByID
-			signer, err := ks.GetSignerByID(tt.keyID)
+			signer, err := ks.GetSignerByID(context.Background(), tt.keyID)
 
 			if tt.expectError {
 				require.Error(t, err, "Expected error for test case: %s", tt.name)
@@ -598,7 +599,7 @@ func TestGetDecrypterByID(t *testing.T) {
 			tt.setupMock(mockBackend)
 
 			// Test GetDecrypterByID
-			decrypter, err := ks.GetDecrypterByID(tt.keyID)
+			decrypter, err := ks.GetDecrypterByID(context.Background(), tt.keyID)
 
 			if tt.expectError {
 				require.Error(t, err, "Expected error for test case: %s", tt.name)
@@ -653,12 +654,12 @@ func TestKeyID_IntegrationFlow(t *testing.T) {
 	keyID := "software:signing:rsa:integration-test-key"
 
 	// Test GetKeyByID
-	key, err := ks.GetKeyByID(keyID)
+	key, err := ks.GetKeyByID(context.Background(), keyID)
 	require.NoError(t, err)
 	assert.NotNil(t, key)
 
 	// Test GetSignerByID
-	signer, err := ks.GetSignerByID(keyID)
+	signer, err := ks.GetSignerByID(context.Background(), keyID)
 	require.NoError(t, err)
 	assert.NotNil(t, signer)
 
@@ -673,7 +674,7 @@ func TestKeyID_IntegrationFlow(t *testing.T) {
 
 	// Test GetDecrypterByID with encryption key ID
 	encryptKeyID := "software:encryption:rsa:integration-test-key"
-	decrypter, err := ks.GetDecrypterByID(encryptKeyID)
+	decrypter, err := ks.GetDecrypterByID(context.Background(), encryptKeyID)
 	require.NoError(t, err)
 	assert.NotNil(t, decrypter)
 }

@@ -17,6 +17,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -72,10 +73,10 @@ func setupServiceIntegration(t *testing.T) {
 	// Initialize service with multiple backends
 	err = xkms.Initialize(&xkms.ServiceConfig{
 		Backends: map[string]xkms.Backend{
-			"backend1": software1KS,
-			"backend2": software2KS,
+			"software": software1KS,
+			"software2": software2KS,
 		},
-		DefaultBackend: "backend1",
+		DefaultBackend: "software",
 	})
 	require.NoError(t, err)
 }
@@ -88,16 +89,16 @@ func TestServiceIntegration_BackendManagement(t *testing.T) {
 	t.Run("Backends", func(t *testing.T) {
 		backends := xkms.Backends()
 		assert.Len(t, backends, 2)
-		assert.Contains(t, backends, "backend1")
-		assert.Contains(t, backends, "backend2")
+		assert.Contains(t, backends, "software")
+		assert.Contains(t, backends, "software2")
 	})
 
 	t.Run("Backend", func(t *testing.T) {
-		ks, err := xkms.GetBackend("backend1")
+		ks, err := xkms.GetBackend("software")
 		assert.NoError(t, err)
 		assert.NotNil(t, ks)
 
-		ks, err = xkms.GetBackend("backend2")
+		ks, err = xkms.GetBackend("software2")
 		assert.NoError(t, err)
 		assert.NotNil(t, ks)
 	})
@@ -132,7 +133,7 @@ func TestServiceIntegration_KeyGeneration(t *testing.T) {
 			Hash: crypto.SHA256,
 		}
 
-		key, err := xkms.GenerateKey(attrs)
+		key, err := xkms.GenerateKey(context.Background(), attrs)
 		assert.NoError(t, err)
 		assert.NotNil(t, key)
 
@@ -154,7 +155,7 @@ func TestServiceIntegration_KeyGeneration(t *testing.T) {
 			Hash: crypto.SHA256,
 		}
 
-		key, err := xkms.GenerateKey(attrs)
+		key, err := xkms.GenerateKey(context.Background(), attrs)
 		assert.NoError(t, err)
 		assert.NotNil(t, key)
 	})
@@ -167,7 +168,7 @@ func TestServiceIntegration_KeyGeneration(t *testing.T) {
 			KeyAlgorithm: x509.Ed25519,
 		}
 
-		key, err := xkms.GenerateKey(attrs)
+		key, err := xkms.GenerateKey(context.Background(), attrs)
 		assert.NoError(t, err)
 		assert.NotNil(t, key)
 	})
@@ -191,11 +192,11 @@ func TestServiceIntegration_KeyRetrieval(t *testing.T) {
 		}
 
 		// Generate key first
-		_, err := xkms.GenerateKey(attrs)
+		_, err := xkms.GenerateKey(context.Background(), attrs)
 		require.NoError(t, err)
 
 		// Retrieve it
-		key, err := xkms.Key(attrs)
+		key, err := xkms.Key(context.Background(), attrs)
 		assert.NoError(t, err)
 		assert.NotNil(t, key)
 	})
@@ -244,18 +245,18 @@ func TestServiceIntegration_CertificateOperations(t *testing.T) {
 			Hash: crypto.SHA256,
 		}
 
-		key, err := xkms.GenerateKey(attrs)
+		key, err := xkms.GenerateKey(context.Background(), attrs)
 		require.NoError(t, err)
 
 		// Create certificate
 		cert := createTestCert(t, "test-cert-service", key.(crypto.Signer))
 
 		// Save certificate
-		err = xkms.SaveCertificate(attrs, cert)
+		err = xkms.SaveCertificate(context.Background(), attrs, cert)
 		assert.NoError(t, err)
 
 		// Retrieve certificate
-		retrievedCert, err := xkms.Certificate(attrs)
+		retrievedCert, err := xkms.Certificate(context.Background(), attrs)
 		assert.NoError(t, err)
 		assert.NotNil(t, retrievedCert)
 		assert.Equal(t, cert.Subject.CommonName, retrievedCert.Subject.CommonName)
@@ -274,29 +275,29 @@ func TestServiceIntegration_CertificateOperations(t *testing.T) {
 			Hash: crypto.SHA256,
 		}
 
-		key, err := xkms.GenerateKey(attrs)
+		key, err := xkms.GenerateKey(context.Background(), attrs)
 		require.NoError(t, err)
 
 		cert := createTestCert(t, "test-delete-cert", key.(crypto.Signer))
 
-		err = xkms.SaveCertificate(attrs, cert)
+		err = xkms.SaveCertificate(context.Background(), attrs, cert)
 		require.NoError(t, err)
 
 		// Delete certificate
-		err = xkms.DeleteCertificate(attrs)
+		err = xkms.DeleteCertificate(context.Background(), attrs)
 		assert.NoError(t, err)
 
 		// Verify it's deleted
-		_, err = xkms.Certificate(attrs)
+		_, err = xkms.Certificate(context.Background(), attrs)
 		assert.Error(t, err)
 	})
 
 	t.Run("ListCertificates", func(t *testing.T) {
 		// Generate keys and certificates in both backends
-		backend1, err := xkms.GetBackend("backend1")
+		backend1, err := xkms.GetBackend("software")
 		require.NoError(t, err)
 
-		backend2, err := xkms.GetBackend("backend2")
+		backend2, err := xkms.GetBackend("software2")
 		require.NoError(t, err)
 
 		// Create cert in backend1
@@ -310,10 +311,10 @@ func TestServiceIntegration_CertificateOperations(t *testing.T) {
 			},
 			Hash: crypto.SHA256,
 		}
-		key1, err := backend1.GenerateRSA(attrs1)
+		key1, err := backend1.GenerateRSA(context.Background(), attrs1)
 		require.NoError(t, err)
 		cert1 := createTestCert(t, "test-list-cert-1", key1.(crypto.Signer))
-		err = backend1.SaveCert("test-list-cert-1", cert1)
+		err = backend1.SaveCert(context.Background(), "test-list-cert-1", cert1)
 		require.NoError(t, err)
 
 		// Create cert in backend2
@@ -327,19 +328,19 @@ func TestServiceIntegration_CertificateOperations(t *testing.T) {
 			},
 			Hash: crypto.SHA256,
 		}
-		key2, err := backend2.GenerateRSA(attrs2)
+		key2, err := backend2.GenerateRSA(context.Background(), attrs2)
 		require.NoError(t, err)
 		cert2 := createTestCert(t, "test-list-cert-2", key2.(crypto.Signer))
-		err = backend2.SaveCert("test-list-cert-2", cert2)
+		err = backend2.SaveCert(context.Background(), "test-list-cert-2", cert2)
 		require.NoError(t, err)
 
 		// List all certificates
-		certs, err := xkms.ListCertificates()
+		certs, err := xkms.ListCertificates(context.Background())
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, len(certs), 2, "Should have at least 2 certificates")
 
 		// List from specific backend
-		certsBackend1, err := xkms.ListCertificates("backend1")
+		certsBackend1, err := xkms.ListCertificates(context.Background(), "software")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, certsBackend1)
 	})
@@ -351,10 +352,10 @@ func TestServiceIntegration_ListKeys(t *testing.T) {
 	defer xkms.Reset()
 
 	// Generate keys in both backends
-	backend1, err := xkms.GetBackend("backend1")
+	backend1, err := xkms.GetBackend("software")
 	require.NoError(t, err)
 
-	backend2, err := xkms.GetBackend("backend2")
+	backend2, err := xkms.GetBackend("software2")
 	require.NoError(t, err)
 
 	// Create key in backend1
@@ -368,7 +369,7 @@ func TestServiceIntegration_ListKeys(t *testing.T) {
 		},
 		Hash: crypto.SHA256,
 	}
-	_, err = backend1.GenerateRSA(attrs1)
+	_, err = backend1.GenerateRSA(context.Background(), attrs1)
 	require.NoError(t, err)
 
 	// Create key in backend2
@@ -382,17 +383,17 @@ func TestServiceIntegration_ListKeys(t *testing.T) {
 		},
 		Hash: crypto.SHA256,
 	}
-	_, err = backend2.GenerateRSA(attrs2)
+	_, err = backend2.GenerateRSA(context.Background(), attrs2)
 	require.NoError(t, err)
 
 	t.Run("ListKeys_AllBackends", func(t *testing.T) {
-		keys, err := xkms.ListKeys()
+		keys, err := xkms.ListKeys(context.Background())
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, len(keys), 2, "Should have at least 2 keys")
 	})
 
 	t.Run("ListKeys_SpecificBackend", func(t *testing.T) {
-		keys, err := xkms.ListKeys("backend1")
+		keys, err := xkms.ListKeys(context.Background(), "software")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, keys)
 	})

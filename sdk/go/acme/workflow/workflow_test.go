@@ -1411,8 +1411,8 @@ func TestErrors_RegistrationError(t *testing.T) {
 	if err.Error() == "" {
 		t.Error("expected non-empty error string")
 	}
-	if err.CAError.Op != "test.op" {
-		t.Errorf("unexpected op: %s", err.CAError.Op)
+	if err.Op != "test.op" {
+		t.Errorf("unexpected op: %s", err.Op)
 	}
 }
 

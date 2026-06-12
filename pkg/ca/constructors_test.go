@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -107,7 +108,7 @@ func TestNewCA_RootOnly(t *testing.T) {
 		CertStore: newInMemoryCertStore(t),
 	}
 
-	root, intermediate, err := NewCA(params)
+	root, intermediate, err := NewCA(context.Background(), params)
 	require.NoError(t, err)
 	require.NotNil(t, root)
 	assert.Nil(t, intermediate)
@@ -132,7 +133,7 @@ func TestNewCA_RootAndIntermediate(t *testing.T) {
 		CertStore: newInMemoryCertStore(t),
 	}
 
-	root, intermediate, err := NewCA(params)
+	root, intermediate, err := NewCA(context.Background(), params)
 	require.NoError(t, err)
 	require.NotNil(t, root)
 	require.NotNil(t, intermediate)
@@ -151,12 +152,12 @@ func TestNewCA_RootAndIntermediate(t *testing.T) {
 }
 
 func TestNewCA_NilParams(t *testing.T) {
-	_, _, err := NewCA(nil)
+	_, _, err := NewCA(context.Background(), nil)
 	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
 func TestNewCA_EmptyIdentity(t *testing.T) {
-	_, _, err := NewCA(&Params{
+	_, _, err := NewCA(context.Background(), &Params{
 		KeyStore:  newInMemoryBackend(t),
 		CertStore: newInMemoryCertStore(t),
 	})
@@ -192,7 +193,7 @@ func TestNewParentCA_ReturnsUninitialized(t *testing.T) {
 	// NewParentCA must NOT initialize; that is the caller's responsibility.
 	assert.False(t, root.IsInitialized())
 
-	require.NoError(t, root.Init())
+	require.NoError(t, root.Init(context.Background()))
 	assert.True(t, root.IsInitialized())
 }
 
@@ -213,7 +214,7 @@ func TestNewIntermediateCA_RequiresParentInitialized(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, root.IsInitialized())
 
-	_, err = NewIntermediateCA(params, root)
+	_, err = NewIntermediateCA(context.Background(), params, root)
 	assert.ErrorIs(t, err, ErrParentCANotInitialized)
 }
 
@@ -226,7 +227,7 @@ func TestNewIntermediateCA_RequiresParent(t *testing.T) {
 		KeyStore:  newInMemoryBackend(t),
 		CertStore: newInMemoryCertStore(t),
 	}
-	_, err := NewIntermediateCA(params, nil)
+	_, err := NewIntermediateCA(context.Background(), params, nil)
 	assert.ErrorIs(t, err, ErrParentCARequired)
 }
 
@@ -238,9 +239,9 @@ func TestNewIntermediateCA_RequiresIntermediateIdentity(t *testing.T) {
 	}
 	root, err := NewParentCA(params)
 	require.NoError(t, err)
-	require.NoError(t, root.Init())
+	require.NoError(t, root.Init(context.Background()))
 
-	_, err = NewIntermediateCA(params, root)
+	_, err = NewIntermediateCA(context.Background(), params, root)
 	assert.ErrorIs(t, err, ErrNoIntermediateIdentity)
 }
 
@@ -289,7 +290,7 @@ func TestNewCA_FactoryResolution(t *testing.T) {
 		CertStoreFactory: certFactory,
 	}
 
-	root, intermediate, err := NewCA(params)
+	root, intermediate, err := NewCA(context.Background(), params)
 	require.NoError(t, err)
 	require.NotNil(t, root)
 	require.NotNil(t, intermediate)
@@ -321,7 +322,7 @@ func TestNewCA_FactoryError(t *testing.T) {
 		},
 		CertStore: newInMemoryCertStore(t),
 	}
-	_, _, err := NewCA(params)
+	_, _, err := NewCA(context.Background(), params)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, sentinel)
 }
@@ -334,7 +335,7 @@ func TestNewCA_FactoryReturnsNil(t *testing.T) {
 		},
 		CertStore: newInMemoryCertStore(t),
 	}
-	_, _, err := NewCA(params)
+	_, _, err := NewCA(context.Background(), params)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrStoreFactoryReturnedNil)
 }
@@ -356,7 +357,7 @@ func TestNewCA_SharedStores(t *testing.T) {
 		CertStore: sharedCS,
 	}
 
-	root, intermediate, err := NewCA(params)
+	root, intermediate, err := NewCA(context.Background(), params)
 	require.NoError(t, err)
 	require.NotNil(t, root)
 	require.NotNil(t, intermediate)
@@ -495,7 +496,7 @@ func TestIssuingIdentity_PreservesMultiKeySlice_Intermediate(t *testing.T) {
 		CertStore: newInMemoryCertStore(t),
 	}
 
-	_, intInstance, err := NewCA(params)
+	_, intInstance, err := NewCA(context.Background(), params)
 	require.NoError(t, err)
 	require.NotNil(t, intInstance)
 

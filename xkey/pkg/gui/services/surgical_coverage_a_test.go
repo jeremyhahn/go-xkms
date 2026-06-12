@@ -38,9 +38,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // saPanicPINBackend panics on every method to trigger panic recovery paths.
-type saPanicPINBackend struct {
-	mockPINBackend
-}
+type saPanicPINBackend struct{}
 
 func (m *saPanicPINBackend) Strategy() qrdbsdk.PINStrategyID { panic("saPanic: Strategy") }
 func (m *saPanicPINBackend) SOPINSet() bool                  { panic("saPanic: SOPINSet") }
@@ -76,8 +74,6 @@ func (m *saPanicPINBackend) SetMaxAttempts(_ int) {
 // and verifyDigests.
 type saPanicTPM struct {
 	mockTPM
-	pcrBanksOverride []xkms.PCRBank
-	pcrBanksErr      error
 }
 
 func (m *saPanicTPM) ReadPCRs(_ []uint) ([]xkms.PCRBank, error) {

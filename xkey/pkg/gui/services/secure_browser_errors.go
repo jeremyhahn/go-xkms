@@ -53,4 +53,23 @@ var (
 
 	// ErrSecureBrowserInvalidMode indicates an invalid profile mode was specified.
 	ErrSecureBrowserInvalidMode = errors.New("secure_browser: invalid profile mode")
+
+	// ErrSecureBrowserHomeDir indicates the user's home directory could not
+	// be resolved when locating the shared NSS database (~/.pki/nssdb).
+	ErrSecureBrowserHomeDir = errors.New("secure_browser: failed to resolve user home directory")
+
+	// ErrSecureBrowserExtImportUnsupported indicates extension import was
+	// requested for an unsupported combination. Extension import only
+	// works for Chrome-family browsers in isolated profile mode: shared
+	// mode already carries the user's own extensions, and Firefox import
+	// is out of scope.
+	ErrSecureBrowserExtImportUnsupported = errors.New("secure_browser: extension import is only supported for Chrome in isolated mode")
+
+	// ErrSecureBrowserSourceProfile indicates the source Chrome profile
+	// directory does not exist or could not be read.
+	ErrSecureBrowserSourceProfile = errors.New("secure_browser: source browser profile not found")
+
+	// ErrSecureBrowserExtImport indicates an extension import operation
+	// (copying version dirs, merging Preferences, mirroring state) failed.
+	ErrSecureBrowserExtImport = errors.New("secure_browser: extension import failed")
 )

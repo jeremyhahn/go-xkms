@@ -15,7 +15,7 @@ import (
 )
 
 func TestNewBarrier_Success(t *testing.T) {
-	store := NewMemoryBackend()
+	store := newMemoryBackend()
 	strategy := NewSoftwareStrategy()
 
 	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
@@ -26,7 +26,7 @@ func TestNewBarrier_Success(t *testing.T) {
 }
 
 func TestNewBarrier_NoStrategies(t *testing.T) {
-	store := NewMemoryBackend()
+	store := newMemoryBackend()
 
 	_, err := NewBarrier(testLogger(), store, BarrierConfig{
 		RootKeyPath: "test/root-key",
@@ -35,7 +35,7 @@ func TestNewBarrier_NoStrategies(t *testing.T) {
 }
 
 func TestNewBarrier_WithAuditLogger(t *testing.T) {
-	store := NewMemoryBackend()
+	store := newMemoryBackend()
 	strategy := NewSoftwareStrategy()
 	recorder := &recordingAuditLogger{}
 
@@ -48,7 +48,7 @@ func TestNewBarrier_WithAuditLogger(t *testing.T) {
 }
 
 func TestNewTenantBarrier_Success(t *testing.T) {
-	store := NewMemoryBackend()
+	store := newMemoryBackend()
 	strategy := NewSoftwareStrategy()
 
 	tb, err := NewTenantBarrier("tenant-1", testLogger(), store, BarrierConfig{
@@ -59,7 +59,7 @@ func TestNewTenantBarrier_Success(t *testing.T) {
 }
 
 func TestNewTenantBarrier_NoStrategies(t *testing.T) {
-	store := NewMemoryBackend()
+	store := newMemoryBackend()
 
 	_, err := NewTenantBarrier("tenant-1", testLogger(), store, BarrierConfig{
 		RootKeyPath: "test/root-key",
@@ -68,7 +68,7 @@ func TestNewTenantBarrier_NoStrategies(t *testing.T) {
 }
 
 func TestNewBarrierRegistry_Success(t *testing.T) {
-	store := NewMemoryBackend()
+	store := newMemoryBackend()
 	strategy := NewSoftwareStrategy()
 
 	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
@@ -101,7 +101,7 @@ func initAndUnsealBarrier(t *testing.T, barrier *Barrier, creds Credentials) {
 }
 
 func TestBarrierRegistry_TenantLifecycle(t *testing.T) {
-	store := NewMemoryBackend()
+	store := newMemoryBackend()
 	strategy := NewSoftwareStrategy()
 
 	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
@@ -164,7 +164,7 @@ func TestBarrierRegistry_TenantLifecycle(t *testing.T) {
 }
 
 func TestBarrierRegistry_RegisterTenantWithConfig(t *testing.T) {
-	store := NewMemoryBackend()
+	store := newMemoryBackend()
 	strategy := NewSoftwareStrategy()
 
 	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
@@ -178,7 +178,7 @@ func TestBarrierRegistry_RegisterTenantWithConfig(t *testing.T) {
 	registry, err := NewBarrierRegistry(barrier)
 	require.NoError(t, err)
 
-	tenantStore := NewMemoryBackend()
+	tenantStore := newMemoryBackend()
 	tb, err := registry.RegisterTenantWithConfig("tenant-custom", tenantStore, BarrierConfig{
 		RootKeyPath: "custom/root-key",
 	}, NewSoftwareStrategy())
@@ -187,7 +187,7 @@ func TestBarrierRegistry_RegisterTenantWithConfig(t *testing.T) {
 }
 
 func TestBarrierRegistry_UnregisterTenant(t *testing.T) {
-	store := NewMemoryBackend()
+	store := newMemoryBackend()
 	strategy := NewSoftwareStrategy()
 
 	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
@@ -212,7 +212,7 @@ func TestBarrierRegistry_UnregisterTenant(t *testing.T) {
 }
 
 func TestBarrierRegistry_SealAll(t *testing.T) {
-	store := NewMemoryBackend()
+	store := newMemoryBackend()
 	strategy := NewSoftwareStrategy()
 
 	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
@@ -231,7 +231,7 @@ func TestBarrierRegistry_SealAll(t *testing.T) {
 }
 
 func TestBarrierRegistry_Close(t *testing.T) {
-	store := NewMemoryBackend()
+	store := newMemoryBackend()
 	strategy := NewSoftwareStrategy()
 
 	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{

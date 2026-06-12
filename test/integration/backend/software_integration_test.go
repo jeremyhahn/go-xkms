@@ -17,6 +17,7 @@ package backend
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -112,7 +113,7 @@ func TestSoftware_RSA_EndToEnd(t *testing.T) {
 			attrs := createRSAAttrs("test-rsa", keySize)
 
 			// Generate key
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
 			}
@@ -127,7 +128,7 @@ func TestSoftware_RSA_EndToEnd(t *testing.T) {
 			}
 
 			// Retrieve key
-			retrievedKey, err := be.GetKey(attrs)
+			retrievedKey, err := be.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GetKey failed: %v", err)
 			}
@@ -138,7 +139,7 @@ func TestSoftware_RSA_EndToEnd(t *testing.T) {
 			}
 
 			// Test signing
-			signer, err := be.Signer(attrs)
+			signer, err := be.Signer(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Signer failed: %v", err)
 			}
@@ -158,7 +159,7 @@ func TestSoftware_RSA_EndToEnd(t *testing.T) {
 			}
 
 			// Test decryption
-			decrypter, err := be.Decrypter(attrs)
+			decrypter, err := be.Decrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Decrypter failed: %v", err)
 			}
@@ -179,12 +180,12 @@ func TestSoftware_RSA_EndToEnd(t *testing.T) {
 			}
 
 			// Delete key
-			if err := be.DeleteKey(attrs); err != nil {
+			if err := be.DeleteKey(context.Background(), attrs); err != nil {
 				t.Fatalf("DeleteKey failed: %v", err)
 			}
 
 			// Verify deletion
-			_, err = be.GetKey(attrs)
+			_, err = be.GetKey(context.Background(), attrs)
 			if err == nil {
 				t.Error("Expected error for deleted key")
 			}
@@ -217,7 +218,7 @@ func TestSoftware_RSA_PSS_EndToEnd(t *testing.T) {
 				attrs.Hash = tt.hash
 
 				// Generate key
-				key, err := be.GenerateKey(attrs)
+				key, err := be.GenerateKey(context.Background(), attrs)
 				if err != nil {
 					t.Fatalf("GenerateKey failed: %v", err)
 				}
@@ -232,7 +233,7 @@ func TestSoftware_RSA_PSS_EndToEnd(t *testing.T) {
 				}
 
 				// Get signer
-				signer, err := be.Signer(attrs)
+				signer, err := be.Signer(context.Background(), attrs)
 				if err != nil {
 					t.Fatalf("Signer failed: %v", err)
 				}
@@ -277,7 +278,7 @@ func TestSoftware_RSA_PSS_EndToEnd(t *testing.T) {
 				t.Logf("Successfully signed and verified with RSA-PSS %d-bit key using %s", keySize, tt.name)
 
 				// Delete key
-				if err := be.DeleteKey(attrs); err != nil {
+				if err := be.DeleteKey(context.Background(), attrs); err != nil {
 					t.Fatalf("DeleteKey failed: %v", err)
 				}
 			})
@@ -297,7 +298,7 @@ func TestSoftware_ECDSA_EndToEnd(t *testing.T) {
 			attrs := createECDSAAttrs("test-ecdsa", curve)
 
 			// Generate key
-			key, err := be.GenerateKey(attrs)
+			key, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
 			}
@@ -308,7 +309,7 @@ func TestSoftware_ECDSA_EndToEnd(t *testing.T) {
 			}
 
 			// Retrieve key
-			retrievedKey, err := be.GetKey(attrs)
+			retrievedKey, err := be.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GetKey failed: %v", err)
 			}
@@ -319,7 +320,7 @@ func TestSoftware_ECDSA_EndToEnd(t *testing.T) {
 			}
 
 			// Test signing
-			signer, err := be.Signer(attrs)
+			signer, err := be.Signer(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Signer failed: %v", err)
 			}
@@ -338,12 +339,12 @@ func TestSoftware_ECDSA_EndToEnd(t *testing.T) {
 			}
 
 			// Delete key
-			if err := be.DeleteKey(attrs); err != nil {
+			if err := be.DeleteKey(context.Background(), attrs); err != nil {
 				t.Fatalf("DeleteKey failed: %v", err)
 			}
 
 			// Verify deletion
-			_, err = be.GetKey(attrs)
+			_, err = be.GetKey(context.Background(), attrs)
 			if err == nil {
 				t.Error("Expected error for deleted key")
 			}
@@ -359,7 +360,7 @@ func TestSoftware_Ed25519_EndToEnd(t *testing.T) {
 	attrs := createEd25519Attrs("test-ed25519")
 
 	// Generate key
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -370,7 +371,7 @@ func TestSoftware_Ed25519_EndToEnd(t *testing.T) {
 	}
 
 	// Retrieve key
-	retrievedKey, err := be.GetKey(attrs)
+	retrievedKey, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -381,7 +382,7 @@ func TestSoftware_Ed25519_EndToEnd(t *testing.T) {
 	}
 
 	// Test signing
-	signer, err := be.Signer(attrs)
+	signer, err := be.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer failed: %v", err)
 	}
@@ -400,12 +401,12 @@ func TestSoftware_Ed25519_EndToEnd(t *testing.T) {
 	}
 
 	// Delete key
-	if err := be.DeleteKey(attrs); err != nil {
+	if err := be.DeleteKey(context.Background(), attrs); err != nil {
 		t.Fatalf("DeleteKey failed: %v", err)
 	}
 
 	// Verify deletion
-	_, err = be.GetKey(attrs)
+	_, err = be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for deleted key")
 	}
@@ -431,7 +432,7 @@ func TestSoftware_Symmetric_EndToEnd(t *testing.T) {
 			attrs := createSymmetricAttrs("test-"+tt.name, tt.keySize, tt.algorithm)
 
 			// Generate key
-			key, err := be.GenerateSymmetricKey(attrs)
+			key, err := be.GenerateSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateSymmetricKey failed: %v", err)
 			}
@@ -441,7 +442,7 @@ func TestSoftware_Symmetric_EndToEnd(t *testing.T) {
 			}
 
 			// Retrieve key
-			retrievedKey, err := be.GetSymmetricKey(attrs)
+			retrievedKey, err := be.GetSymmetricKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GetSymmetricKey failed: %v", err)
 			}
@@ -455,7 +456,7 @@ func TestSoftware_Symmetric_EndToEnd(t *testing.T) {
 			// Test encryption/decryption
 			plaintext := []byte("Hello, World! This is a test message")
 
-			encrypter, err := be.SymmetricEncrypter(attrs)
+			encrypter, err := be.SymmetricEncrypter(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("SymmetricEncrypter failed: %v", err)
 			}
@@ -475,12 +476,12 @@ func TestSoftware_Symmetric_EndToEnd(t *testing.T) {
 			}
 
 			// Delete key
-			if err := be.DeleteKey(attrs); err != nil {
+			if err := be.DeleteKey(context.Background(), attrs); err != nil {
 				t.Fatalf("DeleteKey failed: %v", err)
 			}
 
 			// Verify deletion
-			_, err = be.GetSymmetricKey(attrs)
+			_, err = be.GetSymmetricKey(context.Background(), attrs)
 			if err == nil {
 				t.Error("Expected error for deleted key")
 			}
@@ -495,34 +496,34 @@ func TestSoftware_MixedKeys(t *testing.T) {
 
 	// Generate RSA key
 	rsaAttrs := createRSAAttrs("test-rsa-mixed", 2048)
-	_, err := be.GenerateKey(rsaAttrs)
+	_, err := be.GenerateKey(context.Background(), rsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey RSA failed: %v", err)
 	}
 
 	// Generate ECDSA key
 	ecdsaAttrs := createECDSAAttrs("test-ecdsa-mixed", "P-256")
-	_, err = be.GenerateKey(ecdsaAttrs)
+	_, err = be.GenerateKey(context.Background(), ecdsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey ECDSA failed: %v", err)
 	}
 
 	// Generate Ed25519 key
 	ed25519Attrs := createEd25519Attrs("test-ed25519-mixed")
-	_, err = be.GenerateKey(ed25519Attrs)
+	_, err = be.GenerateKey(context.Background(), ed25519Attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey Ed25519 failed: %v", err)
 	}
 
 	// Generate AES key
 	aesAttrs := createSymmetricAttrs("test-aes-mixed", 256, types.SymmetricAES256GCM)
-	_, err = be.GenerateSymmetricKey(aesAttrs)
+	_, err = be.GenerateSymmetricKey(context.Background(), aesAttrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
 	// List all keys
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -550,7 +551,7 @@ func TestSoftware_ImportExport_RSA(t *testing.T) {
 			// PKCS8 encoding of large keys can exceed RSA-OAEP limits
 			attrs := createRSAAttrs("test-export-rsa", 2048)
 			attrs.Exportable = true // Mark as exportable for import/export test
-			originalKey, err := be.GenerateKey(attrs)
+			originalKey, err := be.GenerateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
 			}
@@ -558,7 +559,7 @@ func TestSoftware_ImportExport_RSA(t *testing.T) {
 			originalRSA := originalKey.(*rsa.PrivateKey)
 
 			// Export the key
-			wrapped, err := exportBackend.ExportKey(attrs, algorithm)
+			wrapped, err := exportBackend.ExportKey(context.Background(), attrs, algorithm)
 			if err != nil {
 				// RSA-OAEP may fail with large PKCS8 keys - log warning if so
 				if algorithm == backend.WrappingAlgorithmRSAES_OAEP_SHA_256 {
@@ -570,18 +571,18 @@ func TestSoftware_ImportExport_RSA(t *testing.T) {
 			}
 
 			// Delete the original key
-			if err := be.DeleteKey(attrs); err != nil {
+			if err := be.DeleteKey(context.Background(), attrs); err != nil {
 				t.Fatalf("DeleteKey failed: %v", err)
 			}
 
 			// Import the key back
 			importAttrs := createRSAAttrs("test-import-rsa", 2048)
-			if err := exportBackend.ImportKey(importAttrs, wrapped); err != nil {
+			if err := exportBackend.ImportKey(context.Background(), importAttrs, wrapped); err != nil {
 				t.Fatalf("ImportKey failed: %v", err)
 			}
 
 			// Retrieve and verify
-			importedKey, err := be.GetKey(importAttrs)
+			importedKey, err := be.GetKey(context.Background(), importAttrs)
 			if err != nil {
 				t.Fatalf("GetKey after import failed: %v", err)
 			}
@@ -607,7 +608,7 @@ func TestSoftware_ImportExport_ECDSA(t *testing.T) {
 	// Generate ECDSA key
 	attrs := createECDSAAttrs("test-export-ecdsa", "P-256")
 	attrs.Exportable = true // Mark as exportable for import/export test
-	originalKey, err := be.GenerateKey(attrs)
+	originalKey, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -615,24 +616,24 @@ func TestSoftware_ImportExport_ECDSA(t *testing.T) {
 	originalECDSA := originalKey.(*ecdsa.PrivateKey)
 
 	// Export the key
-	wrapped, err := exportBackend.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	wrapped, err := exportBackend.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
 		t.Fatalf("ExportKey failed: %v", err)
 	}
 
 	// Delete the original key
-	if err := be.DeleteKey(attrs); err != nil {
+	if err := be.DeleteKey(context.Background(), attrs); err != nil {
 		t.Fatalf("DeleteKey failed: %v", err)
 	}
 
 	// Import the key back
 	importAttrs := createECDSAAttrs("test-import-ecdsa", "P-256")
-	if err := exportBackend.ImportKey(importAttrs, wrapped); err != nil {
+	if err := exportBackend.ImportKey(context.Background(), importAttrs, wrapped); err != nil {
 		t.Fatalf("ImportKey failed: %v", err)
 	}
 
 	// Retrieve and verify
-	importedKey, err := be.GetKey(importAttrs)
+	importedKey, err := be.GetKey(context.Background(), importAttrs)
 	if err != nil {
 		t.Fatalf("GetKey after import failed: %v", err)
 	}
@@ -653,7 +654,7 @@ func TestSoftware_ImportExport_Symmetric(t *testing.T) {
 	// Generate AES key
 	attrs := createSymmetricAttrs("test-export-aes", 256, types.SymmetricAES256GCM)
 	attrs.Exportable = true // Mark as exportable for import/export test
-	originalKey, err := be.GenerateSymmetricKey(attrs)
+	originalKey, err := be.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
@@ -661,24 +662,24 @@ func TestSoftware_ImportExport_Symmetric(t *testing.T) {
 	rawOriginal, _ := originalKey.Raw()
 
 	// Export the key
-	wrapped, err := exportBackend.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	wrapped, err := exportBackend.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
 		t.Fatalf("ExportKey failed: %v", err)
 	}
 
 	// Delete the original key
-	if err := be.DeleteKey(attrs); err != nil {
+	if err := be.DeleteKey(context.Background(), attrs); err != nil {
 		t.Fatalf("DeleteKey failed: %v", err)
 	}
 
 	// Import the key back
 	importAttrs := createSymmetricAttrs("test-import-aes", 256, types.SymmetricAES256GCM)
-	if err := exportBackend.ImportKey(importAttrs, wrapped); err != nil {
+	if err := exportBackend.ImportKey(context.Background(), importAttrs, wrapped); err != nil {
 		t.Fatalf("ImportKey failed: %v", err)
 	}
 
 	// Retrieve and verify
-	importedKey, err := be.GetSymmetricKey(importAttrs)
+	importedKey, err := be.GetSymmetricKey(context.Background(), importAttrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey after import failed: %v", err)
 	}
@@ -697,7 +698,7 @@ func TestSoftware_KeyRotation_Asymmetric(t *testing.T) {
 	attrs := createRSAAttrs("test-rotation-rsa", 2048)
 
 	// Generate initial key
-	originalKey, err := be.GenerateKey(attrs)
+	originalKey, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -705,12 +706,12 @@ func TestSoftware_KeyRotation_Asymmetric(t *testing.T) {
 	originalRSA := originalKey.(*rsa.PrivateKey)
 
 	// Rotate the key
-	if err := be.RotateKey(attrs); err != nil {
+	if err := be.RotateKey(context.Background(), attrs); err != nil {
 		t.Fatalf("RotateKey failed: %v", err)
 	}
 
 	// Retrieve rotated key
-	rotatedKey, err := be.GetKey(attrs)
+	rotatedKey, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey after rotation failed: %v", err)
 	}
@@ -736,7 +737,7 @@ func TestSoftware_KeyRotation_Symmetric(t *testing.T) {
 	attrs := createSymmetricAttrs("test-rotation-aes", 256, types.SymmetricAES256GCM)
 
 	// Generate initial key
-	originalKey, err := be.GenerateSymmetricKey(attrs)
+	originalKey, err := be.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
@@ -744,12 +745,12 @@ func TestSoftware_KeyRotation_Symmetric(t *testing.T) {
 	rawOriginal, _ := originalKey.Raw()
 
 	// Rotate the key
-	if err := be.RotateKey(attrs); err != nil {
+	if err := be.RotateKey(context.Background(), attrs); err != nil {
 		t.Fatalf("RotateKey failed: %v", err)
 	}
 
 	// Retrieve rotated key
-	rotatedKey, err := be.GetSymmetricKey(attrs)
+	rotatedKey, err := be.GetSymmetricKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetSymmetricKey after rotation failed: %v", err)
 	}
@@ -802,13 +803,13 @@ func TestSoftware_ErrorHandling_DuplicateKey(t *testing.T) {
 	attrs := createRSAAttrs("duplicate", 2048)
 
 	// Generate first key
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("First GenerateKey failed: %v", err)
 	}
 
 	// Try to generate duplicate
-	_, err = be.GenerateKey(attrs)
+	_, err = be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for duplicate key")
 	}
@@ -821,12 +822,12 @@ func TestSoftware_ErrorHandling_NonExistentKey(t *testing.T) {
 
 	attrs := createRSAAttrs("nonexistent", 2048)
 
-	_, err := be.GetKey(attrs)
+	_, err := be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for non-existent key")
 	}
 
-	err = be.DeleteKey(attrs)
+	err = be.DeleteKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error on delete for non-existent key")
 	}
@@ -844,17 +845,17 @@ func TestSoftware_ErrorHandling_ClosedBackend(t *testing.T) {
 	attrs := createRSAAttrs("test-closed", 2048)
 
 	// All operations should fail
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for GenerateKey on closed backend")
 	}
 
-	_, err = be.GetKey(attrs)
+	_, err = be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for GetKey on closed backend")
 	}
 
-	err = be.DeleteKey(attrs)
+	err = be.DeleteKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for DeleteKey on closed backend")
 	}
@@ -876,13 +877,13 @@ func TestSoftware_ConcurrentOperations(t *testing.T) {
 			// Half RSA, half AES - use unique names
 			if id%2 == 0 {
 				attrs := createRSAAttrs("concurrent-rsa-"+string(rune('a'+id)), 2048)
-				_, err := be.GenerateKey(attrs)
+				_, err := be.GenerateKey(context.Background(), attrs)
 				if err != nil {
 					t.Errorf("GenerateKey failed in goroutine %d: %v", id, err)
 				}
 			} else {
 				attrs := createSymmetricAttrs("concurrent-aes-"+string(rune('a'+id)), 256, types.SymmetricAES256GCM)
-				_, err := be.GenerateSymmetricKey(attrs)
+				_, err := be.GenerateSymmetricKey(context.Background(), attrs)
 				if err != nil {
 					t.Errorf("GenerateSymmetricKey failed in goroutine %d: %v", id, err)
 				}
@@ -896,7 +897,7 @@ func TestSoftware_ConcurrentOperations(t *testing.T) {
 	}
 
 	// Verify all keys were created
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -926,7 +927,7 @@ func TestSoftware_PasswordProtection_Asymmetric(t *testing.T) {
 	attrs.Password = password
 
 	// Generate password-protected key
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -934,7 +935,7 @@ func TestSoftware_PasswordProtection_Asymmetric(t *testing.T) {
 	originalRSA := key.(*rsa.PrivateKey)
 
 	// Retrieve with correct password
-	retrievedKey, err := be.GetKey(attrs)
+	retrievedKey, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey with correct password failed: %v", err)
 	}
@@ -948,7 +949,7 @@ func TestSoftware_PasswordProtection_Asymmetric(t *testing.T) {
 	wrongPasswordAttrs := createRSAAttrs("test-password-rsa", 2048)
 	wrongPasswordAttrs.Password = backend.StaticPassword("wrong-password")
 
-	_, err = be.GetKey(wrongPasswordAttrs)
+	_, err = be.GetKey(context.Background(), wrongPasswordAttrs)
 	if err == nil {
 		t.Error("Expected error with wrong password")
 	}
@@ -978,7 +979,7 @@ func TestSoftware_AllKeyTypes_Comprehensive(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.attrs.IsSymmetric() {
 				// Test symmetric key
-				key, err := be.GenerateSymmetricKey(tt.attrs)
+				key, err := be.GenerateSymmetricKey(context.Background(), tt.attrs)
 				if err != nil {
 					t.Fatalf("GenerateSymmetricKey failed: %v", err)
 				}
@@ -987,7 +988,7 @@ func TestSoftware_AllKeyTypes_Comprehensive(t *testing.T) {
 				}
 
 				// Retrieve and verify
-				retrieved, err := be.GetSymmetricKey(tt.attrs)
+				retrieved, err := be.GetSymmetricKey(context.Background(), tt.attrs)
 				if err != nil {
 					t.Fatalf("GetSymmetricKey failed: %v", err)
 				}
@@ -996,7 +997,7 @@ func TestSoftware_AllKeyTypes_Comprehensive(t *testing.T) {
 				}
 			} else {
 				// Test asymmetric key
-				key, err := be.GenerateKey(tt.attrs)
+				key, err := be.GenerateKey(context.Background(), tt.attrs)
 				if err != nil {
 					t.Fatalf("GenerateKey failed: %v", err)
 				}
@@ -1005,7 +1006,7 @@ func TestSoftware_AllKeyTypes_Comprehensive(t *testing.T) {
 				}
 
 				// Retrieve and verify
-				retrieved, err := be.GetKey(tt.attrs)
+				retrieved, err := be.GetKey(context.Background(), tt.attrs)
 				if err != nil {
 					t.Fatalf("GetKey failed: %v", err)
 				}
@@ -1015,7 +1016,7 @@ func TestSoftware_AllKeyTypes_Comprehensive(t *testing.T) {
 
 				// Test signer if not Ed25519 with hash
 				if tt.attrs.KeyAlgorithm != x509.Ed25519 || tt.attrs.Hash != 0 {
-					signer, err := be.Signer(tt.attrs)
+					signer, err := be.Signer(context.Background(), tt.attrs)
 					if err != nil {
 						t.Fatalf("Signer failed: %v", err)
 					}
@@ -1026,7 +1027,7 @@ func TestSoftware_AllKeyTypes_Comprehensive(t *testing.T) {
 			}
 
 			// Delete and verify
-			if err := be.DeleteKey(tt.attrs); err != nil {
+			if err := be.DeleteKey(context.Background(), tt.attrs); err != nil {
 				t.Fatalf("DeleteKey failed: %v", err)
 			}
 		})

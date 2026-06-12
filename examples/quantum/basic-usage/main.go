@@ -17,6 +17,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/sha256"
@@ -72,7 +73,7 @@ func main() {
 		},
 	}
 
-	mldsaKey, err := quantumBackend.GenerateKey(mldsaAttrs)
+	mldsaKey, err := quantumBackend.GenerateKey(context.Background(), mldsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate ML-DSA-44 key: %v", err)
 	}
@@ -84,7 +85,7 @@ func main() {
 	message := []byte("Hello, quantum-safe world! This message is protected by NIST-standardized post-quantum cryptography.")
 
 	// Get signer (implements standard crypto.Signer interface)
-	signer, err := quantumBackend.Signer(mldsaAttrs)
+	signer, err := quantumBackend.Signer(context.Background(), mldsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get signer: %v", err)
 	}
@@ -119,7 +120,7 @@ func main() {
 		},
 	}
 
-	_, err = quantumBackend.GenerateKey(mldsa65Attrs)
+	_, err = quantumBackend.GenerateKey(context.Background(), mldsa65Attrs)
 	if err != nil {
 		log.Fatalf("Failed to generate ML-DSA-65 key: %v", err)
 	}
@@ -137,7 +138,7 @@ func main() {
 		},
 	}
 
-	kemKey, err := quantumBackend.GenerateKey(kemAttrs)
+	kemKey, err := quantumBackend.GenerateKey(context.Background(), kemAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate ML-KEM-768 key: %v", err)
 	}
@@ -174,7 +175,7 @@ func main() {
 
 	// Example 6: List all quantum keys
 	fmt.Println("6. Listing all quantum keys...")
-	keys, err := quantumBackend.ListKeys()
+	keys, err := quantumBackend.ListKeys(context.Background())
 	if err != nil {
 		log.Fatalf("Failed to list keys: %v", err)
 	}
@@ -187,14 +188,14 @@ func main() {
 
 	// Example 7: Key persistence - retrieve previously generated key
 	fmt.Println("7. Demonstrating key persistence...")
-	retrievedKey, err := quantumBackend.GetKey(mldsaAttrs)
+	retrievedKey, err := quantumBackend.GetKey(context.Background(), mldsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to retrieve key: %v", err)
 	}
 	fmt.Printf("   ✓ Retrieved key: %s\n", retrievedKey)
 
 	// Use retrieved key to sign
-	retrievedSigner, err := quantumBackend.Signer(mldsaAttrs)
+	retrievedSigner, err := quantumBackend.Signer(context.Background(), mldsaAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get signer from retrieved key: %v", err)
 	}

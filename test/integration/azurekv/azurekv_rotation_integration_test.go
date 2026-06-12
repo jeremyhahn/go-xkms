@@ -16,6 +16,7 @@
 package integration
 
 import (
+	"context"
 	"crypto"
 	"crypto/elliptic"
 	"crypto/sha256"
@@ -168,7 +169,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 
 		// Step 4: Rotate the key
 		t.Log("Step 4: Rotating key to create new version...")
-		err = b.RotateKey(attrs)
+		err = b.RotateKey(context.Background(), attrs)
 		if err != nil {
 			// Azure KV emulator may not support rotation
 			t.Logf("⚠ Key rotation not supported (emulator limitation): %v", err)
@@ -276,7 +277,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 
 		// Rotate the key
 		t.Log("Rotating ECDSA key...")
-		err = b.RotateKey(attrs)
+		err = b.RotateKey(context.Background(), attrs)
 		if err != nil {
 			t.Logf("⚠ ECDSA key rotation not supported: %v", err)
 			_ = b.Delete(attrs)
@@ -351,7 +352,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 			time.Sleep(100 * time.Millisecond) // Small delay between rotations
 
 			t.Logf("Rotation cycle %d/%d...", i+1, numRotations)
-			err = b.RotateKey(attrs)
+			err = b.RotateKey(context.Background(), attrs)
 			if err != nil {
 				t.Logf("⚠ Key rotation not supported: %v", err)
 				_ = b.Delete(attrs)
@@ -411,7 +412,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 
 		// Get Signer interface for original key
 		t.Log("Getting Signer interface for original key...")
-		signer1, err := b.Signer(attrs)
+		signer1, err := b.Signer(context.Background(), attrs)
 		if err != nil {
 			t.Logf("⚠ Signer interface not supported: %v", err)
 			_ = b.Delete(attrs)
@@ -436,7 +437,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 
 		// Rotate key
 		t.Log("Rotating key...")
-		err = b.RotateKey(attrs)
+		err = b.RotateKey(context.Background(), attrs)
 		if err != nil {
 			t.Logf("⚠ Key rotation not supported: %v", err)
 			_ = b.Delete(attrs)
@@ -447,7 +448,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 
 		// Get new Signer interface (should use rotated key)
 		t.Log("Getting Signer interface for rotated key...")
-		signer2, err := b.Signer(attrs)
+		signer2, err := b.Signer(context.Background(), attrs)
 		require.NoError(t, err, "Failed to get Signer after rotation")
 
 		// Get public key from rotated version
@@ -497,7 +498,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 		}
 
 		// Try to rotate a key that doesn't exist
-		err := b.RotateKey(attrs)
+		err := b.RotateKey(context.Background(), attrs)
 		require.Error(t, err, "Rotating non-existent key should return error")
 		t.Logf("✓ Correctly rejected rotation of non-existent key: %v", err)
 	})
@@ -506,7 +507,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 	// Test 6: Error Handling - Nil Attributes
 	// ========================================================================
 	t.Run("RotateKey_NilAttributes", func(t *testing.T) {
-		err := b.RotateKey(nil)
+		err := b.RotateKey(context.Background(), nil)
 		require.Error(t, err, "Rotating with nil attributes should return error")
 		t.Logf("✓ Correctly rejected nil attributes: %v", err)
 	})

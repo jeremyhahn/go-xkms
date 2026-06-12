@@ -68,7 +68,7 @@ func (s *XKMSService) GenerateKey(ctx context.Context, req *transport.GenerateKe
 				Detail:   "does not support symmetric key generation",
 			}
 		}
-		_, symErr := symProvider.GenerateSymmetricKey(attrs)
+		_, symErr := symProvider.GenerateSymmetricKey(ctx, attrs)
 		if symErr != nil {
 			return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: symErr}
 		}
@@ -81,11 +81,11 @@ func (s *XKMSService) GenerateKey(ctx context.Context, req *transport.GenerateKe
 	// Asymmetric key generation
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		privKey, err = b.GenerateRSA(attrs)
+		privKey, err = b.GenerateRSA(ctx, attrs)
 	case x509.ECDSA:
-		privKey, err = b.GenerateECDSA(attrs)
+		privKey, err = b.GenerateECDSA(ctx, attrs)
 	case x509.Ed25519:
-		privKey, err = b.GenerateEd25519(attrs)
+		privKey, err = b.GenerateEd25519(ctx, attrs)
 	default:
 		return nil, &ErrValidation{Sentinel: ErrUnsupportedKeyAlgorithm, Detail: req.Algorithm}
 	}
@@ -121,14 +121,14 @@ func (s *XKMSService) ListKeys(ctx context.Context, backendName string, opts ...
 		if !ok {
 			return nil, &ErrBackendLookup{Sentinel: ErrBackendNotFound, Name: validation.SanitizeForLog(backendName)}
 		}
-		keys, err := b.ListKeys()
+		keys, err := b.ListKeys(ctx)
 		if err != nil {
 			return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 		}
 		allKeys = attrsToKeyInfoList(keys, backendName)
 	} else {
 		for name, b := range s.backends {
-			keys, err := b.ListKeys()
+			keys, err := b.ListKeys(ctx)
 			if err != nil {
 				continue
 			}
@@ -150,7 +150,7 @@ func (s *XKMSService) GetKey(ctx context.Context, backendName, keyID string) (*t
 		return nil, err
 	}
 
-	keyAttrs, err := findKeyAttrs(b, keyID)
+	keyAttrs, err := findKeyAttrs(ctx, b, keyID)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +165,7 @@ func (s *XKMSService) GetKey(ctx context.Context, backendName, keyID string) (*t
 	}
 
 	// Try to extract and encode the public key
-	privKey, keyErr := b.GetKey(keyAttrs)
+	privKey, keyErr := b.GetKey(ctx, keyAttrs)
 	if keyErr == nil {
 		if pemStr, pemErr := pubKeyPEM(privKey); pemErr == nil {
 			resp.PublicKeyPEM = pemStr
@@ -186,12 +186,12 @@ func (s *XKMSService) DeleteKey(ctx context.Context, backendName, keyID string) 
 		return err
 	}
 
-	keyAttrs, err := findKeyAttrs(b, keyID)
+	keyAttrs, err := findKeyAttrs(ctx, b, keyID)
 	if err != nil {
 		return err
 	}
 
-	return b.DeleteKey(keyAttrs)
+	return b.DeleteKey(ctx, keyAttrs)
 }
 
 // ImportKey imports externally generated key material into a backend using
@@ -231,7 +231,7 @@ func (s *XKMSService) ImportKey(ctx context.Context, req *transport.ImportKeyReq
 		ImportToken: req.ImportToken,
 	}
 
-	if err := importExport.ImportKey(attrs, wrapped); err != nil {
+	if err := importExport.ImportKey(ctx, attrs, wrapped); err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
 
@@ -269,13 +269,13 @@ func (s *XKMSService) ExportKey(ctx context.Context, req *transport.ExportKeyReq
 		}
 	}
 
-	keyAttrs, err := findKeyAttrs(b, req.KeyID)
+	keyAttrs, err := findKeyAttrs(ctx, b, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
 
 	algorithm := backend.WrappingAlgorithm(req.Algorithm)
-	wrapped, err := importExport.ExportKey(keyAttrs, algorithm)
+	wrapped, err := importExport.ExportKey(ctx, keyAttrs, algorithm)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
@@ -306,12 +306,12 @@ func (s *XKMSService) RotateKey(ctx context.Context, req *transport.RotateKeyReq
 		return nil, err
 	}
 
-	keyAttrs, err := findKeyAttrs(b, req.KeyID)
+	keyAttrs, err := findKeyAttrs(ctx, b, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
 
-	privKey, err := b.RotateKey(keyAttrs)
+	privKey, err := b.RotateKey(ctx, keyAttrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
@@ -355,7 +355,7 @@ func (s *XKMSService) GetImportParameters(ctx context.Context, req *transport.Ge
 	}
 
 	algorithm := backend.WrappingAlgorithm(req.Algorithm)
-	params, err := importExport.GetImportParameters(attrs, algorithm)
+	params, err := importExport.GetImportParameters(ctx, attrs, algorithm)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
@@ -421,7 +421,7 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		}
 	}
 
-	srcAttrs, err := findKeyAttrs(srcB, req.SourceKeyID)
+	srcAttrs, err := findKeyAttrs(ctx, srcB, req.SourceKeyID)
 	if err != nil {
 		return nil, &ErrCopyKeyBackend{Role: "source key", Err: err}
 	}
@@ -440,18 +440,18 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		algorithm = backend.WrappingAlgorithm(req.Algorithm)
 	}
 
-	importParams, err := dstImportExport.GetImportParameters(dstAttrs, algorithm)
+	importParams, err := dstImportExport.GetImportParameters(ctx, dstAttrs, algorithm)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "get import parameters", Err: err}
 	}
 
-	wrappedKey, err := srcImportExport.ExportKey(srcAttrs, algorithm)
+	wrappedKey, err := srcImportExport.ExportKey(ctx, srcAttrs, algorithm)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "export key", Err: err}
 	}
 	wrappedKey.ImportToken = importParams.ImportToken
 
-	if err := dstImportExport.ImportKey(dstAttrs, wrappedKey); err != nil {
+	if err := dstImportExport.ImportKey(ctx, dstAttrs, wrappedKey); err != nil {
 		return nil, &ErrKeyOperation{Operation: "import key", Err: err}
 	}
 
@@ -504,7 +504,7 @@ func (s *XKMSService) WrapKey(ctx context.Context, req *transport.WrapKeyRequest
 		Algorithm:         backend.WrappingAlgorithm(req.Algorithm),
 	}
 
-	wrapped, err := importExport.WrapKey(req.KeyMaterial, params)
+	wrapped, err := importExport.WrapKey(ctx, req.KeyMaterial, params)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
@@ -551,7 +551,7 @@ func (s *XKMSService) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReq
 		ImportToken: req.ImportToken,
 	}
 
-	keyMaterial, err := importExport.UnwrapKey(wrapped, params)
+	keyMaterial, err := importExport.UnwrapKey(ctx, wrapped, params)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}

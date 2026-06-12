@@ -73,11 +73,16 @@ func runBarrierUnseal(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create barrier and unseal.
-	barrier, err := createBarrier(dataDir)
+	barrier, closer, err := createBarrier(dataDir)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = barrier.Close() }()
+	defer func() {
+		_ = barrier.Close()
+		if closer != nil {
+			_ = closer.Close()
+		}
+	}()
 
 	creds := xkms.SealCredentials{Secret: password}
 	if err := barrier.Unseal(context.Background(), creds); err != nil {
@@ -87,9 +92,9 @@ func runBarrierUnseal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	strategy := barrier.ActiveStrategy()
-	fmt.Fprintf(out, "Barrier unsealed successfully.\n")
-	fmt.Fprintf(out, "  Strategy: %s\n", strategy)
+	strategy := strategyDisplayName(barrier.ActiveStrategy())
+	_, _ = fmt.Fprintf(out, "Barrier unsealed successfully.\n")
+	_, _ = fmt.Fprintf(out, "  Strategy: %s\n", strategy)
 
 	return nil
 }

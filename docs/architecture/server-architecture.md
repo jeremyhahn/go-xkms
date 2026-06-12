@@ -206,6 +206,40 @@ if s.policyManager != nil { svc.SetPolicyManager(s.policyManager) }
 
 Once all subsystems are wired, the `XKMSService` satisfies the full `XKMSServicer` interface and can be used with the embedded SDK transport (`sdk.NewEmbedded(svc)`) for in-process clients like the xkey GUI.
 
+### Transport Dependency Injection
+
+Protocol transports never call `xkms.Get()` themselves. The `*xkms.XKMSService`
+is resolved once at a composition root and injected into every transport
+constructor:
+
+| Transport | Injection point |
+|-----------|-----------------|
+| REST      | `rest.Config.XKMSService` → `rest.NewServer(cfg)` |
+| gRPC      | `grpc.NewService(authorizer, auditLogger, xkmsService)` |
+| QUIC      | `quic.Config.XKMSService` → `quic.NewServer(cfg)` |
+| MCP       | `mcp.Config.XKMSService` → `mcp.NewServer(cfg)` (returns `ErrXKMSServiceRequired` when nil) |
+| Unix      | `unix.GRPCConfig.XKMSService` |
+
+There are exactly two composition roots that call `xkms.Get()`:
+
+1. `pkg/server/server.go` — `New()` resolves the service after
+   `xkms.Initialize()` and threads it into every protocol server it starts.
+2. `sdk/go/embedded.go` — the embedded transport resolves the service for
+   in-process clients.
+
+REST handler sub-groups receive the service the same way:
+`NewCustodianHandlers(svc)`, `NewShareHandlers(svc)`, `NewClusterHandlers(svc)`,
+`NewTenantHandlers(registry, svc)`.
+
+Inside a transport, backend access goes through nil-guarding helpers
+(`lookupBackend`, `backendNames`, `sealWithBackend`, ...) that return
+`xkms.ErrNotInitialized` when the service was not wired, so a misconfigured
+transport fails fast with a typed error instead of panicking.
+
+Tests construct a service via `xkms.Initialize()` + `xkms.Get()` in their
+setup helpers and inject it explicitly — the singleton accessor is a
+composition-root convenience, not an API for business logic.
+
 ### 2. Configuration Management (`pkg/config/`)
 
 Hierarchical configuration system using Viper:

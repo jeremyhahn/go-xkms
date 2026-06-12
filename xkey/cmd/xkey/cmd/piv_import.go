@@ -214,9 +214,7 @@ func publicKeysEqual(pub1, pub2 crypto.PublicKey) bool {
 		if !ok {
 			return false
 		}
-		return key1.Curve == key2.Curve &&
-			key1.X.Cmp(key2.X) == 0 &&
-			key1.Y.Cmp(key2.Y) == 0
+		return key1.Equal(key2)
 
 	default:
 		// For other key types, marshal and compare bytes

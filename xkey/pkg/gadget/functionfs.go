@@ -115,7 +115,7 @@ func (t *FunctionFSTransport) Initialize(ctx context.Context) error {
 	// Write USB descriptors to ep0.
 	descs := BuildCCIDDescriptors()
 	if _, err := t.ep0.Write(descs); err != nil {
-		t.ep0.Close()
+		_ = t.ep0.Close()
 		t.ep0 = nil
 		return NewGadgetError("Initialize",
 			fmt.Errorf("%w: %v", ErrDescriptorWriteFailed, err))
@@ -124,7 +124,7 @@ func (t *FunctionFSTransport) Initialize(ctx context.Context) error {
 	// Write string descriptors to ep0.
 	strings := BuildFunctionFSStrings()
 	if _, err := t.ep0.Write(strings); err != nil {
-		t.ep0.Close()
+		_ = t.ep0.Close()
 		t.ep0 = nil
 		return NewGadgetError("Initialize",
 			fmt.Errorf("%w: %v", ErrDescriptorWriteFailed, err))
@@ -134,7 +134,7 @@ func (t *FunctionFSTransport) Initialize(ctx context.Context) error {
 	epOutPath := filepath.Join(t.mountDir, "ep1")
 	epOut, err := os.OpenFile(epOutPath, os.O_RDONLY, 0)
 	if err != nil {
-		t.ep0.Close()
+		_ = t.ep0.Close()
 		t.ep0 = nil
 		return NewGadgetError("Initialize",
 			fmt.Errorf("%w: ep1: %v", ErrEndpointOpenFailed, err))
@@ -145,9 +145,9 @@ func (t *FunctionFSTransport) Initialize(ctx context.Context) error {
 	epInPath := filepath.Join(t.mountDir, "ep2")
 	epIn, err := os.OpenFile(epInPath, os.O_WRONLY, 0)
 	if err != nil {
-		t.epOut.Close()
+		_ = t.epOut.Close()
 		t.epOut = nil
-		t.ep0.Close()
+		_ = t.ep0.Close()
 		t.ep0 = nil
 		return NewGadgetError("Initialize",
 			fmt.Errorf("%w: ep2: %v", ErrEndpointOpenFailed, err))
@@ -157,8 +157,10 @@ func (t *FunctionFSTransport) Initialize(ctx context.Context) error {
 	t.running.Store(true)
 	t.logger.Info("FunctionFS transport initialized", "mount_dir", t.mountDir)
 
-	// Start background event monitor.
-	go t.monitorEvents(ctx)
+	// Start background event monitor. ep0 is passed by value so the monitor
+	// never reads the shared t.ep0 field — Close() clears that field
+	// concurrently, and *os.File is itself safe for concurrent Close/Read.
+	go t.monitorEvents(ctx, ep0)
 
 	return nil
 }
@@ -186,7 +188,7 @@ func (t *FunctionFSTransport) Read(ctx context.Context) ([]byte, error) {
 
 		// Set a short deadline so we can check for context cancellation.
 		deadline := time.Now().Add(ffsPollInterval)
-		t.epOut.SetReadDeadline(deadline)
+		_ = t.epOut.SetReadDeadline(deadline)
 
 		n, err := t.epOut.Read(buf)
 		if err != nil {
@@ -261,7 +263,7 @@ func (t *FunctionFSTransport) MountDir() string {
 
 // monitorEvents reads FunctionFS lifecycle events from ep0 and logs them.
 // It exits when the context is cancelled or ep0 is closed.
-func (t *FunctionFSTransport) monitorEvents(ctx context.Context) {
+func (t *FunctionFSTransport) monitorEvents(ctx context.Context, ep0 *os.File) {
 	t.logger.Info("FunctionFS event monitor started")
 	defer t.logger.Info("FunctionFS event monitor stopped")
 
@@ -274,14 +276,14 @@ func (t *FunctionFSTransport) monitorEvents(ctx context.Context) {
 		default:
 		}
 
-		if t.closed.Load() || t.ep0 == nil {
+		if t.closed.Load() || ep0 == nil {
 			return
 		}
 
 		// Set a short deadline to allow checking context/closed state.
-		t.ep0.SetReadDeadline(time.Now().Add(ffsPollInterval))
+		_ = ep0.SetReadDeadline(time.Now().Add(ffsPollInterval))
 
-		n, err := t.ep0.Read(eventBuf)
+		n, err := ep0.Read(eventBuf)
 		if err != nil {
 			if os.IsTimeout(err) {
 				continue

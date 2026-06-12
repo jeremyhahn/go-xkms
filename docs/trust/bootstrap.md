@@ -59,6 +59,7 @@ const (
     ModeNoise  Mode = "noise"
     ModeSPKI   Mode = "spki"
     ModeDirect Mode = "direct"
+    ModeTOFU   Mode = "tofu"
 )
 ```
 
@@ -73,6 +74,7 @@ Mode values match both the canonical CLI verb (`quicbaas bootstrap <mode>`,
 | `ModeNoise` | Server's pre-shared Curve25519 static key over a Noise_NK channel | Operator distributes the Noise pubkey out-of-band. |
 | `ModeSPKI` | SHA-256 pin of the server certificate's SubjectPublicKeyInfo | Trust-on-first-use after the server prints its pin. |
 | `ModeDirect` | System trust store | Last-resort fallback for servers that already have a publicly-trusted certificate. |
+| `ModeTOFU` | Captured SPKI pin (trust-on-first-use) | No pre-shared anchor available; first contact is unauthenticated. Requires `TOFUConfig.PinStore`. |
 
 Source: `pkg/trust/bootstrap/bootstrap.go:62`.
 
@@ -94,6 +96,8 @@ type Config struct {
     Noise            *NoiseConfig
     SPKI             *SPKIConfig
     Direct           *DirectConfig
+    TOFU             *TOFUConfig
+    TOFUMethodOrder  []truststrap.Method  // only for ModeAuto; see TOFUConfig
 }
 ```
 
@@ -103,6 +107,7 @@ type Config struct {
 | `NoiseConfig` | `ServerStaticKey` (hex-encoded 32-byte Curve25519 pubkey). Optional: `ServerAddr` — derived from `Config.ServerURL` via `DeriveNoiseAddr` when empty. |
 | `SPKIConfig` | `Pin` (64-character hex-encoded SHA-256 SPKI pin). |
 | `DirectConfig` | No fields. Empty struct flags "direct mode is enabled" so `ModeAuto` can include it. |
+| `TOFUConfig` | `PinStore` (required). Optional: `ConfirmFunc`. Explicit-config-only — set `TOFUMethodOrder` to include `ModeTOFU` in `ModeAuto`; absent by default. |
 
 Source: `pkg/trust/bootstrap/bootstrap.go:96`.
 
@@ -118,6 +123,35 @@ type CABundle struct {
 
 Source: `pkg/trust/bootstrap/bootstrap.go:182`.
 
+### StoragePinStore (TOFU pin persistence)
+
+`StoragePinStore` implements the `truststrap.PinStore` interface over any
+xkms `storage.Backend`. It persists TOFU pins at the key prefix
+`trust/tofu/pins/<host>:<port>` using JSON encoding. IPv6 hosts are
+unambiguous because `net.JoinHostPort` brackets them.
+
+```go
+// Backed by any storage.Backend — memory, file, PebbleDB, or qrdb cluster.
+backend := storage.NewMemory() // or OpenEngine(cfg) for durable backends
+pinStore, err := bootstrap.NewStoragePinStore(backend)
+
+bundle, err := bootstrap.Fetch(ctx, bootstrap.Config{
+    Mode:      bootstrap.ModeTOFU,
+    ServerURL: "https://kms.example.com:8443",
+    TOFU:      &bootstrap.TOFUConfig{PinStore: pinStore},
+})
+```
+
+When the backend is a Raft-replicated qrdb cluster, every `Put` replicates
+through the Raft log, providing cluster-wide pin consistency.
+
+**Security caveat**: the first connection to a new server is unauthenticated.
+No pre-existing trust anchor validates the server certificate. All subsequent
+connections verify the captured SPKI pin with the same strictness as
+`ModeSPKI`. Use DANE, Noise, or SPKI when a pre-shared anchor is available.
+
+Source: `pkg/trust/bootstrap/pinstore_qrdb.go`.
+
 ### DeriveNoiseAddr
 
 Helper that extracts the host portion of `serverURL` and appends the default
@@ -132,6 +166,38 @@ addr := bootstrap.DeriveNoiseAddr("https://kms.example.com:8443")
 
 Source: `pkg/trust/bootstrap/bootstrap.go:272`.
 
+### Trust-verified tls.Config constructors
+
+For callers that need an ongoing TLS connection verified by the same
+bootstrap trust strategies (rather than a one-shot CA-bundle fetch), the
+package exposes two `*tls.Config` constructors built on the documented
+custom-verifier pattern — WebPKI verification is disabled and a
+`VerifyConnection` / `VerifyPeerCertificate` callback is the sole verifier:
+
+```go
+// DANE: TLSA records resolved eagerly for "_<port>._tcp.<hostname>.";
+// the presented chain is verified per RFC 7671. cfg supplies resolver
+// knobs (DNSServer, DNSOverTLS, DNSTLSServerName); nil cfg or empty
+// DNSServer uses the system resolver with DNSSEC AD enforcement.
+// cfg.Hostname takes precedence over the hostname parameter.
+tlsCfg, err := bootstrap.NewDANETLSConfig(ctx, cfg.DANE, "kms.example.com", 8443)
+
+// SPKI: presented chain must contain a certificate whose SHA-256
+// SubjectPublicKeyInfo digest matches the hex-encoded pin.
+tlsCfg, err := bootstrap.NewSPKIPinTLSConfig(cfg.SPKI.Pin)
+```
+
+`NewDANETLSConfig` resolves TLSA records at construction time so callers
+can fall back to another strategy before dialing; build a fresh config
+per connection attempt to honor DNS TTLs. It returns
+`ErrHostnameRequired` when neither `cfg.Hostname` nor the hostname
+parameter is set.
+
+Both constructors are re-exported through `sdk/go/bootstrap` and the
+QuicBaaS `sdk/go/xkms/trust/bootstrap` package.
+
+Source: `pkg/trust/bootstrap/tlsconfig.go`.
+
 ### Errors
 
 ```go
@@ -140,6 +206,7 @@ var (
     ErrModeNotConfigured = errors.New("trust bootstrap: mode not configured")
     ErrServerURLRequired = errors.New("trust bootstrap: server URL required")
     ErrFetch             = errors.New("trust bootstrap: fetch failed")
+    ErrHostnameRequired  = errors.New("trust bootstrap: hostname required")
 )
 
 type FetchError struct {
@@ -162,13 +229,13 @@ Source: `pkg/trust/bootstrap/bootstrap.go:201`.
                 |   bootstrap.Fetch(ctx, cfg) |
                 +--------------+--------------+
                                |
-              +---------+------+-------+----------+----------+
-              v         v              v          v          v
-          fetchAuto fetchDANE     fetchNoise  fetchSPKI  fetchDirect
-              |         |              |          |          |
-              v         v              v          v          v
+              +---------+------+-------+----------+----------+----------+
+              v         v              v          v          v          v
+          fetchAuto fetchDANE     fetchNoise  fetchSPKI  fetchDirect fetchTOFU
+              |         |              |          |          |          |
+              v         v              v          v          v          v
         AutoBootstrapper        NoiseBootstrapper         DirectBootstrapper
-                          DANEBootstrapper           SPKIBootstrapper
+                          DANEBootstrapper      SPKIBootstrapper  TOFUBootstrapper
                                   (go-truststrap)
                                   |
                                   v
@@ -198,11 +265,13 @@ flowchart LR
     Fetch -->|ModeNoise| fetchNoise
     Fetch -->|ModeSPKI| fetchSPKI
     Fetch -->|ModeDirect| fetchDirect
+    Fetch -->|ModeTOFU| fetchTOFU
     fetchAuto -->|truststrap.AutoFetch| truststrap
     fetchDANE -->|NewDANEBootstrapper| truststrap
     fetchNoise -->|NewNoiseBootstrapper| truststrap
     fetchSPKI -->|NewSPKIBootstrapper| truststrap
     fetchDirect -->|NewDirectBootstrapper| truststrap
+    fetchTOFU -->|NewTOFUBootstrapper| truststrap
     truststrap -->|FetchCABundle| Server[xkms server :8443]
 ```
 

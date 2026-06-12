@@ -14,6 +14,7 @@
 package tpm2
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -72,7 +73,7 @@ func (b *Backend) srkPublicContents() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 // it to build the duplication blob. The marshaled SRK TPMTPublic is carried in
 // ImportToken so WrapKey can reconstruct the encapsulation key without a second
 // TPM round trip.
-func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -115,7 +116,7 @@ func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm back
 // The resulting public area, duplication blob, and encrypted seed are returned
 // in WrappedKeyMaterial. This operation is performed locally: the TPM is only
 // read for the SRK public area.
-func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -182,7 +183,7 @@ func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) 
 // TPM2_Import decrypts the duplication blob under the SRK to yield the object's
 // private area; the object is then loaded and unsealed to recover the original
 // key material. All transient handles are flushed before returning.
-func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -207,7 +208,7 @@ func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend
 // The duplication blob is imported under the SRK; the imported public and
 // private areas are saved to the key backend so the object is durably
 // available for subsequent load/unseal operations.
-func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -241,7 +242,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 // ExportKey is not supported: TPM2 storage objects created by this backend are
 // fixedTPM/fixedParent and therefore non-duplicable. Use a duplicable object
 // produced via WrapKey for cross-node transport instead.
-func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}
@@ -253,7 +254,7 @@ func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wrappi
 
 // ExportKeyMaterial is not supported: TPM2 keys never release plaintext private
 // material outside the hardware boundary.
-func (b *Backend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}

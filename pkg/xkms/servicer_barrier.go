@@ -85,6 +85,11 @@ func (s *XKMSService) BarrierStatus(ctx context.Context) (*transport.BarrierStat
 // BarrierInitializeShamir initializes the barrier with Shamir secret sharing.
 // The request's threshold and total shares are applied to the barrier's Shamir
 // configuration before initialization.
+//
+// Share material is never returned: qrdb's share-free seal contract seals each
+// share to an enrolled Security Officer via the CeremonyDistributor, and
+// officers claim their shares individually using their mTLS certificate. Only
+// the threshold/total metadata is reported.
 func (s *XKMSService) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	if s.barrier == nil {
 		return nil, ErrNotConfigured
@@ -101,9 +106,9 @@ func (s *XKMSService) BarrierInitializeShamir(ctx context.Context, req *transpor
 		return nil, err
 	}
 	return &transport.BarrierInitializeShamirResponse{
-		Shares:      result.Shares,
 		Threshold:   result.Threshold,
 		TotalShares: result.TotalShares,
+		ShareCount:  result.ShareCount,
 	}, nil
 }
 
@@ -147,6 +152,9 @@ func (s *XKMSService) BarrierUnsealWithShares(ctx context.Context, req *transpor
 }
 
 // BarrierRekey generates new Shamir shares with a new threshold configuration.
+// New shares are sealed to enrolled Security Officers via the
+// CeremonyDistributor and are never returned; only the threshold/total
+// metadata is reported.
 func (s *XKMSService) BarrierRekey(ctx context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
 	if s.barrier == nil {
 		return nil, ErrNotConfigured
@@ -159,13 +167,16 @@ func (s *XKMSService) BarrierRekey(ctx context.Context, req *transport.BarrierRe
 		return nil, err
 	}
 	return &transport.BarrierRekeyResponse{
-		Shares:      result.Shares,
 		Threshold:   result.Threshold,
 		TotalShares: result.TotalShares,
+		ShareCount:  result.ShareCount,
 	}, nil
 }
 
 // BarrierGenerateRecoveryKeys generates disaster recovery keys for the barrier.
+// Recovery shares are sealed to enrolled recovery officers via the
+// CeremonyDistributor and are never returned; only the threshold/total
+// metadata is reported.
 func (s *XKMSService) BarrierGenerateRecoveryKeys(ctx context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
 	if s.barrier == nil {
 		return nil, ErrNotConfigured
@@ -178,9 +189,9 @@ func (s *XKMSService) BarrierGenerateRecoveryKeys(ctx context.Context, req *tran
 		return nil, err
 	}
 	return &transport.BarrierRecoveryKeysResponse{
-		Keys:      result.Shares,
-		Threshold: result.Threshold,
-		Total:     result.TotalShares,
+		Threshold:   result.Threshold,
+		TotalShares: result.TotalShares,
+		ShareCount:  result.ShareCount,
 	}, nil
 }
 

@@ -341,6 +341,20 @@ const (
 	StorePhone     = types.StorePhone
 )
 
+// File system extension constants (FSExtension values used by the
+// file-backed key stores).
+const (
+	FSExtBlob            = types.FSExtBlob
+	FSExtPrivatePKCS8    = types.FSExtPrivatePKCS8
+	FSExtPrivatePKCS8PEM = types.FSExtPrivatePKCS8PEM
+	FSExtPublicPKCS1     = types.FSExtPublicPKCS1
+	FSExtPublicPEM       = types.FSExtPublicPEM
+	FSExtPrivateBlob     = types.FSExtPrivateBlob
+	FSExtPublicBlob      = types.FSExtPublicBlob
+	FSExtDigest          = types.FSExtDigest
+	FSExtSignature       = types.FSExtSignature
+)
+
 // Quantum algorithm constants.
 const (
 	QuantumAlgorithmMLDSA44 = types.QuantumAlgorithmMLDSA44

@@ -43,11 +43,17 @@ export interface BarrierInitializeShamirRequest {
   total: number;
 }
 
-/** BarrierInitializeShamirResponse is the response body for POST /admin/barrier/shamir/initialize. */
+/**
+ * BarrierInitializeShamirResponse is the response body for POST /admin/barrier/shamir/initialize.
+ *
+ * Share-free contract: the response carries Shamir metadata only. Shares are
+ * sealed to enrolled Security Officers via the ceremony distributor and are
+ * never returned over the wire.
+ */
 export interface BarrierInitializeShamirResponse {
-  shares: string[];
   threshold: number;
-  total: number;
+  total_shares: number;
+  share_count: number;
 }
 
 /** BarrierUnsealShareRequest is the request body for POST /admin/barrier/shamir/unseal-share. */
@@ -68,11 +74,16 @@ export interface BarrierRekeyRequest {
   total: number;
 }
 
-/** BarrierRekeyResponse is the response body for POST /admin/barrier/rekey. */
+/**
+ * BarrierRekeyResponse is the response body for POST /admin/barrier/rekey.
+ *
+ * Share-free contract: the response carries Shamir metadata only. New shares
+ * are sealed to enrolled Security Officers and are never returned over the wire.
+ */
 export interface BarrierRekeyResponse {
-  shares: string[];
   threshold: number;
-  total: number;
+  total_shares: number;
+  share_count: number;
 }
 
 /** BarrierGenerateRecoveryKeysRequest is the request body for POST /admin/barrier/recovery/generate. */
@@ -81,11 +92,17 @@ export interface BarrierGenerateRecoveryKeysRequest {
   total: number;
 }
 
-/** BarrierRecoveryKeysResponse is the response body for POST /admin/barrier/recovery/generate. */
+/**
+ * BarrierRecoveryKeysResponse is the response body for POST /admin/barrier/recovery/generate.
+ *
+ * Share-free contract: the response carries recovery-key metadata only.
+ * Recovery shares are sealed to enrolled recovery officers and are never
+ * returned over the wire.
+ */
 export interface BarrierRecoveryKeysResponse {
-  keys: string[];
   threshold: number;
   total: number;
+  share_count: number;
 }
 
 /** BarrierRecoverWithKeysRequest is the request body for POST /admin/barrier/recovery/recover. */

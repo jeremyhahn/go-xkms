@@ -201,7 +201,7 @@ func setupCustodianTestHandlers(t *testing.T) (*CustodianHandlers, *chi.Mux) {
 	svc.SetCustodianClient(newFakeCustodianClient())
 	t.Cleanup(func() { xkms.Reset() })
 
-	handlers := NewCustodianHandlers()
+	handlers := NewCustodianHandlers(svc)
 	r := chi.NewRouter()
 	r.Route("/custodian/groups", func(r chi.Router) {
 		r.Post("/", handlers.CreateGroupHandler)
@@ -848,9 +848,12 @@ func TestCustodianHandlers_NotConfigured(t *testing.T) {
 		Backends:       map[string]xkms.Backend{"mem": xkmsmocks.NewMockKeyStore()},
 		DefaultBackend: "mem",
 	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	// custodian client intentionally not wired on svc => xkms.ErrNotConfigured
 	t.Cleanup(func() { xkms.Reset() })
 
-	handlers := NewCustodianHandlers()
+	handlers := NewCustodianHandlers(svc)
 	r := chi.NewRouter()
 	r.Route("/custodian/groups", func(r chi.Router) {
 		r.Post("/", handlers.CreateGroupHandler)

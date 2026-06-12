@@ -1536,38 +1536,39 @@ type KeyProvider interface {
 
 	// GenerateKey generates a new private key with the given attributes.
 	// The key is stored internally by the backend (if it supports native storage)
-	// or externally via KeyStorage (for backends like PKCS#8).
-	GenerateKey(attrs *KeyAttributes) (crypto.PrivateKey, error)
+	// or externally via KeyStorage (for backends like PKCS#8). The context bounds
+	// the storage/hardware operation and propagates cancellation and deadlines.
+	GenerateKey(ctx context.Context, attrs *KeyAttributes) (crypto.PrivateKey, error)
 
 	// GetKey retrieves an existing private key by its attributes.
 	// Returns an error if the key does not exist.
-	GetKey(attrs *KeyAttributes) (crypto.PrivateKey, error)
+	GetKey(ctx context.Context, attrs *KeyAttributes) (crypto.PrivateKey, error)
 
 	// DeleteKey removes a key identified by its attributes.
 	// Returns an error if the key does not exist.
-	DeleteKey(attrs *KeyAttributes) error
+	DeleteKey(ctx context.Context, attrs *KeyAttributes) error
 
 	// ListKeys returns attributes for all keys managed by this backend.
 	// Returns an empty slice if no keys exist.
-	ListKeys() ([]*KeyAttributes, error)
+	ListKeys(ctx context.Context) ([]*KeyAttributes, error)
 
 	// Signer returns a crypto.Signer for the key identified by attrs.
 	// This allows the key to be used for signing operations without
-	// exposing the private key material.
+	// exposing the private key material. The context bounds the key lookup.
 	// Returns an error if the key does not exist or doesn't support signing.
-	Signer(attrs *KeyAttributes) (crypto.Signer, error)
+	Signer(ctx context.Context, attrs *KeyAttributes) (crypto.Signer, error)
 
 	// Decrypter returns a crypto.Decrypter for the key identified by attrs.
 	// This allows the key to be used for decryption operations without
-	// exposing the private key material.
+	// exposing the private key material. The context bounds the key lookup.
 	// Returns an error if the key does not exist or doesn't support decryption.
-	Decrypter(attrs *KeyAttributes) (crypto.Decrypter, error)
+	Decrypter(ctx context.Context, attrs *KeyAttributes) (crypto.Decrypter, error)
 
 	// RotateKey rotates/updates a key identified by attrs.
 	// For cloud KMS backends, this typically creates a new key version.
 	// For hardware backends, behavior depends on the device capabilities.
 	// Returns an error if the key does not exist or rotation is not supported.
-	RotateKey(attrs *KeyAttributes) error
+	RotateKey(ctx context.Context, attrs *KeyAttributes) error
 
 	// Close releases any resources held by the backend.
 	// After calling Close, the backend should not be used.
@@ -1599,7 +1600,7 @@ type AttestingKeyProvider interface {
 	//
 	// Returns AttestationStatement (from attestation package) or error.
 	// May return ErrNotSupported for software backends or unsupported keys.
-	AttestKey(attrs *KeyAttributes, nonce []byte) (interface{}, error)
+	AttestKey(ctx context.Context, attrs *KeyAttributes, nonce []byte) (interface{}, error)
 }
 
 // SymmetricKey represents a symmetric encryption key.
@@ -1675,18 +1676,20 @@ type SymmetricKeyProvider interface {
 
 	// GenerateSymmetricKey generates a new symmetric key with the given attributes.
 	// The key is stored internally by the backend (if it supports native storage)
-	// or externally via KeyStorage (for backends like PKCS#8).
-	GenerateSymmetricKey(attrs *KeyAttributes) (SymmetricKey, error)
+	// or externally via KeyStorage (for backends like PKCS#8). The context bounds
+	// the storage/hardware operation and propagates cancellation and deadlines.
+	GenerateSymmetricKey(ctx context.Context, attrs *KeyAttributes) (SymmetricKey, error)
 
 	// GetSymmetricKey retrieves an existing symmetric key by its attributes.
 	// Returns an error if the key does not exist.
-	GetSymmetricKey(attrs *KeyAttributes) (SymmetricKey, error)
+	GetSymmetricKey(ctx context.Context, attrs *KeyAttributes) (SymmetricKey, error)
 
 	// SymmetricEncrypter returns a SymmetricEncrypter for the key identified by attrs.
 	// This allows the key to be used for encryption/decryption operations without
-	// exposing the key material (especially important for HSM/KMS backends).
+	// exposing the key material (especially important for HSM/KMS backends). The
+	// context bounds the key lookup.
 	// Returns an error if the key does not exist or doesn't support symmetric operations.
-	SymmetricEncrypter(attrs *KeyAttributes) (SymmetricEncrypter, error)
+	SymmetricEncrypter(ctx context.Context, attrs *KeyAttributes) (SymmetricEncrypter, error)
 }
 
 // =============================================================================
@@ -2296,7 +2299,8 @@ type KeyAgreement interface {
 	// encryption keys from it.
 	//
 	// Returns the shared secret or an error if the operation fails.
-	DeriveSharedSecret(attrs *KeyAttributes, publicKey crypto.PublicKey) ([]byte, error)
+	// The context bounds the private-key lookup.
+	DeriveSharedSecret(ctx context.Context, attrs *KeyAttributes, publicKey crypto.PublicKey) ([]byte, error)
 }
 
 // ECIESEncrypter provides public key encryption using ECIES

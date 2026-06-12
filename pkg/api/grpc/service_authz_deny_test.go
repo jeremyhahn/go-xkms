@@ -45,7 +45,7 @@ func (d *denyingRBAC) ListPermissions(_ context.Context, _ *qrdbtransport.Identi
 // newDeniedService creates a Service with a denying authorizer for testing
 // authorization error paths.
 func newDeniedService() *Service {
-	return NewService(auth.NewAuthorizer(&denyingRBAC{}), nil)
+	return NewService(auth.NewAuthorizer(&denyingRBAC{}), nil, nil)
 }
 
 // deniedCtx returns a context carrying an authenticated identity so the

@@ -16,6 +16,7 @@
 package keybackend
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -702,7 +703,7 @@ func TestAllBackends_ListKeysAfterGenerate(t *testing.T) {
 			require.NotNil(t, handle2)
 
 			// ListKeys should return at least our 2 generated keys.
-			keys, err := adapter.provider.ListKeys()
+			keys, err := adapter.provider.ListKeys(context.Background())
 			require.NoError(t, err)
 			assert.GreaterOrEqual(t, len(keys), 2,
 				"ListKeys should return at least 2 keys after generating 2 credentials")

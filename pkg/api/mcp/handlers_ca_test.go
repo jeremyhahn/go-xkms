@@ -315,7 +315,7 @@ func TestHandleUnseal_AdditionalPaths(t *testing.T) {
 		}
 		genParamsJSON, _ := json.Marshal(genParams)
 		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-		_, err := server.handleGenerateKey(genReq)
+		_, err := server.handleGenerateKey(context.Background(), genReq)
 		require.NoError(t, err)
 
 		// Seal data
@@ -362,7 +362,7 @@ func TestHandleUnseal_AdditionalPaths(t *testing.T) {
 		}
 		genParamsJSON, _ := json.Marshal(genParams)
 		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
-		_, err := server.handleGenerateKey(genReq)
+		_, err := server.handleGenerateKey(context.Background(), genReq)
 		require.NoError(t, err)
 
 		sealParams := SealParams{

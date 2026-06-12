@@ -20,7 +20,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/google/go-tpm/tpm2"
 	"github.com/spf13/cobra"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -110,7 +109,7 @@ func runTPMStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrTPMDeviceNotFound, err)
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Get fixed properties for device info
 	props, err := tpm.FixedProperties()
@@ -482,31 +481,4 @@ func formatBoolStatus(b bool) string {
 		return "Yes"
 	}
 	return "No"
-}
-
-// getKeyAlgorithmDetails extracts key algorithm details from TPM public key
-func getKeyAlgorithmDetails(pub tpm2.TPMTPublic) string {
-	switch pub.Type {
-	case tpm2.TPMAlgRSA:
-		if rsaDetail, err := pub.Parameters.RSADetail(); err == nil {
-			return fmt.Sprintf("RSA-%d", rsaDetail.KeyBits)
-		}
-		return "RSA"
-	case tpm2.TPMAlgECC:
-		if eccDetail, err := pub.Parameters.ECCDetail(); err == nil {
-			switch eccDetail.CurveID {
-			case tpm2.TPMECCNistP256:
-				return "ECC-P256"
-			case tpm2.TPMECCNistP384:
-				return "ECC-P384"
-			case tpm2.TPMECCNistP521:
-				return "ECC-P521"
-			default:
-				return "ECC"
-			}
-		}
-		return "ECC"
-	default:
-		return "Unknown"
-	}
 }

@@ -95,6 +95,18 @@ func findBinary(t *testing.T) string {
 	return ""
 }
 
+// cliBuildTags returns the build tags for the test-built xkey binary.
+// The Makefile exports XKEY_CLI_BUILD_TAGS with the full production tag set
+// (ble, production, codec_json, pkcs11, ...). Without it, the minimum tag
+// set required for a functional CLI is used: codec_json is mandatory for
+// the go-codec based DAOs (e.g. pcrpolicy).
+func cliBuildTags() string {
+	if tags := os.Getenv("XKEY_CLI_BUILD_TAGS"); tags != "" {
+		return tags
+	}
+	return "codec_json"
+}
+
 // buildBinary builds the xkey binary for testing.
 // The binary is placed in the package-level pkgTempDir so it survives
 // individual test cleanup. pkgTempDir is created in TestMain and removed
@@ -114,7 +126,7 @@ func buildBinary(t *testing.T) string {
 		t.Fatalf("Failed to get xkey root: %v", err)
 	}
 
-	cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/xkey")
+	cmd := exec.Command("go", "build", "-tags", cliBuildTags(), "-o", binaryPath, "./cmd/xkey")
 	cmd.Dir = xkeyRoot
 
 	output, err := cmd.CombinedOutput()

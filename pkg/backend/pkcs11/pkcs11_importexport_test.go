@@ -16,6 +16,7 @@
 package pkcs11
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -85,7 +86,7 @@ func TestGetImportParameters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			params, err := b.GetImportParameters(attrs, tt.algorithm)
+			params, err := b.GetImportParameters(context.Background(), attrs, tt.algorithm)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetImportParameters() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -205,7 +206,7 @@ func TestWrapKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			wrapped, err := b.WrapKey(tt.keyMaterial, tt.params)
+			wrapped, err := b.WrapKey(context.Background(), tt.keyMaterial, tt.params)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("WrapKey() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -251,7 +252,7 @@ func TestUnwrapKey(t *testing.T) {
 		Algorithm: backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	_, err := b.UnwrapKey(wrapped, params)
+	_, err := b.UnwrapKey(context.Background(), wrapped, params)
 	if err == nil {
 		t.Error("UnwrapKey() should return an error")
 	}
@@ -292,7 +293,7 @@ func TestImportKey(t *testing.T) {
 
 	// Get import parameters
 	// Use hybrid wrapping with SHA-1 since SoftHSM2 has better support for SHA-1 than SHA-256
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
 	if err != nil {
 		t.Fatalf("GetImportParameters() failed: %v", err)
 	}
@@ -304,13 +305,13 @@ func TestImportKey(t *testing.T) {
 	}
 
 	// Wrap the key
-	wrapped, err := b.WrapKey(keyMaterial, params)
+	wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
 	if err != nil {
 		t.Fatalf("WrapKey() failed: %v", err)
 	}
 
 	// Import the key
-	err = b.ImportKey(attrs, wrapped)
+	err = b.ImportKey(context.Background(), attrs, wrapped)
 	if err != nil {
 		t.Errorf("ImportKey() failed: %v", err)
 	}
@@ -359,7 +360,7 @@ func TestExportKey(t *testing.T) {
 	}
 
 	// Try to export (should fail because key is not extractable)
-	_, err = b.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = b.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err == nil {
 		t.Error("ExportKey() should fail for non-extractable keys")
 	}
@@ -401,7 +402,7 @@ func TestImportExportRoundTrip(t *testing.T) {
 
 	// Get import parameters
 	// Use hybrid wrapping with SHA-1 since SoftHSM2 has better support for SHA-1 than SHA-256
-	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
 	if err != nil {
 		t.Fatalf("GetImportParameters() failed: %v", err)
 	}
@@ -413,13 +414,13 @@ func TestImportExportRoundTrip(t *testing.T) {
 	}
 
 	// Wrap the key
-	wrapped, err := b.WrapKey(keyMaterial, params)
+	wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
 	if err != nil {
 		t.Fatalf("WrapKey() failed: %v", err)
 	}
 
 	// Import the key
-	err = b.ImportKey(attrs, wrapped)
+	err = b.ImportKey(context.Background(), attrs, wrapped)
 	if err != nil {
 		t.Errorf("ImportKey() failed: %v", err)
 	}

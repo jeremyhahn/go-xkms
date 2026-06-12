@@ -16,6 +16,7 @@ package handlers
 import (
 	"context"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"time"
 
@@ -261,5 +262,116 @@ func (r *PreIssuanceHookRegistry) Execute(ctx *PreIssuanceHookContext) error {
 
 // Count returns the number of registered hooks.
 func (r *PreIssuanceHookRegistry) Count() int {
+	return len(r.hooks)
+}
+
+// =============================================================================
+// Pre-Sign Extension Hooks
+// =============================================================================
+
+// OrderPreSignHookContext contains the contextual information available to
+// pre-sign extension hooks. These hooks fire immediately before the CA signs
+// the certificate (after all validation passes) and return additional X.509
+// extensions to embed in the issued certificate.
+//
+// The hook fires in both signing paths:
+//   - Standard CSR path (IsTCGCSR == false): called before ca.SignCSR.
+//   - TCG-CSR-IDEVID path (IsTCGCSR == true): called before ca.SignTCGCSRIDevID.
+//
+// Returned extensions are appended to ExtraExtensions in registration order;
+// extensions from later-registered hooks follow those from earlier ones.
+type OrderPreSignHookContext struct {
+	// Context is the request context.
+	Context context.Context
+
+	// Order is the ACME order being finalized.
+	Order *entities.ACMEOrder
+
+	// CSR is the parsed certificate signing request. Nil when IsTCGCSR is true
+	// because TCG-CSR-IDEVID uses a proprietary binary format rather than a
+	// standard PKCS#10 structure.
+	CSR *x509.CertificateRequest
+
+	// ClientIP is the IP address of the client that submitted the order.
+	ClientIP string
+
+	// IsTCGCSR indicates whether this is a TCG-CSR-IDEVID (enroll-01) path.
+	// When true, TCGData is populated and CSR is nil.
+	IsTCGCSR bool
+
+	// TCGData contains device identity fields extracted from the TCG-CSR-IDEVID.
+	// Only populated when IsTCGCSR is true.
+	TCGData *TCGEnrollmentData
+}
+
+// OrderPreSignHook is a function that fires immediately before the CA signs
+// the certificate. It returns additional pkix.Extension values to embed in
+// the issued certificate, or an error to abort finalization.
+//
+// Returning a nil slice with a nil error is valid and leaves the certificate
+// unchanged. All non-nil extension slices from registered hooks are appended
+// to the certificate's ExtraExtensions in registration order.
+//
+// A non-nil error causes the finalization request to fail with a server-error
+// ACME response; the order remains in the processing state and the certificate
+// is not issued.
+//
+// Example use cases:
+//   - Embedding a network-zone extension (OIDTPNetworkZone) for SDN routing
+//   - Adding tenant-specific policy extensions
+//   - Including device-class or compliance-level markers
+type OrderPreSignHook func(ctx *OrderPreSignHookContext) ([]pkix.Extension, error)
+
+// ErrPreSignHookFailed is returned when an OrderPreSignHook aborts certificate
+// finalization. The Cause field carries the original hook error.
+type ErrPreSignHookFailed struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e ErrPreSignHookFailed) Error() string {
+	return "acme: pre-sign hook failed: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying hook error.
+func (e ErrPreSignHookFailed) Unwrap() error { return e.Cause }
+
+// OrderPreSignHookRegistry manages registered pre-sign extension hooks.
+// Hooks are executed in registration order; each hook's returned extensions
+// are accumulated and appended to the certificate before signing.
+type OrderPreSignHookRegistry struct {
+	hooks []OrderPreSignHook
+}
+
+// NewOrderPreSignHookRegistry creates a new pre-sign hook registry.
+func NewOrderPreSignHookRegistry() *OrderPreSignHookRegistry {
+	return &OrderPreSignHookRegistry{
+		hooks: make([]OrderPreSignHook, 0),
+	}
+}
+
+// Register adds a hook to the registry. Hooks execute in the order they
+// are registered.
+func (r *OrderPreSignHookRegistry) Register(hook OrderPreSignHook) {
+	r.hooks = append(r.hooks, hook)
+}
+
+// Execute runs all registered hooks in order, accumulating returned extensions.
+// If any hook returns an error, execution stops and an ErrPreSignHookFailed
+// wrapping the original error is returned.
+func (r *OrderPreSignHookRegistry) Execute(ctx *OrderPreSignHookContext) ([]pkix.Extension, error) {
+	var exts []pkix.Extension
+	for _, hook := range r.hooks {
+		hookExts, err := hook(ctx)
+		if err != nil {
+			return nil, ErrPreSignHookFailed{Cause: err}
+		}
+		exts = append(exts, hookExts...)
+	}
+	return exts, nil
+}
+
+// Count returns the number of registered hooks.
+func (r *OrderPreSignHookRegistry) Count() int {
 	return len(r.hooks)
 }

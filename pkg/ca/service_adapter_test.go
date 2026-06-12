@@ -15,6 +15,7 @@ package ca
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -94,7 +95,7 @@ func setupTestCA(t *testing.T) *CA {
 	}
 
 	// Initialize the CA (generates root certificate)
-	if err := caIface.Init(); err != nil {
+	if err := caIface.Init(context.Background()); err != nil {
 		t.Fatalf("Failed to initialize CA: %v", err)
 	}
 
@@ -400,7 +401,7 @@ func TestSignCSRRaw_Defaults(t *testing.T) {
 	csrPEM := generateTestCSRPEM(t, "defaults.example.com")
 
 	// profile="" and validityDays=0 should delegate to SignCSR with nil opts
-	cert, err := testCA.SignCSRRaw(csrPEM, "", 0)
+	cert, err := testCA.SignCSRRaw(context.Background(), csrPEM, "", 0)
 	if err != nil {
 		t.Fatalf("SignCSRRaw with defaults failed: %v", err)
 	}
@@ -429,7 +430,7 @@ func TestSignCSRRaw_WithProfile(t *testing.T) {
 	csrPEM := generateTestCSRPEM(t, "profiled.example.com")
 
 	// Use profile="server" and validityDays=365
-	cert, err := testCA.SignCSRRaw(csrPEM, "server", 365)
+	cert, err := testCA.SignCSRRaw(context.Background(), csrPEM, "server", 365)
 	if err != nil {
 		t.Fatalf("SignCSRRaw with profile failed: %v", err)
 	}
@@ -459,7 +460,7 @@ func TestSignCSRRaw_InvalidCSR(t *testing.T) {
 	testCA := setupTestCA(t)
 
 	// Pass garbage bytes that are not a valid PEM-encoded CSR
-	_, err := testCA.SignCSRRaw([]byte("this is not a valid CSR"), "", 0)
+	_, err := testCA.SignCSRRaw(context.Background(), []byte("this is not a valid CSR"), "", 0)
 	if err == nil {
 		t.Fatal("Expected error for invalid CSR, got nil")
 	}
@@ -473,7 +474,7 @@ func TestSignCSRRaw_NotInitialized(t *testing.T) {
 	uninitCA := setupUninitializedCA(t)
 	csrPEM := generateTestCSRPEM(t, "uninit.example.com")
 
-	_, err := uninitCA.SignCSRRaw(csrPEM, "", 0)
+	_, err := uninitCA.SignCSRRaw(context.Background(), csrPEM, "", 0)
 	if err == nil {
 		t.Fatal("Expected error for uninitialized CA, got nil")
 	}
@@ -488,7 +489,7 @@ func TestSignCSRRaw_ProfileOnlyNoValidityDays(t *testing.T) {
 	csrPEM := generateTestCSRPEM(t, "profile-only.example.com")
 
 	// Profile set but validityDays=0: should still create opts with profile
-	cert, err := testCA.SignCSRRaw(csrPEM, "client", 0)
+	cert, err := testCA.SignCSRRaw(context.Background(), csrPEM, "client", 0)
 	if err != nil {
 		t.Fatalf("SignCSRRaw with profile only failed: %v", err)
 	}
@@ -515,7 +516,7 @@ func TestSignCSRRaw_ValidityDaysOnlyNoProfile(t *testing.T) {
 	csrPEM := generateTestCSRPEM(t, "validity-only.example.com")
 
 	// validityDays>0 but no profile: should create opts with validity only
-	cert, err := testCA.SignCSRRaw(csrPEM, "", 30)
+	cert, err := testCA.SignCSRRaw(context.Background(), csrPEM, "", 30)
 	if err != nil {
 		t.Fatalf("SignCSRRaw with validity only failed: %v", err)
 	}
@@ -538,7 +539,7 @@ func TestSignCSRRaw_WrongPEMType(t *testing.T) {
 		Bytes: []byte("fake certificate data"),
 	})
 
-	_, err := testCA.SignCSRRaw(wrongPEM, "", 0)
+	_, err := testCA.SignCSRRaw(context.Background(), wrongPEM, "", 0)
 	if err == nil {
 		t.Fatal("Expected error for wrong PEM type, got nil")
 	}
@@ -555,7 +556,7 @@ func TestSignCSRRaw_WrongPEMType(t *testing.T) {
 func TestIssueCertificateRaw_Success(t *testing.T) {
 	testCA := setupTestCA(t)
 
-	certPEM, chainPEM, _, serialHex, err := testCA.IssueCertificateRaw(
+	certPEM, chainPEM, _, serialHex, err := testCA.IssueCertificateRaw(context.Background(),
 		"server.example.com", "Test Org", nil, 365, "", "",
 	)
 	if err != nil {
@@ -600,7 +601,7 @@ func TestIssueCertificateRaw_WithSANs(t *testing.T) {
 
 	sans := []string{"DNS:example.com", "IP:1.2.3.4"}
 
-	certPEM, _, _, _, err := testCA.IssueCertificateRaw(
+	certPEM, _, _, _, err := testCA.IssueCertificateRaw(context.Background(),
 		"san-cert.example.com", "Test Org", sans, 365, "", "",
 	)
 	if err != nil {
@@ -649,7 +650,7 @@ func TestIssueCertificateRaw_WithSANs(t *testing.T) {
 func TestIssueCertificateRaw_EmptyCommonName(t *testing.T) {
 	testCA := setupTestCA(t)
 
-	_, _, _, _, err := testCA.IssueCertificateRaw(
+	_, _, _, _, err := testCA.IssueCertificateRaw(context.Background(),
 		"", "Test Org", nil, 365, "", "",
 	)
 	if err == nil {
@@ -664,7 +665,7 @@ func TestIssueCertificateRaw_EmptyCommonName(t *testing.T) {
 func TestIssueCertificateRaw_NotInitialized(t *testing.T) {
 	uninitCA := setupUninitializedCA(t)
 
-	_, _, _, _, err := uninitCA.IssueCertificateRaw(
+	_, _, _, _, err := uninitCA.IssueCertificateRaw(context.Background(),
 		"uninit.example.com", "Test Org", nil, 365, "", "",
 	)
 	if err == nil {
@@ -688,7 +689,7 @@ func TestIssueCertificateRaw_WithAllSANTypes(t *testing.T) {
 		"URI:https://example.com/api",
 	}
 
-	certPEM, _, _, _, err := testCA.IssueCertificateRaw(
+	certPEM, _, _, _, err := testCA.IssueCertificateRaw(context.Background(),
 		"all-sans.example.com", "Test Org", sans, 365, "", "",
 	)
 	if err != nil {
@@ -725,7 +726,7 @@ func TestIssueCertificateRaw_WithAllSANTypes(t *testing.T) {
 func TestIssueCertificateRaw_NilSANs(t *testing.T) {
 	testCA := setupTestCA(t)
 
-	certPEM, _, _, serialHex, err := testCA.IssueCertificateRaw(
+	certPEM, _, _, serialHex, err := testCA.IssueCertificateRaw(context.Background(),
 		"no-sans.example.com", "Test Org", nil, 365, "", "",
 	)
 	if err != nil {
@@ -743,7 +744,7 @@ func TestIssueCertificateRaw_NilSANs(t *testing.T) {
 func TestIssueCertificateRaw_EmptySANs(t *testing.T) {
 	testCA := setupTestCA(t)
 
-	certPEM, _, _, _, err := testCA.IssueCertificateRaw(
+	certPEM, _, _, _, err := testCA.IssueCertificateRaw(context.Background(),
 		"empty-sans.example.com", "Test Org", []string{}, 365, "", "",
 	)
 	if err != nil {
@@ -759,7 +760,7 @@ func TestIssueCertificateRaw_DuplicateCommonName(t *testing.T) {
 	testCA := setupTestCA(t)
 
 	// Issue first certificate
-	_, _, _, _, err := testCA.IssueCertificateRaw(
+	_, _, _, _, err := testCA.IssueCertificateRaw(context.Background(),
 		"duplicate.example.com", "Test Org", nil, 365, "", "",
 	)
 	if err != nil {
@@ -767,7 +768,7 @@ func TestIssueCertificateRaw_DuplicateCommonName(t *testing.T) {
 	}
 
 	// Attempt to issue a second certificate with the same CN
-	_, _, _, _, err = testCA.IssueCertificateRaw(
+	_, _, _, _, err = testCA.IssueCertificateRaw(context.Background(),
 		"duplicate.example.com", "Test Org", nil, 365, "", "",
 	)
 	if err == nil {
@@ -782,7 +783,7 @@ func TestIssueCertificateRaw_DuplicateCommonName(t *testing.T) {
 func TestIssueCertificateRaw_WithServerProfile(t *testing.T) {
 	testCA := setupTestCA(t)
 
-	certPEM, _, _, _, err := testCA.IssueCertificateRaw(
+	certPEM, _, _, _, err := testCA.IssueCertificateRaw(context.Background(),
 		"profiled-server.example.com", "Test Org", nil, 365, "server", "",
 	)
 	if err != nil {
@@ -1030,7 +1031,7 @@ func TestSignCSRRaw_VerifyIssuedCert(t *testing.T) {
 	testCA := setupTestCA(t)
 	csrPEM := generateTestCSRPEM(t, "verify-roundtrip.example.com")
 
-	cert, err := testCA.SignCSRRaw(csrPEM, "", 0)
+	cert, err := testCA.SignCSRRaw(context.Background(), csrPEM, "", 0)
 	if err != nil {
 		t.Fatalf("SignCSRRaw failed: %v", err)
 	}
@@ -1058,7 +1059,7 @@ func TestSignCSRRaw_VerifyIssuedCert(t *testing.T) {
 func TestIssueCertificateRaw_FullRoundTrip(t *testing.T) {
 	testCA := setupTestCA(t)
 
-	certPEM, chainPEM, _, serialHex, err := testCA.IssueCertificateRaw(
+	certPEM, chainPEM, _, serialHex, err := testCA.IssueCertificateRaw(context.Background(),
 		"roundtrip.example.com", "RoundTrip Org",
 		[]string{"DNS:roundtrip.example.com", "IP:10.10.10.10"},
 		180, "", "",

@@ -44,8 +44,8 @@ func (s *Server) handleGetCABundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}
@@ -77,8 +77,8 @@ func (s *Server) handleGetCACertificate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}
@@ -115,8 +115,8 @@ func (s *Server) handleSignCSR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}
@@ -149,8 +149,8 @@ func (s *Server) handleIssueCertificate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}
@@ -183,8 +183,8 @@ func (s *Server) handleRevokeCertificate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}
@@ -217,8 +217,8 @@ func (s *Server) handleGenerateCRL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}
@@ -254,8 +254,8 @@ func (s *Server) handleIsRevoked(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := xkms.Get()
-	if err != nil {
+	svc := s.xkmsService
+	if svc == nil {
 		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
 		return
 	}

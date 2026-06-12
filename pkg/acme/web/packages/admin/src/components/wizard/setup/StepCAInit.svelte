@@ -22,7 +22,7 @@
   let organization: string = $state(setupWizardStore.organization);
   let organizationalUnit: string = $state(setupWizardStore.organizationalUnit);
   let country: string = $state(setupWizardStore.country);
-  let state: string = $state(setupWizardStore.state);
+  let stateProvince: string = $state(setupWizardStore.state);
   let locality: string = $state(setupWizardStore.locality);
 
   const fallbackAlgorithms: readonly { value: string; label: string }[] = [
@@ -70,7 +70,7 @@
     setupWizardStore.organization = organization.trim();
     setupWizardStore.organizationalUnit = organizationalUnit.trim();
     setupWizardStore.country = country.trim();
-    setupWizardStore.state = state.trim();
+    setupWizardStore.state = stateProvince.trim();
     setupWizardStore.locality = locality.trim();
     onNext();
   }
@@ -112,8 +112,8 @@
         if (defaults.country && !country) {
           country = defaults.country;
         }
-        if (defaults.state && !state) {
-          state = defaults.state;
+        if (defaults.state && !stateProvince) {
+          stateProvince = defaults.state;
         }
         if (defaults.locality && !locality) {
           locality = defaults.locality;
@@ -269,7 +269,7 @@
           type="text"
           class="input input-bordered w-full"
           placeholder="e.g., California"
-          bind:value={state}
+          bind:value={stateProvince}
         />
       </div>
     </div>

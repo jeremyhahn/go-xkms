@@ -19,6 +19,7 @@ package ca
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/x509"
 	"encoding/json"
@@ -125,12 +126,12 @@ func NewOCSPResponder(ca *CA, config OCSPResponderConfig) *OCSPResponder {
 // HandleRequest parses the DER-encoded OCSP request, produces a signed
 // OCSP response, and returns the DER-encoded response bytes. This is the
 // primary entry point for HTTP OCSP endpoints.
-func (o *OCSPResponder) HandleRequest(requestBytes []byte) ([]byte, error) {
+func (o *OCSPResponder) HandleRequest(ctx context.Context, requestBytes []byte) ([]byte, error) {
 	req, err := o.parseRequest(requestBytes)
 	if err != nil {
 		return nil, err
 	}
-	return o.createResponse(req)
+	return o.createResponse(ctx, req)
 }
 
 // parseRequest decodes and validates an OCSPRequest per RFC 6960.
@@ -153,7 +154,7 @@ func (o *OCSPResponder) parseRequest(requestBytes []byte) (*ocsp.Request, error)
 
 // createResponse builds and signs the OCSP response for req. Cached responses
 // are returned directly when their TTL has not expired.
-func (o *OCSPResponder) createResponse(req *ocsp.Request) ([]byte, error) {
+func (o *OCSPResponder) createResponse(ctx context.Context, req *ocsp.Request) ([]byte, error) {
 	cacheKey := ocspCacheKey(req.SerialNumber)
 	if cached := o.getCachedResponse(cacheKey); cached != nil {
 		return cached, nil
@@ -174,7 +175,7 @@ func (o *OCSPResponder) createResponse(req *ocsp.Request) ([]byte, error) {
 		return nil, fmt.Errorf("%w: no issuing certificate", ErrOCSPResponseFailed)
 	}
 
-	signer, err := o.ca.Signer()
+	signer, err := o.ca.Signer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrOCSPSigningFailed, err)
 	}

@@ -16,6 +16,7 @@
 package pkcs11
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -685,7 +686,7 @@ func TestBackend_AllBranches(t *testing.T) {
 		}
 
 		// Signer
-		_, err = b.Signer(attrs)
+		_, err = b.Signer(context.Background(), attrs)
 		if err == nil {
 			t.Error("Signer() should fail")
 		}

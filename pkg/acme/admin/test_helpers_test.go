@@ -191,7 +191,7 @@ func createTestInfrastructure(t *testing.T) (ca.TCGCA, acmestorage.Factory, func
 	multiConfig.Identity[1].Subject.Organization = "Test Org"
 	multiConfig.Identity[1].Keys = multiKeys
 
-	_, intermediate, err := ca.NewCA(&ca.Params{
+	_, intermediate, err := ca.NewCA(context.Background(), &ca.Params{
 		Identity:    multiConfig.Identity,
 		Config:      &ca.CAConfig{DefaultCertValidityDays: multiConfig.GetDefaultValidityDays()},
 		KeyStore:    keyStore,

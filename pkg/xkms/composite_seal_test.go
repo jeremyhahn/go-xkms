@@ -47,21 +47,25 @@ func (m *mockSealerBackendForComposite) Type() types.BackendType { return m.back
 func (m *mockSealerBackendForComposite) Capabilities() types.Capabilities {
 	return types.Capabilities{}
 }
-func (m *mockSealerBackendForComposite) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockSealerBackendForComposite) GenerateKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockSealerBackendForComposite) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockSealerBackendForComposite) GetKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockSealerBackendForComposite) DeleteKey(attrs *types.KeyAttributes) error { return nil }
-func (m *mockSealerBackendForComposite) ListKeys() ([]*types.KeyAttributes, error)  { return nil, nil }
-func (m *mockSealerBackendForComposite) RotateKey(attrs *types.KeyAttributes) error {
+func (m *mockSealerBackendForComposite) DeleteKey(_ context.Context, attrs *types.KeyAttributes) error {
+	return nil
+}
+func (m *mockSealerBackendForComposite) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
+	return nil, nil
+}
+func (m *mockSealerBackendForComposite) RotateKey(_ context.Context, attrs *types.KeyAttributes) error {
 	return errors.New("not implemented")
 }
-func (m *mockSealerBackendForComposite) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockSealerBackendForComposite) Signer(_ context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockSealerBackendForComposite) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockSealerBackendForComposite) Decrypter(_ context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, errors.New("not implemented")
 }
 func (m *mockSealerBackendForComposite) Close() error { return nil }
@@ -116,21 +120,25 @@ func (m *mockNonSealerBackend) Type() types.BackendType { return m.backendType }
 func (m *mockNonSealerBackend) Capabilities() types.Capabilities {
 	return types.Capabilities{}
 }
-func (m *mockNonSealerBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockNonSealerBackend) GenerateKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockNonSealerBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockNonSealerBackend) GetKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockNonSealerBackend) DeleteKey(attrs *types.KeyAttributes) error { return nil }
-func (m *mockNonSealerBackend) ListKeys() ([]*types.KeyAttributes, error)  { return nil, nil }
-func (m *mockNonSealerBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (m *mockNonSealerBackend) DeleteKey(_ context.Context, attrs *types.KeyAttributes) error {
+	return nil
+}
+func (m *mockNonSealerBackend) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
+	return nil, nil
+}
+func (m *mockNonSealerBackend) RotateKey(_ context.Context, attrs *types.KeyAttributes) error {
 	return errors.New("not implemented")
 }
-func (m *mockNonSealerBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockNonSealerBackend) Signer(_ context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	return nil, errors.New("not implemented")
 }
-func (m *mockNonSealerBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockNonSealerBackend) Decrypter(_ context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, errors.New("not implemented")
 }
 func (m *mockNonSealerBackend) Close() error { return nil }

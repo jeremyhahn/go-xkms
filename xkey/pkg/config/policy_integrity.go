@@ -187,17 +187,17 @@ func WritePolicyHMAC(policy *PolicySection, soPIN string, hmacPath string) error
 	success := false
 	defer func() {
 		if !success {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 		}
 	}()
 
 	if _, writeErr := tmpFile.Write(data); writeErr != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return errors.Join(ErrPolicyHMACSaveFailed, writeErr)
 	}
 
 	if syncErr := tmpFile.Sync(); syncErr != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return errors.Join(ErrPolicyHMACSaveFailed, syncErr)
 	}
 

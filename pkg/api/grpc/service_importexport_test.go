@@ -35,7 +35,7 @@ type MockImportExportBackend struct {
 	types.KeyProvider
 }
 
-func (m *MockImportExportBackend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (m *MockImportExportBackend) GetImportParameters(_ context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	args := m.Called(attrs, algorithm)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -43,7 +43,7 @@ func (m *MockImportExportBackend) GetImportParameters(attrs *types.KeyAttributes
 	return args.Get(0).(*backend.ImportParameters), args.Error(1)
 }
 
-func (m *MockImportExportBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (m *MockImportExportBackend) WrapKey(_ context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	args := m.Called(keyMaterial, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -51,7 +51,7 @@ func (m *MockImportExportBackend) WrapKey(keyMaterial []byte, params *backend.Im
 	return args.Get(0).(*backend.WrappedKeyMaterial), args.Error(1)
 }
 
-func (m *MockImportExportBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (m *MockImportExportBackend) UnwrapKey(_ context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	args := m.Called(wrapped, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -59,17 +59,25 @@ func (m *MockImportExportBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial,
 	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockImportExportBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (m *MockImportExportBackend) ImportKey(_ context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	args := m.Called(attrs, wrapped)
 	return args.Error(0)
 }
 
-func (m *MockImportExportBackend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (m *MockImportExportBackend) ExportKey(_ context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	args := m.Called(attrs, algorithm)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*backend.WrappedKeyMaterial), args.Error(1)
+}
+
+func (m *MockImportExportBackend) ExportKeyMaterial(_ context.Context, attrs *types.KeyAttributes) ([]byte, error) {
+	args := m.Called(attrs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), args.Error(1)
 }
 
 // TestGetImportParameters tests the GetImportParameters RPC method
@@ -150,7 +158,7 @@ func TestGetImportParameters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewService(nil, nil)
+			service := NewService(nil, nil, nil)
 
 			resp, err := service.GetImportParameters(context.Background(), tt.request)
 
@@ -225,7 +233,7 @@ func TestWrapKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewService(nil, nil)
+			service := NewService(nil, nil, nil)
 
 			resp, err := service.WrapKey(context.Background(), tt.request)
 
@@ -301,7 +309,7 @@ func TestUnwrapKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewService(nil, nil)
+			service := NewService(nil, nil, nil)
 
 			resp, err := service.UnwrapKey(context.Background(), tt.request)
 
@@ -445,7 +453,7 @@ func TestImportKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewService(nil, nil)
+			service := NewService(nil, nil, nil)
 
 			resp, err := service.ImportKey(context.Background(), tt.request)
 
@@ -502,7 +510,7 @@ func TestExportKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewService(nil, nil)
+			service := NewService(nil, nil, nil)
 
 			resp, err := service.ExportKey(context.Background(), tt.request)
 

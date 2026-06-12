@@ -15,6 +15,7 @@ package opaque
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -29,13 +30,13 @@ import (
 // This avoids circular dependencies with the xkms package.
 type KeyStorer interface {
 	// GetKey retrieves an existing private key by its attributes.
-	GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error)
+	GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error)
 
 	// Signer returns a crypto.Signer for the specified key.
-	Signer(attrs *types.KeyAttributes) (crypto.Signer, error)
+	Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error)
 
 	// Decrypter returns a crypto.Decrypter for the specified key.
-	Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error)
+	Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error)
 }
 
 // OpaqueKey provides a unified interface for cryptographic operations
@@ -126,7 +127,9 @@ func (o *Opaque) Sign(
 	digest []byte,
 	opts crypto.SignerOpts) (signature []byte, err error) {
 
-	signer, err := o.keyStore.Signer(o.attrs)
+	// context.Background() is correct here: Sign implements the fixed stdlib
+	// crypto.Signer signature, which carries no request context.
+	signer, err := o.keyStore.Signer(context.Background(), o.attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +152,9 @@ func (o *Opaque) Decrypt(
 	ciphertext []byte,
 	opts crypto.DecrypterOpts) (plaintext []byte, err error) {
 
-	decrypter, err := o.keyStore.Decrypter(o.attrs)
+	// context.Background() is correct here: Decrypt implements the fixed stdlib
+	// crypto.Decrypter signature, which carries no request context.
+	decrypter, err := o.keyStore.Decrypter(context.Background(), o.attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -165,8 +170,9 @@ func (o *Opaque) Decrypt(
 //
 // See: https://pkg.go.dev/crypto#PrivateKey
 func (o *Opaque) Equal(x crypto.PrivateKey) bool {
-	// Try to get the actual private key from the backend
-	key, err := o.keyStore.GetKey(o.attrs)
+	// context.Background() is correct here: Equal implements the fixed stdlib
+	// crypto.PrivateKey contract, which carries no request context.
+	key, err := o.keyStore.GetKey(context.Background(), o.attrs)
 	if err != nil {
 		return false
 	}

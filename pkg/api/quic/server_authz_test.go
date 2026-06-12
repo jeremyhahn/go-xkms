@@ -123,12 +123,15 @@ func createAuthzTestServer(
 	})
 	require.NoError(t, err)
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: &identityAuthenticator{identity: identity},
 		Authorizer:    authorizer,
 		AuditLogger:   auditLogger,
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -376,9 +379,12 @@ func TestAuthzNewServer_DefaultAuthorizerAndAuditLogger(t *testing.T) {
 	setupTestXKMS(t)
 	defer cleanupXKMS()
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
-		Addr:   "localhost:8444",
-		Logger: testLogger(),
+		Addr:        "localhost:8444",
+		Logger:      testLogger(),
+		XKMSService: svc,
 		// No Authorizer or AuditLogger provided
 	}
 
@@ -400,11 +406,14 @@ func TestAuthzNewServer_WithCustomAuthorizerAndAuditLogger(t *testing.T) {
 	authorizer := auth.NewAuthorizer(&recordingRBAC{})
 	logger := &mockAuditLogger{}
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:        "localhost:8444",
 		Logger:      testLogger(),
 		Authorizer:  authorizer,
 		AuditLogger: logger,
+		XKMSService: svc,
 	}
 
 	server, err := NewServer(cfg)

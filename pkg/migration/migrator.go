@@ -14,9 +14,11 @@
 package migration
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -36,10 +38,10 @@ type defaultMigrator struct {
 // Returns an error if either backend is nil.
 func NewMigrator(source, dest types.KeyProvider) (Migrator, error) {
 	if source == nil {
-		return nil, fmt.Errorf("source backend cannot be nil")
+		return nil, fmt.Errorf("%w: source", ErrNilBackend)
 	}
 	if dest == nil {
-		return nil, fmt.Errorf("destination backend cannot be nil")
+		return nil, fmt.Errorf("%w: destination", ErrNilBackend)
 	}
 
 	return &defaultMigrator{
@@ -59,16 +61,16 @@ func (m *defaultMigrator) DestBackend() types.KeyProvider {
 }
 
 // MigrateKey migrates a single key from source to destination backend.
-func (m *defaultMigrator) MigrateKey(attrs *types.KeyAttributes, opts *MigrateOptions) error {
+func (m *defaultMigrator) MigrateKey(ctx context.Context, attrs *types.KeyAttributes, opts *MigrateOptions) error {
 	m.mu.RLock()
 	if m.closed {
 		m.mu.RUnlock()
-		return fmt.Errorf("migrator is closed")
+		return ErrMigratorClosed
 	}
 	m.mu.RUnlock()
 
 	if attrs == nil {
-		return fmt.Errorf("key attributes cannot be nil")
+		return ErrNilKeyAttributes
 	}
 
 	if opts == nil {
@@ -92,30 +94,30 @@ func (m *defaultMigrator) MigrateKey(attrs *types.KeyAttributes, opts *MigrateOp
 	}
 
 	// Step 1: Export the key from source backend
-	wrapped, err := m.exportKey(sourceExportBackend, attrs, opts)
+	wrapped, err := m.exportKey(ctx, sourceExportBackend, attrs, opts)
 	if err != nil {
 		return fmt.Errorf("failed to export key: %w", err)
 	}
 
 	// Step 2: Import the key into destination backend
-	if err := m.importKey(destImportBackend, attrs, wrapped); err != nil {
+	if err := m.importKey(ctx, destImportBackend, attrs, wrapped); err != nil {
 		return fmt.Errorf("failed to import key: %w", err)
 	}
 
 	// Step 3: Validate migration if requested
 	if !opts.SkipVerification {
-		result, err := m.ValidateMigration(attrs)
+		result, err := m.ValidateMigration(ctx, attrs)
 		if err != nil {
 			return fmt.Errorf("migration validation failed: %w", err)
 		}
 		if !result.IsValid {
-			return fmt.Errorf("migration validation failed: %s", result.Message)
+			return fmt.Errorf("%w: %s", ErrVerificationFailed, result.Message)
 		}
 	}
 
 	// Step 4: Delete from source if requested
 	if opts.DeleteSourceAfterVerification {
-		if err := m.source.DeleteKey(attrs); err != nil {
+		if err := m.source.DeleteKey(ctx, attrs); err != nil {
 			return fmt.Errorf("failed to delete source key after migration: %w", err)
 		}
 	}
@@ -124,11 +126,11 @@ func (m *defaultMigrator) MigrateKey(attrs *types.KeyAttributes, opts *MigrateOp
 }
 
 // MigrateAll migrates all keys matching the filter.
-func (m *defaultMigrator) MigrateAll(filter *KeyFilter, opts *MigrateOptions) (*MigrationResult, error) {
+func (m *defaultMigrator) MigrateAll(ctx context.Context, filter *KeyFilter, opts *MigrateOptions) (*MigrationResult, error) {
 	m.mu.RLock()
 	if m.closed {
 		m.mu.RUnlock()
-		return nil, fmt.Errorf("migrator is closed")
+		return nil, ErrMigratorClosed
 	}
 	m.mu.RUnlock()
 
@@ -141,7 +143,7 @@ func (m *defaultMigrator) MigrateAll(filter *KeyFilter, opts *MigrateOptions) (*
 	}
 
 	// Get all keys from source backend
-	allKeys, err := m.source.ListKeys()
+	allKeys, err := m.source.ListKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys from source backend: %w", err)
 	}
@@ -157,9 +159,9 @@ func (m *defaultMigrator) MigrateAll(filter *KeyFilter, opts *MigrateOptions) (*
 
 	// Perform migrations
 	if opts.Parallel > 1 {
-		m.migrateKeysParallel(filteredKeys, opts, result)
+		m.migrateKeysParallel(ctx, filteredKeys, opts, result)
 	} else {
-		m.migrateKeysSequential(filteredKeys, opts, result)
+		m.migrateKeysSequential(ctx, filteredKeys, opts, result)
 	}
 
 	result.EndTime = time.Now()
@@ -169,16 +171,16 @@ func (m *defaultMigrator) MigrateAll(filter *KeyFilter, opts *MigrateOptions) (*
 }
 
 // MigrationPlan performs a dry-run analysis.
-func (m *defaultMigrator) MigrationPlan(filter *KeyFilter) (*MigrationPlan, error) {
+func (m *defaultMigrator) MigrationPlan(ctx context.Context, filter *KeyFilter) (*MigrationPlan, error) {
 	m.mu.RLock()
 	if m.closed {
 		m.mu.RUnlock()
-		return nil, fmt.Errorf("migrator is closed")
+		return nil, ErrMigratorClosed
 	}
 	m.mu.RUnlock()
 
 	// Get all keys from source backend
-	allKeys, err := m.source.ListKeys()
+	allKeys, err := m.source.ListKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys from source backend: %w", err)
 	}
@@ -205,11 +207,11 @@ func (m *defaultMigrator) MigrationPlan(filter *KeyFilter) (*MigrationPlan, erro
 }
 
 // ValidateMigration verifies the migrated key works in the destination backend.
-func (m *defaultMigrator) ValidateMigration(attrs *types.KeyAttributes) (*ValidationResult, error) {
+func (m *defaultMigrator) ValidateMigration(ctx context.Context, attrs *types.KeyAttributes) (*ValidationResult, error) {
 	m.mu.RLock()
 	if m.closed {
 		m.mu.RUnlock()
-		return nil, fmt.Errorf("migrator is closed")
+		return nil, ErrMigratorClosed
 	}
 	m.mu.RUnlock()
 
@@ -219,7 +221,7 @@ func (m *defaultMigrator) ValidateMigration(attrs *types.KeyAttributes) (*Valida
 	}
 
 	// Try to get the key from destination backend
-	_, err := m.dest.GetKey(attrs)
+	_, err := m.dest.GetKey(ctx, attrs)
 	if err != nil {
 		result.IsValid = false
 		result.Message = fmt.Sprintf("key not found in destination backend: %v", err)
@@ -229,7 +231,7 @@ func (m *defaultMigrator) ValidateMigration(attrs *types.KeyAttributes) (*Valida
 
 	// For asymmetric keys, try a sign operation
 	if attrs.KeyAlgorithm != 0 {
-		signer, err := m.dest.Signer(attrs)
+		signer, err := m.dest.Signer(ctx, attrs)
 		if err != nil {
 			result.IsValid = false
 			result.Message = fmt.Sprintf("failed to get signer for validation: %v", err)
@@ -265,7 +267,7 @@ func (m *defaultMigrator) Close() error {
 // Helper functions
 
 // exportKey exports a key from the source backend using the specified algorithm.
-func (m *defaultMigrator) exportKey(backend backend.ImportExportBackend, attrs *types.KeyAttributes, opts *MigrateOptions) (*backend.WrappedKeyMaterial, error) {
+func (m *defaultMigrator) exportKey(ctx context.Context, backend backend.ImportExportBackend, attrs *types.KeyAttributes, opts *MigrateOptions) (*backend.WrappedKeyMaterial, error) {
 	// Determine wrapping algorithm
 	algorithm := opts.WrappingAlgorithm
 	if algorithm == "" {
@@ -273,7 +275,7 @@ func (m *defaultMigrator) exportKey(backend backend.ImportExportBackend, attrs *
 	}
 
 	// Export the key
-	wrapped, err := backend.ExportKey(attrs, algorithm)
+	wrapped, err := backend.ExportKey(ctx, attrs, algorithm)
 	if err != nil {
 		return nil, err
 	}
@@ -282,9 +284,9 @@ func (m *defaultMigrator) exportKey(backend backend.ImportExportBackend, attrs *
 }
 
 // importKey imports a wrapped key into the destination backend.
-func (m *defaultMigrator) importKey(backend backend.ImportExportBackend, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (m *defaultMigrator) importKey(ctx context.Context, backend backend.ImportExportBackend, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	// Get import parameters with the same algorithm that was used for export
-	params, err := backend.GetImportParameters(attrs, wrapped.Algorithm)
+	params, err := backend.GetImportParameters(ctx, attrs, wrapped.Algorithm)
 	if err != nil {
 		return fmt.Errorf("failed to get import parameters: %w", err)
 	}
@@ -293,7 +295,7 @@ func (m *defaultMigrator) importKey(backend backend.ImportExportBackend, attrs *
 	wrapped.ImportToken = params.ImportToken
 
 	// Import the key
-	if err := backend.ImportKey(attrs, wrapped); err != nil {
+	if err := backend.ImportKey(ctx, attrs, wrapped); err != nil {
 		return err
 	}
 
@@ -456,9 +458,9 @@ func (m *defaultMigrator) isKeyTypeSupported(attrs *types.KeyAttributes) bool {
 }
 
 // migrateKeysSequential migrates keys one at a time.
-func (m *defaultMigrator) migrateKeysSequential(keys []*types.KeyAttributes, opts *MigrateOptions, result *MigrationResult) {
+func (m *defaultMigrator) migrateKeysSequential(ctx context.Context, keys []*types.KeyAttributes, opts *MigrateOptions, result *MigrationResult) {
 	for _, key := range keys {
-		err := m.MigrateKey(key, opts)
+		err := m.MigrateKey(ctx, key, opts)
 		if err != nil {
 			result.FailureCount++
 			result.FailedKeys[key] = err
@@ -472,36 +474,47 @@ func (m *defaultMigrator) migrateKeysSequential(keys []*types.KeyAttributes, opt
 	}
 }
 
-// migrateKeysParallel migrates keys in parallel using goroutines.
-func (m *defaultMigrator) migrateKeysParallel(keys []*types.KeyAttributes, opts *MigrateOptions, result *MigrationResult) {
+// migrateKeysParallel migrates keys in parallel using goroutines. The
+// dispatch loop honors both context cancellation and StopOnError: workers
+// record a failure under mu and flip the lock-free stop flag, which the
+// dispatcher checks before launching each migration.
+func (m *defaultMigrator) migrateKeysParallel(ctx context.Context, keys []*types.KeyAttributes, opts *MigrateOptions, result *MigrationResult) {
 	semaphore := make(chan struct{}, opts.Parallel)
 	var wg sync.WaitGroup
 	mu := sync.Mutex{}
+	var stop atomic.Bool
 
 	for _, key := range keys {
+		if stop.Load() {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return
+		case semaphore <- struct{}{}:
+		}
 		wg.Add(1)
-		semaphore <- struct{}{}
 
 		go func(k *types.KeyAttributes) {
 			defer wg.Done()
 			defer func() { <-semaphore }()
 
-			err := m.MigrateKey(k, opts)
+			err := m.MigrateKey(ctx, k, opts)
 
 			mu.Lock()
 			if err != nil {
 				result.FailureCount++
 				result.FailedKeys[k] = err
+				if opts.StopOnError {
+					stop.Store(true)
+				}
 			} else {
 				result.SuccessCount++
 				result.SuccessfulKeys = append(result.SuccessfulKeys, k)
 			}
 			mu.Unlock()
 		}(key)
-
-		if opts.StopOnError && result.FailureCount > 0 {
-			break
-		}
 	}
 
 	wg.Wait()

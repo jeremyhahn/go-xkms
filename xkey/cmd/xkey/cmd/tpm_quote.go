@@ -107,7 +107,7 @@ func runTPMQuote(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Check for IAK
 	if _, err := tpm.IAKAttributes(); err != nil {

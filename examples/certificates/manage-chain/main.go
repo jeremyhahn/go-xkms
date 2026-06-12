@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
@@ -84,7 +85,7 @@ func main() {
 	// Step 4: Build and store complete certificate chain
 	fmt.Println("4. Building certificate chain (leaf -> intermediate -> root)...")
 	chain := []*x509.Certificate{leafCert, intermediateCert, rootCert}
-	err = ks.SaveCertChain("server.example.com", chain)
+	err = ks.SaveCertChain(context.Background(), "server.example.com", chain)
 	if err != nil {
 		log.Fatalf("Failed to save certificate chain: %v", err)
 	}
@@ -93,7 +94,7 @@ func main() {
 
 	// Step 5: Retrieve and verify certificate chain
 	fmt.Println("5. Retrieving certificate chain...")
-	retrievedChain, err := ks.GetCertChain("server.example.com")
+	retrievedChain, err := ks.GetCertChain(context.Background(), "server.example.com")
 	if err != nil {
 		log.Fatalf("Failed to retrieve certificate chain: %v", err)
 	}
@@ -142,7 +143,7 @@ func createRootCA(ks xkms.Backend, cn string) (*x509.Certificate, interface{}) {
 		},
 	}
 
-	privKey, err := ks.GenerateECDSA(keyAttrs)
+	privKey, err := ks.GenerateECDSA(context.Background(), keyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate key: %v", err)
 	}
@@ -178,7 +179,7 @@ func createRootCA(ks xkms.Backend, cn string) (*x509.Certificate, interface{}) {
 	}
 
 	cert, _ := x509.ParseCertificate(certBytes)
-	if err := ks.SaveCert(cn, cert); err != nil {
+	if err := ks.SaveCert(context.Background(), cn, cert); err != nil {
 		log.Fatalf("Failed to save certificate: %v", err)
 	}
 
@@ -197,7 +198,7 @@ func createIntermediateCA(ks xkms.Backend, issuerCert *x509.Certificate, issuerK
 		},
 	}
 
-	privKey, err := ks.GenerateECDSA(keyAttrs)
+	privKey, err := ks.GenerateECDSA(context.Background(), keyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate key: %v", err)
 	}
@@ -233,7 +234,7 @@ func createIntermediateCA(ks xkms.Backend, issuerCert *x509.Certificate, issuerK
 	}
 
 	cert, _ := x509.ParseCertificate(certBytes)
-	if err := ks.SaveCert(cn, cert); err != nil {
+	if err := ks.SaveCert(context.Background(), cn, cert); err != nil {
 		log.Fatalf("Failed to save certificate: %v", err)
 	}
 
@@ -252,7 +253,7 @@ func createLeafCertificate(ks xkms.Backend, issuerCert *x509.Certificate, issuer
 		},
 	}
 
-	privKey, err := ks.GenerateECDSA(keyAttrs)
+	privKey, err := ks.GenerateECDSA(context.Background(), keyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate key: %v", err)
 	}
@@ -286,7 +287,7 @@ func createLeafCertificate(ks xkms.Backend, issuerCert *x509.Certificate, issuer
 	}
 
 	cert, _ := x509.ParseCertificate(certBytes)
-	if err := ks.SaveCert(cn, cert); err != nil {
+	if err := ks.SaveCert(context.Background(), cn, cert); err != nil {
 		log.Fatalf("Failed to save certificate: %v", err)
 	}
 

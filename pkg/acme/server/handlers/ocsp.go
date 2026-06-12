@@ -14,6 +14,7 @@
 package handlers
 
 import (
+	"context"
 	"io"
 	"net/http"
 )
@@ -22,7 +23,7 @@ import (
 // This allows for dependency injection and easier testing.
 type OCSPResponderInterface interface {
 	// HandleRequest processes a DER-encoded OCSP request and returns a signed response.
-	HandleRequest(requestBytes []byte) ([]byte, error)
+	HandleRequest(ctx context.Context, requestBytes []byte) ([]byte, error)
 }
 
 // OCSPHandler handles OCSP requests at the /ocsp endpoint per RFC 6960
@@ -61,7 +62,7 @@ func OCSPHandler(responder OCSPResponderInterface) http.HandlerFunc {
 		}
 
 		// Process OCSP request
-		responseBytes, err := responder.HandleRequest(requestBytes)
+		responseBytes, err := responder.HandleRequest(r.Context(), requestBytes)
 		if err != nil {
 			// Log error for debugging
 			// In production, you might want to use structured logging

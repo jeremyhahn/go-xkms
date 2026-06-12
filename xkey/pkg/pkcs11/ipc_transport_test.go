@@ -18,8 +18,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
-	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -92,10 +90,6 @@ func newMockIPCServer(t *testing.T, handler func(*ipc.Message) *ipc.Response) (*
 func (s *mockIPCServer) Close() {
 	s.listener.Close()
 	s.wg.Wait()
-}
-
-func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 func TestNewIPCTransport_ExplicitPath(t *testing.T) {

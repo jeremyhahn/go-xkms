@@ -76,12 +76,12 @@ func runLock(cmd *cobra.Command, args []string) error {
 	}
 
 	// Lock the volume
-	fmt.Fprintln(cmd.OutOrStdout(), "Locking encrypted storage...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Locking encrypted storage...")
 	if err := vol.Lock(); err != nil {
 		return &LockError{Operation: "lock", Err: err}
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Encrypted storage locked successfully.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Encrypted storage locked successfully.")
 	return nil
 }
 

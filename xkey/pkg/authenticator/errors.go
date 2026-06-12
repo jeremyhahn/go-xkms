@@ -127,3 +127,52 @@ func (e ErrMigration) Error() string {
 func (e ErrMigration) Unwrap() error {
 	return e.Cause
 }
+
+// ErrIncompatibleState is returned when persisted authenticator state exists
+// but cannot be decoded as the current JSON state format. This happens when the
+// state was written by an incompatible producer — for example, barrier-sealed
+// ciphertext written by an older build or by the GUI's encrypted storage path —
+// and is then read back through the plain (file/JSON) storage path.
+//
+// The error is actionable: it names the storage key, reports the observed byte
+// length, and tells the operator how to recover. It is NOT a corruption signal
+// and the runtime must never silently wipe or overwrite the bytes, because they
+// may be encrypted key material.
+//
+// ErrIncompatibleState wraps ErrDeserializationFailed so existing
+// errors.Is(err, ErrDeserializationFailed) checks continue to match.
+type ErrIncompatibleState struct {
+	// StorageKey is the namespaced key whose value failed to decode
+	// (e.g. "xkey/state").
+	StorageKey string
+
+	// Size is the number of bytes read for the key.
+	Size int
+
+	// Cause is the underlying decode error (a JSON syntax error).
+	Cause error
+}
+
+// Error implements the error interface with an actionable, operator-facing
+// message that includes the offending key, the byte count, the expected versus
+// observed format, and a concrete remediation hint.
+func (e ErrIncompatibleState) Error() string {
+	return fmt.Sprintf(
+		"authenticator: incompatible authenticator state at key %q (%d bytes): "+
+			"expected JSON state but found non-JSON bytes (likely barrier-sealed "+
+			"state from an older build or the GUI's encrypted storage). "+
+			"This storage path reads plain JSON and cannot decode sealed data. "+
+			"Remediation: start with the matching '--storage barrier' path to read "+
+			"the sealed data, or point '--storage-path' at a fresh directory to "+
+			"reinitialize. Do not delete the existing file unless you are certain it "+
+			"holds no key material you need: %v",
+		e.StorageKey, e.Size, e.Cause,
+	)
+}
+
+// Unwrap returns ErrDeserializationFailed joined with the underlying decode
+// error so both errors.Is(err, ErrDeserializationFailed) and inspection of the
+// JSON syntax error continue to work.
+func (e ErrIncompatibleState) Unwrap() []error {
+	return []error{ErrDeserializationFailed, e.Cause}
+}

@@ -280,7 +280,7 @@ func TestUnregisterPhoneBackend_ClosesBackend(t *testing.T) {
 
 	// The backend should now be closed. Calling an operation on it should
 	// return ErrBackendClosed.
-	_, listErr := backend.ListKeys()
+	_, listErr := backend.ListKeys(context.Background())
 	assert.ErrorIs(t, listErr, phonebackend.ErrBackendClosed)
 }
 

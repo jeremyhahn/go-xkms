@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto/elliptic"
 	"crypto/x509"
 	"fmt"
@@ -99,7 +100,7 @@ func demonstrateBasicRotation(ks xkms.Backend) {
 
 	// Generate initial key
 	fmt.Println("   a. Generating initial key...")
-	key1, err := ks.GenerateECDSA(keyAttrs)
+	key1, err := ks.GenerateECDSA(context.Background(), keyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate key: %v", err)
 	}
@@ -110,7 +111,7 @@ func demonstrateBasicRotation(ks xkms.Backend) {
 
 	// Rotate the key
 	fmt.Println("   b. Rotating key...")
-	key2, err := ks.RotateKey(keyAttrs)
+	key2, err := ks.RotateKey(context.Background(), keyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to rotate key: %v", err)
 	}
@@ -118,7 +119,7 @@ func demonstrateBasicRotation(ks xkms.Backend) {
 
 	// Verify old key is gone
 	fmt.Println("   c. Verifying rotation...")
-	currentKey, err := ks.GetKey(keyAttrs)
+	currentKey, err := ks.GetKey(context.Background(), keyAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get current key: %v", err)
 	}
@@ -143,7 +144,7 @@ func demonstrateVersionedRotation(ks xkms.Backend) {
 			},
 		}
 
-		_, err := ks.GenerateECDSA(keyAttrs)
+		_, err := ks.GenerateECDSA(context.Background(), keyAttrs)
 		if err != nil {
 			log.Fatalf("Failed to generate key %s: %v", version, err)
 		}
@@ -154,7 +155,7 @@ func demonstrateVersionedRotation(ks xkms.Backend) {
 	}
 
 	fmt.Println("   b. Listing all versions...")
-	keys, err := ks.ListKeys()
+	keys, err := ks.ListKeys(context.Background())
 	if err != nil {
 		log.Fatalf("Failed to list keys: %v", err)
 	}
@@ -179,7 +180,7 @@ func demonstrateVersionedRotation(ks xkms.Backend) {
 				Curve: elliptic.P256(),
 			},
 		}
-		err := ks.DeleteKey(keyAttrs)
+		err := ks.DeleteKey(context.Background(), keyAttrs)
 		if err != nil {
 			log.Fatalf("Failed to delete key %s: %v", version, err)
 		}
@@ -204,7 +205,7 @@ func demonstrateBlueGreenRotation(ks xkms.Backend) {
 
 	// Generate blue key
 	fmt.Println("      - Generating blue key (active)...")
-	_, err := ks.GenerateECDSA(blueAttrs)
+	_, err := ks.GenerateECDSA(context.Background(), blueAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate blue key: %v", err)
 	}
@@ -226,7 +227,7 @@ func demonstrateBlueGreenRotation(ks xkms.Backend) {
 
 	// Generate green key
 	fmt.Println("      - Generating green key (standby)...")
-	_, err = ks.GenerateECDSA(greenAttrs)
+	_, err = ks.GenerateECDSA(context.Background(), greenAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate green key: %v", err)
 	}
@@ -239,7 +240,7 @@ func demonstrateBlueGreenRotation(ks xkms.Backend) {
 
 	// Verify green is working
 	fmt.Println("      - Verifying green key operation...")
-	_, err = ks.GetKey(greenAttrs)
+	_, err = ks.GetKey(context.Background(), greenAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get green key: %v", err)
 	}
@@ -247,7 +248,7 @@ func demonstrateBlueGreenRotation(ks xkms.Backend) {
 
 	// Delete blue key
 	fmt.Println("      - Removing blue key...")
-	err = ks.DeleteKey(blueAttrs)
+	err = ks.DeleteKey(context.Background(), blueAttrs)
 	if err != nil {
 		log.Fatalf("Failed to delete blue key: %v", err)
 	}
@@ -271,7 +272,7 @@ func demonstrateGracefulRotation(ks xkms.Backend) {
 	}
 
 	fmt.Println("      - Generating current key...")
-	_, err := ks.GenerateECDSA(currentAttrs)
+	_, err := ks.GenerateECDSA(context.Background(), currentAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate current key: %v", err)
 	}
@@ -290,7 +291,7 @@ func demonstrateGracefulRotation(ks xkms.Backend) {
 
 	fmt.Println("      - Starting overlap period...")
 	fmt.Println("        - Generating next key...")
-	_, err = ks.GenerateECDSA(nextAttrs)
+	_, err = ks.GenerateECDSA(context.Background(), nextAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate next key: %v", err)
 	}
@@ -304,7 +305,7 @@ func demonstrateGracefulRotation(ks xkms.Backend) {
 
 	// End overlap period
 	fmt.Println("      - Ending overlap period...")
-	err = ks.DeleteKey(currentAttrs)
+	err = ks.DeleteKey(context.Background(), currentAttrs)
 	if err != nil {
 		log.Fatalf("Failed to delete current key: %v", err)
 	}
@@ -329,7 +330,7 @@ func demonstrateEmergencyRotation(ks xkms.Backend) {
 
 	// Generate key
 	fmt.Println("      - Initial key in use...")
-	_, err := ks.GenerateECDSA(compromisedAttrs)
+	_, err := ks.GenerateECDSA(context.Background(), compromisedAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate key: %v", err)
 	}
@@ -343,7 +344,7 @@ func demonstrateEmergencyRotation(ks xkms.Backend) {
 	startTime := time.Now()
 
 	// Rotate key immediately
-	newKey, err := ks.RotateKey(compromisedAttrs)
+	newKey, err := ks.RotateKey(context.Background(), compromisedAttrs)
 	if err != nil {
 		log.Fatalf("Failed to rotate key: %v", err)
 	}
@@ -356,7 +357,7 @@ func demonstrateEmergencyRotation(ks xkms.Backend) {
 
 	// Verify new key
 	fmt.Println("      - Verifying new key...")
-	_, err = ks.GetKey(compromisedAttrs)
+	_, err = ks.GetKey(context.Background(), compromisedAttrs)
 	if err != nil {
 		log.Fatalf("Failed to get new key: %v", err)
 	}

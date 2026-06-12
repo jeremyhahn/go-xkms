@@ -54,7 +54,7 @@ func (p *CSVParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry,
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidFile, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	reader := csv.NewReader(file)
 	reader.LazyQuotes = true

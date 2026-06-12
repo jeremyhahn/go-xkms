@@ -428,7 +428,7 @@ func TestShareInfoToProto(t *testing.T) {
 // --- Custodian Group Operations ---
 
 func TestCreateCustodianGroup(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
 		old := GetCustodianClient()
@@ -492,7 +492,7 @@ func TestCreateCustodianGroup(t *testing.T) {
 }
 
 func TestGetCustodianGroup(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
 		old := GetCustodianClient()
@@ -548,7 +548,7 @@ func TestGetCustodianGroup(t *testing.T) {
 }
 
 func TestListCustodianGroups(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
 		old := GetCustodianClient()
@@ -590,7 +590,7 @@ func TestListCustodianGroups(t *testing.T) {
 }
 
 func TestDeleteCustodianGroup(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
 		old := GetCustodianClient()
@@ -630,7 +630,7 @@ func TestDeleteCustodianGroup(t *testing.T) {
 }
 
 func TestAddCustodianMember(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
 		old := GetCustodianClient()
@@ -693,7 +693,7 @@ func TestAddCustodianMember(t *testing.T) {
 }
 
 func TestRemoveCustodianMember(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
 		old := GetCustodianClient()
@@ -757,7 +757,7 @@ func TestRemoveCustodianMember(t *testing.T) {
 }
 
 func TestDistributeShares(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
 		old := GetCustodianClient()
@@ -784,7 +784,7 @@ func TestDistributeShares(t *testing.T) {
 // --- Share Operations ---
 
 func TestSubmitShare(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when share client not configured", func(t *testing.T) {
 		old := GetShareClient()
@@ -863,7 +863,7 @@ func TestSubmitShare(t *testing.T) {
 }
 
 func TestListShares(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when share client not configured", func(t *testing.T) {
 		old := GetShareClient()
@@ -908,7 +908,7 @@ func TestListShares(t *testing.T) {
 }
 
 func TestGetShareCollectionStatus(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when share client not configured", func(t *testing.T) {
 		old := GetShareClient()
@@ -973,7 +973,7 @@ func TestGetShareCollectionStatus(t *testing.T) {
 // --- Tenant Operations ---
 
 func TestCreateTenant(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when registry not configured", func(t *testing.T) {
 		old := GetBarrierRegistry()
@@ -1026,7 +1026,7 @@ func TestCreateTenant(t *testing.T) {
 }
 
 func TestGetTenant(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when registry not configured", func(t *testing.T) {
 		old := GetBarrierRegistry()
@@ -1076,7 +1076,7 @@ func TestGetTenant(t *testing.T) {
 }
 
 func TestListTenants(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when registry not configured", func(t *testing.T) {
 		old := GetBarrierRegistry()
@@ -1113,7 +1113,7 @@ func TestListTenants(t *testing.T) {
 }
 
 func TestDeleteTenant(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when registry not configured", func(t *testing.T) {
 		old := GetBarrierRegistry()
@@ -1150,7 +1150,15 @@ func TestDeleteTenant(t *testing.T) {
 }
 
 func TestTenantBarrierInit(t *testing.T) {
-	svc := NewService(nil, nil)
+	// Initialize xkms at function scope so the service can be wired for the
+	// success path. The registry-nil subtest overrides barrierRegistry explicitly,
+	// so it still exercises the registry guard before reaching xkmsService.
+	reg := setupBarrierRegistry(t)
+	SetBarrierRegistry(reg)
+	t.Cleanup(func() { SetBarrierRegistry(nil) })
+	xkmsSvc, err := xkms.Get()
+	require.NoError(t, err)
+	svc := NewService(nil, nil, xkmsSvc)
 
 	t.Run("returns error when registry not configured", func(t *testing.T) {
 		old := GetBarrierRegistry()
@@ -1162,10 +1170,6 @@ func TestTenantBarrierInit(t *testing.T) {
 	})
 
 	t.Run("returns error when tenant_id is empty", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(setupBarrierRegistry(t))
-		defer SetBarrierRegistry(old)
-
 		_, err := svc.TenantBarrierInit(context.Background(), &pb.TenantBarrierInitRequest{})
 		require.Error(t, err)
 		st, ok := status.FromError(err)
@@ -1174,20 +1178,11 @@ func TestTenantBarrierInit(t *testing.T) {
 	})
 
 	t.Run("returns error when tenant not found", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(setupBarrierRegistry(t))
-		defer SetBarrierRegistry(old)
-
 		_, err := svc.TenantBarrierInit(context.Background(), &pb.TenantBarrierInitRequest{TenantId: "nonexistent"})
 		require.Error(t, err)
 	})
 
 	t.Run("succeeds for existing tenant", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		reg := setupBarrierRegistry(t)
-		SetBarrierRegistry(reg)
-		defer SetBarrierRegistry(old)
-
 		testTenantRegisteredTenant(t, reg, "init-tenant")
 
 		_, err := svc.TenantBarrierInit(context.Background(), &pb.TenantBarrierInitRequest{TenantId: "init-tenant"})
@@ -1196,7 +1191,15 @@ func TestTenantBarrierInit(t *testing.T) {
 }
 
 func TestTenantBarrierUnseal(t *testing.T) {
-	svc := NewService(nil, nil)
+	// Initialize xkms at function scope so the service can be wired for the
+	// success path. The registry-nil subtest overrides barrierRegistry explicitly,
+	// so it still exercises the registry guard before reaching xkmsService.
+	reg := setupBarrierRegistry(t)
+	SetBarrierRegistry(reg)
+	t.Cleanup(func() { SetBarrierRegistry(nil) })
+	xkmsSvc, err := xkms.Get()
+	require.NoError(t, err)
+	svc := NewService(nil, nil, xkmsSvc)
 
 	t.Run("returns error when registry not configured", func(t *testing.T) {
 		old := GetBarrierRegistry()
@@ -1208,10 +1211,6 @@ func TestTenantBarrierUnseal(t *testing.T) {
 	})
 
 	t.Run("returns error when tenant_id is empty", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(setupBarrierRegistry(t))
-		defer SetBarrierRegistry(old)
-
 		_, err := svc.TenantBarrierUnseal(context.Background(), &pb.TenantBarrierUnsealRequest{})
 		require.Error(t, err)
 		st, ok := status.FromError(err)
@@ -1220,20 +1219,11 @@ func TestTenantBarrierUnseal(t *testing.T) {
 	})
 
 	t.Run("returns error when tenant not found", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(setupBarrierRegistry(t))
-		defer SetBarrierRegistry(old)
-
 		_, err := svc.TenantBarrierUnseal(context.Background(), &pb.TenantBarrierUnsealRequest{TenantId: "nonexistent"})
 		require.Error(t, err)
 	})
 
 	t.Run("succeeds for existing tenant", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		reg := setupBarrierRegistry(t)
-		SetBarrierRegistry(reg)
-		defer SetBarrierRegistry(old)
-
 		testTenantRegisteredTenant(t, reg, "unseal-tenant")
 
 		_, err := svc.TenantBarrierUnseal(context.Background(), &pb.TenantBarrierUnsealRequest{TenantId: "unseal-tenant"})

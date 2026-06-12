@@ -63,7 +63,7 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 	}
 
 	// Get the symmetric encrypter for this key
-	encrypter, err := b.SymmetricEncrypter(keyAttrs)
+	encrypter, err := b.SymmetricEncrypter(ctx, keyAttrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get symmetric encrypter: %w", err)
 	}
@@ -139,7 +139,7 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 	}
 
 	// Get the symmetric encrypter for this key
-	encrypter, err := b.SymmetricEncrypter(keyAttrs)
+	encrypter, err := b.SymmetricEncrypter(ctx, keyAttrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get symmetric encrypter: %w", err)
 	}

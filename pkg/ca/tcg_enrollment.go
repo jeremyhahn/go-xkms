@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -59,7 +60,7 @@ func (ca *CA) getTPM() tpm2.TrustedPlatformModule {
 //  2. Device calls TPM2_ActivateCredential and returns the decrypted secret
 //  3. Caller compares returned secret with PlainSecret
 //  4. If secrets match, deliver IAKCertDER and IDevIDCertDER to the device
-func (ca *CA) EnrollDevice(packedCSR []byte, request *CertificateRequest) (*TCGEnrollmentResult, error) {
+func (ca *CA) EnrollDevice(ctx context.Context, packedCSR []byte, request *CertificateRequest) (*TCGEnrollmentResult, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
@@ -119,7 +120,7 @@ func (ca *CA) EnrollDevice(packedCSR []byte, request *CertificateRequest) (*TCGE
 		slog.Int("secret_size", len(secret)))
 
 	// Sign the TCG-CSR-IDEVID to issue IAK and IDevID certificates
-	iakDER, idevidDER, err := ca.SignTCGCSRIDevID(tcgCSR, request)
+	iakDER, idevidDER, err := ca.SignTCGCSRIDevID(ctx, tcgCSR, request)
 	if err != nil {
 		return nil, err
 	}

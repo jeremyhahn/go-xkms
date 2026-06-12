@@ -16,6 +16,7 @@
 package pkcs11
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -311,7 +312,7 @@ func (b *Backend) deleteKeyInSession(session pkcs11.SessionHandle, id []byte, cn
 // may silently accept the call without actually clearing the slot, so
 // the operation verifies removal and returns hardware.ErrDeleteNotSupportedOnToken
 // with actionable guidance when the object persists.
-func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -337,13 +338,13 @@ func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
 // Delete removes a key from the PKCS#11 backend.
 // This is an alias for DeleteKey to satisfy the Storage interface.
 func (b *Backend) Delete(attrs *types.KeyAttributes) error {
-	return b.DeleteKey(attrs)
+	return b.DeleteKey(context.Background(), attrs)
 }
 
 // ListKeys returns attributes for all keys managed by this backend.
 // It enumerates all private key objects on the PKCS#11 token and returns
 // their key attributes including algorithm type and PIV slot mapping.
-func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -415,10 +416,10 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 // Decrypter returns a crypto.Decrypter for the specified key.
 // This allows the key to be used for decryption operations without
 // exposing the private key material.
-func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	// For PKCS#11, decryption is handled through the HSM.
 	// RSA signers implement crypto.Decrypter (PKCS1v15 and OAEP).
-	signer, err := b.Signer(attrs)
+	signer, err := b.Signer(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +434,7 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 
 // RotateKey rotates/updates a key identified by attrs.
 // For PKCS#11, this is not typically supported as keys are managed on the HSM.
-func (b *Backend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	return fmt.Errorf("%w: key rotation not supported for PKCS#11", backend.ErrOperationNotSupported)
 }
 
@@ -718,7 +719,7 @@ func (b *Backend) initializeToken(soPIN, userPIN string) error {
 // GenerateKey dispatches key generation to the appropriate algorithm-specific method.
 // Supports RSA, ECDSA, Ed25519, and post-quantum algorithms (ML-DSA, ML-KEM)
 // when QuantumAttributes are specified.
-func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	// Check for quantum key generation first
 	if attrs.QuantumAttributes != nil {
 		return b.generateQuantumKey(attrs)
@@ -1105,9 +1106,9 @@ func (b *Backend) FindSecretKey(attrs *types.KeyAttributes) (pkcs11.ObjectHandle
 // GetKey retrieves an existing private key by its attributes.
 // For PKCS#11, this returns a crypto.Signer that performs operations on the HSM.
 // The private key material never leaves the hardware module.
-func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	// Delegate to Signer since PKCS#11 keys are always hardware-backed signers
-	return b.Signer(attrs)
+	return b.Signer(ctx, attrs)
 }
 
 // GetSignerByID retrieves a crypto.Signer for the specified key by name.
@@ -1117,7 +1118,7 @@ func (b *Backend) GetSignerByID(keyID string) (crypto.Signer, error) {
 		KeyType:   backend.KEY_TYPE_SIGNING,
 		StoreType: backend.STORE_PKCS11,
 	}
-	key, err := b.GetKey(attrs)
+	key, err := b.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -1135,7 +1136,7 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 		KeyType:   backend.KEY_TYPE_ENCRYPTION,
 		StoreType: backend.STORE_PKCS11,
 	}
-	key, err := b.GetKey(attrs)
+	key, err := b.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -1148,7 +1149,7 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 
 // Signer returns a crypto.Signer for the specified key.
 // The signer performs operations using the HSM without exposing private key material.
-func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -1174,7 +1175,7 @@ func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
 
 // Sign signs a digest using the specified key on the HSM.
 func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	signer, err := b.Signer(attrs)
+	signer, err := b.Signer(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}

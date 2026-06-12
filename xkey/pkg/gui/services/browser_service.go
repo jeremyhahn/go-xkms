@@ -62,6 +62,13 @@ type BrowserConfig struct {
 	// profile or shares the user's default profile. Valid values are
 	// "isolated" and "shared". Defaults to "isolated".
 	FirefoxProfileMode string `json:"firefox_profile_mode"`
+
+	// IncludeExtensions controls whether the user-installed extensions from
+	// the system default Chrome profile are imported into the isolated
+	// profile on launch. It applies only to Chrome-family browsers in
+	// isolated mode. Defaults to false. A CLI flag overrides this value
+	// per-launch. The GUI may surface this as a toggle.
+	IncludeExtensions bool `json:"include_extensions"`
 }
 
 // BrowserInfo describes an available browser detected on the system.

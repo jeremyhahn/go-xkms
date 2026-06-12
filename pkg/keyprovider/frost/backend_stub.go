@@ -18,6 +18,7 @@
 package frost
 
 import (
+	"context"
 	"crypto"
 	"errors"
 
@@ -59,37 +60,37 @@ func (b *FrostBackend) Capabilities() types.Capabilities {
 }
 
 // GenerateKey returns an error.
-func (b *FrostBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *FrostBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, ErrNotCompiled
 }
 
 // GetKey returns an error.
-func (b *FrostBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *FrostBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, ErrNotCompiled
 }
 
 // DeleteKey returns an error.
-func (b *FrostBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *FrostBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	return ErrNotCompiled
 }
 
 // ListKeys returns an error.
-func (b *FrostBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *FrostBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	return nil, ErrNotCompiled
 }
 
 // Signer returns an error.
-func (b *FrostBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *FrostBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	return nil, ErrNotCompiled
 }
 
 // Decrypter returns an error.
-func (b *FrostBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *FrostBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, ErrNotCompiled
 }
 
 // RotateKey returns an error.
-func (b *FrostBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *FrostBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	return ErrNotCompiled
 }
 

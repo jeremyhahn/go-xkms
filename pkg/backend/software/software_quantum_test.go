@@ -14,6 +14,7 @@
 package software
 
 import (
+	"context"
 	"crypto"
 	"testing"
 
@@ -51,7 +52,7 @@ func TestGenerateKey_MLDSA44(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLDSAAttrs("test.mldsa44", types.QuantumAlgorithmMLDSA44)
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey ML-DSA-44 failed: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestGenerateKey_MLDSA44_InvalidCN(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLDSAAttrs("", types.QuantumAlgorithmMLDSA44)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("expected error for empty CN, got nil")
 	}
@@ -82,7 +83,7 @@ func TestGenerateKey_MLDSA65(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLDSAAttrs("test.mldsa65", types.QuantumAlgorithmMLDSA65)
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey ML-DSA-65 failed: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestGenerateKey_MLDSA87(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLDSAAttrs("test.mldsa87", types.QuantumAlgorithmMLDSA87)
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey ML-DSA-87 failed: %v", err)
 	}
@@ -122,7 +123,7 @@ func TestGenerateKey_MLKEM768(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLKEMAttrs("test.mlkem768", types.QuantumAlgorithmMLKEM768)
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey ML-KEM-768 failed: %v", err)
 	}
@@ -142,7 +143,7 @@ func TestGenerateKey_MLKEM1024(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLKEMAttrs("test.mlkem1024", types.QuantumAlgorithmMLKEM1024)
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey ML-KEM-1024 failed: %v", err)
 	}
@@ -162,12 +163,12 @@ func TestGetKey_MLDSA(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLDSAAttrs("test.getkey.mldsa", types.QuantumAlgorithmMLDSA44)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
-	retrieved, err := be.GetKey(attrs)
+	retrieved, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestGetKey_MLDSA_NotFound(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLDSAAttrs("nonexistent.mldsa", types.QuantumAlgorithmMLDSA44)
-	_, err := be.GetKey(attrs)
+	_, err := be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("expected error for nonexistent key, got nil")
 	}
@@ -198,12 +199,12 @@ func TestGetKey_MLKEM(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLKEMAttrs("test.getkey.mlkem", types.QuantumAlgorithmMLKEM768)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
-	retrieved, err := be.GetKey(attrs)
+	retrieved, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -223,18 +224,18 @@ func TestDeleteKey_Quantum(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLDSAAttrs("test.delete.mldsa", types.QuantumAlgorithmMLDSA44)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
-	err = be.DeleteKey(attrs)
+	err = be.DeleteKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("DeleteKey failed: %v", err)
 	}
 
 	// Verify key is gone
-	_, err = be.GetKey(attrs)
+	_, err = be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("expected error after delete, got nil")
 	}
@@ -245,7 +246,7 @@ func TestDeleteKey_Quantum_NotFound(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLDSAAttrs("nonexistent.delete", types.QuantumAlgorithmMLDSA44)
-	err := be.DeleteKey(attrs)
+	err := be.DeleteKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("expected error deleting nonexistent key, got nil")
 	}
@@ -256,12 +257,12 @@ func TestSigner_MLDSA(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLDSAAttrs("test.signer.mldsa", types.QuantumAlgorithmMLDSA65)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
-	signer, err := be.Signer(attrs)
+	signer, err := be.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer failed: %v", err)
 	}
@@ -278,7 +279,7 @@ func TestSigner_MLDSA(t *testing.T) {
 	}
 
 	// Verify via the MLDSAPrivateKey.Verify method
-	key, err := be.GetKey(attrs)
+	key, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -297,12 +298,12 @@ func TestSigner_MLDSA_VerifyTampered(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLDSAAttrs("test.signer.tampered", types.QuantumAlgorithmMLDSA44)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
-	signer, err := be.Signer(attrs)
+	signer, err := be.Signer(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Signer failed: %v", err)
 	}
@@ -314,7 +315,7 @@ func TestSigner_MLDSA_VerifyTampered(t *testing.T) {
 	}
 
 	// Tamper with the message
-	key, err := be.GetKey(attrs)
+	key, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
@@ -333,25 +334,25 @@ func TestRotateKey_Quantum(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLDSAAttrs("test.rotate.mldsa", types.QuantumAlgorithmMLDSA44)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
 	// Get original key seed for comparison
-	origKey, err := be.GetKey(attrs)
+	origKey, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey failed: %v", err)
 	}
 	origSeed := origKey.(*quantum.MLDSAPrivateKey).ExportSecretKey()
 
-	err = be.RotateKey(attrs)
+	err = be.RotateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("RotateKey failed: %v", err)
 	}
 
 	// Verify the key changed
-	newKey, err := be.GetKey(attrs)
+	newKey, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GetKey after rotate failed: %v", err)
 	}
@@ -367,7 +368,7 @@ func TestRotateKey_Quantum_NotFound(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLDSAAttrs("nonexistent.rotate", types.QuantumAlgorithmMLDSA44)
-	err := be.RotateKey(attrs)
+	err := be.RotateKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("expected error rotating nonexistent key, got nil")
 	}
@@ -379,18 +380,18 @@ func TestListKeys_IncludesQuantum(t *testing.T) {
 
 	// Generate one classical and one quantum key
 	rsaAttrs := createRSAAttrs("test.list.rsa", 2048)
-	_, err := be.GenerateKey(rsaAttrs)
+	_, err := be.GenerateKey(context.Background(), rsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey RSA failed: %v", err)
 	}
 
 	mldsaAttrs := createMLDSAAttrs("test.list.mldsa", types.QuantumAlgorithmMLDSA44)
-	_, err = be.GenerateKey(mldsaAttrs)
+	_, err = be.GenerateKey(context.Background(), mldsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey ML-DSA-44 failed: %v", err)
 	}
 
-	keys, err := be.ListKeys()
+	keys, err := be.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
@@ -434,13 +435,13 @@ func TestEncapsulateDecapsulate_MLKEM768(t *testing.T) {
 
 	// Generate sender and recipient keys
 	senderAttrs := createMLKEMAttrs("sender.mlkem", types.QuantumAlgorithmMLKEM768)
-	_, err := be.GenerateKey(senderAttrs)
+	_, err := be.GenerateKey(context.Background(), senderAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey sender failed: %v", err)
 	}
 
 	recipientAttrs := createMLKEMAttrs("recipient.mlkem", types.QuantumAlgorithmMLKEM768)
-	recipientKey, err := be.GenerateKey(recipientAttrs)
+	recipientKey, err := be.GenerateKey(context.Background(), recipientAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey recipient failed: %v", err)
 	}
@@ -448,7 +449,7 @@ func TestEncapsulateDecapsulate_MLKEM768(t *testing.T) {
 	recipientMLKEM := recipientKey.(*quantum.MLKEMPrivateKey)
 
 	// Sender encapsulates to recipient's public key
-	senderKey, err := be.GetKey(senderAttrs)
+	senderKey, err := be.GetKey(context.Background(), senderAttrs)
 	if err != nil {
 		t.Fatalf("GetKey sender failed: %v", err)
 	}
@@ -475,7 +476,7 @@ func TestEncapsulateDecapsulate_MLKEM768_BadCiphertext(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := createMLKEMAttrs("test.badct", types.QuantumAlgorithmMLKEM768)
-	key, err := be.GenerateKey(attrs)
+	key, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -494,7 +495,7 @@ func TestClose_Quantum(t *testing.T) {
 
 	// Generate a quantum key
 	attrs := createMLDSAAttrs("test.close", types.QuantumAlgorithmMLDSA44)
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
@@ -505,7 +506,7 @@ func TestClose_Quantum(t *testing.T) {
 	}
 
 	// Operations after close should fail
-	_, err = be.GenerateKey(attrs)
+	_, err = be.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("expected error after close, got nil")
 	}

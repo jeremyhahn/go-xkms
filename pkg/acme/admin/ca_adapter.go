@@ -14,6 +14,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/x509"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -36,14 +37,14 @@ func newCAAdapter(ca xkmssdk.TrustedCA) *caAdapter {
 }
 
 // SignCSR signs a PEM-encoded CSR using the go-xkms CA with the given options.
-func (a *caAdapter) SignCSR(csrPEM []byte, opts *qrdbsdk.SignCSROptions) (*x509.Certificate, error) {
+func (a *caAdapter) SignCSR(ctx context.Context, csrPEM []byte, opts *qrdbsdk.SignCSROptions) (*x509.Certificate, error) {
 	xkmsOpts := &xkmssdk.TrustedCASignOptions{
 		Profile:      opts.Profile,
 		ValidityDays: opts.ValidityDays,
 		KeyUsage:     opts.KeyUsage,
 		ExtKeyUsage:  opts.ExtKeyUsage,
 	}
-	return a.ca.SignCSR(csrPEM, xkmsOpts)
+	return a.ca.SignCSR(ctx, csrPEM, xkmsOpts)
 }
 
 // CACertificate returns the CA's own certificate.
@@ -59,7 +60,7 @@ func (a *caAdapter) CABundle() ([]byte, error) {
 // IssueCertificate generates a new key pair and issues a certificate using the
 // go-xkms CA. The go-qrdb IssueCertRequest is mapped to go-xkms's
 // CertificateRequest, and the result is mapped back to go-qrdb's IssuedCert.
-func (a *caAdapter) IssueCertificate(req *qrdbsdk.IssueCertRequest) (*qrdbsdk.IssuedCert, error) {
+func (a *caAdapter) IssueCertificate(ctx context.Context, req *qrdbsdk.IssueCertRequest) (*qrdbsdk.IssuedCert, error) {
 	xkmsReq := &xkmssdk.TrustedCACertificateRequest{
 		Subject: xkmssdk.TrustedCASubject{
 			CommonName: req.CommonName,
@@ -76,7 +77,7 @@ func (a *caAdapter) IssueCertificate(req *qrdbsdk.IssueCertRequest) (*qrdbsdk.Is
 		}
 	}
 
-	issued, err := a.ca.IssueCertificate(xkmsReq)
+	issued, err := a.ca.IssueCertificate(ctx, xkmsReq)
 	if err != nil {
 		return nil, err
 	}

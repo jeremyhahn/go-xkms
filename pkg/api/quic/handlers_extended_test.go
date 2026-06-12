@@ -15,6 +15,7 @@ package quic
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -49,8 +50,11 @@ func createImportExportTestServer(t *testing.T) (*Server, *MockKeyStoreWithImpor
 	})
 	require.NoError(t, err)
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
-		Addr: "localhost:8444",
+		Addr:        "localhost:8444",
+		XKMSService: svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -722,7 +726,7 @@ func TestNewMockImportExportBackendDefaults(t *testing.T) {
 	m := NewMockImportExportBackend()
 
 	t.Run("ExportKeyMaterial returns error", func(t *testing.T) {
-		_, err := m.ExportKeyMaterial(nil)
+		_, err := m.ExportKeyMaterial(context.Background(), nil)
 		require.Error(t, err)
 	})
 }

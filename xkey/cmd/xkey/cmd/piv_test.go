@@ -409,7 +409,7 @@ func TestParseCertificateAuto_PEM(t *testing.T) {
 	}
 
 	if cert == nil {
-		t.Error("parseCertificateAuto() returned nil certificate")
+		t.Fatal("parseCertificateAuto() returned nil certificate")
 	}
 
 	if cert.Subject.CommonName != "Test Certificate" {
@@ -431,7 +431,7 @@ func TestParseCertificateAuto_DER(t *testing.T) {
 	}
 
 	if cert == nil {
-		t.Error("parseCertificateAuto() returned nil certificate")
+		t.Fatal("parseCertificateAuto() returned nil certificate")
 	}
 
 	if cert.Subject.CommonName != "Test Certificate" {
@@ -2836,11 +2836,7 @@ func TestBuildPIVConfig_AllBackends_Detailed(t *testing.T) {
 		t.Fatal("buildPIVConfig() returned nil")
 	}
 
-	// Default backend should be software
-	if cfg.Backend != PIVBackendSoftware && cfg.Backend != "" {
-		// Either default or empty is acceptable based on viper config
-	}
-
+	// Default backend should be software (or empty based on viper config).
 	// If backend is set, storage type should default appropriately
 	if cfg.Backend == PIVBackendSoftware && cfg.StorageType != PIVStorageTypeFile {
 		// Software backend defaults to file storage
@@ -2924,7 +2920,7 @@ func TestEncodePublicKeyToPEM_ValidatesOutput(t *testing.T) {
 		t.Fatalf("expected *ecdsa.PublicKey, got %T", parsedKey)
 	}
 
-	if parsedEC.X.Cmp(ecKey.X) != 0 || parsedEC.Y.Cmp(ecKey.Y) != 0 {
+	if !parsedEC.Equal(&ecKey.PublicKey) {
 		t.Error("parsed key does not match original key")
 	}
 }

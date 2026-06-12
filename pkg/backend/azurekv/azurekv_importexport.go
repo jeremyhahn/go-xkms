@@ -52,7 +52,7 @@ var _ backend.ImportExportBackend = (*Backend)(nil)
 //   - An import token (the temporary private key, stored securely)
 //   - The specified wrapping algorithm
 //   - A 24-hour expiration time
-func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	if attrs == nil {
 		return nil, fmt.Errorf("attributes cannot be nil")
 	}
@@ -121,7 +121,7 @@ func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm back
 // The wrapping is performed locally to ensure the plaintext key material is never
 // transmitted to Azure over the network. Only the encrypted (wrapped) key material
 // is sent during the ImportKey operation.
-func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if len(keyMaterial) == 0 {
 		return nil, fmt.Errorf("key material cannot be empty")
 	}
@@ -176,7 +176,7 @@ func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) 
 // move it into a *secure.Buffer immediately and wipe the returned slice
 // once the data has been copied out. See importKeyMaterial for the
 // canonical handling pattern.
-func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if wrapped == nil {
 		return nil, fmt.Errorf("wrapped key material cannot be nil")
 	}
@@ -227,7 +227,7 @@ func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend
 //
 // After successful import, the key can be used for cryptographic operations like any
 // other Azure Key Vault key.
-func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	if attrs == nil {
 		return fmt.Errorf("attributes cannot be nil")
 	}
@@ -241,7 +241,6 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 		return fmt.Errorf("wrapped key material is empty")
 	}
 
-	ctx := context.Background()
 	if err := b.initClient(ctx); err != nil {
 		return err
 	}
@@ -255,7 +254,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 		ImportToken: wrapped.ImportToken,
 		Algorithm:   wrapped.Algorithm,
 	}
-	keyMaterial, err := b.UnwrapKey(wrapped, params)
+	keyMaterial, err := b.UnwrapKey(ctx, wrapped, params)
 	if err != nil {
 		return fmt.Errorf("failed to unwrap key material: %w", err)
 	}
@@ -462,7 +461,7 @@ func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes
 // ExportKey exports a key in wrapped form for secure transport.
 // Azure Key Vault does not support exporting private keys directly.
 // This method returns ErrNotSupported.
-func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -484,7 +483,7 @@ func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wrappi
 // ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
 // Azure Key Vault does not support exporting raw key material.
 // This method returns ErrNotSupported.
-func (b *Backend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}

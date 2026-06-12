@@ -158,7 +158,7 @@ func TestGetImportParameters(t *testing.T) {
 				t.Fatalf("NewBackendWithClient() error = %v", err)
 			}
 
-			params, err := b.GetImportParameters(tt.attrs, tt.algorithm)
+			params, err := b.GetImportParameters(context.Background(), tt.attrs, tt.algorithm)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetImportParameters() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -263,7 +263,7 @@ func TestWrapKey(t *testing.T) {
 				t.Fatalf("NewBackend() error = %v", err)
 			}
 
-			wrapped, err := b.WrapKey(tt.keyMaterial, tt.params)
+			wrapped, err := b.WrapKey(context.Background(), tt.keyMaterial, tt.params)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("WrapKey() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -299,7 +299,7 @@ func TestUnwrapKey(t *testing.T) {
 		Algorithm: backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	_, err = b.UnwrapKey(wrapped, params)
+	_, err = b.UnwrapKey(context.Background(), wrapped, params)
 	if !errors.Is(err, backend.ErrNotSupported) {
 		t.Errorf("UnwrapKey() error = %v, want ErrNotSupported", err)
 	}
@@ -420,7 +420,7 @@ func TestImportKey(t *testing.T) {
 				t.Fatalf("NewBackendWithClient() error = %v", err)
 			}
 
-			err = b.ImportKey(tt.attrs, tt.wrapped)
+			err = b.ImportKey(context.Background(), tt.attrs, tt.wrapped)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ImportKey() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -446,7 +446,7 @@ func TestExportKey(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	_, err = b.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err = b.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if !errors.Is(err, backend.ErrExportNotSupported) {
 		t.Errorf("ExportKey() error = %v, want ErrExportNotSupported", err)
 	}
@@ -522,13 +522,13 @@ func TestImportKeyRoundTrip(t *testing.T) {
 	for _, algorithm := range algorithms {
 		t.Run(string(algorithm), func(t *testing.T) {
 			// Step 1: Get import parameters
-			params, err := b.GetImportParameters(attrs, algorithm)
+			params, err := b.GetImportParameters(context.Background(), attrs, algorithm)
 			if err != nil {
 				t.Fatalf("GetImportParameters() error = %v", err)
 			}
 
 			// Step 2: Wrap the key material
-			wrapped, err := b.WrapKey(keyMaterial, params)
+			wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
 			if err != nil {
 				t.Fatalf("WrapKey() error = %v", err)
 			}
@@ -544,7 +544,7 @@ func TestImportKeyRoundTrip(t *testing.T) {
 			}
 
 			// Step 3: Import the wrapped key
-			err = b.ImportKey(attrs, wrapped)
+			err = b.ImportKey(context.Background(), attrs, wrapped)
 			if err != nil {
 				t.Fatalf("ImportKey() error = %v", err)
 			}

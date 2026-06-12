@@ -108,13 +108,9 @@ func GetTLSConfig() *tls.Config {
 			}
 		}
 	}
-	// For integration tests with self-signed certs, allow InsecureSkipVerify
-	if os.Getenv("TRUSTED_CA_TLS_INSECURE") == "true" {
-		return &tls.Config{
-			InsecureSkipVerify: true,
-			MinVersion:         tls.VersionTLS13,
-		}
-	}
+	// If no CA file is configured, fall back to the system pool. Integration
+	// tests must set TRUSTED_CA_TLS_CA to the server's CA cert so TLS
+	// verification succeeds. InsecureSkipVerify is not supported.
 	return &tls.Config{
 		MinVersion: tls.VersionTLS13,
 	}

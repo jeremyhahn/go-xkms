@@ -278,7 +278,7 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	}
 
 	// Get TLS config from CA (TLS 1.3 enforced)
-	tlsConfig, err := tca.ca.TLSConfig(nil)
+	tlsConfig, err := tca.ca.TLSConfig(ctx, nil)
 	if err != nil {
 		return caerrors.TLSErrorCreate("failed to get TLS config from CA: %v", err)
 	}

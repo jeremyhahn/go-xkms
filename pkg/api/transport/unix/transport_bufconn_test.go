@@ -282,7 +282,7 @@ func (s *mockKeystoreServer) BarrierStatus(_ context.Context, _ *emptypb.Empty) 
 }
 
 func (s *mockKeystoreServer) BarrierInitializeShamir(_ context.Context, _ *pb.BarrierInitializeShamirRequest) (*pb.BarrierShamirInitResponse, error) {
-	return &pb.BarrierShamirInitResponse{Shares: []string{"share-1", "share-2", "share-3"}, Threshold: 2}, nil
+	return &pb.BarrierShamirInitResponse{Threshold: 2, TotalShares: 3, ShareCount: 3}, nil
 }
 
 func (s *mockKeystoreServer) BarrierUnsealShare(_ context.Context, _ *pb.BarrierUnsealShareRequest) (*pb.BarrierQuorumProgressResponse, error) {
@@ -294,11 +294,11 @@ func (s *mockKeystoreServer) BarrierUnsealShares(_ context.Context, _ *pb.Barrie
 }
 
 func (s *mockKeystoreServer) BarrierRekey(_ context.Context, _ *pb.BarrierRekeyRequest) (*pb.BarrierShamirInitResponse, error) {
-	return &pb.BarrierShamirInitResponse{Shares: []string{"new-share-1", "new-share-2"}, Threshold: 2}, nil
+	return &pb.BarrierShamirInitResponse{Threshold: 2, TotalShares: 2, ShareCount: 2}, nil
 }
 
 func (s *mockKeystoreServer) BarrierGenerateRecoveryKeys(_ context.Context, _ *pb.BarrierGenerateRecoveryKeysRequest) (*pb.BarrierRecoveryKeysResponse, error) {
-	return &pb.BarrierRecoveryKeysResponse{Shares: []string{"recovery-1", "recovery-2"}, Threshold: 2}, nil
+	return &pb.BarrierRecoveryKeysResponse{Threshold: 2, TotalShares: 2, ShareCount: 2}, nil
 }
 
 func (s *mockKeystoreServer) BarrierRecoverWithKeys(_ context.Context, _ *pb.BarrierRecoverWithKeysRequest) (*emptypb.Empty, error) {
@@ -1023,8 +1023,9 @@ func TestBarrierInitializeShamir_Connected(t *testing.T) {
 
 	resp, err := tr.BarrierInitializeShamir(context.Background(), &transport.BarrierInitializeShamirRequest{Threshold: 2, TotalShares: 3})
 	require.NoError(t, err)
-	require.Len(t, resp.Shares, 3)
 	assert.Equal(t, 2, resp.Threshold)
+	assert.Equal(t, 3, resp.TotalShares)
+	assert.Equal(t, 3, resp.ShareCount)
 }
 
 func TestBarrierUnsealWithShare_Connected(t *testing.T) {
@@ -1048,7 +1049,8 @@ func TestBarrierRekey_Connected(t *testing.T) {
 
 	resp, err := tr.BarrierRekey(context.Background(), &transport.BarrierRekeyRequest{Threshold: 2, Total: 3})
 	require.NoError(t, err)
-	require.Len(t, resp.Shares, 2)
+	assert.Equal(t, 2, resp.Threshold)
+	assert.Equal(t, 2, resp.ShareCount)
 }
 
 func TestBarrierGenerateRecoveryKeys_Connected(t *testing.T) {
@@ -1057,7 +1059,9 @@ func TestBarrierGenerateRecoveryKeys_Connected(t *testing.T) {
 
 	resp, err := tr.BarrierGenerateRecoveryKeys(context.Background(), &transport.BarrierGenerateRecoveryKeysRequest{Total: 2})
 	require.NoError(t, err)
-	assert.Len(t, resp.Keys, 2)
+	assert.Equal(t, 2, resp.Threshold)
+	assert.Equal(t, 2, resp.TotalShares)
+	assert.Equal(t, 2, resp.ShareCount)
 }
 
 func TestBarrierRecoverWithKeys_Connected(t *testing.T) {

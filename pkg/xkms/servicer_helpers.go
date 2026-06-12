@@ -14,6 +14,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -90,8 +91,8 @@ func (s *XKMSService) defaultBackendName() string {
 }
 
 // findKeyAttrs searches a backend's key list for a key matching the given ID.
-func findKeyAttrs(b Backend, keyID string) (*types.KeyAttributes, error) {
-	attrs, err := b.ListKeys()
+func findKeyAttrs(ctx context.Context, b Backend, keyID string) (*types.KeyAttributes, error) {
+	attrs, err := b.ListKeys(ctx)
 	if err != nil {
 		return nil, err
 	}

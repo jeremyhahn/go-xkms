@@ -132,9 +132,9 @@ func TestServicerListKeys_AllBackends(t *testing.T) {
 	require.NoError(t, err)
 
 	// Generate keys in both backends
-	_, err = software.GenerateECDSA(&types.KeyAttributes{CN: "sw-key", KeyAlgorithm: x509.ECDSA})
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{CN: "sw-key", KeyAlgorithm: x509.ECDSA})
 	require.NoError(t, err)
-	_, err = pkcs11.GenerateECDSA(&types.KeyAttributes{CN: "p11-key", KeyAlgorithm: x509.ECDSA})
+	_, err = pkcs11.GenerateECDSA(context.Background(), &types.KeyAttributes{CN: "p11-key", KeyAlgorithm: x509.ECDSA})
 	require.NoError(t, err)
 
 	resp, err := svc.ListKeys(context.Background(), "")
@@ -147,9 +147,9 @@ func TestServicerListKeys_SpecificBackend(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateECDSA(&types.KeyAttributes{CN: "sw-only", KeyAlgorithm: x509.ECDSA})
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{CN: "sw-only", KeyAlgorithm: x509.ECDSA})
 	require.NoError(t, err)
-	_, err = pkcs11.GenerateECDSA(&types.KeyAttributes{CN: "p11-only", KeyAlgorithm: x509.ECDSA})
+	_, err = pkcs11.GenerateECDSA(context.Background(), &types.KeyAttributes{CN: "p11-only", KeyAlgorithm: x509.ECDSA})
 	require.NoError(t, err)
 
 	resp, err := svc.ListKeys(context.Background(), "software")
@@ -186,7 +186,7 @@ func TestGetKey_Success(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateECDSA(&types.KeyAttributes{
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{
 		CN:           "get-me",
 		KeyAlgorithm: x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{
@@ -228,14 +228,14 @@ func TestDeleteKey_Success(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateECDSA(&types.KeyAttributes{CN: "delete-me", KeyAlgorithm: x509.ECDSA})
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{CN: "delete-me", KeyAlgorithm: x509.ECDSA})
 	require.NoError(t, err)
 
 	err = svc.DeleteKey(context.Background(), "software", "delete-me")
 	require.NoError(t, err)
 
 	// Verify it's gone
-	_, err = software.GetKey(&types.KeyAttributes{CN: "delete-me"})
+	_, err = software.GetKey(context.Background(), &types.KeyAttributes{CN: "delete-me"})
 	require.Error(t, err)
 }
 
@@ -473,7 +473,7 @@ func TestServicerRotateKey_MockNotImplemented(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = software.GenerateECDSA(&types.KeyAttributes{
+	_, err = software.GenerateECDSA(context.Background(), &types.KeyAttributes{
 		CN:            "rotate-me",
 		KeyAlgorithm:  x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},

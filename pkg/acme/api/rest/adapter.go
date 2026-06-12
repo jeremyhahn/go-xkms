@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -72,13 +71,8 @@ func NewAdapter(config *api.AdapterConfig) (*Adapter, error) {
 	}
 
 	if config.TLSConfig != nil {
-		if config.TLSConfig.InsecureSkipVerify { //nolint:staticcheck // config-driven passthrough for self-signed integration testing; production leaves it false
-			slog.Warn("acme/rest: TLS certificate verification disabled via InsecureSkipVerify; do not use in production",
-				"base_url", config.BaseURL)
-		}
 		tlsConfig := &tls.Config{
-			MinVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: config.TLSConfig.InsecureSkipVerify, //nolint:staticcheck // config-driven passthrough for self-signed integration testing; production leaves it false
+			MinVersion: tls.VersionTLS13,
 		}
 
 		// Load client certificate if provided

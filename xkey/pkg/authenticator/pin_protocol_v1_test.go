@@ -91,7 +91,7 @@ func TestPINProtocolV1_Initialize_MultipleCallsGenerateNewKeys(t *testing.T) {
 	}
 
 	// Keys should be different
-	if p.privateKey.D.Cmp(firstPrivKey.D) == 0 {
+	if p.privateKey.D.Cmp(firstPrivKey.D) == 0 { //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 		t.Error("Initialize should generate new keys each time")
 	}
 }

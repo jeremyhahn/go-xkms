@@ -83,7 +83,7 @@ func runUnseal(cmd *cobra.Command, args []string) error {
 
 	// Check if already mounted
 	if vol.IsMounted() {
-		fmt.Fprintf(cmd.OutOrStdout(), "Volume already unlocked and mounted at %s\n", vol.MountPoint)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Volume already unlocked and mounted at %s\n", vol.MountPoint)
 		return nil
 	}
 
@@ -94,12 +94,12 @@ func runUnseal(cmd *cobra.Command, args []string) error {
 	}
 
 	// Unlock the volume
-	fmt.Fprintln(cmd.OutOrStdout(), "Unlocking encrypted storage...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Unlocking encrypted storage...")
 	if err := vol.Unlock(string(passphrase)); err != nil {
 		return &UnsealError{Operation: "unlock", Err: err}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Encrypted storage unlocked and mounted at %s\n", vol.MountPoint)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Encrypted storage unlocked and mounted at %s\n", vol.MountPoint)
 	return nil
 }
 
@@ -107,9 +107,9 @@ func runUnseal(cmd *cobra.Command, args []string) error {
 func readUnsealPassphrase(out io.Writer) (string, error) {
 	// Check if stdin is a terminal
 	if term.IsTerminal(int(os.Stdin.Fd())) {
-		fmt.Fprint(out, "Enter passphrase: ")
+		_, _ = fmt.Fprint(out, "Enter passphrase: ")
 		passphrase, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 		if err != nil {
 			return "", &UnsealError{Operation: "read_passphrase", Err: err}
 		}

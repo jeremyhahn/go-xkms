@@ -33,7 +33,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -153,69 +152,6 @@ type p5bMockKeyCounter struct {
 func (c *p5bMockKeyCounter) KeyCount() int {
 	return c.count
 }
-
-// p5bMockStaticPWStore implements staticpw.Store for password protection tests.
-type p5bMockStaticPWStore struct {
-	passwords []*staticpw.StaticPassword
-	listErr   error
-	updateErr error
-}
-
-func (s *p5bMockStaticPWStore) Add(pw *staticpw.StaticPassword) error {
-	s.passwords = append(s.passwords, pw)
-	return nil
-}
-
-func (s *p5bMockStaticPWStore) Get(name string) (*staticpw.StaticPassword, error) {
-	for _, p := range s.passwords {
-		if p.Name == name {
-			return p, nil
-		}
-	}
-	return nil, errors.New("not found")
-}
-
-func (s *p5bMockStaticPWStore) List() ([]*staticpw.StaticPassword, error) {
-	if s.listErr != nil {
-		return nil, s.listErr
-	}
-	return s.passwords, nil
-}
-
-func (s *p5bMockStaticPWStore) Update(pw *staticpw.StaticPassword) error {
-	return s.updateErr
-}
-
-func (s *p5bMockStaticPWStore) Delete(name string) error {
-	return nil
-}
-
-func (s *p5bMockStaticPWStore) ForceDelete(idOrName string) error {
-	return nil
-}
-
-func (s *p5bMockStaticPWStore) ListByFolder(folderPath string) ([]*staticpw.StaticPassword, error) {
-	return nil, nil
-}
-
-func (s *p5bMockStaticPWStore) ListByFolderDirect(folderPath string) ([]*staticpw.StaticPassword, error) {
-	return nil, nil
-}
-
-func (s *p5bMockStaticPWStore) ListFolders() ([]string, error) {
-	return nil, nil
-}
-
-func (s *p5bMockStaticPWStore) MoveToFolder(idOrName string, folderPath string) error {
-	return nil
-}
-
-func (s *p5bMockStaticPWStore) Close() error {
-	return nil
-}
-
-func (s *p5bMockStaticPWStore) CreateFolder(_ string) error { return nil }
-func (s *p5bMockStaticPWStore) RemoveFolder(_ string) error { return nil }
 
 // ---------------------------------------------------------------------------
 // 1. OIDC Service Tests
@@ -1515,7 +1451,7 @@ func TestP5B_BarrierService_Context_Set(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewBarrierService(dir, slog.Default())
 
-	expected := context.WithValue(context.Background(), "key", "value")
+	expected := context.WithValue(context.Background(), testCtxKey("key"), "value")
 	svc.SetContext(expected)
 
 	ctx := svc.context()
@@ -2074,7 +2010,7 @@ func TestP5B_PlatformPolicy_GetPolicyContext_NilFallback(t *testing.T) {
 // getPolicyContext returns the set context.
 func TestP5B_PlatformPolicy_GetPolicyContext_Set(t *testing.T) {
 	svc := NewPlatformPolicyService("")
-	expected := context.WithValue(context.Background(), "k", "v")
+	expected := context.WithValue(context.Background(), testCtxKey("k"), "v")
 	svc.SetContext(expected)
 	assert.Equal(t, expected, svc.getPolicyContext())
 }

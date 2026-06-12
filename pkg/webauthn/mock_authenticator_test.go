@@ -167,6 +167,7 @@ func TestMockAuthenticator_CreateAttestationObject(t *testing.T) {
 	// Verify attestation structure
 	if attestation == nil {
 		t.Fatal("Attestation should not be nil")
+		return
 	}
 
 	// ID is base64-encoded
@@ -215,6 +216,7 @@ func TestMockAuthenticator_CreateAssertionResponse(t *testing.T) {
 	// Verify assertion structure
 	if assertion == nil {
 		t.Fatal("Assertion should not be nil")
+		return
 	}
 
 	// ID is base64-encoded
@@ -288,6 +290,7 @@ func TestMockAuthenticator_FullRegistrationFlow(t *testing.T) {
 
 	if options == nil {
 		t.Fatal("Options should not be nil")
+		return
 	}
 
 	if sessionID == "" {
@@ -406,6 +409,7 @@ func TestMockAuthenticator_FullLoginFlow(t *testing.T) {
 
 	if loginOptions == nil {
 		t.Fatal("Login options should not be nil")
+		return
 	}
 
 	if loginSessionID == "" {
@@ -631,6 +635,7 @@ func TestMockAuthenticator_DiscoverableCredentials(t *testing.T) {
 
 	if loginOptions == nil {
 		t.Fatal("Login options should not be nil")
+		return
 	}
 
 	// For discoverable credentials, allowedCredentials should be empty

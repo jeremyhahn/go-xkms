@@ -95,7 +95,7 @@ func runPINChangeSO(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintln(out, "SO PIN changed successfully.")
+	_, _ = fmt.Fprintln(out, "SO PIN changed successfully.")
 	return nil
 }
 
@@ -135,6 +135,6 @@ func runPINChangeUser(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintln(out, "User PIN changed successfully.")
+	_, _ = fmt.Fprintln(out, "User PIN changed successfully.")
 	return nil
 }

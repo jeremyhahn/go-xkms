@@ -26,10 +26,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/client"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -699,41 +700,35 @@ func TestEnrollment_Timeout(t *testing.T) {
 
 // Helper functions
 
-// createTestACMEClient creates an ACME client for testing
+// createTestACMEClient creates an ACME client for testing.
+// Storage is backed by an in-memory KV store via kvadapter, matching the
+// pattern used by the server-side test helpers in the same package.
 func createTestACMEClient(serverURL string, accountKey *ecdsa.PrivateKey, tpmAdapter *client.XKMSTPMAdapter) (*client.Client, error) {
 	config := client.DefaultConfig()
 	config.DirectoryURL = serverURL + "/acme/directory"
 
-	// Create a temporary directory for test storage
-	tmpDir, err := os.MkdirTemp("", "acme-client-test-*")
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
 	if err != nil {
-		return nil, caerrors.StorageFailureError("failed to create temp dir: %v", err)
+		return nil, caerrors.StorageFailureError("failed to create kv store: %v", err)
 	}
 
-	// Create local storage backend
-	store := local.New()
-	if err := store.Configure(map[string]string{"path": tmpDir}); err != nil {
-		os.RemoveAll(tmpDir)
-		return nil, caerrors.StorageFailureError("failed to create storage: %v", err)
+	storageFactory, err := acmeobjstore.NewFactoryFromKVStore(kv)
+	if err != nil {
+		return nil, caerrors.StorageFailureError("failed to create storage factory: %v", err)
 	}
 
-	// Create DAOs for account, certificate, and order storage
-	accountDAO, err := objstore.NewAccountDAO(store, nil)
+	accountDAO, err := storageFactory.AccountDAO()
 	if err != nil {
-		os.RemoveAll(tmpDir)
 		return nil, caerrors.StorageFailureError("failed to create account DAO: %v", err)
 	}
 
-	certDAO, err := objstore.NewCertificateDAO(store, nil)
+	certDAO, err := storageFactory.CertificateDAO()
 	if err != nil {
-		os.RemoveAll(tmpDir)
 		return nil, caerrors.StorageFailureError("failed to create certificate DAO: %v", err)
 	}
 
-	// Note: OrderDAO requires a valid account ID which we don't have yet
-	// (account is created when client registers with server)
-	// OrderStorage is optional, so we pass nil
-
+	// OrderStorage is optional: OrderDAO requires a known account ID which is
+	// not available until the client has registered with the server.
 	params := &client.Params{
 		AccountEmail:  "test@example.com",
 		AccountSigner: accountKey,
@@ -743,7 +738,7 @@ func createTestACMEClient(serverURL string, accountKey *ecdsa.PrivateKey, tpmAda
 		})),
 		Storage:            accountDAO,
 		CertificateStorage: certDAO,
-		OrderStorage:       nil, // OrderDAO requires account ID which is unknown at client creation
+		OrderStorage:       nil,
 	}
 
 	return client.NewClient(params)

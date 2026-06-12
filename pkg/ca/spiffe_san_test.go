@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
@@ -27,7 +28,7 @@ func TestSignCSR_StampsTenantSPIFFESAN(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM, _ := makeLeafCSR(t, "alice")
 
-	cert, err := ca.SignCSR(csrPEM, &SignOptions{
+	cert, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{
 		SPIFFETrustDomain: "example.com",
 		TenantID:          "tenant-acme",
 		Profile:           "client",
@@ -53,7 +54,7 @@ func TestSignCSR_SPIFFEKindAndNameOverride(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM, _ := makeLeafCSR(t, "ignored-cn")
 
-	cert, err := ca.SignCSR(csrPEM, &SignOptions{
+	cert, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{
 		SPIFFETrustDomain: "trust.internal",
 		TenantID:          "t1",
 		SPIFFEKind:        spiffe.KindService,
@@ -69,7 +70,7 @@ func TestSignCSR_NoSPIFFEWhenTrustDomainEmpty(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM, _ := makeLeafCSR(t, "nospiffe")
 
-	cert, err := ca.SignCSR(csrPEM, &SignOptions{TenantID: "t1"})
+	cert, err := ca.SignCSR(context.Background(), csrPEM, &SignOptions{TenantID: "t1"})
 	require.NoError(t, err)
 	assert.Empty(t, cert.URIs, "no SPIFFE SAN expected without a trust domain")
 }
@@ -79,7 +80,7 @@ func TestSignCSRWithSPIFFE_Raw(t *testing.T) {
 	ca := setupTestCA(t)
 	csrPEM, _ := makeLeafCSR(t, "bob")
 
-	cert, err := ca.SignCSRWithSPIFFE(csrPEM, "client", 30, "example.com", "tenant-b", "", "")
+	cert, err := ca.SignCSRWithSPIFFE(context.Background(), csrPEM, "client", 30, "example.com", "tenant-b", "", "")
 	require.NoError(t, err)
 	require.Len(t, cert.URIs, 1)
 	assert.Equal(t, "spiffe://example.com/tenant/tenant-b/user/bob", cert.URIs[0].String())
@@ -92,7 +93,7 @@ func TestSignCSRWithSPIFFE_Raw(t *testing.T) {
 func TestIssueCertificate_StampsTenantSPIFFESAN(t *testing.T) {
 	ca := setupTestCA(t)
 
-	issued, err := ca.IssueCertificateWithProfile(&CertificateRequest{
+	issued, err := ca.IssueCertificateWithProfile(context.Background(), &CertificateRequest{
 		Subject:           Subject{CommonName: "carol"},
 		Valid:             30,
 		SPIFFETrustDomain: "example.com",
@@ -119,7 +120,7 @@ func TestIssueCertificate_StampsTenantSPIFFESAN(t *testing.T) {
 func TestIssueCertificate_SPIFFEKindAndNameOverride(t *testing.T) {
 	ca := setupTestCA(t)
 
-	issued, err := ca.IssueCertificateWithProfile(&CertificateRequest{
+	issued, err := ca.IssueCertificateWithProfile(context.Background(), &CertificateRequest{
 		Subject:           Subject{CommonName: "ignored-cn"},
 		Valid:             30,
 		SPIFFETrustDomain: "trust.internal",
@@ -138,7 +139,7 @@ func TestIssueCertificate_SPIFFEKindAndNameOverride(t *testing.T) {
 func TestIssueCertificate_NoSPIFFEWhenTrustDomainEmpty(t *testing.T) {
 	ca := setupTestCA(t)
 
-	issued, err := ca.IssueCertificate(&CertificateRequest{
+	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		Subject:  Subject{CommonName: "nospiffe-keypair"},
 		Valid:    30,
 		TenantID: "t1", // tenant set but no trust domain => no SPIFFE SAN

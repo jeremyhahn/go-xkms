@@ -20,7 +20,7 @@ Core architectural concepts, design patterns, and technical specifications:
 
 ### [Backends](backends/)
 Backend-specific documentation for all supported storage systems:
-- **Software**: [Software](backends/software.md) (asymmetric + symmetric, default backend), [PKCS#8](backends/pkcs8.md)
+- **Software**: [Software](backends/software.md) (asymmetric + symmetric, default backend; [PKCS#8](backends/pkcs8.md) key provider)
 - **Hardware**: [TPM 2.0](backends/tpm2.md), [PKCS#11](backends/pkcs11.md), [Nitrokey HSM](backends/nitrokey-hsm.md)
 - **Cloud**: [AWS KMS](backends/awskms.md), [GCP KMS](backends/gcpkms.md), [Azure Key Vault](backends/azurekv.md), [HashiCorp Vault](backends/vault.md)
 - **Quantum**: [Post-Quantum Cryptography](backends/quantum.md)

@@ -228,7 +228,7 @@ func (b *SoftwareBackend) Capabilities() types.Capabilities {
 //   - RSA: Requires RSAAttributes with KeySize (minimum 2048 bits)
 //   - ECDSA: Requires ECCAttributes with Curve (P-256, P-384, P-521)
 //   - Ed25519: No additional attributes required
-func (b *SoftwareBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *SoftwareBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -237,15 +237,15 @@ func (b *SoftwareBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.Privat
 	}
 
 	if attrs.QuantumAttributes != nil {
-		return b.quantumBackend.GenerateKey(attrs)
+		return b.quantumBackend.GenerateKey(ctx, attrs)
 	}
 
-	return b.pkcs8Backend.GenerateKey(attrs)
+	return b.pkcs8Backend.GenerateKey(ctx, attrs)
 }
 
 // GetKey retrieves an existing asymmetric private key by its attributes.
 // This operation is delegated to the PKCS8 backend.
-func (b *SoftwareBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *SoftwareBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -254,15 +254,15 @@ func (b *SoftwareBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey,
 	}
 
 	if attrs.QuantumAttributes != nil {
-		return b.quantumBackend.GetKey(attrs)
+		return b.quantumBackend.GetKey(ctx, attrs)
 	}
 
-	return b.pkcs8Backend.GetKey(attrs)
+	return b.pkcs8Backend.GetKey(ctx, attrs)
 }
 
 // DeleteKey removes a key identified by its attributes.
 // This works for both asymmetric and symmetric keys.
-func (b *SoftwareBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *SoftwareBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -271,19 +271,19 @@ func (b *SoftwareBackend) DeleteKey(attrs *types.KeyAttributes) error {
 	}
 
 	if attrs.QuantumAttributes != nil {
-		return b.quantumBackend.DeleteKey(attrs)
+		return b.quantumBackend.DeleteKey(ctx, attrs)
 	}
 
 	// Determine if this is a symmetric or asymmetric key
 	if attrs.IsSymmetric() {
-		return b.symmetricBackend.DeleteKey(attrs)
+		return b.symmetricBackend.DeleteKey(ctx, attrs)
 	}
-	return b.pkcs8Backend.DeleteKey(attrs)
+	return b.pkcs8Backend.DeleteKey(ctx, attrs)
 }
 
 // ListKeys returns attributes for all keys managed by this backend.
 // This includes asymmetric, symmetric, and quantum keys.
-func (b *SoftwareBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *SoftwareBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -292,17 +292,17 @@ func (b *SoftwareBackend) ListKeys() ([]*types.KeyAttributes, error) {
 	}
 
 	// Get keys from all three backends
-	pkcs8Keys, err := b.pkcs8Backend.ListKeys()
+	pkcs8Keys, err := b.pkcs8Backend.ListKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list PKCS8 keys: %w", err)
 	}
 
-	symmetricKeys, err := b.symmetricBackend.ListKeys()
+	symmetricKeys, err := b.symmetricBackend.ListKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list symmetric keys: %w", err)
 	}
 
-	quantumKeys, err := b.quantumBackend.ListKeys()
+	quantumKeys, err := b.quantumBackend.ListKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list quantum keys: %w", err)
 	}
@@ -318,7 +318,7 @@ func (b *SoftwareBackend) ListKeys() ([]*types.KeyAttributes, error) {
 
 // Signer creates a crypto.Signer for the given asymmetric key.
 // This operation is delegated to the appropriate backend.
-func (b *SoftwareBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *SoftwareBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -327,15 +327,15 @@ func (b *SoftwareBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, err
 	}
 
 	if attrs.QuantumAttributes != nil {
-		return b.quantumBackend.Signer(attrs)
+		return b.quantumBackend.Signer(ctx, attrs)
 	}
 
-	return b.pkcs8Backend.Signer(attrs)
+	return b.pkcs8Backend.Signer(ctx, attrs)
 }
 
 // Decrypter creates a crypto.Decrypter for the given asymmetric key.
 // This operation is delegated to the PKCS8 backend.
-func (b *SoftwareBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *SoftwareBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -343,12 +343,12 @@ func (b *SoftwareBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypte
 		return nil, ErrStorageClosed
 	}
 
-	return b.pkcs8Backend.Decrypter(attrs)
+	return b.pkcs8Backend.Decrypter(ctx, attrs)
 }
 
 // RotateKey generates a new version of the key, keeping the same key ID.
 // This operation is delegated to the appropriate backend.
-func (b *SoftwareBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *SoftwareBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -357,13 +357,13 @@ func (b *SoftwareBackend) RotateKey(attrs *types.KeyAttributes) error {
 	}
 
 	if attrs.QuantumAttributes != nil {
-		return b.quantumBackend.RotateKey(attrs)
+		return b.quantumBackend.RotateKey(ctx, attrs)
 	}
 
 	if attrs.IsSymmetric() {
-		return b.symmetricBackend.RotateKey(attrs)
+		return b.symmetricBackend.RotateKey(ctx, attrs)
 	}
-	return b.pkcs8Backend.RotateKey(attrs)
+	return b.pkcs8Backend.RotateKey(ctx, attrs)
 }
 
 // Close releases any resources held by the backend.
@@ -412,7 +412,7 @@ func (b *SoftwareBackend) Close() error {
 // This operation is delegated to the symmetric backend.
 //
 // Supported key sizes: 128, 192, 256 bits
-func (b *SoftwareBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *SoftwareBackend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -420,12 +420,12 @@ func (b *SoftwareBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (type
 		return nil, ErrStorageClosed
 	}
 
-	return b.symmetricBackend.GenerateSymmetricKey(attrs)
+	return b.symmetricBackend.GenerateSymmetricKey(ctx, attrs)
 }
 
 // GetSymmetricKey retrieves an existing symmetric key by its attributes.
 // This operation is delegated to the symmetric backend.
-func (b *SoftwareBackend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *SoftwareBackend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -433,12 +433,12 @@ func (b *SoftwareBackend) GetSymmetricKey(attrs *types.KeyAttributes) (types.Sym
 		return nil, ErrStorageClosed
 	}
 
-	return b.symmetricBackend.GetSymmetricKey(attrs)
+	return b.symmetricBackend.GetSymmetricKey(ctx, attrs)
 }
 
 // SymmetricEncrypter creates a SymmetricEncrypter for the given key.
 // This operation is delegated to the symmetric backend.
-func (b *SoftwareBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (b *SoftwareBackend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -446,7 +446,7 @@ func (b *SoftwareBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.
 		return nil, ErrStorageClosed
 	}
 
-	return b.symmetricBackend.SymmetricEncrypter(attrs)
+	return b.symmetricBackend.SymmetricEncrypter(ctx, attrs)
 }
 
 // GetImportParameters generates a wrapping key pair and returns the public key
@@ -458,7 +458,7 @@ func (b *SoftwareBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.
 // The import token is a UUID that identifies this wrapping key pair.
 // The ceremony expires in 24 hours; on expiry (or on Close), the
 // enclave is destroyed.
-func (b *SoftwareBackend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (b *SoftwareBackend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	b.importMu.Lock()
 	defer b.importMu.Unlock()
 
@@ -530,7 +530,7 @@ func (b *SoftwareBackend) GetImportParameters(attrs *types.KeyAttributes, algori
 
 // WrapKey wraps key material using the specified import parameters.
 // This uses the pkg/crypto/wrapping functions to wrap the key.
-func (b *SoftwareBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (b *SoftwareBackend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if len(keyMaterial) == 0 {
 		return nil, fmt.Errorf("%w: key material cannot be nil or empty", backend.ErrInvalidAttributes)
 	}
@@ -577,7 +577,7 @@ func (b *SoftwareBackend) WrapKey(keyMaterial []byte, params *backend.ImportPara
 // PKCS#8 DER into an ephemeral *rsa.PrivateKey → call the wrapping
 // library → destroy the Buffer. The parsed *rsa.PrivateKey is only
 // referenced inside this function's stack frame.
-func (b *SoftwareBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (b *SoftwareBackend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if wrapped == nil {
 		return nil, fmt.Errorf("%w: wrapped key material cannot be nil", backend.ErrInvalidAttributes)
 	}
@@ -654,7 +654,7 @@ func (b *SoftwareBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params 
 
 // ImportKey imports externally generated key material into the backend.
 // The key material is unwrapped and then stored based on the key type.
-func (b *SoftwareBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (b *SoftwareBackend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	if attrs == nil {
 		return fmt.Errorf("%w: key attributes cannot be nil", backend.ErrInvalidAttributes)
 	}
@@ -702,7 +702,7 @@ func (b *SoftwareBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend
 	}
 
 	// Unwrap the key material
-	keyMaterial, err := b.UnwrapKey(wrapped, params)
+	keyMaterial, err := b.UnwrapKey(ctx, wrapped, params)
 	if err != nil {
 		return fmt.Errorf("failed to unwrap key material: %w", err)
 	}
@@ -710,15 +710,15 @@ func (b *SoftwareBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend
 	// Parse and store the key based on type
 	if attrs.IsSymmetric() {
 		// For symmetric keys, the key material is raw bytes
-		return b.importSymmetricKey(attrs, keyMaterial)
+		return b.importSymmetricKey(ctx, attrs, keyMaterial)
 	}
 
 	// For asymmetric keys, parse the PKCS8 private key
-	return b.importAsymmetricKey(attrs, keyMaterial)
+	return b.importAsymmetricKey(ctx, attrs, keyMaterial)
 }
 
 // ExportKey exports a key in wrapped form for secure transport.
-func (b *SoftwareBackend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (b *SoftwareBackend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -751,7 +751,7 @@ func (b *SoftwareBackend) ExportKey(attrs *types.KeyAttributes, algorithm backen
 
 	if attrs.IsSymmetric() {
 		// Get symmetric key
-		key, err := b.symmetricBackend.GetSymmetricKey(attrs)
+		key, err := b.symmetricBackend.GetSymmetricKey(ctx, attrs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get symmetric key: %w", err)
 		}
@@ -761,7 +761,7 @@ func (b *SoftwareBackend) ExportKey(attrs *types.KeyAttributes, algorithm backen
 		}
 	} else {
 		// Get asymmetric key and marshal to PKCS8
-		privateKey, err := b.pkcs8Backend.GetKey(attrs)
+		privateKey, err := b.pkcs8Backend.GetKey(ctx, attrs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get private key: %w", err)
 		}
@@ -772,13 +772,13 @@ func (b *SoftwareBackend) ExportKey(attrs *types.KeyAttributes, algorithm backen
 	}
 
 	// Generate import parameters for wrapping
-	params, err := b.GetImportParameters(attrs, algorithm)
+	params, err := b.GetImportParameters(ctx, attrs, algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate import parameters: %w", err)
 	}
 
 	// Wrap the key material
-	wrapped, err := b.WrapKey(keyMaterial, params)
+	wrapped, err := b.WrapKey(ctx, keyMaterial, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wrap key: %w", err)
 	}
@@ -796,7 +796,7 @@ func (b *SoftwareBackend) ExportKey(attrs *types.KeyAttributes, algorithm backen
 //   - Returns ErrKeyNotExportable if the key is not marked as exportable
 //
 // For secure key transport between backends, prefer ExportKey which wraps the material.
-func (b *SoftwareBackend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+func (b *SoftwareBackend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -820,7 +820,7 @@ func (b *SoftwareBackend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte,
 	}
 
 	// Get the symmetric key
-	key, err := b.symmetricBackend.GetSymmetricKey(attrs)
+	key, err := b.symmetricBackend.GetSymmetricKey(ctx, attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get symmetric key: %w", err)
 	}
@@ -835,7 +835,7 @@ func (b *SoftwareBackend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte,
 }
 
 // importSymmetricKey imports a symmetric key from raw key material
-func (b *SoftwareBackend) importSymmetricKey(attrs *types.KeyAttributes, keyMaterial []byte) error {
+func (b *SoftwareBackend) importSymmetricKey(ctx context.Context, attrs *types.KeyAttributes, keyMaterial []byte) error {
 	// Validate key size
 	expectedSize := attrs.SymmetricAlgorithm.KeySize() / 8
 	if len(keyMaterial) != expectedSize {
@@ -844,7 +844,7 @@ func (b *SoftwareBackend) importSymmetricKey(attrs *types.KeyAttributes, keyMate
 
 	// Store the raw key material directly (symmetric backend stores raw bytes)
 	keyID := attrs.ID()
-	if err := storage.SaveKey(context.Background(), b.storage, keyID, keyMaterial); err != nil {
+	if err := storage.SaveKey(ctx, b.storage, keyID, keyMaterial); err != nil {
 		return fmt.Errorf("failed to store symmetric key: %w", err)
 	}
 
@@ -852,7 +852,7 @@ func (b *SoftwareBackend) importSymmetricKey(attrs *types.KeyAttributes, keyMate
 }
 
 // importAsymmetricKey imports an asymmetric key from PKCS8-encoded key material
-func (b *SoftwareBackend) importAsymmetricKey(attrs *types.KeyAttributes, keyMaterial []byte) error {
+func (b *SoftwareBackend) importAsymmetricKey(ctx context.Context, attrs *types.KeyAttributes, keyMaterial []byte) error {
 	// Parse the PKCS8 private key
 	privateKey, err := x509.ParsePKCS8PrivateKey(keyMaterial)
 	if err != nil {
@@ -866,7 +866,7 @@ func (b *SoftwareBackend) importAsymmetricKey(attrs *types.KeyAttributes, keyMat
 
 	// Store the PKCS8-encoded key material directly
 	keyID := attrs.ID()
-	if err := storage.SaveKey(context.Background(), b.storage, keyID, keyMaterial); err != nil {
+	if err := storage.SaveKey(ctx, b.storage, keyID, keyMaterial); err != nil {
 		return fmt.Errorf("failed to store asymmetric key: %w", err)
 	}
 
@@ -960,8 +960,8 @@ func (b *SoftwareBackend) GetTracker() types.AEADSafetyTracker {
 //   - NIST curves (P-256, P-384, P-521) via ECDSA keys
 //
 // The shared secret is the raw output of ECDH - use a KDF to derive encryption keys.
-func (b *SoftwareBackend) DeriveSharedSecret(attrs *types.KeyAttributes, publicKey crypto.PublicKey) ([]byte, error) {
-	return b.pkcs8Backend.DeriveSharedSecret(attrs, publicKey)
+func (b *SoftwareBackend) DeriveSharedSecret(ctx context.Context, attrs *types.KeyAttributes, publicKey crypto.PublicKey) ([]byte, error) {
+	return b.pkcs8Backend.DeriveSharedSecret(ctx, attrs, publicKey)
 }
 
 // CanSeal returns true if this backend supports sealing operations.

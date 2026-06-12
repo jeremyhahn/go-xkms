@@ -210,7 +210,7 @@ func runTPMInstall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrTPMDeviceNotFound, err)
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	result := &ProvisionResult{}
 
@@ -325,7 +325,7 @@ func runTPMProvision(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrTPMDeviceNotFound, err)
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	fmt.Println()
 	fmt.Println("Performing FULL TPM provisioning (destructive)...")

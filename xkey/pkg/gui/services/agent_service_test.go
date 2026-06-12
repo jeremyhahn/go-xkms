@@ -25,6 +25,10 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 )
 
+// testCtxKey is a typed context key for test context round-trip assertions.
+// Using a defined type avoids staticcheck SA1029 (built-in key types collide).
+type testCtxKey string
+
 // mockCAService implements agent.CAService for testing.
 type mockCAService struct {
 	signCSRFunc    func(csrPEM []byte) ([]byte, error)
@@ -63,12 +67,6 @@ func (m *mockEventCollector) emit(evt events.Event) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.events = append(m.events, evt)
-}
-
-func (m *mockEventCollector) count() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.events)
 }
 
 func (m *mockEventCollector) hasEventType(et events.EventType) bool {
@@ -151,7 +149,7 @@ func TestAgentService_SetContext(t *testing.T) {
 func TestAgentService_SetContext_Nil(t *testing.T) {
 	svc := NewAgentService()
 	// Setting nil context should not panic.
-	svc.SetContext(nil)
+	svc.SetContext(nil) //nolint:staticcheck // SA1012: intentionally testing nil-context handling
 }
 
 func TestAgentService_SetEventEmitter(t *testing.T) {

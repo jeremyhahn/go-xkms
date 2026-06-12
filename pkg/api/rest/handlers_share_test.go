@@ -100,21 +100,22 @@ func (f *fakeShareClient) GetShareCollectionStatus(_ context.Context, groupID st
 
 // initShareServiceSingleton initializes the XKMSService singleton with a backend
 // and (optionally) wires the given share client. Share state is owned by the
-// embedded go-qrdb node; the handlers delegate to the singleton, mirroring
-// production wiring in pkg/server/server.go.
-func initShareServiceSingleton(t *testing.T, client qrdbtransport.ShareClient) {
+// embedded go-qrdb node; the handlers delegate to the injected service.
+// Returns the initialized service so callers can pass it to NewShareHandlers.
+func initShareServiceSingleton(t *testing.T, client qrdbtransport.ShareClient) *xkms.XKMSService {
 	t.Helper()
 	xkms.Reset()
 	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
 		Backends:       map[string]xkms.Backend{"mem": xkmsmocks.NewMockKeyStore()},
 		DefaultBackend: "mem",
 	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
 	if client != nil {
-		svc, err := xkms.Get()
-		require.NoError(t, err)
 		svc.SetShareClient(client)
 	}
 	t.Cleanup(func() { xkms.Reset() })
+	return svc
 }
 
 // shareRouter mounts the share routes on a chi router.
@@ -135,8 +136,8 @@ func shareRouter(handlers *ShareHandlers) *chi.Mux {
 func setupShareTestHandlers(t *testing.T) (*fakeShareClient, *chi.Mux) {
 	t.Helper()
 	client := newFakeShareClient()
-	initShareServiceSingleton(t, client)
-	return client, shareRouter(NewShareHandlers())
+	svc := initShareServiceSingleton(t, client)
+	return client, shareRouter(NewShareHandlers(svc))
 }
 
 // submitTestShare is a helper that submits a share through the router and
@@ -260,8 +261,8 @@ func TestSubmitShareHandler_InvalidBody(t *testing.T) {
 }
 
 func TestSubmitShareHandler_NotConfigured(t *testing.T) {
-	initShareServiceSingleton(t, nil) // xkms initialized, share client not wired
-	router := shareRouter(NewShareHandlers())
+	svc := initShareServiceSingleton(t, nil) // xkms initialized, share client not wired
+	router := shareRouter(NewShareHandlers(svc))
 
 	body := submitShareRequest{
 		ServerURL:  "https://kms.example.com",
@@ -330,8 +331,8 @@ func TestListSharesHandler_WithShares(t *testing.T) {
 }
 
 func TestListSharesHandler_NotConfigured(t *testing.T) {
-	initShareServiceSingleton(t, nil)
-	router := shareRouter(NewShareHandlers())
+	svc := initShareServiceSingleton(t, nil)
+	router := shareRouter(NewShareHandlers(svc))
 
 	req := httptest.NewRequest(http.MethodGet, "/shares/", nil)
 	rr := httptest.NewRecorder()
@@ -410,8 +411,8 @@ func TestGetShareHandler_InvalidShareIndex(t *testing.T) {
 }
 
 func TestGetShareHandler_NotConfigured(t *testing.T) {
-	initShareServiceSingleton(t, nil)
-	router := shareRouter(NewShareHandlers())
+	svc := initShareServiceSingleton(t, nil)
+	router := shareRouter(NewShareHandlers(svc))
 
 	encodedURL := url.PathEscape("https://kms.example.com")
 	req := httptest.NewRequest(http.MethodGet, "/shares/"+encodedURL+"/grp-001/1", nil)
@@ -455,8 +456,8 @@ func TestDeleteShareHandler_NotFound(t *testing.T) {
 }
 
 func TestDeleteShareHandler_NotConfigured(t *testing.T) {
-	initShareServiceSingleton(t, nil)
-	router := shareRouter(NewShareHandlers())
+	svc := initShareServiceSingleton(t, nil)
+	router := shareRouter(NewShareHandlers(svc))
 
 	encodedURL := url.PathEscape("https://kms.example.com")
 	req := httptest.NewRequest(http.MethodDelete, "/shares/"+encodedURL+"/grp-001/1", nil)
@@ -494,8 +495,8 @@ func TestGetShareCollectionStatusHandler_Success(t *testing.T) {
 }
 
 func TestGetShareCollectionStatusHandler_NotConfigured(t *testing.T) {
-	initShareServiceSingleton(t, nil)
-	router := shareRouter(NewShareHandlers())
+	svc := initShareServiceSingleton(t, nil)
+	router := shareRouter(NewShareHandlers(svc))
 
 	req := httptest.NewRequest(http.MethodGet, "/shares/status/grp-001", nil)
 	rr := httptest.NewRecorder()

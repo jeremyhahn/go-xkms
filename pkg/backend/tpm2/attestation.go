@@ -14,6 +14,7 @@
 package tpm2
 
 import (
+	"context"
 	"crypto/x509"
 	"fmt"
 	"time"
@@ -32,7 +33,7 @@ import (
 // in the TPM, signed by the IAK.
 //
 // The returned interface{} is an *attestation.AttestationStatement.
-func (b *Backend) AttestKey(attrs *types.KeyAttributes, nonce []byte) (interface{}, error) {
+func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, nonce []byte) (interface{}, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 

@@ -15,6 +15,7 @@ package fido2
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/base64"
@@ -37,17 +38,20 @@ import (
 func buildCOSEES256Key(t *testing.T) []byte {
 	t.Helper()
 
-	// Generate a real P-256 point so X/Y are valid curve coordinates.
-	priv, x, y, err := elliptic.GenerateKey(elliptic.P256(), rand.Reader)
+	// Generate a real P-256 point so X/Y are valid curve coordinates. Derive the
+	// uncompressed point via crypto/ecdh rather than the deprecated
+	// elliptic.GenerateKey / ecdsa coordinate big.Int fields.
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate P-256 key: %v", err)
 	}
-	_ = priv
-
-	xb := make([]byte, 32)
-	yb := make([]byte, 32)
-	x.FillBytes(xb)
-	y.FillBytes(yb)
+	ecdhPub, err := priv.PublicKey.ECDH()
+	if err != nil {
+		t.Fatalf("convert public key to ecdh: %v", err)
+	}
+	point := ecdhPub.Bytes() // 0x04 || X(32) || Y(32)
+	xb := point[1:33]
+	yb := point[33:65]
 
 	coseKey := map[int]interface{}{
 		1:  2,  // kty: EC2

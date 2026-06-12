@@ -1345,8 +1345,8 @@ func TestECDSAPublicKeyToCOSE(t *testing.T) {
 		ecdsaPubKey, ok := pubKey.(*ecdsa.PublicKey)
 		require.True(t, ok)
 		require.True(t, ecdsaPubKey.Curve == elliptic.P256())
-		require.Equal(t, privateKey.X.Bytes(), ecdsaPubKey.X.Bytes())
-		require.Equal(t, privateKey.Y.Bytes(), ecdsaPubKey.Y.Bytes())
+		require.Equal(t, privateKey.X.Bytes(), ecdsaPubKey.X.Bytes()) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
+		require.Equal(t, privateKey.Y.Bytes(), ecdsaPubKey.Y.Bytes()) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 	})
 }
 

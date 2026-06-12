@@ -145,9 +145,5 @@ func isBadRequest(err error) bool {
 		return true
 	}
 	var authLine *pkgauthorized.MalformedLineError
-	if errors.As(err, &authLine) {
-		return true
-	}
-
-	return false
+	return errors.As(err, &authLine)
 }

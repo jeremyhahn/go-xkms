@@ -18,6 +18,7 @@ package handlers
 import (
 	"context"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -646,4 +647,164 @@ func TestResolveComplianceConfig_NilTenant(t *testing.T) {
 	result := entities.ResolveComplianceConfig(global, nil)
 	require.NotNil(t, result)
 	assert.True(t, result.Enabled)
+}
+
+// =============================================================================
+// Pre-Sign Extension Hook Tests
+// =============================================================================
+
+func TestNewOrderPreSignHookRegistry(t *testing.T) {
+	registry := NewOrderPreSignHookRegistry()
+	require.NotNil(t, registry)
+	assert.Equal(t, 0, registry.Count())
+}
+
+func TestOrderPreSignHookRegistry_Register(t *testing.T) {
+	registry := NewOrderPreSignHookRegistry()
+
+	hook := func(ctx *OrderPreSignHookContext) ([]pkix.Extension, error) {
+		return nil, nil
+	}
+	registry.Register(hook)
+	assert.Equal(t, 1, registry.Count())
+
+	registry.Register(hook)
+	assert.Equal(t, 2, registry.Count())
+}
+
+func TestOrderPreSignHookRegistry_Execute_ReturnsExtensions(t *testing.T) {
+	registry := NewOrderPreSignHookRegistry()
+
+	ext1 := pkix.Extension{Id: []int{1, 3, 6, 1, 4, 1, 29377, 101, 21}, Value: []byte("zone-a")}
+	ext2 := pkix.Extension{Id: []int{1, 3, 6, 1, 4, 1, 29377, 101, 22}, Value: []byte("zone-b")}
+
+	registry.Register(func(ctx *OrderPreSignHookContext) ([]pkix.Extension, error) {
+		return []pkix.Extension{ext1}, nil
+	})
+	registry.Register(func(ctx *OrderPreSignHookContext) ([]pkix.Extension, error) {
+		return []pkix.Extension{ext2}, nil
+	})
+
+	hookCtx := &OrderPreSignHookContext{
+		Context:  context.Background(),
+		Order:    &entities.ACMEOrder{ID: 1},
+		IsTCGCSR: false,
+	}
+
+	exts, err := registry.Execute(hookCtx)
+	require.NoError(t, err)
+	require.Len(t, exts, 2)
+	assert.Equal(t, ext1, exts[0])
+	assert.Equal(t, ext2, exts[1])
+}
+
+func TestOrderPreSignHookRegistry_Execute_NoHooks(t *testing.T) {
+	registry := NewOrderPreSignHookRegistry()
+
+	hookCtx := &OrderPreSignHookContext{
+		Context: context.Background(),
+		Order:   &entities.ACMEOrder{ID: 1},
+	}
+
+	exts, err := registry.Execute(hookCtx)
+	require.NoError(t, err)
+	assert.Empty(t, exts)
+}
+
+func TestOrderPreSignHookRegistry_Execute_HookReturnsNilSlice(t *testing.T) {
+	registry := NewOrderPreSignHookRegistry()
+
+	registry.Register(func(ctx *OrderPreSignHookContext) ([]pkix.Extension, error) {
+		return nil, nil
+	})
+
+	hookCtx := &OrderPreSignHookContext{
+		Context: context.Background(),
+		Order:   &entities.ACMEOrder{ID: 1},
+	}
+
+	exts, err := registry.Execute(hookCtx)
+	require.NoError(t, err)
+	assert.Empty(t, exts)
+}
+
+func TestOrderPreSignHookRegistry_Execute_ErrorAborts(t *testing.T) {
+	registry := NewOrderPreSignHookRegistry()
+
+	executed := []int{}
+	hookErr := errors.New("zone resolution failed")
+
+	registry.Register(func(ctx *OrderPreSignHookContext) ([]pkix.Extension, error) {
+		executed = append(executed, 1)
+		return nil, nil
+	})
+	registry.Register(func(ctx *OrderPreSignHookContext) ([]pkix.Extension, error) {
+		executed = append(executed, 2)
+		return nil, hookErr
+	})
+	registry.Register(func(ctx *OrderPreSignHookContext) ([]pkix.Extension, error) {
+		executed = append(executed, 3)
+		return nil, nil
+	})
+
+	hookCtx := &OrderPreSignHookContext{
+		Context: context.Background(),
+		Order:   &entities.ACMEOrder{ID: 1},
+	}
+
+	exts, err := registry.Execute(hookCtx)
+	require.Error(t, err)
+	assert.Nil(t, exts)
+	assert.Equal(t, []int{1, 2}, executed)
+
+	var preSignErr ErrPreSignHookFailed
+	require.ErrorAs(t, err, &preSignErr)
+	assert.Equal(t, hookErr, preSignErr.Cause)
+}
+
+func TestErrPreSignHookFailed_Error(t *testing.T) {
+	cause := errors.New("root cause")
+	e := ErrPreSignHookFailed{Cause: cause}
+	assert.Contains(t, e.Error(), "pre-sign hook failed")
+	assert.Contains(t, e.Error(), "root cause")
+	assert.Equal(t, cause, e.Unwrap())
+}
+
+func TestOrderPreSignHookContext_CSRPath(t *testing.T) {
+	csr := &x509.CertificateRequest{}
+	hookCtx := &OrderPreSignHookContext{
+		Context:  context.Background(),
+		Order:    &entities.ACMEOrder{ID: 42},
+		CSR:      csr,
+		ClientIP: "10.0.0.1",
+		IsTCGCSR: false,
+	}
+
+	assert.Equal(t, uint64(42), hookCtx.Order.ID)
+	assert.Same(t, csr, hookCtx.CSR)
+	assert.Equal(t, "10.0.0.1", hookCtx.ClientIP)
+	assert.False(t, hookCtx.IsTCGCSR)
+	assert.Nil(t, hookCtx.TCGData)
+}
+
+func TestOrderPreSignHookContext_TCGPath(t *testing.T) {
+	tcgData := &TCGEnrollmentData{
+		ProductModel:        "XYZ-4000",
+		ProductSerial:       "SN-9999",
+		PermanentIdentifier: "XYZ-4000-SN-9999",
+	}
+
+	hookCtx := &OrderPreSignHookContext{
+		Context:  context.Background(),
+		Order:    &entities.ACMEOrder{ID: 7},
+		ClientIP: "192.168.0.5",
+		IsTCGCSR: true,
+		TCGData:  tcgData,
+	}
+
+	assert.True(t, hookCtx.IsTCGCSR)
+	assert.Nil(t, hookCtx.CSR)
+	require.NotNil(t, hookCtx.TCGData)
+	assert.Equal(t, "XYZ-4000", hookCtx.TCGData.ProductModel)
+	assert.Equal(t, "SN-9999", hookCtx.TCGData.ProductSerial)
 }

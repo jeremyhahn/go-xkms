@@ -105,8 +105,7 @@ func verificationSharePath(keyID string, participantID uint32) string {
 }
 
 // StoreKeyPackage stores a FROST key package.
-func (ks *KeyStore) StoreKeyPackage(keyID string, pkg *KeyPackage, metadata *KeyMetadata) error {
-	ctx := context.Background()
+func (ks *KeyStore) StoreKeyPackage(ctx context.Context, keyID string, pkg *KeyPackage, metadata *KeyMetadata) error {
 
 	// Store metadata
 	metadataBytes, err := json.Marshal(metadata)
@@ -138,9 +137,9 @@ func (ks *KeyStore) StoreKeyPackage(keyID string, pkg *KeyPackage, metadata *Key
 		SealData:  types.NewSealData(pkg.SecretShare.Value),
 	}
 
-	if _, err := ks.secretBackend.GenerateKey(attrs); err != nil {
+	if _, err := ks.secretBackend.GenerateKey(ctx, attrs); err != nil {
 		// Clean up public components on failure
-		_ = ks.DeleteKey(keyID)
+		_ = ks.DeleteKey(ctx, keyID)
 		return fmt.Errorf("failed to store secret share: %w", err)
 	}
 
@@ -148,8 +147,7 @@ func (ks *KeyStore) StoreKeyPackage(keyID string, pkg *KeyPackage, metadata *Key
 }
 
 // LoadKeyPackage loads a FROST key package.
-func (ks *KeyStore) LoadKeyPackage(keyID string, participantID uint32) (*KeyPackage, *KeyMetadata, error) {
-	ctx := context.Background()
+func (ks *KeyStore) LoadKeyPackage(ctx context.Context, keyID string, participantID uint32) (*KeyPackage, *KeyMetadata, error) {
 
 	// Load metadata
 	metadataBytes, err := ks.publicStorage.Get(ctx, keyPath(keyID, metadataFile))
@@ -194,7 +192,7 @@ func (ks *KeyStore) LoadKeyPackage(keyID string, participantID uint32) (*KeyPack
 		StoreType: types.StoreFrost,
 	}
 
-	secretKey, err := ks.secretBackend.GetKey(attrs)
+	secretKey, err := ks.secretBackend.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load secret share: %w", err)
 	}
@@ -228,8 +226,7 @@ func (ks *KeyStore) LoadKeyPackage(keyID string, participantID uint32) (*KeyPack
 }
 
 // LoadPublicKeyPackage loads only the public components of a FROST key.
-func (ks *KeyStore) LoadPublicKeyPackage(keyID string) (*PublicKeyPackage, *KeyMetadata, error) {
-	ctx := context.Background()
+func (ks *KeyStore) LoadPublicKeyPackage(ctx context.Context, keyID string) (*PublicKeyPackage, *KeyMetadata, error) {
 
 	// Load metadata
 	metadataBytes, err := ks.publicStorage.Get(ctx, keyPath(keyID, metadataFile))
@@ -280,8 +277,7 @@ func (ks *KeyStore) LoadPublicKeyPackage(keyID string) (*PublicKeyPackage, *KeyM
 }
 
 // DeleteKey deletes a FROST key and all its components.
-func (ks *KeyStore) DeleteKey(keyID string) error {
-	ctx := context.Background()
+func (ks *KeyStore) DeleteKey(ctx context.Context, keyID string) error {
 
 	// Load metadata first to know how many verification shares to delete
 	metadataBytes, err := ks.publicStorage.Get(ctx, keyPath(keyID, metadataFile))
@@ -304,19 +300,19 @@ func (ks *KeyStore) DeleteKey(keyID string) error {
 		CN:        keyID,
 		StoreType: types.StoreFrost,
 	}
-	_ = ks.secretBackend.DeleteKey(attrs)
+	_ = ks.secretBackend.DeleteKey(ctx, attrs)
 
 	return nil
 }
 
 // KeyExists checks if a FROST key exists.
-func (ks *KeyStore) KeyExists(keyID string) (bool, error) {
-	return ks.publicStorage.Exists(context.Background(), keyPath(keyID, metadataFile))
+func (ks *KeyStore) KeyExists(ctx context.Context, keyID string) (bool, error) {
+	return ks.publicStorage.Exists(ctx, keyPath(keyID, metadataFile))
 }
 
 // ListKeys lists all FROST key IDs.
-func (ks *KeyStore) ListKeys() ([]string, error) {
-	keys, err := ks.publicStorage.List(context.Background(), keysPrefix+"/")
+func (ks *KeyStore) ListKeys(ctx context.Context) ([]string, error) {
+	keys, err := ks.publicStorage.List(ctx, keysPrefix+"/")
 	if err != nil {
 		return nil, err
 	}
@@ -351,10 +347,9 @@ func (ks *KeyStore) ListKeys() ([]string, error) {
 }
 
 // ListKeysWithMetadata returns all keys with their metadata.
-func (ks *KeyStore) ListKeysWithMetadata() ([]*KeyMetadata, error) {
-	ctx := context.Background()
+func (ks *KeyStore) ListKeysWithMetadata(ctx context.Context) ([]*KeyMetadata, error) {
 
-	keyIDs, err := ks.ListKeys()
+	keyIDs, err := ks.ListKeys(ctx)
 	if err != nil {
 		return nil, err
 	}

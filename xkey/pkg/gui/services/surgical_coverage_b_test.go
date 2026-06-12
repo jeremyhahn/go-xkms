@@ -487,7 +487,7 @@ func TestSB_Barrier_Context(t *testing.T) {
 		t.Fatal("expected non-nil context")
 	}
 
-	custom := context.WithValue(context.Background(), "sbkey", "val")
+	custom := context.WithValue(context.Background(), testCtxKey("sbkey"), "val")
 	svc.SetContext(custom)
 	if svc.context() != custom {
 		t.Fatal("expected custom context")

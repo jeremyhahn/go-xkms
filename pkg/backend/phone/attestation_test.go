@@ -45,7 +45,7 @@ func TestBackend_AttestKey_Success(t *testing.T) {
 	b := newTestBackend(t, sender)
 	attrs := ecdsaP256Attrs("test-key")
 
-	result, err := b.AttestKey(attrs, nonce)
+	result, err := b.AttestKey(context.Background(), attrs, nonce)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -90,7 +90,7 @@ func TestBackend_AttestKey_TEE(t *testing.T) {
 	}
 
 	b := newTestBackend(t, sender)
-	result, err := b.AttestKey(ecdsaP256Attrs("test-key"), nonce)
+	result, err := b.AttestKey(context.Background(), ecdsaP256Attrs("test-key"), nonce)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBackend_AttestKey_UnknownSecurityLevel(t *testing.T) {
 	}
 
 	b := newTestBackend(t, sender)
-	result, err := b.AttestKey(ecdsaP256Attrs("test-key"), nonce)
+	result, err := b.AttestKey(context.Background(), ecdsaP256Attrs("test-key"), nonce)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestBackend_AttestKey_Closed(t *testing.T) {
 	b := newTestBackend(t, sender)
 	_ = b.Close()
 
-	_, err := b.AttestKey(ecdsaP256Attrs("test-key"), []byte("nonce"))
+	_, err := b.AttestKey(context.Background(), ecdsaP256Attrs("test-key"), []byte("nonce"))
 	if err != ErrBackendClosed {
 		t.Errorf("expected ErrBackendClosed, got %v", err)
 	}
@@ -142,7 +142,7 @@ func TestBackend_AttestKey_NilAttrs(t *testing.T) {
 	sender := &mockSender{}
 	b := newTestBackend(t, sender)
 
-	_, err := b.AttestKey(nil, []byte("nonce"))
+	_, err := b.AttestKey(context.Background(), nil, []byte("nonce"))
 	if err != ErrInvalidConfig {
 		t.Errorf("expected ErrInvalidConfig, got %v", err)
 	}
@@ -157,7 +157,7 @@ func TestBackend_AttestKey_RPCError(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	_, err := b.AttestKey(ecdsaP256Attrs("test-key"), []byte("nonce"))
+	_, err := b.AttestKey(context.Background(), ecdsaP256Attrs("test-key"), []byte("nonce"))
 	if err != ErrAttestationFailed {
 		t.Errorf("expected ErrAttestationFailed, got %v", err)
 	}
@@ -177,7 +177,7 @@ func TestBackend_AttestKey_NilNonce(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	result, err := b.AttestKey(ecdsaP256Attrs("test-key"), nil)
+	result, err := b.AttestKey(context.Background(), ecdsaP256Attrs("test-key"), nil)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -202,7 +202,7 @@ func TestBackend_AttestKey_VerifiedFalseWithoutTrustStore(t *testing.T) {
 
 	b := newTestBackend(t, sender)
 
-	result, err := b.AttestKey(ecdsaP256Attrs("test-key"), []byte("nonce"))
+	result, err := b.AttestKey(context.Background(), ecdsaP256Attrs("test-key"), []byte("nonce"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestBackend_AttestKey_WithVerifier(t *testing.T) {
 		},
 	}
 
-	result, err := b.AttestKey(ecdsaP256Attrs("test-key"), nonce)
+	result, err := b.AttestKey(context.Background(), ecdsaP256Attrs("test-key"), nonce)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestBackend_AttestKey_VerifierError(t *testing.T) {
 		err:      ErrChainVerificationFailed,
 	}
 
-	_, err := b.AttestKey(ecdsaP256Attrs("test-key"), nonce)
+	_, err := b.AttestKey(context.Background(), ecdsaP256Attrs("test-key"), nonce)
 	if err != ErrChainVerificationFailed {
 		t.Errorf("expected ErrChainVerificationFailed, got %v", err)
 	}

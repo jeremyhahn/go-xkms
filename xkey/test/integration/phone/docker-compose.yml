@@ -49,6 +49,10 @@ services:
       additional_contexts:
         go-qrdb: ../../../../../go-qrdb
         go-quicraft: ../../../../../go-quicraft
+        go-truststrap: ../../../../../go-truststrap
+        go-codec: ../../../../../go-codec
+        go-frost: ../../../../../go-frost
+        go-objstore: ../../../../../go-objstore
     environment:
       ANDROID_ADB_HOST: android-emulator
       XKEY_RELAY_ADDR: xkey-desktop:8444

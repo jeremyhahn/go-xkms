@@ -75,30 +75,6 @@ func (m *p6bMockPINManager) VerifySOPIN(_ string) error                  { retur
 func (m *p6bMockPINManager) VerifyUserPIN(_ string) error                { return m.verifyUserErr }
 func (m *p6bMockPINManager) ResetLockout(_ string) error                 { return m.resetLockoutErr }
 
-// p6bMockSealer implements types.Sealer for seal service testing.
-type p6bMockSealer struct {
-	canSeal  bool
-	sealErr  error
-	sealData *xkms.SealedData
-
-	unsealErr  error
-	unsealData []byte
-}
-
-func (m *p6bMockSealer) CanSeal() bool { return m.canSeal }
-func (m *p6bMockSealer) Seal(_ context.Context, _ []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
-	if m.sealErr != nil {
-		return nil, m.sealErr
-	}
-	return m.sealData, nil
-}
-func (m *p6bMockSealer) Unseal(_ context.Context, data *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
-	if m.unsealErr != nil {
-		return nil, m.unsealErr
-	}
-	return m.unsealData, nil
-}
-
 // p6bMockOATHStore implements oath.Store for OATHService testing.
 type p6bMockOATHStore struct {
 	creds  map[string]*oath.Credential

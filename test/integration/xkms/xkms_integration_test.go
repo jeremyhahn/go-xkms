@@ -17,6 +17,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -183,11 +184,11 @@ func TestKeyStore_KeyGeneration(t *testing.T) {
 
 			switch attrs.KeyAlgorithm {
 			case x509.RSA:
-				key, err = ks.GenerateRSA(attrs)
+				key, err = ks.GenerateRSA(context.Background(), attrs)
 			case x509.ECDSA:
-				key, err = ks.GenerateECDSA(attrs)
+				key, err = ks.GenerateECDSA(context.Background(), attrs)
 			case x509.Ed25519:
-				key, err = ks.GenerateEd25519(attrs)
+				key, err = ks.GenerateEd25519(context.Background(), attrs)
 			default:
 				t.Fatalf("Unsupported algorithm: %v", attrs.KeyAlgorithm)
 			}
@@ -204,7 +205,7 @@ func TestKeyStore_KeyGeneration(t *testing.T) {
 			tt.verifyKey(t, key)
 
 			// Verify key can be retrieved
-			retrievedKey, err := ks.GetKey(attrs)
+			retrievedKey, err := ks.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to retrieve key: %v", err)
 			}
@@ -233,13 +234,13 @@ func TestKeyStore_KeyRetrieval(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := ks.GenerateRSA(attrs)
+	_, err := ks.GenerateRSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Retrieve the key
-	key, err := ks.GetKey(attrs)
+	key, err := ks.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to retrieve key: %v", err)
 	}
@@ -283,25 +284,25 @@ func TestKeyStore_KeyDeletion(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := ks.GenerateRSA(attrs)
+	_, err := ks.GenerateRSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Verify key exists
-	_, err = ks.GetKey(attrs)
+	_, err = ks.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Key should exist before deletion: %v", err)
 	}
 
 	// Delete the key
-	err = ks.DeleteKey(attrs)
+	err = ks.DeleteKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to delete key: %v", err)
 	}
 
 	// Verify key no longer exists
-	_, err = ks.GetKey(attrs)
+	_, err = ks.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("Key should not exist after deletion")
 	}
@@ -313,7 +314,7 @@ func TestKeyStore_ListKeys(t *testing.T) {
 	defer ks.Close()
 
 	// Get initial key count
-	initialKeys, err := ks.ListKeys()
+	initialKeys, err := ks.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to list keys: %v", err)
 	}
@@ -332,14 +333,14 @@ func TestKeyStore_ListKeys(t *testing.T) {
 			},
 			Hash: crypto.SHA256,
 		}
-		_, err := ks.GenerateRSA(attrs)
+		_, err := ks.GenerateRSA(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("Failed to generate key %s: %v", name, err)
 		}
 	}
 
 	// List keys again
-	keys, err := ks.ListKeys()
+	keys, err := ks.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to list keys: %v", err)
 	}
@@ -385,7 +386,7 @@ func TestKeyStore_KeyRotation(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	oldKey, err := ks.GenerateRSA(attrs)
+	oldKey, err := ks.GenerateRSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate initial key: %v", err)
 	}
@@ -394,7 +395,7 @@ func TestKeyStore_KeyRotation(t *testing.T) {
 	oldPub := oldSigner.Public().(*rsa.PublicKey)
 
 	// Rotate the key
-	newKey, err := ks.RotateKey(attrs)
+	newKey, err := ks.RotateKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to rotate key: %v", err)
 	}
@@ -408,7 +409,7 @@ func TestKeyStore_KeyRotation(t *testing.T) {
 	}
 
 	// Verify old key no longer retrievable (it should retrieve the new key)
-	retrievedKey, err := ks.GetKey(attrs)
+	retrievedKey, err := ks.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to retrieve rotated key: %v", err)
 	}
@@ -444,7 +445,7 @@ func TestKeyStore_SigningAndVerification(t *testing.T) {
 					},
 					Hash: crypto.SHA256,
 				}
-				_, err := ks.GenerateRSA(attrs)
+				_, err := ks.GenerateRSA(context.Background(), attrs)
 				return attrs, err
 			},
 		},
@@ -463,7 +464,7 @@ func TestKeyStore_SigningAndVerification(t *testing.T) {
 					},
 					Hash: crypto.SHA256,
 				}
-				_, err := ks.GenerateECDSA(attrs)
+				_, err := ks.GenerateECDSA(context.Background(), attrs)
 				return attrs, err
 			},
 		},
@@ -478,7 +479,7 @@ func TestKeyStore_SigningAndVerification(t *testing.T) {
 					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.Ed25519,
 				}
-				_, err := ks.GenerateEd25519(attrs)
+				_, err := ks.GenerateEd25519(context.Background(), attrs)
 				return attrs, err
 			},
 		},
@@ -496,7 +497,7 @@ func TestKeyStore_SigningAndVerification(t *testing.T) {
 			}
 
 			// Get signer
-			signer, err := ks.Signer(attrs)
+			signer, err := ks.Signer(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to get signer: %v", err)
 			}
@@ -569,13 +570,13 @@ func TestKeyStore_RSAEncryptionDecryption(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := ks.GenerateRSA(attrs)
+	_, err := ks.GenerateRSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key: %v", err)
 	}
 
 	// Get decrypter
-	decrypter, err := ks.Decrypter(attrs)
+	decrypter, err := ks.Decrypter(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to get decrypter: %v", err)
 	}
@@ -629,7 +630,7 @@ func TestKeyStore_CertificateManagement(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	key, err := ks.GenerateRSA(attrs)
+	key, err := ks.GenerateRSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
@@ -639,13 +640,13 @@ func TestKeyStore_CertificateManagement(t *testing.T) {
 
 	// Save certificate
 	keyID := "test-cert.example.com"
-	err = ks.SaveCert(keyID, cert)
+	err = ks.SaveCert(context.Background(), keyID, cert)
 	if err != nil {
 		t.Fatalf("Failed to save certificate: %v", err)
 	}
 
 	// Retrieve certificate
-	retrievedCert, err := ks.GetCert(keyID)
+	retrievedCert, err := ks.GetCert(context.Background(), keyID)
 	if err != nil {
 		t.Fatalf("Failed to retrieve certificate: %v", err)
 	}
@@ -656,7 +657,7 @@ func TestKeyStore_CertificateManagement(t *testing.T) {
 	}
 
 	// Test CertExists
-	exists, err := ks.CertExists(keyID)
+	exists, err := ks.CertExists(context.Background(), keyID)
 	if err != nil {
 		t.Fatalf("Failed to check certificate existence: %v", err)
 	}
@@ -665,7 +666,7 @@ func TestKeyStore_CertificateManagement(t *testing.T) {
 	}
 
 	// Test ListCerts
-	certIDs, err := ks.ListCerts()
+	certIDs, err := ks.ListCerts(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to list certificates: %v", err)
 	}
@@ -677,13 +678,13 @@ func TestKeyStore_CertificateManagement(t *testing.T) {
 	}
 
 	// Delete certificate
-	err = ks.DeleteCert(keyID)
+	err = ks.DeleteCert(context.Background(), keyID)
 	if err != nil {
 		t.Fatalf("Failed to delete certificate: %v", err)
 	}
 
 	// Verify deletion
-	exists, err = ks.CertExists(keyID)
+	exists, err = ks.CertExists(context.Background(), keyID)
 	if err != nil {
 		t.Fatalf("Failed to check certificate existence after deletion: %v", err)
 	}
@@ -698,7 +699,7 @@ func TestKeyStore_CertificateChain(t *testing.T) {
 	defer ks.Close()
 
 	// Create a certificate chain (root -> intermediate -> leaf)
-	rootKey, err := ks.GenerateRSA(&types.KeyAttributes{
+	rootKey, err := ks.GenerateRSA(context.Background(), &types.KeyAttributes{
 		CN:           "root-ca",
 		KeyType:      types.KeyTypeCA,
 		StoreType:    types.StoreSoftware,
@@ -712,7 +713,7 @@ func TestKeyStore_CertificateChain(t *testing.T) {
 		t.Fatalf("Failed to generate root key: %v", err)
 	}
 
-	intermediateKey, err := ks.GenerateRSA(&types.KeyAttributes{
+	intermediateKey, err := ks.GenerateRSA(context.Background(), &types.KeyAttributes{
 		CN:           "intermediate-ca",
 		KeyType:      types.KeyTypeCA,
 		StoreType:    types.StoreSoftware,
@@ -726,7 +727,7 @@ func TestKeyStore_CertificateChain(t *testing.T) {
 		t.Fatalf("Failed to generate intermediate key: %v", err)
 	}
 
-	leafKey, err := ks.GenerateRSA(&types.KeyAttributes{
+	leafKey, err := ks.GenerateRSA(context.Background(), &types.KeyAttributes{
 		CN:           "leaf.example.com",
 		KeyType:      types.KeyTypeTLS,
 		StoreType:    types.StoreSoftware,
@@ -748,13 +749,13 @@ func TestKeyStore_CertificateChain(t *testing.T) {
 	// Save certificate chain
 	keyID := "leaf.example.com"
 	chain := []*x509.Certificate{leafCert, intermediateCert, rootCert}
-	err = ks.SaveCertChain(keyID, chain)
+	err = ks.SaveCertChain(context.Background(), keyID, chain)
 	if err != nil {
 		t.Fatalf("Failed to save certificate chain: %v", err)
 	}
 
 	// Retrieve certificate chain
-	retrievedChain, err := ks.GetCertChain(keyID)
+	retrievedChain, err := ks.GetCertChain(context.Background(), keyID)
 	if err != nil {
 		t.Fatalf("Failed to retrieve certificate chain: %v", err)
 	}
@@ -790,20 +791,20 @@ func TestKeyStore_TLSCertificate(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	key, err := ks.GenerateRSA(attrs)
+	key, err := ks.GenerateRSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Create and save certificate
 	cert := createSelfSignedCert(t, key, keyID)
-	err = ks.SaveCert(keyID, cert)
+	err = ks.SaveCert(context.Background(), keyID, cert)
 	if err != nil {
 		t.Fatalf("Failed to save certificate: %v", err)
 	}
 
 	// Get TLS certificate
-	tlsCert, err := ks.GetTLSCertificate(keyID, attrs)
+	tlsCert, err := ks.GetTLSCertificate(context.Background(), keyID, attrs)
 	if err != nil {
 		t.Fatalf("Failed to get TLS certificate: %v", err)
 	}
@@ -844,14 +845,14 @@ func TestKeyStore_GetKeyByID(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := ks.GenerateRSA(attrs)
+	_, err := ks.GenerateRSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Test GetKeyByID
 	keyID := "software:signing:rsa:test-key-id"
-	key, err := ks.GetKeyByID(keyID)
+	key, err := ks.GetKeyByID(context.Background(), keyID)
 	if err != nil {
 		t.Fatalf("Failed to get key by ID: %v", err)
 	}
@@ -884,14 +885,14 @@ func TestKeyStore_GetSignerByID(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := ks.GenerateECDSA(attrs)
+	_, err := ks.GenerateECDSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Test GetSignerByID
 	keyID := "software:signing:ecdsa-p256:test-signer-id"
-	signer, err := ks.GetSignerByID(keyID)
+	signer, err := ks.GetSignerByID(context.Background(), keyID)
 	if err != nil {
 		t.Fatalf("Failed to get signer by ID: %v", err)
 	}
@@ -929,14 +930,14 @@ func TestKeyStore_GetDecrypterByID(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := ks.GenerateRSA(attrs)
+	_, err := ks.GenerateRSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Test GetDecrypterByID
 	keyID := "software:encryption:rsa:test-decrypter-id"
-	decrypter, err := ks.GetDecrypterByID(keyID)
+	decrypter, err := ks.GetDecrypterByID(context.Background(), keyID)
 	if err != nil {
 		t.Fatalf("Failed to get decrypter by ID: %v", err)
 	}
@@ -980,7 +981,7 @@ func TestKeyStore_ErrorHandling(t *testing.T) {
 			},
 		}
 
-		_, err := ks.GetKey(attrs)
+		_, err := ks.GetKey(context.Background(), attrs)
 		if err == nil {
 			t.Error("Expected error when getting non-existent key")
 		}
@@ -997,65 +998,65 @@ func TestKeyStore_ErrorHandling(t *testing.T) {
 			},
 		}
 
-		err := ks.DeleteKey(attrs)
+		err := ks.DeleteKey(context.Background(), attrs)
 		if err == nil {
 			t.Error("Expected error when deleting non-existent key")
 		}
 	})
 
 	t.Run("NilKeyAttributes", func(t *testing.T) {
-		_, err := ks.GenerateRSA(nil)
+		_, err := ks.GenerateRSA(context.Background(), nil)
 		if err == nil {
 			t.Error("Expected error with nil key attributes")
 		}
 
-		_, err = ks.GetKey(nil)
+		_, err = ks.GetKey(context.Background(), nil)
 		if err == nil {
 			t.Error("Expected error with nil key attributes")
 		}
 
-		err = ks.DeleteKey(nil)
+		err = ks.DeleteKey(context.Background(), nil)
 		if err == nil {
 			t.Error("Expected error with nil key attributes")
 		}
 	})
 
 	t.Run("InvalidCertOperations", func(t *testing.T) {
-		err := ks.SaveCert("", nil)
+		err := ks.SaveCert(context.Background(), "", nil)
 		if err == nil {
 			t.Error("Expected error when saving cert with empty ID")
 		}
 
-		_, err = ks.GetCert("")
+		_, err = ks.GetCert(context.Background(), "")
 		if err == nil {
 			t.Error("Expected error when getting cert with empty ID")
 		}
 
-		err = ks.DeleteCert("")
+		err = ks.DeleteCert(context.Background(), "")
 		if err == nil {
 			t.Error("Expected error when deleting cert with empty ID")
 		}
 
-		_, err = ks.CertExists("")
+		_, err = ks.CertExists(context.Background(), "")
 		if err == nil {
 			t.Error("Expected error when checking cert existence with empty ID")
 		}
 	})
 
 	t.Run("GetNonExistentCert", func(t *testing.T) {
-		_, err := ks.GetCert("nonexistent")
+		_, err := ks.GetCert(context.Background(), "nonexistent")
 		if err == nil {
 			t.Error("Expected error when getting non-existent cert")
 		}
 	})
 
 	t.Run("InvalidKeyID", func(t *testing.T) {
-		_, err := ks.GetKeyByID("invalid-format")
+		_, err := ks.GetKeyByID(context.Background(), "invalid-format")
 		if err == nil {
 			t.Error("Expected error with invalid key ID format")
 		}
 
-		_, err = ks.GetSignerByID("invalid:format")
+		_, err = ks.GetSignerByID(context.Background(), "invalid:format")
 		if err == nil {
 			t.Error("Expected error with invalid key ID format")
 		}
@@ -1063,7 +1064,7 @@ func TestKeyStore_ErrorHandling(t *testing.T) {
 
 	t.Run("BackendMismatch", func(t *testing.T) {
 		// Try to get a key with a different backend
-		_, err := ks.GetKeyByID("pkcs11:signing:rsa:test-key")
+		_, err := ks.GetKeyByID(context.Background(), "pkcs11:signing:rsa:test-key")
 		if err == nil {
 			t.Error("Expected error when backend doesn't match")
 		}
@@ -1099,21 +1100,21 @@ func TestKeyStore_ConcurrentOperations(t *testing.T) {
 				Hash: crypto.SHA256,
 			}
 
-			_, err := ks.GenerateRSA(attrs)
+			_, err := ks.GenerateRSA(context.Background(), attrs)
 			if err != nil {
 				errChan <- err
 				return
 			}
 
 			// Retrieve key
-			_, err = ks.GetKey(attrs)
+			_, err = ks.GetKey(context.Background(), attrs)
 			if err != nil {
 				errChan <- err
 				return
 			}
 
 			// Delete key
-			err = ks.DeleteKey(attrs)
+			err = ks.DeleteKey(context.Background(), attrs)
 			if err != nil {
 				errChan <- err
 				return
@@ -1154,19 +1155,19 @@ func TestKeyStore_MultipleBackends(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := ks1.GenerateRSA(attrs)
+	_, err := ks1.GenerateRSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key in first keystore: %v", err)
 	}
 
 	// Verify key exists in first keystore
-	_, err = ks1.GetKey(attrs)
+	_, err = ks1.GetKey(context.Background(), attrs)
 	if err != nil {
 		t.Errorf("Key should exist in first keystore: %v", err)
 	}
 
 	// Verify key does NOT exist in second keystore (different storage)
-	_, err = ks2.GetKey(attrs)
+	_, err = ks2.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Key should not exist in second keystore")
 	}

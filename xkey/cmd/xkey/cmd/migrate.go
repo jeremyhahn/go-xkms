@@ -147,10 +147,10 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 
 	// Lock source if mounted
 	if sourceVol.IsMounted() || sourceVol.IsOpen() {
-		fmt.Fprintln(cmd.OutOrStdout(), "Locking current container...")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Locking current container...")
 		if err := sourceVol.Lock(); err != nil {
 			// If lock fails, try to continue (might already be locked)
-			fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock container: %v\n", err)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock container: %v\n", err)
 		}
 	}
 
@@ -180,11 +180,11 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	// Create backup path for old container
 	oldPath := sourceVol.LUKSPath + ".old"
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Migration plan:")
-	fmt.Fprintf(cmd.OutOrStdout(), "  Source:    %s (%s)\n", sourceVol.LUKSPath, formatSize(currentSize))
-	fmt.Fprintf(cmd.OutOrStdout(), "  New:       %s (%s)\n", newPath, formatSize(newSize))
-	fmt.Fprintf(cmd.OutOrStdout(), "  Backup:    %s\n", oldPath)
-	fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Migration plan:")
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Source:    %s (%s)\n", sourceVol.LUKSPath, formatSize(currentSize))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  New:       %s (%s)\n", newPath, formatSize(newSize))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Backup:    %s\n", oldPath)
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 
 	// Read passphrases
 	oldPassphrase, newPassphrase, err := readMigratePassphrases(cmd.OutOrStdout())
@@ -193,7 +193,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Rename current container to .old
-	fmt.Fprintln(cmd.OutOrStdout(), "Renaming current container to backup...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Renaming current container to backup...")
 	if err := os.Rename(sourceVol.LUKSPath, oldPath); err != nil {
 		return &MigrateError{Operation: "rename", Err: fmt.Errorf("%w: %v", ErrMigrateRenameFailed, err)}
 	}
@@ -205,39 +205,39 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	// Create new volume
 	newVol := luks.NewVolumeWithPaths(newPath, sourceVol.MountPoint)
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Creating new container (%s)...\n", formatSize(newSize))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Creating new container (%s)...\n", formatSize(newSize))
 	if err := newVol.Create(newSize, string(newPassphrase)); err != nil {
 		// Restore old container on failure
 		restoreErr := os.Rename(oldPath, sourceVol.LUKSPath)
 		if restoreErr != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
 		}
 		return &MigrateError{Operation: "create", Err: fmt.Errorf("%w: %v", ErrMigrateCreateFailed, err)}
 	}
 
 	// Unlock both containers
-	fmt.Fprintln(cmd.OutOrStdout(), "Unlocking containers for data transfer...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Unlocking containers for data transfer...")
 
 	// Create temp mount points
 	oldMount, err := os.MkdirTemp("", "xkey-migrate-old-")
 	if err != nil {
 		restoreErr := os.Rename(oldPath, sourceVol.LUKSPath)
 		if restoreErr != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
 		}
 		return &MigrateError{Operation: "create_temp_mount", Err: fmt.Errorf("failed to create temp mount: %w", err)}
 	}
-	defer os.RemoveAll(oldMount)
+	defer func() { _ = os.RemoveAll(oldMount) }()
 
 	newMount, err := os.MkdirTemp("", "xkey-migrate-new-")
 	if err != nil {
 		restoreErr := os.Rename(oldPath, sourceVol.LUKSPath)
 		if restoreErr != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
 		}
 		return &MigrateError{Operation: "create_temp_mount", Err: fmt.Errorf("failed to create temp mount: %w", err)}
 	}
-	defer os.RemoveAll(newMount)
+	defer func() { _ = os.RemoveAll(newMount) }()
 
 	// Update mount points
 	oldVol.MountPoint = oldMount
@@ -247,7 +247,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	if err := oldVol.Unlock(string(oldPassphrase)); err != nil {
 		restoreErr := os.Rename(oldPath, sourceVol.LUKSPath)
 		if restoreErr != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
 		}
 		return &MigrateError{Operation: "unlock_old", Err: fmt.Errorf("%w: %v", ErrMigrateSourceLocked, err)}
 	}
@@ -256,46 +256,46 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	if err := newVol.Unlock(string(newPassphrase)); err != nil {
 		lockErr := oldVol.Lock()
 		if lockErr != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock old container: %v\n", lockErr)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock old container: %v\n", lockErr)
 		}
 		restoreErr := os.Rename(oldPath, sourceVol.LUKSPath)
 		if restoreErr != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
 		}
 		return &MigrateError{Operation: "unlock_new", Err: fmt.Errorf("failed to unlock new container: %w", err)}
 	}
 
 	// Copy data
-	fmt.Fprintln(cmd.OutOrStdout(), "Copying data to new container...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Copying data to new container...")
 	if err := newVol.CopyDataToVolume(oldMount); err != nil {
 		lockErr := oldVol.Lock()
 		if lockErr != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock old container: %v\n", lockErr)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock old container: %v\n", lockErr)
 		}
 		lockErr = newVol.Lock()
 		if lockErr != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock new container: %v\n", lockErr)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock new container: %v\n", lockErr)
 		}
 		removeErr := os.Remove(newPath)
 		if removeErr != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not remove new container: %v\n", removeErr)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not remove new container: %v\n", removeErr)
 		}
 		restoreErr := os.Rename(oldPath, sourceVol.LUKSPath)
 		if restoreErr != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
 		}
 		return &MigrateError{Operation: "copy_data", Err: fmt.Errorf("%w: %v", ErrMigrateDataCopyFailed, err)}
 	}
 
 	// Lock both containers
-	fmt.Fprintln(cmd.OutOrStdout(), "Locking containers...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Locking containers...")
 	lockErr := oldVol.Lock()
 	if lockErr != nil {
-		fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock old container: %v\n", lockErr)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock old container: %v\n", lockErr)
 	}
 	lockErr = newVol.Lock()
 	if lockErr != nil {
-		fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock new container: %v\n", lockErr)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock new container: %v\n", lockErr)
 	}
 
 	// Handle old container based on flags
@@ -303,34 +303,34 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		if migrateWipe {
 			// Securely wipe the old container using go-luks2
 			patternDesc := getWipePatternDescription(wipeStdValue)
-			fmt.Fprintf(cmd.OutOrStdout(), "Securely wiping old container (%s: %s)...\n", migrateWipeStandard, patternDesc)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Securely wiping old container (%s: %s)...\n", migrateWipeStandard, patternDesc)
 			if err := wipeContainerWithStandard(oldPath, wipeStdValue); err != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Warning: secure wipe failed: %v\n", err)
-				fmt.Fprintln(cmd.OutOrStdout(), "Falling back to simple removal...")
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: secure wipe failed: %v\n", err)
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Falling back to simple removal...")
 			}
 			// Remove the container file after wiping
 			if err := os.Remove(oldPath); err != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not remove old container: %v\n", err)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not remove old container: %v\n", err)
 			}
 		} else {
 			// Simple removal
-			fmt.Fprintln(cmd.OutOrStdout(), "Removing old container...")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Removing old container...")
 			if err := os.Remove(oldPath); err != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not remove old container: %v\n", err)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not remove old container: %v\n", err)
 			}
 		}
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Migration complete!")
-	fmt.Fprintf(cmd.OutOrStdout(), "  New container: %s (%s)\n", newPath, formatSize(newSize))
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Migration complete!")
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  New container: %s (%s)\n", newPath, formatSize(newSize))
 	if migrateKeepOld {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Old container: %s (kept as backup)\n", oldPath)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Old container: %s (kept as backup)\n", oldPath)
 	} else if migrateWipe {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Old container: securely wiped (%s) and removed\n", migrateWipeStandard)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Old container: securely wiped (%s) and removed\n", migrateWipeStandard)
 	}
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Use 'xkey luks2 unseal' to unlock the new container.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Use 'xkey luks2 unseal' to unlock the new container.")
 
 	return nil
 }
@@ -346,17 +346,17 @@ func readMigratePassphrases(out io.Writer) (string, string, error) {
 // readMigratePassphrasesFromTerminal reads passphrases securely from terminal.
 func readMigratePassphrasesFromTerminal(out io.Writer) (string, string, error) {
 	// Read passphrase for old container
-	fmt.Fprint(out, "Enter passphrase for current container: ")
+	_, _ = fmt.Fprint(out, "Enter passphrase for current container: ")
 	oldPassphrase, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	if err != nil {
 		return "", "", &MigrateError{Operation: "read_passphrase", Err: fmt.Errorf("%w: %v", ErrMigratePassphraseRead, err)}
 	}
 
 	// Read passphrase for new container
-	fmt.Fprint(out, "Enter passphrase for new container (or press Enter to use same): ")
+	_, _ = fmt.Fprint(out, "Enter passphrase for new container (or press Enter to use same): ")
 	newPassphrase, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	if err != nil {
 		return "", "", &MigrateError{Operation: "read_passphrase", Err: fmt.Errorf("%w: %v", ErrMigratePassphraseRead, err)}
 	}
@@ -365,9 +365,9 @@ func readMigratePassphrasesFromTerminal(out io.Writer) (string, string, error) {
 		newPassphrase = oldPassphrase
 	} else {
 		// Confirm new passphrase
-		fmt.Fprint(out, "Confirm new passphrase: ")
+		_, _ = fmt.Fprint(out, "Confirm new passphrase: ")
 		confirmPassphrase, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 		if err != nil {
 			return "", "", &MigrateError{Operation: "read_passphrase", Err: fmt.Errorf("%w: %v", ErrMigratePassphraseRead, err)}
 		}

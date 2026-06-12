@@ -1484,7 +1484,7 @@ func (s *TenantAwareAdminService) storeKeyAndCert(ctx context.Context, tenantID,
 			_ = attrs // Used for key storage context
 
 			// Save cert to keystore
-			if err := ks.SaveCert(keyID, cert); err != nil {
+			if err := ks.SaveCert(ctx, keyID, cert); err != nil {
 				s.logger.Warn("failed to save cert to keystore, continuing with KV storage",
 					slog.String("error", err.Error()))
 			}
@@ -1555,7 +1555,7 @@ func (s *TenantAwareAdminService) GetTenantSigningCA(ctx context.Context, tenant
 	}
 
 	// Get the signer from the global CA
-	signer, err := s.ca.Signer()
+	signer, err := s.ca.Signer(ctx)
 	if err != nil {
 		return nil, nil, ErrNoSigningCAAvailable
 	}

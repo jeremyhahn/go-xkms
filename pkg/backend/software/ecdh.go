@@ -101,7 +101,7 @@ func (b *SoftwareBackend) DeriveKeyECDH(
 	}
 
 	// Get the private key
-	privateKey, err := b.pkcs8Backend.GetKey(privateKeyAttrs)
+	privateKey, err := b.pkcs8Backend.GetKey(ctx, privateKeyAttrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get private key: %w", err)
 	}

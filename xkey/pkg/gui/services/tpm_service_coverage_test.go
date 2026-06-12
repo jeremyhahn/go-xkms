@@ -102,13 +102,6 @@ func newCoverageTPMService(tpm xkms.TrustedPlatformModule) *TPMService {
 	return svc
 }
 
-func newCoverageTPMServiceWithDataDir(t *testing.T, tpm xkms.TrustedPlatformModule) *TPMService {
-	t.Helper()
-	svc := newCoverageTPMService(tpm)
-	svc.SetDataDir(t.TempDir())
-	return svc
-}
-
 // ---------------------------------------------------------------------------
 // Test: SetAuditLogger
 // ---------------------------------------------------------------------------

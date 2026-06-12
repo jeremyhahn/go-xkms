@@ -28,6 +28,7 @@ import (
 
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // DefaultSocketPath is the default path for the Unix socket
@@ -55,6 +56,11 @@ type GRPCConfig struct {
 
 	// MaxConcurrentStreams is the maximum number of concurrent streams per connection
 	MaxConcurrentStreams uint32
+
+	// XKMSService is the composed XKMS service injected by the composition
+	// root. It is forwarded to the keystore gRPC service; when nil the
+	// service reports ErrNotInitialized on every operation.
+	XKMSService *xkms.XKMSService
 }
 
 // GRPCServer represents a gRPC server listening on a Unix domain socket
@@ -147,9 +153,8 @@ func (s *GRPCServer) Start() error {
 	s.mu.Lock()
 	s.server = grpc.NewServer(opts...)
 
-	// Register the keystore service
-	// Uses the global xkms service for backend management
-	service := grpcinternal.NewService(nil, nil)
+	// Register the keystore service with the injected XKMS service.
+	service := grpcinternal.NewService(nil, nil, s.config.XKMSService)
 	pb.RegisterKeystoreServiceServer(s.server, service)
 	s.mu.Unlock()
 

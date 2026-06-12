@@ -76,14 +76,6 @@ type FIDO2Credential struct {
 	Discoverable    bool      `json:"discoverable"`
 }
 
-// credProtectLabel returns a human-readable label for a credProtect level.
-var credProtectLabels = map[uint8]string{
-	0: "None",
-	1: "UV Optional",
-	2: "UV Optional + Allow List",
-	3: "UV Required",
-}
-
 // coseKeyTypes maps COSE algorithm identifiers to key type descriptions.
 var coseKeyTypes = map[int]string{
 	-7:   "ECDSA P-256",
@@ -404,7 +396,7 @@ func (s *FIDO2Service) StopPhoneBridge() error {
 	defer s.bridgeMu.Unlock()
 
 	if s.bridge != nil {
-		s.bridge.Close()
+		_ = s.bridge.Close()
 		s.bridge = nil
 	}
 	s.bridgeRunning.Store(false)
@@ -668,11 +660,6 @@ func storedToFIDO2Credential(stored *authenticator.StoredCredential) FIDO2Creden
 	keyType := coseKeyTypes[stored.Algorithm]
 	if keyType == "" {
 		keyType = fmt.Sprintf("Unknown(%d)", stored.Algorithm)
-	}
-
-	cpLabel := credProtectLabels[stored.CredProtect]
-	if cpLabel == "" {
-		cpLabel = "None"
 	}
 
 	// Determine backend type from BackendID or key material heuristic.

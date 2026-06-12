@@ -27,7 +27,7 @@ import (
 func newTestRegistry(t *testing.T) *BarrierRegistry {
 	t.Helper()
 
-	store := NewMemoryBackend()
+	store := newMemoryBackend()
 	strategy := NewSoftwareStrategy()
 
 	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{

@@ -45,7 +45,7 @@
 //	    },
 //	}
 //
-//	csrPEM, err := ca.CreateCSR(request)
+//	csrPEM, err := ca.CreateCSR(ctx, request)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -68,6 +68,7 @@
 package ca
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -113,8 +114,8 @@ var oidHardwareModuleName = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 8, 4}
 //	        DNS: []string{"server.example.com"},
 //	    },
 //	}
-//	csrPEM, err := ca.CreateCSR(request)
-func (ca *CA) CreateCSR(request *CertificateRequest) ([]byte, error) {
+//	csrPEM, err := ca.CreateCSR(ctx, request)
+func (ca *CA) CreateCSR(ctx context.Context, request *CertificateRequest) ([]byte, error) {
 	// Validate the request
 	if err := validateCSRRequest(request); err != nil {
 		return nil, err
@@ -129,7 +130,7 @@ func (ca *CA) CreateCSR(request *CertificateRequest) ([]byte, error) {
 		signer = request.Signer
 	} else {
 		// Get or generate key from keystore
-		signer, err = ca.getOrGenerateKey(request)
+		signer, err = ca.getOrGenerateKey(ctx, request)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrCSRGenerationFailed, err)
 		}
@@ -176,7 +177,7 @@ func CreateCSRWithKey(request *CertificateRequest, signer crypto.Signer) ([]byte
 }
 
 // getOrGenerateKey retrieves an existing key or generates a new one based on the request's KeyAttributes.
-func (ca *CA) getOrGenerateKey(request *CertificateRequest) (crypto.Signer, error) {
+func (ca *CA) getOrGenerateKey(ctx context.Context, request *CertificateRequest) (crypto.Signer, error) {
 	attrs := request.KeyAttributes
 	if attrs == nil {
 		// Create default key attributes using ECDSA P-256
@@ -199,7 +200,7 @@ func (ca *CA) getOrGenerateKey(request *CertificateRequest) (crypto.Signer, erro
 	}
 
 	// Try to get existing key first
-	signer, err := ca.keyStore.Signer(attrs)
+	signer, err := ca.keyStore.Signer(ctx, attrs)
 	if err == nil {
 		return signer, nil
 	}
@@ -209,18 +210,18 @@ func (ca *CA) getOrGenerateKey(request *CertificateRequest) (crypto.Signer, erro
 
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		privKey, err = ca.keyStore.GenerateRSA(attrs)
+		privKey, err = ca.keyStore.GenerateRSA(ctx, attrs)
 	case x509.ECDSA:
-		privKey, err = ca.keyStore.GenerateECDSA(attrs)
+		privKey, err = ca.keyStore.GenerateECDSA(ctx, attrs)
 	case x509.Ed25519:
-		privKey, err = ca.keyStore.GenerateEd25519(attrs)
+		privKey, err = ca.keyStore.GenerateEd25519(ctx, attrs)
 	default:
 		// Default to ECDSA P-256
 		if attrs.ECCAttributes == nil {
 			attrs.ECCAttributes = &types.ECCAttributes{Curve: elliptic.P256()}
 		}
 		attrs.KeyAlgorithm = x509.ECDSA
-		privKey, err = ca.keyStore.GenerateECDSA(attrs)
+		privKey, err = ca.keyStore.GenerateECDSA(ctx, attrs)
 	}
 
 	if err != nil {

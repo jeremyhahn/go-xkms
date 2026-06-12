@@ -86,6 +86,14 @@ type Server struct {
 	keyProviders map[string]types.KeyProvider
 	logger       *slog.Logger
 
+	// xkmsService is the composed XKMS service injected into every transport
+	// constructor. It is resolved once from the package singleton at the
+	// composition root (New) and threaded through dependency injection from
+	// there; transports never call xkms.Get() themselves. It is nil when the
+	// service has not been initialized, and transports preserve the
+	// ErrNotInitialized contract in that case.
+	xkmsService *xkms.XKMSService
+
 	// Protocol servers
 	unixGRPCServer       *unix.GRPCServer
 	restServer           *rest.Server
@@ -143,7 +151,7 @@ type Server struct {
 	// Ceremony service for init ceremony
 	ceremonyService *initialize.CeremonyService
 
-	// Factor registry for hardware auth factors (PIV, PKCS#11, FIDO2)
+	// Factor registry for hardware auth factors (PIV, PKCS#11, FIDO2, mTLS)
 	factorRegistry *qrdbsdk.AuthFactorRegistry
 
 	// qrdbStorage is the single shared qrdb-backed storage backend used when
@@ -211,7 +219,9 @@ func New(cfg *config.Config) (*Server, error) {
 	// Initialize backends
 	if err := s.initializeBackends(); err != nil {
 		cancel()
-		s.closeQRDBStorage()
+		if closeErr := s.closeQRDBStorage(); closeErr != nil {
+			s.logger.Error("failed to close qrdb storage during backend init failure", "error", closeErr)
+		}
 		return nil, &ErrServiceInit{Service: "backends", Err: err}
 	}
 
@@ -316,7 +326,7 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "CA", Err: err}
 	}
 
-	// Initialize hardware auth-factor registry (PIV, PKCS#11, FIDO2)
+	// Initialize hardware auth-factor registry (PIV, PKCS#11, FIDO2, mTLS)
 	if err := s.initializeFactorRegistry(); err != nil {
 		cancel()
 		s.closeBackends()
@@ -325,7 +335,10 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// Wire all subsystems into the XKMSService singleton so it implements
 	// the full embedded.XKMSServicer interface for in-process SDK access.
+	// The resolved service is also captured on the server so the transport
+	// constructors receive it via dependency injection.
 	if svc, err := xkms.Get(); err == nil {
+		s.xkmsService = svc
 		if s.barrier != nil {
 			svc.SetBarrier(s.barrier)
 		}
@@ -580,8 +593,9 @@ func (s *Server) initializeKeyStore() error {
 		}
 	}
 
-	// Initialize the global xkms service with the keystores
-	// This allows REST handlers to access backends via xkms.Backends()
+	// Initialize the global xkms service with the keystores. The resolved
+	// service is captured on the server in New() and injected into every
+	// transport constructor; the singleton exists for embedded SDK access.
 	serviceConfig := &xkms.ServiceConfig{
 		Backends:       s.backends,
 		DefaultBackend: defaultBackend,
@@ -792,9 +806,10 @@ func (s *Server) createCompositeAuthenticator() (*auth.CompositeAuthenticator, e
 // when WebAuthn is not enabled (webauthnConfig is nil).
 //
 // When xkms hosts or dials the qrdb engine, users and credentials are persisted
-// on the qrdb node — the single source of identity. Otherwise it falls back to
-// in-memory stores for development and testing. Sessions are always ephemeral
-// and live in memory.
+// on the qrdb node — the single source of identity. Otherwise they are persisted
+// in the configured datastore (BackendUserStore / BackendCredentialStore) so
+// registrations survive restarts in every storage mode. Sessions are always
+// ephemeral and live in memory.
 func (s *Server) initializeWebAuthnService() error {
 	if s.webauthnConfig == nil {
 		return nil
@@ -1116,11 +1131,17 @@ func (s *Server) initializePolicyManager() error {
 }
 
 // initializeFactorRegistry composes the canonical go-xkms hardware auth
-// factors (PIV, PKCS#11, FIDO2) into a qrdb AuthFactorRegistry. The registry is
-// exposed via FactorRegistry() so downstream binaries can inject it into the
-// qrdb server constructor (WithFactorRegistry) for server-side challenge
-// verification during custodian enrollment and Shamir unseal ceremonies.
+// factors (PIV, PKCS#11, FIDO2, mTLS) into a qrdb AuthFactorRegistry. The registry is
+// injected into the embedded qrdb node via WithFactorRegistry (in
+// initEmbeddedQRDBNode) so the node's unified AuthFactorService can verify
+// hardware factor challenges during custodian enrollment and Shamir unseal
+// ceremonies. It is also exposed via FactorRegistry() for downstream embedders.
+// The function is idempotent: a second call returns nil immediately, preserving
+// the registry instance already injected into the qrdb node.
 func (s *Server) initializeFactorRegistry() error {
+	if s.factorRegistry != nil {
+		return nil
+	}
 	registry, err := factor.NewDefaultRegistry(factor.Config{})
 	if err != nil {
 		return &ErrServiceInit{Service: "factor registry", Err: err}
@@ -1322,7 +1343,7 @@ func (s *Server) initializeHealth() error {
 			// Run the check in a goroutine to respect the timeout
 			done := make(chan error, 1)
 			go func() {
-				_, err := ks.ListKeys()
+				_, err := ks.ListKeys(checkCtx)
 				done <- err
 			}()
 
@@ -1430,9 +1451,9 @@ func (s *Server) initializeCA() error {
 
 	// Try to load existing CA state (certificates and keys from a previous run).
 	// If loading fails, the CA has not been initialized yet, so create it.
-	if err := trustedCA.Load(); err != nil {
+	if err := trustedCA.Load(s.ctx); err != nil {
 		s.logger.Info("No existing CA found, initializing new CA", "reason", err.Error())
-		if initErr := trustedCA.Init(); initErr != nil {
+		if initErr := trustedCA.Init(s.ctx); initErr != nil {
 			return &ErrCAInit{Operation: "initialize new CA", Err: initErr}
 		}
 	}
@@ -1468,7 +1489,7 @@ func (s *Server) ensureTLSServerCert(xkmsCA ca.TrustedCA, keystoreType types.Sto
 	}
 
 	// Check if the cert already exists by trying to retrieve it
-	if _, err := xkmsCA.TLSCertificate(attrs); err == nil {
+	if _, err := xkmsCA.TLSCertificate(s.ctx, attrs); err == nil {
 		s.logger.Info("TLS server certificate already exists", "cn", serverCN)
 		return nil
 	}
@@ -1482,7 +1503,7 @@ func (s *Server) ensureTLSServerCert(xkmsCA ca.TrustedCA, keystoreType types.Sto
 	}
 
 	// Issue the TLS server certificate
-	issued, err := xkmsCA.IssueCertificateWithProfile(&ca.CertificateRequest{
+	issued, err := xkmsCA.IssueCertificateWithProfile(s.ctx, &ca.CertificateRequest{
 		Subject: ca.Subject{
 			CommonName:   serverCN,
 			Organization: identity.Subject.Organization,
@@ -1510,7 +1531,7 @@ func (s *Server) ensureTLSServerCert(xkmsCA ca.TrustedCA, keystoreType types.Sto
 	// ca.TLSCertificate() → keyStore.GetTLSCertificate() can find it.
 	// The CA stores certs in its own certStore, but GetTLSCertificate
 	// looks in the compositeBackend's certStorage (separate storage).
-	if err := s.storeTLSCertInBackend(xkmsCA, serverCN, keystoreType, issued.Certificate); err != nil {
+	if err := s.storeTLSCertInBackend(s.ctx, xkmsCA, serverCN, keystoreType, issued.Certificate); err != nil {
 		return err
 	}
 
@@ -1530,7 +1551,7 @@ func (s *Server) syncExistingTLSCert(xkmsCA ca.TrustedCA, serverCN string, keyst
 		return &ErrTLSCertOp{Operation: "retrieve existing TLS cert from CA certStore", Err: err}
 	}
 
-	if err := s.storeTLSCertInBackend(xkmsCA, serverCN, keystoreType, cert); err != nil {
+	if err := s.storeTLSCertInBackend(s.ctx, xkmsCA, serverCN, keystoreType, cert); err != nil {
 		return err
 	}
 
@@ -1542,12 +1563,12 @@ func (s *Server) syncExistingTLSCert(xkmsCA ca.TrustedCA, serverCN string, keyst
 // cert storage so that ca.TLSCertificate() → keyStore.GetTLSCertificate() can
 // find it. The CA stores certs in its own certStore, but GetTLSCertificate looks
 // in the compositeBackend's certStorage (separate storage).
-func (s *Server) storeTLSCertInBackend(xkmsCA ca.TrustedCA, serverCN string, keystoreType types.StoreType, cert *x509.Certificate) error {
+func (s *Server) storeTLSCertInBackend(ctx context.Context, xkmsCA ca.TrustedCA, serverCN string, keystoreType types.StoreType, cert *x509.Certificate) error {
 	backend, ok := s.backends[string(keystoreType)]
 	if !ok {
 		return &ErrBackendNotAvailable{Backend: string(keystoreType), Purpose: "TLS cert storage"}
 	}
-	if err := backend.SaveCert(serverCN, cert); err != nil {
+	if err := backend.SaveCert(ctx, serverCN, cert); err != nil {
 		return &ErrTLSCertOp{Operation: "store TLS cert in backend", Err: err}
 	}
 
@@ -1555,7 +1576,7 @@ func (s *Server) storeTLSCertInBackend(xkmsCA ca.TrustedCA, serverCN string, key
 	caCert, caErr := xkmsCA.CACertificate()
 	if caErr == nil && caCert != nil {
 		chain := []*x509.Certificate{cert, caCert}
-		if chainErr := backend.SaveCertChain(serverCN, chain); chainErr != nil {
+		if chainErr := backend.SaveCertChain(ctx, serverCN, chain); chainErr != nil {
 			s.logger.Warn("Failed to store TLS cert chain in backend", "error", chainErr)
 		}
 	}
@@ -1675,8 +1696,9 @@ func (s *Server) startUnix() {
 		// Create Unix gRPC server configuration
 		// Note: Logger is nil - the unix package will use its internal noOpLogger
 		grpcConfig := &unix.GRPCConfig{
-			SocketPath: socketPath,
-			Logger:     nil,
+			SocketPath:  socketPath,
+			Logger:      nil,
+			XKMSService: s.xkmsService,
 		}
 
 		grpcServer, err := unix.NewGRPCServer(grpcConfig)
@@ -1722,6 +1744,7 @@ func (s *Server) startREST() {
 		ShareEnabled:      s.qrdbClient != nil,
 		CeremonyService:   s.ceremonyService,
 		CredentialService: s.credentialService,
+		XKMSService:       s.xkmsService,
 	}
 
 	// When xkms hosts/dials the qrdb engine, persist WebAuthn users and
@@ -1734,10 +1757,8 @@ func (s *Server) startREST() {
 	// Pass the XKMSService as CA servicer. The XKMSService wraps the raw CA
 	// with transport-level methods (GetCABundle, IssueCertificate, etc.) that
 	// match the caServicer interface expected by the REST handlers.
-	if s.ca != nil {
-		if svc, err := xkms.Get(); err == nil {
-			restConfig.CA = svc
-		}
+	if s.ca != nil && s.xkmsService != nil {
+		restConfig.CA = s.xkmsService
 	}
 
 	// Add WebAuthn config if enabled, sharing the single service instance so the
@@ -1822,8 +1843,8 @@ func (s *Server) startGRPC() {
 	s.grpcServer = grpcSrv
 	s.mu.Unlock()
 
-	// Create and register gRPC service (uses xkms service)
-	service := grpcinternal.NewService(s.rbacAuthorizer, s.auditLogger)
+	// Create and register gRPC service with the injected XKMS service
+	service := grpcinternal.NewService(s.rbacAuthorizer, s.auditLogger, s.xkmsService)
 
 	// Wire barrier and PIN manager into gRPC service
 	if s.barrier != nil {
@@ -1852,9 +1873,12 @@ func (s *Server) startGRPC() {
 		grpcinternal.SetCredentialService(s.credentialService)
 	}
 
-	// Wire CA into gRPC
-	if s.ca != nil {
-		grpcinternal.SetCA(s.ca)
+	// Wire CA into gRPC. The XKMSService wraps the raw CA with the
+	// transport-shaped methods (GetCACertificate, SignCSR, IssueCertificate,
+	// etc.) that the gRPC CA handlers delegate to — the same servicer
+	// delegation used by the REST and QUIC transports.
+	if s.ca != nil && s.xkmsService != nil {
+		grpcinternal.SetCA(s.xkmsService)
 	}
 
 	pb.RegisterKeystoreServiceServer(grpcSrv, service)
@@ -1932,8 +1956,9 @@ func (s *Server) startMCP() {
 	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.MCPPort)
 
 	mcpConfig := &mcp.Config{
-		Addr:   addr,
-		Logger: s.logger.With("component", "mcp"),
+		Addr:        addr,
+		Logger:      s.logger.With("component", "mcp"),
+		XKMSService: s.xkmsService,
 	}
 
 	mcpSrv, err := mcp.NewServer(mcpConfig)
@@ -2067,7 +2092,7 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 			attrs.StoreType = keystoreType
 			attrs.KeyType = types.KeyTypeTLS
 			var err error
-			cert, err = s.ca.TLSCertificate(attrs)
+			cert, err = s.ca.TLSCertificate(s.ctx, attrs)
 			if err != nil {
 				if s.config.TLS.CertFile == "" && s.config.TLS.KeyFile == "" {
 					return nil, &ErrTLSCertOp{Operation: "load CA-backed TLS certificate", Err: err, Sentinel: ErrCATLSCertFailed}
@@ -2240,6 +2265,7 @@ func (s *Server) startQUIC() {
 		Authenticator: s.authenticator,
 		Authorizer:    s.rbacAuthorizer,
 		AuditLogger:   s.auditLogger,
+		XKMSService:   s.xkmsService,
 	}
 
 	quicSrv, err := quic.NewServer(quicConfig)

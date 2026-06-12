@@ -15,6 +15,7 @@ package ca
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -54,7 +55,7 @@ var tcgNotAfter = func() time.Time {
 //
 // If request.Signer and request.IssuerCert are set, uses them for signing (multi-tenant mode).
 // Otherwise, uses the CA's internal signer and certificate.
-func (ca *CA) IssueEKCertificate(request *CertificateRequest, ekPubKey crypto.PublicKey) (*x509.Certificate, error) {
+func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateRequest, ekPubKey crypto.PublicKey) (*x509.Certificate, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
@@ -74,7 +75,7 @@ func (ca *CA) IssueEKCertificate(request *CertificateRequest, ekPubKey crypto.Pu
 	}
 
 	// Resolve signer and issuer certificate
-	signer, signingCert, issuerKeyStoreType, err := ca.resolveTCGSigner(request)
+	signer, signingCert, issuerKeyStoreType, err := ca.resolveTCGSigner(ctx, request)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +83,7 @@ func (ca *CA) IssueEKCertificate(request *CertificateRequest, ekPubKey crypto.Pu
 	sigAlg := determineSignatureAlgorithm(signer.Public())
 
 	// Generate serial number
-	serial, err := ca.serialGen.Generate()
+	serial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrSerialGenerationFailed, err)
 	}
@@ -185,7 +186,7 @@ func (ca *CA) IssueEKCertificate(request *CertificateRequest, ekPubKey crypto.Pu
 //   - AK certificates include TPM-specific policy OIDs
 //   - NotAfter SHOULD use 99991231235959Z for indefinite validity
 //   - Key usage is limited to digital signature (attestation, quotes)
-func (ca *CA) IssueAKCertificate(request *CertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error) {
+func (ca *CA) IssueAKCertificate(ctx context.Context, request *CertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
@@ -207,7 +208,7 @@ func (ca *CA) IssueAKCertificate(request *CertificateRequest, pubKey crypto.Publ
 	}
 
 	// Resolve signer and issuer certificate
-	signer, signingCert, _, err := ca.resolveTCGSigner(request)
+	signer, signingCert, _, err := ca.resolveTCGSigner(ctx, request)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +216,7 @@ func (ca *CA) IssueAKCertificate(request *CertificateRequest, pubKey crypto.Publ
 	sigAlg := determineSignatureAlgorithm(signer.Public())
 
 	// Generate serial number
-	serial, err := ca.serialGen.Generate()
+	serial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrSerialGenerationFailed, err)
 	}
@@ -288,6 +289,7 @@ func (ca *CA) IssueAKCertificate(request *CertificateRequest, pubKey crypto.Publ
 //  3. Issues an IAK certificate with TCG AIK extensions
 //  4. Issues an IDevID certificate with permanent identifier extension
 func (ca *CA) SignTCGCSRIDevID(
+	ctx context.Context,
 	tcgCSR *tpm2.TCG_CSR_IDEVID,
 	request *CertificateRequest) (iakDER, idevidDER []byte, err error) {
 
@@ -324,7 +326,7 @@ func (ca *CA) SignTCGCSRIDevID(
 	}
 
 	// Get the CA signer and issuing certificate
-	signer, signingCert, issuerKeyStoreType, err := ca.resolveTCGSigner(request)
+	signer, signingCert, issuerKeyStoreType, err := ca.resolveTCGSigner(ctx, request)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -335,7 +337,7 @@ func (ca *CA) SignTCGCSRIDevID(
 	iakExtensions := buildIAKExtensions(unpacked, issuerKeyStoreType)
 
 	// Generate IAK serial number
-	iakSerial, err := ca.serialGen.Generate()
+	iakSerial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %v", ErrSerialGenerationFailed, err)
 	}
@@ -364,11 +366,15 @@ func (ca *CA) SignTCGCSRIDevID(
 		return nil, nil, fmt.Errorf("%w: iak: %v", ErrTCGCertIssuanceFailed, err)
 	}
 
-	// Build IDevID certificate extensions
+	// Build IDevID certificate extensions and append any caller-supplied extras
+	// (e.g. the SDN network-zone extension from the platform layer).
 	idevidExtensions := buildIDevIDExtensions(unpacked, issuerKeyStoreType)
+	if len(request.ExtraExtensions) > 0 {
+		idevidExtensions = append(idevidExtensions, request.ExtraExtensions...)
+	}
 
 	// Generate IDevID serial number
-	idevidSerial, err := ca.serialGen.Generate()
+	idevidSerial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %v", ErrSerialGenerationFailed, err)
 	}
@@ -433,7 +439,7 @@ func (ca *CA) SignTCGCSRIDevID(
 // type for a TCG certificate operation. If the request provides an external signer
 // and issuer cert (multi-tenant mode), those are used. Otherwise the CA's internal
 // signer is used.
-func (ca *CA) resolveTCGSigner(request *CertificateRequest) (crypto.Signer, *x509.Certificate, string, error) {
+func (ca *CA) resolveTCGSigner(ctx context.Context, request *CertificateRequest) (crypto.Signer, *x509.Certificate, string, error) {
 	if request.Signer != nil && request.IssuerCert != nil {
 		return request.Signer, request.IssuerCert, "external", nil
 	}
@@ -450,7 +456,7 @@ func (ca *CA) resolveTCGSigner(request *CertificateRequest) (crypto.Signer, *x50
 		return nil, nil, "", ErrCertificateNotFound
 	}
 
-	signer, err := ca.getSigner()
+	signer, err := ca.getSigner(ctx)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("%w: %v", ErrSigningFailed, err)
 	}

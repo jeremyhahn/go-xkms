@@ -141,6 +141,11 @@ COVERAGE_THRESHOLD := 90
 # This is NOT included in BUILD_TAGS because it requires OpenSSL headers.
 INTEGRATION_TEST_FLAGS := -v -tags="integration linux tpm_simulator $(BUILD_TAGS)"
 
+# Export the production tag set for tests that build the CLI binary
+# themselves (test/integration buildBinary). Without it the test-built
+# binary lacks codec_json and the go-codec based DAOs fail at runtime.
+export XKEY_CLI_BUILD_TAGS := $(BUILD_TAGS)
+
 # Color output (ANSI escape codes)
 RESET := \033[0m
 BOLD := \033[1m

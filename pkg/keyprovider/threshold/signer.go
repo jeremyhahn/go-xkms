@@ -114,6 +114,8 @@ func (s *ThresholdSigner) reconstructKey() (crypto.PrivateKey, error) {
 		}
 
 		shareKey := fmt.Sprintf("threshold/shares/%s/share-%d", keyID, i)
+		// context.Background() is intentional: reconstructKey is invoked from
+		// crypto.Signer.Sign, whose fixed interface signature carries no context.
 		data, err := s.backend.config.ShareStorage.Get(context.Background(), shareKey)
 		if err != nil {
 			continue // Share not available, try next one

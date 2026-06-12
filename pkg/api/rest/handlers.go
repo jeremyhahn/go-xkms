@@ -47,6 +47,8 @@ type HandlerContext struct {
 	Barrier *seal.Barrier
 	// PINManager is the optional PIN backend for SO/User PIN operations
 	PINManager qrdbsdk.PINBackend
+	// xkmsService is the injected XKMS service; replaces package-singleton lookups.
+	xkmsService *xkms.XKMSService
 }
 
 // HealthChecker defines the interface for health checking.
@@ -57,7 +59,7 @@ type HealthChecker interface {
 }
 
 // NewHandlerContext creates a new handler context.
-// The handlers use the global xkms service for backend management.
+// Callers must call SetXKMSService to wire the injected service before use.
 func NewHandlerContext(version string) *HandlerContext {
 	return &HandlerContext{
 		Version: version,
@@ -79,6 +81,56 @@ func (h *HandlerContext) SetPINManager(manager qrdbsdk.PINBackend) {
 	h.PINManager = manager
 }
 
+// SetXKMSService sets the injected XKMS service on the handler context.
+func (h *HandlerContext) SetXKMSService(svc *xkms.XKMSService) {
+	h.xkmsService = svc
+}
+
+// lookupBackend returns the named backend from the injected service.
+// Returns xkms.ErrNotInitialized when the service has not been wired.
+func (h *HandlerContext) lookupBackend(name string) (xkms.Backend, error) {
+	if h.xkmsService == nil {
+		return nil, xkms.ErrNotInitialized
+	}
+	return h.xkmsService.LookupBackend(name)
+}
+
+// backendNames returns the names of all registered backends.
+// Returns nil when the service has not been wired.
+func (h *HandlerContext) backendNames() []string {
+	if h.xkmsService == nil {
+		return nil
+	}
+	return h.xkmsService.BackendNames()
+}
+
+// sealWithBackend seals data using the named backend.
+// Returns xkms.ErrNotInitialized when the service has not been wired.
+func (h *HandlerContext) sealWithBackend(ctx context.Context, backendName string, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	if h.xkmsService == nil {
+		return nil, xkms.ErrNotInitialized
+	}
+	return h.xkmsService.SealWithBackend(ctx, backendName, data, opts)
+}
+
+// unsealWithBackend unseals data using the named backend.
+// Returns xkms.ErrNotInitialized when the service has not been wired.
+func (h *HandlerContext) unsealWithBackend(ctx context.Context, backendName string, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	if h.xkmsService == nil {
+		return nil, xkms.ErrNotInitialized
+	}
+	return h.xkmsService.UnsealWithBackend(ctx, backendName, sealed, opts)
+}
+
+// canSeal returns true if the named backend supports sealing operations.
+// Returns false when the service has not been wired.
+func (h *HandlerContext) canSeal(backendName ...string) bool {
+	if h.xkmsService == nil {
+		return false
+	}
+	return h.xkmsService.CanSealDirect(backendName...)
+}
+
 // HealthHandler handles GET /health requests.
 func (h *HandlerContext) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	resp := HealthResponse{
@@ -90,11 +142,11 @@ func (h *HandlerContext) HealthHandler(w http.ResponseWriter, r *http.Request) {
 
 // ListBackendsHandler handles GET /api/v1/backends requests.
 func (h *HandlerContext) ListBackendsHandler(w http.ResponseWriter, r *http.Request) {
-	backendNames := xkms.Backends()
+	backendNames := h.backendNames()
 
 	backends := make([]BackendInfo, 0, len(backendNames))
 	for _, name := range backendNames {
-		ks, err := xkms.GetBackend(name)
+		ks, err := h.lookupBackend(name)
 		if err != nil {
 			continue // Skip backends that can't be retrieved
 		}
@@ -128,7 +180,7 @@ func (h *HandlerContext) GetBackendHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -184,7 +236,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Get the backend (this also validates it exists)
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := h.lookupBackend(req.Backend)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -262,7 +314,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		_, err = symBackend.GenerateSymmetricKey(attrs)
+		_, err = symBackend.GenerateSymmetricKey(r.Context(), attrs)
 	} else {
 		// Asymmetric key generation
 		switch keyAlgorithm {
@@ -274,7 +326,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 			attrs.RSAAttributes = &types.RSAAttributes{
 				KeySize: keySize,
 			}
-			privKey, err = ks.GenerateRSA(attrs)
+			privKey, err = ks.GenerateRSA(r.Context(), attrs)
 
 		case x509.ECDSA:
 			curve := req.Curve
@@ -285,10 +337,10 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 			attrs.ECCAttributes = &types.ECCAttributes{
 				Curve: parsedCurve,
 			}
-			privKey, err = ks.GenerateECDSA(attrs)
+			privKey, err = ks.GenerateECDSA(r.Context(), attrs)
 
 		case x509.Ed25519:
-			privKey, err = ks.GenerateEd25519(attrs)
+			privKey, err = ks.GenerateEd25519(r.Context(), attrs)
 
 		default:
 			writeError(w, ErrInvalidKeyType, http.StatusBadRequest)
@@ -333,14 +385,14 @@ func (h *HandlerContext) ListKeysHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// List keys from backend
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(r.Context())
 	if err != nil {
 		log.Printf("Failed to list keys: %v", err)
 		handleError(w, err)
@@ -358,7 +410,7 @@ func (h *HandlerContext) ListKeysHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		// Try to get public key
-		privKey, err := ks.GetKey(attr)
+		privKey, err := ks.GetKey(r.Context(), attr)
 		if err == nil {
 			pubKey := getPublicKey(privKey)
 			if pubKey != nil {
@@ -396,14 +448,14 @@ func (h *HandlerContext) GetKeyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// List all keys and find the matching one
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(r.Context())
 	if err != nil {
 		log.Printf("Failed to list keys: %v", err)
 		handleError(w, err)
@@ -425,7 +477,7 @@ func (h *HandlerContext) GetKeyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the key
-	privKey, err := ks.GetKey(targetAttr)
+	privKey, err := ks.GetKey(r.Context(), targetAttr)
 	if err != nil {
 		log.Printf("Failed to get key: %v", err)
 		handleError(w, err)
@@ -474,14 +526,14 @@ func (h *HandlerContext) SignHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Find the key
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(r.Context())
 	if err != nil {
 		log.Printf("Failed to list keys: %v", err)
 		handleError(w, err)
@@ -502,7 +554,7 @@ func (h *HandlerContext) SignHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get signer
-	signer, err := ks.Signer(targetAttr)
+	signer, err := ks.Signer(r.Context(), targetAttr)
 	if err != nil {
 		log.Printf("Failed to get signer: %v", err)
 		handleError(w, err)
@@ -571,14 +623,14 @@ func (h *HandlerContext) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Find the key
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(r.Context())
 	if err != nil {
 		log.Printf("Failed to list keys: %v", err)
 		handleError(w, err)
@@ -599,7 +651,7 @@ func (h *HandlerContext) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the key
-	privKey, err := ks.GetKey(targetAttr)
+	privKey, err := ks.GetKey(r.Context(), targetAttr)
 	if err != nil {
 		log.Printf("Failed to get key: %v", err)
 		handleError(w, err)
@@ -664,14 +716,14 @@ func (h *HandlerContext) DeleteKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Find the key
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(r.Context())
 	if err != nil {
 		log.Printf("Failed to list keys: %v", err)
 		handleError(w, err)
@@ -692,7 +744,7 @@ func (h *HandlerContext) DeleteKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Delete the key
-	if err := ks.DeleteKey(targetAttr); err != nil {
+	if err := ks.DeleteKey(r.Context(), targetAttr); err != nil {
 		log.Printf("Failed to delete key: %v", err)
 		handleError(w, err)
 		return
@@ -719,14 +771,14 @@ func (h *HandlerContext) RotateKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Find the key
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(r.Context())
 	if err != nil {
 		log.Printf("Failed to list keys: %v", err)
 		handleError(w, err)
@@ -747,7 +799,7 @@ func (h *HandlerContext) RotateKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Rotate the key
-	newKey, err := ks.RotateKey(targetAttr)
+	newKey, err := ks.RotateKey(r.Context(), targetAttr)
 	if err != nil {
 		log.Printf("Failed to rotate key: %v", err)
 		handleError(w, err)
@@ -794,14 +846,14 @@ func (h *HandlerContext) EncryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Find the key
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(r.Context())
 	if err != nil {
 		log.Printf("Failed to list keys: %v", err)
 		handleError(w, err)
@@ -829,7 +881,7 @@ func (h *HandlerContext) EncryptHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get symmetric encrypter
-	encrypter, err := symBackend.SymmetricEncrypter(targetAttr)
+	encrypter, err := symBackend.SymmetricEncrypter(r.Context(), targetAttr)
 	if err != nil {
 		log.Printf("Failed to get symmetric encrypter: %v", err)
 		handleError(w, err)
@@ -876,14 +928,14 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Find the key
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(r.Context())
 	if err != nil {
 		log.Printf("Failed to list keys: %v", err)
 		handleError(w, err)
@@ -914,7 +966,7 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		}
 
 		// Get symmetric encrypter
-		encrypter, err := symBackend.SymmetricEncrypter(targetAttr)
+		encrypter, err := symBackend.SymmetricEncrypter(r.Context(), targetAttr)
 		if err != nil {
 			log.Printf("Failed to get symmetric encrypter: %v", err)
 			handleError(w, err)
@@ -941,7 +993,7 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	} else {
 		// Asymmetric decryption path (RSA-OAEP with SHA256 to match EncryptAsymHandler)
-		decrypter, err := ks.Decrypter(targetAttr)
+		decrypter, err := ks.Decrypter(r.Context(), targetAttr)
 		if err != nil {
 			log.Printf("Failed to get decrypter: %v", err)
 			handleError(w, err)
@@ -990,14 +1042,14 @@ func (h *HandlerContext) EncryptAsymHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Find the key
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(r.Context())
 	if err != nil {
 		log.Printf("Failed to list keys: %v", err)
 		handleError(w, err)
@@ -1018,7 +1070,7 @@ func (h *HandlerContext) EncryptAsymHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Get the key to extract public key
-	key, err := ks.GetKey(targetAttr)
+	key, err := ks.GetKey(r.Context(), targetAttr)
 	if err != nil {
 		log.Printf("Failed to get key: %v", err)
 		handleError(w, err)
@@ -1101,7 +1153,7 @@ func (h *HandlerContext) SaveCertHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1116,7 +1168,7 @@ func (h *HandlerContext) SaveCertHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Save certificate
-	if err := ks.SaveCert(keyID, cert); err != nil {
+	if err := ks.SaveCert(r.Context(), keyID, cert); err != nil {
 		log.Printf("Failed to save certificate: %v", err)
 		handleError(w, err)
 		return
@@ -1143,14 +1195,14 @@ func (h *HandlerContext) GetCertHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Get certificate
-	cert, err := ks.GetCert(keyID)
+	cert, err := ks.GetCert(r.Context(), keyID)
 	if err != nil {
 		log.Printf("Failed to get certificate: %v", err)
 		handleError(w, err)
@@ -1186,14 +1238,14 @@ func (h *HandlerContext) DeleteCertHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Delete certificate
-	if err := ks.DeleteCert(keyID); err != nil {
+	if err := ks.DeleteCert(r.Context(), keyID); err != nil {
 		log.Printf("Failed to delete certificate: %v", err)
 		handleError(w, err)
 		return
@@ -1214,14 +1266,14 @@ func (h *HandlerContext) ListCertsHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// List certificates
-	certIDs, err := ks.ListCerts()
+	certIDs, err := ks.ListCerts(r.Context())
 	if err != nil {
 		log.Printf("Failed to list certificates: %v", err)
 		handleError(w, err)
@@ -1260,14 +1312,14 @@ func (h *HandlerContext) CertExistsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Check if certificate exists
-	exists, err := ks.CertExists(keyID)
+	exists, err := ks.CertExists(r.Context(), keyID)
 	if err != nil {
 		log.Printf("Failed to check certificate existence: %v", err)
 		handleError(w, err)
@@ -1301,7 +1353,7 @@ func (h *HandlerContext) SaveCertChainHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1320,7 +1372,7 @@ func (h *HandlerContext) SaveCertChainHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Save certificate chain
-	if err := ks.SaveCertChain(keyID, chain); err != nil {
+	if err := ks.SaveCertChain(r.Context(), keyID, chain); err != nil {
 		log.Printf("Failed to save certificate chain: %v", err)
 		handleError(w, err)
 		return
@@ -1347,14 +1399,14 @@ func (h *HandlerContext) GetCertChainHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Get certificate chain
-	chain, err := ks.GetCertChain(keyID)
+	chain, err := ks.GetCertChain(r.Context(), keyID)
 	if err != nil {
 		log.Printf("Failed to get certificate chain: %v", err)
 		handleError(w, err)
@@ -1394,14 +1446,14 @@ func (h *HandlerContext) GetTLSCertificateHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Find the key
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(r.Context())
 	if err != nil {
 		log.Printf("Failed to list keys: %v", err)
 		handleError(w, err)
@@ -1422,7 +1474,7 @@ func (h *HandlerContext) GetTLSCertificateHandler(w http.ResponseWriter, r *http
 	}
 
 	// Get TLS certificate
-	tlsCert, err := ks.GetTLSCertificate(keyID, targetAttr)
+	tlsCert, err := ks.GetTLSCertificate(r.Context(), keyID, targetAttr)
 	if err != nil {
 		log.Printf("Failed to get TLS certificate: %v", err)
 		handleError(w, err)
@@ -1508,7 +1560,7 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 	}
 
 	// Get the backend
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := h.lookupBackend(req.Backend)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1528,7 +1580,7 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 	wrappingAlg := backend.WrappingAlgorithm(req.Algorithm)
 
 	// Get import parameters
-	params, err := importExportBackend.GetImportParameters(attrs, wrappingAlg)
+	params, err := importExportBackend.GetImportParameters(r.Context(), attrs, wrappingAlg)
 	if err != nil {
 		log.Printf("Failed to get import parameters: %v", err)
 		handleError(w, err)
@@ -1603,8 +1655,8 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 	// Note: WrapKey is typically a utility function that can be called on any backend
 	// For now, we'll get a backend that supports import/export and use it
 	var importExportBackend backend.ImportExportBackend
-	for _, backendName := range xkms.Backends() {
-		ks, err := xkms.GetBackend(backendName)
+	for _, backendName := range h.backendNames() {
+		ks, err := h.lookupBackend(backendName)
 		if err != nil {
 			continue
 		}
@@ -1619,7 +1671,7 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	wrapped, err := importExportBackend.WrapKey(req.KeyMaterial, params)
+	wrapped, err := importExportBackend.WrapKey(r.Context(), req.KeyMaterial, params)
 	if err != nil {
 		log.Printf("Failed to wrap key: %v", err)
 		handleError(w, err)
@@ -1682,8 +1734,8 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 
 	// Unwrap the key material
 	var importExportBackend backend.ImportExportBackend
-	for _, backendName := range xkms.Backends() {
-		ks, err := xkms.GetBackend(backendName)
+	for _, backendName := range h.backendNames() {
+		ks, err := h.lookupBackend(backendName)
 		if err != nil {
 			continue
 		}
@@ -1698,7 +1750,7 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	keyMaterial, err := importExportBackend.UnwrapKey(wrapped, params)
+	keyMaterial, err := importExportBackend.UnwrapKey(r.Context(), wrapped, params)
 	if err != nil {
 		log.Printf("Failed to unwrap key: %v", err)
 		handleError(w, err)
@@ -1758,7 +1810,7 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Get the backend
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := h.lookupBackend(req.Backend)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1782,7 +1834,7 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Import the key
-	if err := importExportBackend.ImportKey(attrs, wrapped); err != nil {
+	if err := importExportBackend.ImportKey(r.Context(), attrs, wrapped); err != nil {
 		log.Printf("Failed to import key: %v", err)
 		handleError(w, err)
 		return
@@ -1797,7 +1849,7 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 
 	// Try to get public key for asymmetric keys
 	if req.KeyType != "symmetric" {
-		privKey, err := ks.GetKey(attrs)
+		privKey, err := ks.GetKey(r.Context(), attrs)
 		if err == nil {
 			pubKey := getPublicKey(privKey)
 			if pubKey != nil {
@@ -1838,7 +1890,7 @@ func (h *HandlerContext) ExportKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := xkms.GetBackend(backendID)
+	ks, err := h.lookupBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1852,7 +1904,7 @@ func (h *HandlerContext) ExportKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Find the key
-	keyAttrs, err := ks.ListKeys()
+	keyAttrs, err := ks.ListKeys(r.Context())
 	if err != nil {
 		log.Printf("Failed to list keys: %v", err)
 		handleError(w, err)
@@ -1876,7 +1928,7 @@ func (h *HandlerContext) ExportKeyHandler(w http.ResponseWriter, r *http.Request
 	wrappingAlg := backend.WrappingAlgorithm(req.Algorithm)
 
 	// Export the key
-	wrapped, err := importExportBackend.ExportKey(targetAttr, wrappingAlg)
+	wrapped, err := importExportBackend.ExportKey(r.Context(), targetAttr, wrappingAlg)
 	if err != nil {
 		log.Printf("Failed to export key: %v", err)
 		handleError(w, err)
@@ -1933,7 +1985,7 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get source backend
-	sourceKS, err := xkms.GetBackend(req.SourceBackend)
+	sourceKS, err := h.lookupBackend(req.SourceBackend)
 	if err != nil {
 		writeError(w, fmt.Errorf("source backend not found: %w", err), http.StatusNotFound)
 		return
@@ -1947,7 +1999,7 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get destination backend
-	destKS, err := xkms.GetBackend(req.DestBackend)
+	destKS, err := h.lookupBackend(req.DestBackend)
 	if err != nil {
 		writeError(w, fmt.Errorf("destination backend not found: %w", err), http.StatusNotFound)
 		return
@@ -1961,7 +2013,7 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Find the source key
-	sourceKeyAttrs, err := sourceKS.ListKeys()
+	sourceKeyAttrs, err := sourceKS.ListKeys(r.Context())
 	if err != nil {
 		log.Printf("Failed to list keys from source backend: %v", err)
 		handleError(w, err)
@@ -1985,7 +2037,7 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 	wrappingAlg := backend.WrappingAlgorithm(req.Algorithm)
 
 	// Export the key from source backend
-	wrapped, err := sourceBackend.ExportKey(sourceAttr, wrappingAlg)
+	wrapped, err := sourceBackend.ExportKey(r.Context(), sourceAttr, wrappingAlg)
 	if err != nil {
 		log.Printf("Failed to export key from source backend: %v", err)
 		handleError(w, err)
@@ -1996,7 +2048,7 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 	destAttrs := buildKeyAttributes(req.DestKeyID, req.KeyType, req.KeySize, req.Curve, req.Hash, req.AESKeySize)
 
 	// Import the key to destination backend
-	if err := destBackend.ImportKey(destAttrs, wrapped); err != nil {
+	if err := destBackend.ImportKey(r.Context(), destAttrs, wrapped); err != nil {
 		log.Printf("Failed to import key to destination backend: %v", err)
 		handleError(w, err)
 		return
@@ -2055,14 +2107,14 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 	// If key ID is provided, look up the key to get its actual attributes
 	if req.KeyID != "" {
 		// Get the backend to look up the key
-		ks, err := xkms.GetBackend(req.Backend)
+		ks, err := h.lookupBackend(req.Backend)
 		if err != nil {
 			writeError(w, ErrBackendNotFound, http.StatusNotFound)
 			return
 		}
 
 		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys()
+		keyAttrs, err := ks.ListKeys(r.Context())
 		if err != nil {
 			log.Printf("Failed to list keys: %v", err)
 			handleError(w, err)
@@ -2086,7 +2138,7 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Seal the data using the xkms service
-	sealed, err := xkms.SealWithBackend(r.Context(), req.Backend, req.Data, opts)
+	sealed, err := h.sealWithBackend(r.Context(), req.Backend, req.Data, opts)
 	if err != nil {
 		log.Printf("Failed to seal data: %v", err)
 		handleError(w, err)
@@ -2141,7 +2193,7 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get backend to determine backend type
-	ks, err := xkms.GetBackend(req.Backend)
+	ks, err := h.lookupBackend(req.Backend)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -2164,7 +2216,7 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 	// If key ID is provided, look up the key to get its actual attributes
 	if req.KeyID != "" {
 		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys()
+		keyAttrs, err := ks.ListKeys(r.Context())
 		if err != nil {
 			log.Printf("Failed to list keys: %v", err)
 			handleError(w, err)
@@ -2189,7 +2241,7 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Unseal the data using the xkms service
-	plaintext, err := xkms.UnsealWithBackend(r.Context(), req.Backend, sealed, opts)
+	plaintext, err := h.unsealWithBackend(r.Context(), req.Backend, sealed, opts)
 	if err != nil {
 		log.Printf("Failed to unseal data: %v", err)
 		handleError(w, err)
@@ -2211,7 +2263,7 @@ func (h *HandlerContext) CanSealHandler(w http.ResponseWriter, r *http.Request) 
 
 	// If no backend specified, check default backend
 	if backendName == "" {
-		canSeal := xkms.CanSeal()
+		canSeal := h.canSeal()
 		resp := CanSealResponse{
 			CanSeal: canSeal,
 		}
@@ -2226,7 +2278,7 @@ func (h *HandlerContext) CanSealHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Check if the specified backend supports sealing
-	canSeal := xkms.CanSeal(backendName)
+	canSeal := h.canSeal(backendName)
 
 	resp := CanSealResponse{
 		CanSeal: canSeal,

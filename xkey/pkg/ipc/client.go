@@ -154,7 +154,7 @@ func (c *Client) send(msg *Message) (*Response, error) {
 		}
 		return nil, fmt.Errorf("%w: %v", ErrConnectionFailed, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if err := conn.SetDeadline(time.Now().Add(c.timeout)); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrConnectionFailed, err)

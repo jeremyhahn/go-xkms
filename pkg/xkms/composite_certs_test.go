@@ -14,6 +14,7 @@
 package xkms_test
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -74,7 +75,7 @@ func TestCompositeKeyStore_SaveCert(t *testing.T) {
 			ks, _, certStorage := setupKeyStore()
 			defer func() { _ = ks.Close() }()
 
-			err := ks.SaveCert(tt.keyID, tt.cert)
+			err := ks.SaveCert(context.Background(), tt.keyID, tt.cert)
 
 			if tt.expectError {
 				if err == nil {
@@ -106,7 +107,7 @@ func TestCompositeKeyStore_GetCert(t *testing.T) {
 			name: "existing certificate",
 			setupStorage: func(ks *xkms.Backend) {
 				cert := generateTestCert("test-get-cert")
-				_ = (*ks).SaveCert("test-get-cert", cert)
+				_ = (*ks).SaveCert(context.Background(), "test-get-cert", cert)
 			},
 			keyID:       "test-get-cert",
 			expectError: false,
@@ -136,7 +137,7 @@ func TestCompositeKeyStore_GetCert(t *testing.T) {
 
 			tt.setupStorage(&ks)
 
-			cert, err := ks.GetCert(tt.keyID)
+			cert, err := ks.GetCert(context.Background(), tt.keyID)
 
 			if tt.expectError {
 				if err == nil {
@@ -172,7 +173,7 @@ func TestCompositeKeyStore_DeleteCert(t *testing.T) {
 			name: "delete existing certificate",
 			setupStorage: func(ks *xkms.Backend) {
 				cert := generateTestCert("test-delete-cert")
-				_ = (*ks).SaveCert("test-delete-cert", cert)
+				_ = (*ks).SaveCert(context.Background(), "test-delete-cert", cert)
 			},
 			keyID:       "test-delete-cert",
 			expectError: false,
@@ -202,7 +203,7 @@ func TestCompositeKeyStore_DeleteCert(t *testing.T) {
 
 			tt.setupStorage(&ks)
 
-			err := ks.DeleteCert(tt.keyID)
+			err := ks.DeleteCert(context.Background(), tt.keyID)
 
 			if tt.expectError {
 				if err == nil {
@@ -259,7 +260,7 @@ func TestCompositeKeyStore_SaveCertChain(t *testing.T) {
 			ks, _, certStorage := setupKeyStore()
 			defer func() { _ = ks.Close() }()
 
-			err := ks.SaveCertChain(tt.keyID, tt.chain)
+			err := ks.SaveCertChain(context.Background(), tt.keyID, tt.chain)
 
 			if tt.expectError {
 				if err == nil {
@@ -294,7 +295,7 @@ func TestCompositeKeyStore_GetCertChain(t *testing.T) {
 					generateTestCert("leaf"),
 					generateTestCert("intermediate"),
 				}
-				_ = (*ks).SaveCertChain("test-get-chain", chain)
+				_ = (*ks).SaveCertChain(context.Background(), "test-get-chain", chain)
 			},
 			keyID:       "test-get-chain",
 			expectError: false,
@@ -324,7 +325,7 @@ func TestCompositeKeyStore_GetCertChain(t *testing.T) {
 
 			tt.setupStorage(&ks)
 
-			chain, err := ks.GetCertChain(tt.keyID)
+			chain, err := ks.GetCertChain(context.Background(), tt.keyID)
 
 			if tt.expectError {
 				if err == nil {
@@ -356,10 +357,10 @@ func TestCompositeKeyStore_ListCerts(t *testing.T) {
 	// Save some certificates
 	for i := 0; i < 3; i++ {
 		cert := generateTestCert("test-list-cert")
-		_ = ks.SaveCert("test-list-cert", cert)
+		_ = ks.SaveCert(context.Background(), "test-list-cert", cert)
 	}
 
-	certs, err := ks.ListCerts()
+	certs, err := ks.ListCerts(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -386,7 +387,7 @@ func TestCompositeKeyStore_CertExists(t *testing.T) {
 			name: "existing certificate",
 			setupStorage: func(ks *xkms.Backend) {
 				cert := generateTestCert("test-exists")
-				_ = (*ks).SaveCert("test-exists", cert)
+				_ = (*ks).SaveCert(context.Background(), "test-exists", cert)
 			},
 			keyID:        "test-exists",
 			expectExists: true,
@@ -419,7 +420,7 @@ func TestCompositeKeyStore_CertExists(t *testing.T) {
 
 			tt.setupStorage(&ks)
 
-			exists, err := ks.CertExists(tt.keyID)
+			exists, err := ks.CertExists(context.Background(), tt.keyID)
 
 			if tt.expectError {
 				if err == nil {
@@ -459,7 +460,7 @@ func TestCompositeKeyStore_SaveCert_EdgeCases(t *testing.T) {
 		}
 
 		cert := generateTestCert("test-storage-error")
-		err := ks.SaveCert("test-storage-error", cert)
+		err := ks.SaveCert(context.Background(), "test-storage-error", cert)
 
 		if err == nil {
 			t.Fatal("expected error, got nil")
@@ -480,7 +481,7 @@ func TestCompositeKeyStore_GetCert_EdgeCases(t *testing.T) {
 			return nil, fmt.Errorf("certificate corrupted")
 		}
 
-		_, err := ks.GetCert("test-storage-error")
+		_, err := ks.GetCert(context.Background(), "test-storage-error")
 
 		if err == nil {
 			t.Fatal("expected error, got nil")
@@ -501,7 +502,7 @@ func TestCompositeKeyStore_DeleteCert_EdgeCases(t *testing.T) {
 			return fmt.Errorf("certificate is locked")
 		}
 
-		err := ks.DeleteCert("test-delete-error")
+		err := ks.DeleteCert(context.Background(), "test-delete-error")
 
 		if err == nil {
 			t.Fatal("expected error, got nil")
@@ -527,7 +528,7 @@ func TestCompositeKeyStore_SaveCertChain_EdgeCases(t *testing.T) {
 			generateTestCert("intermediate"),
 		}
 
-		err := ks.SaveCertChain("test-chain-error", chain)
+		err := ks.SaveCertChain(context.Background(), "test-chain-error", chain)
 
 		if err == nil {
 			t.Fatal("expected error, got nil")
@@ -541,7 +542,7 @@ func TestCompositeKeyStore_SaveCertChain_EdgeCases(t *testing.T) {
 		ks, _, _ := setupKeyStore()
 		defer func() { _ = ks.Close() }()
 
-		err := ks.SaveCertChain("test-nil-chain", nil)
+		err := ks.SaveCertChain(context.Background(), "test-nil-chain", nil)
 
 		if err == nil {
 			t.Fatal("expected error, got nil")
@@ -562,7 +563,7 @@ func TestCompositeKeyStore_GetCertChain_EdgeCases(t *testing.T) {
 			return nil, fmt.Errorf("chain validation failed")
 		}
 
-		_, err := ks.GetCertChain("test-chain-error")
+		_, err := ks.GetCertChain(context.Background(), "test-chain-error")
 
 		if err == nil {
 			t.Fatal("expected error, got nil")
@@ -583,7 +584,7 @@ func TestCompositeKeyStore_ListCerts_EdgeCases(t *testing.T) {
 			return nil, fmt.Errorf("database connection lost")
 		}
 
-		_, err := ks.ListCerts()
+		_, err := ks.ListCerts(context.Background())
 
 		if err == nil {
 			t.Fatal("expected error, got nil")
@@ -597,7 +598,7 @@ func TestCompositeKeyStore_ListCerts_EdgeCases(t *testing.T) {
 		ks, _, _ := setupKeyStore()
 		defer func() { _ = ks.Close() }()
 
-		certs, err := ks.ListCerts()
+		certs, err := ks.ListCerts(context.Background())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -622,7 +623,7 @@ func TestCompositeKeyStore_CertExists_EdgeCases(t *testing.T) {
 			return false, fmt.Errorf("storage unavailable")
 		}
 
-		_, err := ks.CertExists("test-exists-error")
+		_, err := ks.CertExists(context.Background(), "test-exists-error")
 
 		if err == nil {
 			t.Fatal("expected error, got nil")
@@ -644,12 +645,12 @@ func TestCompositeCertOperations_Integration(t *testing.T) {
 		cert := generateTestCert(keyID)
 
 		// Save
-		if err := ks.SaveCert(keyID, cert); err != nil {
+		if err := ks.SaveCert(context.Background(), keyID, cert); err != nil {
 			t.Fatalf("SaveCert failed: %v", err)
 		}
 
 		// Verify exists
-		exists, err := ks.CertExists(keyID)
+		exists, err := ks.CertExists(context.Background(), keyID)
 		if err != nil {
 			t.Fatalf("CertExists failed: %v", err)
 		}
@@ -658,7 +659,7 @@ func TestCompositeCertOperations_Integration(t *testing.T) {
 		}
 
 		// Get
-		retrieved, err := ks.GetCert(keyID)
+		retrieved, err := ks.GetCert(context.Background(), keyID)
 		if err != nil {
 			t.Fatalf("GetCert failed: %v", err)
 		}
@@ -667,12 +668,12 @@ func TestCompositeCertOperations_Integration(t *testing.T) {
 		}
 
 		// Delete
-		if err := ks.DeleteCert(keyID); err != nil {
+		if err := ks.DeleteCert(context.Background(), keyID); err != nil {
 			t.Fatalf("DeleteCert failed: %v", err)
 		}
 
 		// Verify doesn't exist
-		exists, err = ks.CertExists(keyID)
+		exists, err = ks.CertExists(context.Background(), keyID)
 		if err != nil {
 			t.Fatalf("CertExists failed: %v", err)
 		}
@@ -691,12 +692,12 @@ func TestCompositeCertOperations_Integration(t *testing.T) {
 		}
 
 		// Save chain
-		if err := ks.SaveCertChain(keyID, chain); err != nil {
+		if err := ks.SaveCertChain(context.Background(), keyID, chain); err != nil {
 			t.Fatalf("SaveCertChain failed: %v", err)
 		}
 
 		// Get chain
-		retrieved, err := ks.GetCertChain(keyID)
+		retrieved, err := ks.GetCertChain(context.Background(), keyID)
 		if err != nil {
 			t.Fatalf("GetCertChain failed: %v", err)
 		}
@@ -712,13 +713,13 @@ func TestCompositeCertOperations_Integration(t *testing.T) {
 		// Save multiple certs
 		for _, id := range certIDs {
 			cert := generateTestCert(id)
-			if err := ks.SaveCert(id, cert); err != nil {
+			if err := ks.SaveCert(context.Background(), id, cert); err != nil {
 				t.Fatalf("failed to save cert %s: %v", id, err)
 			}
 		}
 
 		// List certificates
-		list, err := ks.ListCerts()
+		list, err := ks.ListCerts(context.Background())
 		if err != nil {
 			t.Fatalf("ListCerts failed: %v", err)
 		}
@@ -730,7 +731,7 @@ func TestCompositeCertOperations_Integration(t *testing.T) {
 
 		// Cleanup
 		for _, id := range certIDs {
-			_ = ks.DeleteCert(id)
+			_ = ks.DeleteCert(context.Background(), id)
 		}
 	})
 }

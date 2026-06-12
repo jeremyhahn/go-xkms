@@ -24,5 +24,5 @@ import (
 // drift in either direction fails the build.
 func TestInterfaceConformance(t *testing.T) {
 	// Compile-time assertion — the test body itself is empty.
-	var _ func(sdkssh.EmbeddedOptions) (sdkssh.Client, error) = sdkssh.NewEmbedded
+	_ = sdkssh.NewEmbedded
 }

@@ -138,3 +138,10 @@ var (
 	// ErrPIVPKCS11NotAvailable is returned when the PKCS#11 backend is unavailable.
 	ErrPIVPKCS11NotAvailable = pivcert.ErrPKCS11NotAvailable
 )
+
+// PIVVerifyChain verifies a PIV certificate chain against the given root and
+// intermediate pools, returning the verified chains.
+var PIVVerifyChain = pivcert.VerifyChain
+
+// PIVThumbprintSHA256 computes the SHA-256 thumbprint of a PIV certificate.
+var PIVThumbprintSHA256 = pivcert.ThumbprintSHA256

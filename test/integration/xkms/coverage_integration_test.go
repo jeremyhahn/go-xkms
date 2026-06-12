@@ -17,6 +17,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 	"crypto/elliptic"
 	"crypto/x509"
@@ -69,7 +70,7 @@ func TestKeyStore_Close(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := ks.GenerateRSA(attrs)
+	_, err := ks.GenerateRSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
@@ -81,7 +82,7 @@ func TestKeyStore_Close(t *testing.T) {
 	}
 
 	// Operations after close should fail
-	_, err = ks.GetKey(attrs)
+	_, err = ks.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when using closed keystore")
 	}
@@ -130,7 +131,7 @@ func TestKeyStore_RotateKey_AllAlgorithms(t *testing.T) {
 					},
 					Hash: crypto.SHA256,
 				}
-				_, err := ks.GenerateRSA(attrs)
+				_, err := ks.GenerateRSA(context.Background(), attrs)
 				return attrs, err
 			},
 		},
@@ -147,7 +148,7 @@ func TestKeyStore_RotateKey_AllAlgorithms(t *testing.T) {
 					},
 					Hash: crypto.SHA256,
 				}
-				_, err := ks.GenerateECDSA(attrs)
+				_, err := ks.GenerateECDSA(context.Background(), attrs)
 				return attrs, err
 			},
 		},
@@ -160,7 +161,7 @@ func TestKeyStore_RotateKey_AllAlgorithms(t *testing.T) {
 					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.Ed25519,
 				}
-				_, err := ks.GenerateEd25519(attrs)
+				_, err := ks.GenerateEd25519(context.Background(), attrs)
 				return attrs, err
 			},
 		},
@@ -178,7 +179,7 @@ func TestKeyStore_RotateKey_AllAlgorithms(t *testing.T) {
 			}
 
 			// Rotate the key
-			newKey, err := ks.RotateKey(attrs)
+			newKey, err := ks.RotateKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to rotate key: %v", err)
 			}
@@ -188,7 +189,7 @@ func TestKeyStore_RotateKey_AllAlgorithms(t *testing.T) {
 			}
 
 			// Verify new key exists
-			retrievedKey, err := ks.GetKey(attrs)
+			retrievedKey, err := ks.GetKey(context.Background(), attrs)
 			if err != nil {
 				t.Fatalf("Failed to retrieve rotated key: %v", err)
 			}
@@ -214,7 +215,7 @@ func TestKeyStore_RotateKey_InvalidAlgorithm(t *testing.T) {
 	}
 
 	// Try to rotate - should fail
-	_, err := ks.RotateKey(attrs)
+	_, err := ks.RotateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when rotating key with invalid algorithm")
 	}
@@ -237,14 +238,14 @@ func TestKeyStore_GetDecrypterByID_InvalidKeyType(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := ks.GenerateECDSA(attrs)
+	_, err := ks.GenerateECDSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Try to get decrypter for ECDSA key (should fail)
 	keyID := "software:signing:ecdsa-p256:test-decrypter-ecdsa"
-	_, err = ks.GetDecrypterByID(keyID)
+	_, err = ks.GetDecrypterByID(context.Background(), keyID)
 	if err == nil {
 		t.Error("Expected error when getting decrypter for ECDSA key")
 	}
@@ -268,20 +269,20 @@ func TestKeyStore_GetTLSCertificate_MissingChain(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	key, err := ks.GenerateRSA(attrs)
+	key, err := ks.GenerateRSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Create and save just the certificate (no chain)
 	cert := createSelfSignedCert(t, key, keyID)
-	err = ks.SaveCert(keyID, cert)
+	err = ks.SaveCert(context.Background(), keyID, cert)
 	if err != nil {
 		t.Fatalf("Failed to save certificate: %v", err)
 	}
 
 	// Get TLS certificate (should work even without chain)
-	tlsCert, err := ks.GetTLSCertificate(keyID, attrs)
+	tlsCert, err := ks.GetTLSCertificate(context.Background(), keyID, attrs)
 	if err != nil {
 		t.Fatalf("Failed to get TLS certificate: %v", err)
 	}
@@ -313,21 +314,21 @@ func TestKeyStore_GetTLSCertificate_ErrorCases(t *testing.T) {
 	}
 
 	t.Run("EmptyKeyID", func(t *testing.T) {
-		_, err := ks.GetTLSCertificate("", attrs)
+		_, err := ks.GetTLSCertificate(context.Background(), "", attrs)
 		if err == nil {
 			t.Error("Expected error with empty key ID")
 		}
 	})
 
 	t.Run("NilAttributes", func(t *testing.T) {
-		_, err := ks.GetTLSCertificate("test-tls-errors", nil)
+		_, err := ks.GetTLSCertificate(context.Background(), "test-tls-errors", nil)
 		if err == nil {
 			t.Error("Expected error with nil attributes")
 		}
 	})
 
 	t.Run("MissingKey", func(t *testing.T) {
-		_, err := ks.GetTLSCertificate("nonexistent", attrs)
+		_, err := ks.GetTLSCertificate(context.Background(), "nonexistent", attrs)
 		if err == nil {
 			t.Error("Expected error with nonexistent key")
 		}
@@ -339,7 +340,7 @@ func TestKeyStore_DeleteCert_NonExistent(t *testing.T) {
 	ks := createTestKeyStore(t)
 	defer ks.Close()
 
-	err := ks.DeleteCert("nonexistent-cert")
+	err := ks.DeleteCert(context.Background(), "nonexistent-cert")
 	if err == nil {
 		t.Error("Expected error when deleting nonexistent certificate")
 	}
@@ -380,14 +381,14 @@ func TestKeyStore_GetDecrypterByID_P521(t *testing.T) {
 		Hash: crypto.SHA256,
 	}
 
-	_, err := ks.GenerateECDSA(attrs)
+	_, err := ks.GenerateECDSA(context.Background(), attrs)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
 	// Try to get decrypter (should fail as ECDSA keys don't support decryption)
 	keyID := "software:signing:ecdsa-p521:test-p521"
-	_, err = ks.GetDecrypterByID(keyID)
+	_, err = ks.GetDecrypterByID(context.Background(), keyID)
 	if err == nil {
 		t.Error("Expected error when getting decrypter for ECDSA key")
 	}
@@ -398,7 +399,7 @@ func TestKeyStore_SaveCertChain_EmptyChain(t *testing.T) {
 	ks := createTestKeyStore(t)
 	defer ks.Close()
 
-	err := ks.SaveCertChain("test-empty-chain", []*x509.Certificate{})
+	err := ks.SaveCertChain(context.Background(), "test-empty-chain", []*x509.Certificate{})
 	if err == nil {
 		t.Error("Expected error when saving empty certificate chain")
 	}
@@ -409,7 +410,7 @@ func TestKeyStore_SaveCert_NilCertificate(t *testing.T) {
 	ks := createTestKeyStore(t)
 	defer ks.Close()
 
-	err := ks.SaveCert("test-nil-cert", nil)
+	err := ks.SaveCert(context.Background(), "test-nil-cert", nil)
 	if err == nil {
 		t.Error("Expected error when saving nil certificate")
 	}

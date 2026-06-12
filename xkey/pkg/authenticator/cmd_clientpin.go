@@ -1464,8 +1464,8 @@ func ecdsaPublicKeyToCOSE(pub *ecdsa.PublicKey, algorithm int) ([]byte, error) {
 		coordSize = 66
 	}
 
-	xBytes := padCoordinate(pub.X.Bytes(), coordSize)
-	yBytes := padCoordinate(pub.Y.Bytes(), coordSize)
+	xBytes := padCoordinate(pub.X.Bytes(), coordSize) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
+	yBytes := padCoordinate(pub.Y.Bytes(), coordSize) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
 
 	coseKey := map[int]interface{}{
 		coseKeyLabelKty: COSEKeyTypeEC2,

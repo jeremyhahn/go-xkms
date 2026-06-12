@@ -31,11 +31,16 @@ export interface SetupBarrierRequest {
   shamir?: { threshold: number; total: number };
 }
 
-/** SetupBarrierResponse returns Shamir shares when the shamir strategy is used. */
+/**
+ * SetupBarrierResponse returns Shamir metadata when the shamir strategy is used.
+ *
+ * Share-free contract: shares are sealed to enrolled Security Officers via the
+ * ceremony distributor and are never returned over the wire.
+ */
 export interface SetupBarrierResponse {
-  shares?: string[];
   threshold?: number;
   total?: number;
+  share_count?: number;
 }
 
 /** SetupCARequest configures the root and intermediate CA hierarchy. */

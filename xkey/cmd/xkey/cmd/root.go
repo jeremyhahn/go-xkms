@@ -30,11 +30,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
-const (
-	// envPrefix is the environment variable prefix for xKey configuration.
-	envPrefix = "XKEY"
-)
-
 // LUKS-related errors.
 var (
 	// ErrLUKSPassphraseRead indicates failure to read the passphrase.

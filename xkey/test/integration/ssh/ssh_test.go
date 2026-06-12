@@ -13,784 +13,788 @@
 
 //go:build integration
 
-// Package ssh provides integration tests for the xkey ssh CLI commands.
-// These tests execute the real xkey binary and verify actual CLI behavior
-// in standalone mode (local key storage) and server modes (Unix socket, gRPC).
 package ssh
 
 import (
-	"context"
-	"fmt"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// TestSSH_ProtocolAvailability logs which protocols are available.
-// This runs first to help diagnose test skips.
-func TestSSH_ProtocolAvailability(t *testing.T) {
-	LogAvailableProtocols(t)
-}
-
-// TestSSHKeys_Generate tests SSH key generation across all modes and backends.
-func TestSSHKeys_Generate(t *testing.T) {
-	configs := GetAllTestConfigs(t)
-
-	keyTypes := []struct {
-		name     string
-		keyType  string
-		extraArg []string
-	}{
-		{name: "Ed25519", keyType: "ed25519", extraArg: nil},
-		{name: "RSA2048", keyType: "rsa", extraArg: []string{"--bits", "2048"}},
-		{name: "ECDSA_P256", keyType: "ecdsa", extraArg: []string{"--curve", "P-256"}},
-	}
-
-	for _, cfg := range configs {
-		cfg := cfg
-		t.Run(cfg.Name, func(t *testing.T) {
-			helper := NewSSHTestHelperWithConfig(t, cfg)
-
-			for _, kt := range keyTypes {
-				kt := kt
-				t.Run(kt.name, func(t *testing.T) {
-					keyID := fmt.Sprintf("test-%s-%s-%d", kt.keyType, strings.ReplaceAll(cfg.Name, "/", "-"), time.Now().UnixNano())
-
-					args := []string{"generate", "--id", keyID, "--type", kt.keyType}
-					args = append(args, helper.ModeArgs()...)
-					args = append(args, kt.extraArg...)
-
-					result := helper.RunSSHKeys(args...)
-
-					require.True(t, result.Success(),
-						"Generate %s key should succeed: %s", kt.keyType, result.Combined())
-					assert.True(t, result.OutputContains("Generated") || result.OutputContains(keyID),
-						"Output should confirm key generation: %s", result.Combined())
-
-					// Clean up
-					cleanupArgs := append([]string{"delete", keyID, "--force"}, helper.ModeArgs()...)
-					helper.RunSSHKeys(cleanupArgs...)
-				})
-			}
-		})
-	}
-}
-
-// TestSSHKeys_GenerateErrors tests error handling for key generation.
-func TestSSHKeys_GenerateErrors(t *testing.T) {
-	helper := NewSSHTestHelper(t)
-
-	t.Run("InvalidKeyType", func(t *testing.T) {
-		args := append([]string{"generate", "--id", "invalid-key", "--type", "invalid-type"}, helper.ModeArgs()...)
-		result := helper.RunSSHKeys(args...)
-		assert.False(t, result.Success(), "Generate with invalid type should fail")
-		assert.True(t, result.OutputContains("invalid") || result.OutputContains("Invalid") ||
-			result.OutputContains("error") || result.OutputContains("Error") ||
-			result.OutputContains("unsupported"),
-			"Output should indicate invalid type: %s", result.Combined())
-	})
-
-	t.Run("MissingID", func(t *testing.T) {
-		args := append([]string{"generate", "--type", "ed25519"}, helper.ModeArgs()...)
-		result := helper.RunSSHKeys(args...)
-		assert.False(t, result.Success(), "Generate without ID should fail")
-		assert.True(t, result.OutputContains("required") || result.OutputContains("Required") ||
-			result.OutputContains("ID") || result.OutputContains("id"),
-			"Output should mention missing ID: %s", result.Combined())
-	})
-}
-
-// TestSSHKeys_ListExportDelete tests the full key lifecycle across all modes and backends.
-func TestSSHKeys_ListExportDelete(t *testing.T) {
-	configs := GetAllTestConfigs(t)
-
-	for _, cfg := range configs {
-		cfg := cfg
-		t.Run(cfg.Name, func(t *testing.T) {
-			helper := NewSSHTestHelperWithConfig(t, cfg)
-
-			keyID := fmt.Sprintf("lifecycle-test-%s-%d", strings.ReplaceAll(cfg.Name, "/", "-"), time.Now().UnixNano())
-
-			// Generate a key
-			genArgs := append([]string{"generate", "--id", keyID, "--type", "ed25519"}, helper.ModeArgs()...)
-			genResult := helper.RunSSHKeys(genArgs...)
-			require.True(t, genResult.Success(),
-				"Generate should succeed: %s", genResult.Combined())
-
-			// List keys
-			t.Run("List", func(t *testing.T) {
-				listArgs := append([]string{"list"}, helper.ModeArgs()...)
-				result := helper.RunSSHKeys(listArgs...)
-				require.True(t, result.Success(),
-					"List should succeed: %s", result.Combined())
-				assert.True(t, result.OutputContains(keyID) || result.OutputContains("ed25519"),
-					"List should show the key: %s", result.Combined())
-			})
-
-			// Export public key
-			t.Run("Export", func(t *testing.T) {
-				exportArgs := append([]string{"export", keyID}, helper.ModeArgs()...)
-				result := helper.RunSSHKeys(exportArgs...)
-				require.True(t, result.Success(),
-					"Export should succeed: %s", result.Combined())
-				assert.True(t, result.OutputContains("ssh-ed25519"),
-					"Export should output Ed25519 public key: %s", result.Stdout)
-
-				// Verify fingerprint
-				_, hasFingerprint := ExtractPublicKey(result.Stdout)
-				assert.True(t, hasFingerprint, "Should contain valid SSH public key")
-			})
-
-			// Delete key
-			t.Run("Delete", func(t *testing.T) {
-				deleteArgs := append([]string{"delete", keyID, "--force"}, helper.ModeArgs()...)
-				result := helper.RunSSHKeys(deleteArgs...)
-				require.True(t, result.Success(),
-					"Delete should succeed: %s", result.Combined())
-			})
-
-			// Verify deleted
-			t.Run("VerifyDeleted", func(t *testing.T) {
-				exportArgs := append([]string{"export", keyID}, helper.ModeArgs()...)
-				result := helper.RunSSHKeys(exportArgs...)
-				assert.False(t, result.Success(),
-					"Export of deleted key should fail")
-			})
-		})
-	}
-}
-
-// TestSSHKeys_Import tests key import across all modes and backends.
-func TestSSHKeys_Import(t *testing.T) {
-	configs := GetAllTestConfigs(t)
-
-	keyTypes := []string{"ed25519", "rsa", "ecdsa"}
-
-	for _, cfg := range configs {
-		cfg := cfg
-		t.Run(cfg.Name, func(t *testing.T) {
-			helper := NewSSHTestHelperWithConfig(t, cfg)
-
-			for _, keyType := range keyTypes {
-				keyType := keyType
-				t.Run(keyType, func(t *testing.T) {
-					// Create a test key using ssh-keygen
-					keyPath, err := helper.CreateTestSSHKey(keyType)
-					if err != nil {
-						t.Skipf("Cannot create test key (ssh-keygen may not be available): %v", err)
-					}
-
-					keyID := fmt.Sprintf("imported-%s-%s-%d", keyType, strings.ReplaceAll(cfg.Name, "/", "-"), time.Now().UnixNano())
-
-					// Import the key
-					importArgs := append([]string{"import", keyPath, "--id", keyID}, helper.ModeArgs()...)
-					result := helper.RunSSHKeys(importArgs...)
-
-					require.True(t, result.Success(),
-						"Import %s key should succeed: %s", keyType, result.Combined())
-					assert.True(t, result.OutputContains("Imported") || result.OutputContains("imported") ||
-						result.OutputContains(keyID),
-						"Output should confirm import: %s", result.Combined())
-
-					// Clean up
-					cleanupArgs := append([]string{"delete", keyID, "--force"}, helper.ModeArgs()...)
-					helper.RunSSHKeys(cleanupArgs...)
-				})
-			}
-		})
-	}
-}
-
-// TestSSHKeys_ImportErrors tests error handling for key import.
-func TestSSHKeys_ImportErrors(t *testing.T) {
-	helper := NewSSHTestHelper(t)
-
-	t.Run("MissingFile", func(t *testing.T) {
-		args := append([]string{"import", "/nonexistent/path/to/key", "--id", "test-key"}, helper.ModeArgs()...)
-		result := helper.RunSSHKeys(args...)
-		assert.False(t, result.Success(), "Import of non-existent file should fail")
-	})
-
-	t.Run("MissingPath", func(t *testing.T) {
-		args := append([]string{"import", "--id", "test-key"}, helper.ModeArgs()...)
-		result := helper.RunSSHKeys(args...)
-		assert.False(t, result.Success(), "Import without file path should fail")
-	})
-}
-
-// TestSSHKeys_ExportErrors tests error handling for key export.
-func TestSSHKeys_ExportErrors(t *testing.T) {
-	configs := GetAllTestConfigs(t)
-
-	for _, cfg := range configs {
-		cfg := cfg
-		t.Run(cfg.Name, func(t *testing.T) {
-			helper := NewSSHTestHelperWithConfig(t, cfg)
-
-			t.Run("MissingKey", func(t *testing.T) {
-				exportArgs := append([]string{"export", "non-existent-key-12345"}, helper.ModeArgs()...)
-				result := helper.RunSSHKeys(exportArgs...)
-				assert.False(t, result.Success(),
-					"Export of non-existent key should fail")
-			})
-
-			t.Run("MissingID", func(t *testing.T) {
-				exportArgs := append([]string{"export"}, helper.ModeArgs()...)
-				result := helper.RunSSHKeys(exportArgs...)
-				assert.False(t, result.Success(),
-					"Export without key ID should fail")
-			})
-		})
-	}
-}
-
-// TestSSHKeys_DeleteErrors tests error handling for key deletion.
-func TestSSHKeys_DeleteErrors(t *testing.T) {
-	configs := GetAllTestConfigs(t)
-
-	for _, cfg := range configs {
-		cfg := cfg
-		t.Run(cfg.Name, func(t *testing.T) {
-			helper := NewSSHTestHelperWithConfig(t, cfg)
-
-			t.Run("MissingKey", func(t *testing.T) {
-				deleteArgs := append([]string{"delete", "non-existent-key-12345", "--force"}, helper.ModeArgs()...)
-				result := helper.RunSSHKeys(deleteArgs...)
-				// May succeed with warning or fail - just check it doesn't crash
-				_ = result
-			})
-
-			t.Run("MissingID", func(t *testing.T) {
-				deleteArgs := append([]string{"delete", "--force"}, helper.ModeArgs()...)
-				result := helper.RunSSHKeys(deleteArgs...)
-				assert.False(t, result.Success(),
-					"Delete without key ID should fail")
-			})
-		})
-	}
-}
-
-// TestSSHKeys_Aliases tests command aliases work correctly.
-func TestSSHKeys_Aliases(t *testing.T) {
-	configs := GetAllTestConfigs(t)
-
-	for _, cfg := range configs {
-		cfg := cfg
-		t.Run(cfg.Name, func(t *testing.T) {
-			helper := NewSSHTestHelperWithConfig(t, cfg)
-
-			// Test 'ls' alias for list
-			t.Run("LsAlias", func(t *testing.T) {
-				lsArgs := append([]string{"ls"}, helper.ModeArgs()...)
-				result := helper.RunSSHKeys(lsArgs...)
-				require.True(t, result.Success(),
-					"ls alias should work: %s", result.Combined())
-			})
-
-			// Test 'rm' alias for delete (should be recognized even if it fails due to missing args)
-			t.Run("RmAlias", func(t *testing.T) {
-				rmArgs := append([]string{"rm", "--force"}, helper.ModeArgs()...)
-				result := helper.RunSSHKeys(rmArgs...)
-				assert.False(t, result.OutputContains("unknown command"),
-					"rm alias should be recognized: %s", result.Combined())
-			})
-
-			// Test 'remove' alias for delete
-			t.Run("RemoveAlias", func(t *testing.T) {
-				removeArgs := append([]string{"remove", "--force"}, helper.ModeArgs()...)
-				result := helper.RunSSHKeys(removeArgs...)
-				assert.False(t, result.OutputContains("unknown command"),
-					"remove alias should be recognized: %s", result.Combined())
-			})
-		})
-	}
-}
-
-// TestSSHAgent_StartStop tests agent lifecycle in standalone mode.
-func TestSSHAgent_StartStop(t *testing.T) {
-	helper := NewSSHTestHelper(t)
-
-	// Clean up any existing socket
-	helper.CleanupSocket()
-
-	// Start agent in background
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx,
-		helper.BinaryPath(),
-		"ssh", "agent", "start",
-		"--foreground",
-		"--socket", helper.SocketPath(),
-		"--store", helper.StorePath(),
-	)
-	cmd.Env = helper.CommandEnv()
-
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("Failed to start agent: %v", err)
-	}
-
-	// Wait for socket to become available
-	if !helper.WaitForSocket(10 * time.Second) {
-		cancel()
-		cmd.Wait()
-		t.Fatal("Agent socket did not become available")
-	}
-
-	// Verify socket exists and responds
-	assert.True(t, helper.SocketExists(), "Socket file should exist")
-	assert.True(t, helper.SocketResponds(), "Socket should respond to connections")
-
-	// Stop the agent
-	cancel()
-	cmd.Wait()
-}
-
-// TestSSHAgent_Status tests agent status command.
-func TestSSHAgent_Status(t *testing.T) {
-	helper := NewSSHTestHelper(t)
-
-	// Test status when agent is not running
-	t.Run("NotRunning", func(t *testing.T) {
-		helper.CleanupSocket()
-
-		result := helper.RunSSHAgent("status")
-		// Status command may fail or succeed when not running, check output
-		assert.True(t, result.OutputContains("not running") || result.OutputContains("not found") ||
-			result.OutputContains("no agent") || result.ExitCode != 0,
-			"Should indicate agent is not running or return error: %s", result.Combined())
-	})
-
-	// Test status when agent is running
-	t.Run("Running", func(t *testing.T) {
-		helper.CleanupSocket()
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		cmd := exec.CommandContext(ctx,
-			helper.BinaryPath(),
-			"ssh", "agent", "start",
-			"--foreground",
-			"--socket", helper.SocketPath(),
-			"--store", helper.StorePath(),
-		)
-		cmd.Env = helper.CommandEnv()
-
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("Failed to start agent: %v", err)
-		}
-		defer func() {
-			cancel()
-			cmd.Wait()
-		}()
-
-		if !helper.WaitForSocket(10 * time.Second) {
-			t.Fatal("Agent socket did not become available")
-		}
-
-		result := helper.RunSSHAgent("status")
-		require.True(t, result.Success(),
-			"Status should succeed when running: %s", result.Combined())
-		assert.True(t, result.OutputContains("running"),
-			"Should indicate agent is running: %s", result.Combined())
-	})
-}
-
-// TestSSHAgent_PrintEnv tests print-env flag for various shells.
-func TestSSHAgent_PrintEnv(t *testing.T) {
-	helper := NewSSHTestHelper(t)
-
-	testCases := []struct {
-		name     string
-		shell    string
-		expected string
-	}{
-		{name: "Bash", shell: "bash", expected: "export SSH_AUTH_SOCK="},
-		{name: "Fish", shell: "fish", expected: "set -gx SSH_AUTH_SOCK"},
-		{name: "Csh", shell: "csh", expected: "setenv SSH_AUTH_SOCK"},
-	}
-
-	for _, tc := range testCases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			result := helper.RunSSHAgent("start",
-				"--print-env",
-				"--shell", tc.shell,
-				"--socket", helper.SocketPath(),
-				"--store", helper.StorePath(),
-			)
-
-			// Check if output contains expected format
-			if result.OutputContains("SSH_AUTH_SOCK") {
-				assert.True(t, result.OutputContains(tc.expected),
-					"Output for %s should contain '%s': %s", tc.shell, tc.expected, result.Combined())
-			}
-		})
-	}
-}
-
-// TestSSHAgent_SignWithAgent tests signing via ssh-add.
-func TestSSHAgent_SignWithAgent(t *testing.T) {
-	helper := NewSSHTestHelper(t)
-
-	// Clean up any existing socket
-	helper.CleanupSocket()
-
-	// Generate a test key
-	keyID := fmt.Sprintf("test-agent-sign-key-%d", time.Now().UnixNano())
-	genArgs := append([]string{"generate", "--id", keyID, "--type", "ed25519"}, helper.ModeArgs()...)
-	genResult := helper.RunSSHKeys(genArgs...)
-	if !genResult.Success() {
-		t.Fatalf("Cannot generate test key: %s", genResult.Combined())
-	}
-	defer func() {
-		cleanupArgs := append([]string{"delete", keyID, "--force"}, helper.ModeArgs()...)
-		helper.RunSSHKeys(cleanupArgs...)
-	}()
-
-	// Start the agent
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx,
-		helper.BinaryPath(),
-		"ssh", "agent", "start",
-		"--foreground",
-		"--socket", helper.SocketPath(),
-		"--store", helper.StorePath(),
-	)
-	cmd.Env = helper.CommandEnv()
-
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("Failed to start agent: %v", err)
-	}
-	defer func() {
-		cancel()
-		cmd.Wait()
-	}()
-
-	// Wait for socket
-	if !helper.WaitForSocket(10 * time.Second) {
-		t.Fatal("Agent socket did not become available")
-	}
-
-	// Use ssh-add -l to list keys
-	t.Run("ListWithSSHAdd", func(t *testing.T) {
-		result := helper.RunSSHAdd("-l")
-		if result.Success() {
-			t.Logf("ssh-add -l output: %s", result.Combined())
-		} else if result.OutputContains("no identities") || result.OutputContains("agent has no identities") {
-			t.Log("Agent has no identities (expected if key wasn't auto-loaded)")
-		} else {
-			t.Logf("ssh-add -l result: %s", result.Combined())
-		}
-	})
-
-	// Use ssh-add -L to list full public keys
-	t.Run("ListPublicKeysWithSSHAdd", func(t *testing.T) {
-		result := helper.RunSSHAdd("-L")
-		if result.Success() && result.OutputContains("ssh-") {
-			t.Logf("Found SSH public keys")
-		}
-	})
-}
-
-// TestSSHCLI_HelpOutput tests help commands work correctly.
-func TestSSHCLI_HelpOutput(t *testing.T) {
-	helper := NewSSHTestHelper(t)
-
-	testCases := []struct {
-		name     string
-		args     []string
-		contains []string
-	}{
-		{
-			name:     "SSHHelp",
-			args:     []string{"--help"},
-			contains: []string{"SSH", "ssh", "agent", "keys", "standalone", "server"},
-		},
-		{
-			name:     "AgentHelp",
-			args:     []string{"agent", "--help"},
-			contains: []string{"agent", "Agent"},
-		},
-		{
-			name:     "AgentStartHelp",
-			args:     []string{"agent", "start", "--help"},
-			contains: []string{"start", "Start", "foreground", "socket", "store"},
-		},
-		{
-			name:     "KeysHelp",
-			args:     []string{"keys", "--help"},
-			contains: []string{"keys", "Keys"},
-		},
-		{
-			name:     "KeysGenerateHelp",
-			args:     []string{"keys", "generate", "--help"},
-			contains: []string{"generate", "Generate", "ed25519", "rsa", "type", "store"},
-		},
-	}
-
-	for _, tc := range testCases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			result := helper.RunSSH(tc.args...)
-			require.True(t, result.Success(),
-				"%s should succeed: %s", tc.name, result.Combined())
-
-			foundAny := false
-			for _, s := range tc.contains {
-				if result.OutputContains(s) {
-					foundAny = true
-					break
-				}
-			}
-			assert.True(t, foundAny,
-				"Help output should contain one of %v: %s", tc.contains, result.Combined())
-		})
-	}
-}
-
-// TestSSHKeys_FullWorkflow tests complete key management workflow across all modes.
-func TestSSHKeys_FullWorkflow(t *testing.T) {
-	configs := GetAllTestConfigs(t)
-
-	for _, cfg := range configs {
-		cfg := cfg
-		t.Run(cfg.Name, func(t *testing.T) {
-			helper := NewSSHTestHelperWithConfig(t, cfg)
-
-			keyID := fmt.Sprintf("workflow-test-%s-%d", strings.ReplaceAll(cfg.Name, "/", "-"), time.Now().UnixNano())
-
-			// Step 1: Generate key
-			genArgs := append([]string{"generate", "--id", keyID, "--type", "ed25519"}, helper.ModeArgs()...)
-			genResult := helper.RunSSHKeys(genArgs...)
-			require.True(t, genResult.Success(),
-				"Generate should succeed: %s", genResult.Combined())
-
-			// Step 2: Verify in list
-			listArgs := append([]string{"list"}, helper.ModeArgs()...)
-			listResult := helper.RunSSHKeys(listArgs...)
-			require.True(t, listResult.Success(),
-				"List should succeed: %s", listResult.Combined())
-
-			// Step 3: Export public key
-			exportArgs := append([]string{"export", keyID}, helper.ModeArgs()...)
-			exportResult := helper.RunSSHKeys(exportArgs...)
-			require.True(t, exportResult.Success(),
-				"Export should succeed: %s", exportResult.Combined())
-			assert.True(t, exportResult.OutputContains("ssh-ed25519"),
-				"Should output Ed25519 public key: %s", exportResult.Stdout)
-
-			// Step 4: Export to file
-			pubKeyPath := filepath.Join(helper.TempDir(), "exported.pub")
-			if err := os.WriteFile(pubKeyPath, []byte(exportResult.Stdout), 0644); err != nil {
-				t.Fatalf("Failed to write public key file: %v", err)
-			}
-			contents, err := os.ReadFile(pubKeyPath)
-			require.NoError(t, err)
-			assert.True(t, strings.Contains(string(contents), "ssh-ed25519"),
-				"File should contain Ed25519 key")
-
-			// Step 5: Delete key
-			deleteArgs := append([]string{"delete", keyID, "--force"}, helper.ModeArgs()...)
-			deleteResult := helper.RunSSHKeys(deleteArgs...)
-			require.True(t, deleteResult.Success(),
-				"Delete should succeed: %s", deleteResult.Combined())
-
-			// Step 6: Verify deleted
-			verifyArgs := append([]string{"export", keyID}, helper.ModeArgs()...)
-			verifyResult := helper.RunSSHKeys(verifyArgs...)
-			assert.False(t, verifyResult.Success(),
-				"Export of deleted key should fail")
-		})
-	}
-}
-
-// TestSSHKeys_BackendSelection tests explicit backend selection in server modes.
-func TestSSHKeys_BackendSelection(t *testing.T) {
-	if !IsXKMSdAvailable() {
-		t.Skip("Skipping: xkmsd is not available")
-	}
-
-	// Test Unix socket if available
-	if IsUnixSocketAvailable() {
-		unixURL := "unix://" + GetUnixSocketPath()
-
-		t.Run("unix", func(t *testing.T) {
-			helper := NewSSHTestHelperWithConfig(t, SSHTestConfig{
-				Mode:    ModeUnix,
-				Backend: BackendSoftware,
-				Name:    "unix/software",
-				XKMSURL: unixURL,
-			})
-
-			// Only test backends that are verified to work
-			backends := []TestBackend{}
-			if IsXKMSdBackendWorking(t, unixURL, BackendSoftware) {
-				backends = append(backends, BackendSoftware)
-			}
-			if IsTPM2Available() && IsXKMSdBackendWorking(t, unixURL, BackendTPM2) {
-				backends = append(backends, BackendTPM2)
-			}
-
-			if len(backends) == 0 {
-				t.Skip("Skipping: no working xkmsd backends available for unix mode")
-			}
-
-			for _, backend := range backends {
-				backend := backend
-				t.Run(string(backend), func(t *testing.T) {
-					args := []string{"list", "--xkmsd-url", unixURL, "--backend", string(backend)}
-					result := helper.RunSSHKeys(args...)
-					require.True(t, result.Success(),
-						"List with backend %s should succeed: %s", backend, result.Combined())
-				})
-			}
-		})
-	}
-
-	// Test gRPC if available
-	if IsGRPCAvailable() {
-		grpcURL := "grpc://" + GetGRPCAddr()
-
-		t.Run("grpc", func(t *testing.T) {
-			helper := NewSSHTestHelperWithConfig(t, SSHTestConfig{
-				Mode:    ModeGRPC,
-				Backend: BackendSoftware,
-				Name:    "grpc/software",
-				XKMSURL: grpcURL,
-			})
-
-			// Only test backends that are verified to work
-			backends := []TestBackend{}
-			if IsXKMSdBackendWorking(t, grpcURL, BackendSoftware) {
-				backends = append(backends, BackendSoftware)
-			}
-			if IsTPM2Available() && IsXKMSdBackendWorking(t, grpcURL, BackendTPM2) {
-				backends = append(backends, BackendTPM2)
-			}
-
-			if len(backends) == 0 {
-				t.Skip("Skipping: no working xkmsd backends available for grpc mode")
-			}
-
-			for _, backend := range backends {
-				backend := backend
-				t.Run(string(backend), func(t *testing.T) {
-					args := []string{"list", "--xkmsd-url", grpcURL, "--backend", string(backend)}
-					result := helper.RunSSHKeys(args...)
-					require.True(t, result.Success(),
-						"List with backend %s should succeed: %s", backend, result.Combined())
-				})
-			}
-		})
-	}
-}
-
-// TestSSHAgent_ServerModes tests agent with xkmsd backends.
-//
-// KNOWN ISSUE: This test has intermittent timeout issues where the SSH agent
-// doesn't respond to ssh-add requests when using the xkmsd backend.
-// TODO: Investigate why the agent hangs when using xkmsd backend for SSH operations.
-func TestSSHAgent_ServerModes(t *testing.T) {
-	t.Skip("Skipping: known timeout issue with xkmsd backend - see TODO")
-
-	if !IsXKMSdAvailable() {
-		t.Skip("Skipping: xkmsd is not available")
-	}
-
-	testCases := []struct {
+// ----------------------------------------------------------------------------
+// xkey ssh keys generate
+// ----------------------------------------------------------------------------
+
+// TestSSHKeysGenerate verifies key generation for every supported
+// algorithm over the embedded transport.
+func TestSSHKeysGenerate(t *testing.T) {
+	cases := []struct {
 		name      string
-		mode      TestMode
-		available func() bool
-		xkmsdURL  string
+		algorithm string
+		extraArgs []string
 	}{
-		{
-			name:      "unix",
-			mode:      ModeUnix,
-			available: IsUnixSocketAvailable,
-			xkmsdURL:  "unix://" + GetUnixSocketPath(),
-		},
-		{
-			name:      "grpc",
-			mode:      ModeGRPC,
-			available: IsGRPCAvailable,
-			xkmsdURL:  "grpc://" + GetGRPCAddr(),
-		},
+		{"ed25519", "ed25519", nil},
+		{"rsa_default_bits", "rsa", nil},
+		{"rsa_2048", "rsa", []string{"--bits", "2048"}},
+		{"ecdsa_p256", "ecdsa-p256", nil},
+		{"ecdsa_p384", "ecdsa-p384", nil},
+		{"ecdsa_p521", "ecdsa-p521", nil},
 	}
 
-	for _, tc := range testCases {
-		tc := tc
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if !tc.available() {
-				t.Skipf("Skipping: %s mode not available", tc.name)
+			h := NewSSHTestHelper(t)
+			keyName := "gen-" + tc.name
+
+			args := []string{"generate",
+				"--scope", "user", "--owner", "alice",
+				"--name", keyName, "--type", tc.algorithm,
+				"--comment", "integration test key"}
+			args = append(args, tc.extraArgs...)
+
+			result := h.RunSSHKeys(args...)
+			if !result.Success() {
+				t.Fatalf("generate %s failed (exit %d): %s",
+					tc.algorithm, result.ExitCode, result.Combined())
+			}
+			if !result.OutputContains("Key: user/alice/" + keyName) {
+				t.Errorf("missing key identity line in output: %s", result.Combined())
+			}
+			if !result.OutputContains(tc.algorithm) {
+				t.Errorf("missing algorithm %q in output: %s", tc.algorithm, result.Combined())
+			}
+			if _, ok := ExtractFingerprint(result.Combined()); !ok {
+				t.Errorf("missing SHA256 fingerprint in output: %s", result.Combined())
 			}
 
-			// Verify the backend actually works for SSH operations
-			if !IsXKMSdBackendWorking(t, tc.xkmsdURL, BackendSoftware) {
-				t.Skipf("Skipping: xkmsd %s backend not working for SSH operations", tc.name)
+			// The generated key must be listable and exportable.
+			list := h.RunSSHKeys("list", "--scope", "user", "--owner", "alice")
+			if !list.Success() || !list.OutputContains(keyName) {
+				t.Errorf("generated key not in list output: %s", list.Combined())
 			}
 
-			helper := NewSSHTestHelperWithConfig(t, SSHTestConfig{
-				Mode:    tc.mode,
-				Backend: BackendSoftware,
-				Name:    tc.name + "/software",
-				XKMSURL: tc.xkmsdURL,
-			})
-
-			// Clean up any existing socket
-			helper.CleanupSocket()
-
-			// Generate a test key
-			keyID := fmt.Sprintf("test-agent-%s-key-%d", tc.name, time.Now().UnixNano())
-			genArgs := append([]string{"generate", "--id", keyID, "--type", "ed25519"}, helper.ModeArgs()...)
-			genResult := helper.RunSSHKeys(genArgs...)
-			if !genResult.Success() {
-				t.Fatalf("Cannot generate test key: %s", genResult.Combined())
+			export := h.RunSSHKeys("export",
+				"--scope", "user", "--owner", "alice", "--name", keyName)
+			if !export.Success() {
+				t.Fatalf("export failed: %s", export.Combined())
 			}
-			defer func() {
-				cleanupArgs := append([]string{"delete", keyID, "--force"}, helper.ModeArgs()...)
-				helper.RunSSHKeys(cleanupArgs...)
-			}()
-
-			// Start the agent
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			cmd := exec.CommandContext(ctx,
-				helper.BinaryPath(),
-				"ssh", "agent", "start",
-				"--foreground",
-				"--socket", helper.SocketPath(),
-				"--xkmsd-url", tc.xkmsdURL,
-				"--backend", "software",
-			)
-			cmd.Env = helper.CommandEnv()
-
-			if err := cmd.Start(); err != nil {
-				t.Fatalf("Failed to start agent: %v", err)
+			if _, ok := ExtractPublicKey(export.Stdout); !ok {
+				t.Errorf("export did not emit an authorized_keys line: %s", export.Stdout)
 			}
-			defer func() {
-				cancel()
-				cmd.Wait()
-			}()
-
-			// Wait for socket
-			if !helper.WaitForSocket(10 * time.Second) {
-				t.Fatal("Agent socket did not become available")
-			}
-
-			// Use ssh-add -l to list keys
-			result := helper.RunSSHAdd("-l")
-			t.Logf("ssh-add -l output (%s mode): %s", tc.name, result.Combined())
 		})
 	}
+}
+
+// TestSSHKeysGenerateErrors verifies generation rejects invalid input
+// with the documented typed-error messages.
+func TestSSHKeysGenerateErrors(t *testing.T) {
+	h := NewSSHTestHelper(t)
+
+	t.Run("missing_name", func(t *testing.T) {
+		result := h.RunSSHKeys("generate", "--type", "ed25519")
+		if result.Success() {
+			t.Fatal("generate without --name should fail")
+		}
+		if !result.OutputContains("--name is required") {
+			t.Errorf("expected --name-required error, got: %s", result.Combined())
+		}
+	})
+
+	t.Run("invalid_type", func(t *testing.T) {
+		result := h.RunSSHKeys("generate", "--name", "bad-type", "--type", "dsa")
+		if result.Success() {
+			t.Fatal("generate with invalid --type should fail")
+		}
+		if !result.OutputContains("invalid key type") {
+			t.Errorf("expected invalid-key-type error, got: %s", result.Combined())
+		}
+	})
+
+	t.Run("invalid_scope", func(t *testing.T) {
+		result := h.RunSSHKeys("generate",
+			"--name", "bad-scope", "--scope", "galactic")
+		if result.Success() {
+			t.Fatal("generate with invalid --scope should fail")
+		}
+		if !result.OutputContains("invalid scope") {
+			t.Errorf("expected invalid-scope error, got: %s", result.Combined())
+		}
+	})
+
+	t.Run("unknown_flag", func(t *testing.T) {
+		result := h.RunSSHKeys("generate", "--name", "x", "--id", "legacy")
+		if result.Success() {
+			t.Fatal("generate with the removed --id flag should fail")
+		}
+		if !result.OutputContains("unknown flag") {
+			t.Errorf("expected unknown-flag error, got: %s", result.Combined())
+		}
+	})
+}
+
+// ----------------------------------------------------------------------------
+// Full key lifecycle
+// ----------------------------------------------------------------------------
+
+// TestSSHKeysLifecycle drives generate -> list -> get -> export ->
+// delete -> verify-gone end to end.
+func TestSSHKeysLifecycle(t *testing.T) {
+	h := NewSSHTestHelper(t)
+	sel := []string{"--scope", "user", "--owner", "alice", "--name", "lifecycle"}
+
+	gen := h.RunSSHKeys(append([]string{"generate", "--type", "ed25519"}, sel...)...)
+	if !gen.Success() {
+		t.Fatalf("generate failed: %s", gen.Combined())
+	}
+	genFP, ok := ExtractFingerprint(gen.Combined())
+	if !ok {
+		t.Fatalf("generate output missing fingerprint: %s", gen.Combined())
+	}
+
+	get := h.RunSSHKeys(append([]string{"get"}, sel...)...)
+	if !get.Success() {
+		t.Fatalf("get failed: %s", get.Combined())
+	}
+	getFP, ok := ExtractFingerprint(get.Combined())
+	if !ok || getFP != genFP {
+		t.Errorf("get fingerprint %q does not match generate fingerprint %q", getFP, genFP)
+	}
+
+	list := h.RunSSHKeys("list", "--scope", "user", "--owner", "alice")
+	if !list.Success() || !list.OutputContainsAll("lifecycle", "ed25519", genFP) {
+		t.Errorf("list missing key row: %s", list.Combined())
+	}
+
+	export := h.RunSSHKeys(append([]string{"export"}, sel...)...)
+	if !export.Success() {
+		t.Fatalf("export failed: %s", export.Combined())
+	}
+	if _, ok := ExtractPublicKey(export.Stdout); !ok {
+		t.Errorf("export output is not an authorized_keys line: %s", export.Stdout)
+	}
+
+	del := h.RunSSHKeys(append([]string{"delete"}, sel...)...)
+	if !del.Success() {
+		t.Fatalf("delete failed: %s", del.Combined())
+	}
+	if !del.OutputContains("Deleted user/alice/lifecycle") {
+		t.Errorf("delete confirmation missing: %s", del.Combined())
+	}
+
+	// The key must be gone from both get and list.
+	getGone := h.RunSSHKeys(append([]string{"get"}, sel...)...)
+	if getGone.Success() {
+		t.Errorf("get after delete should fail, got: %s", getGone.Combined())
+	}
+	listGone := h.RunSSHKeys("list", "--scope", "user", "--owner", "alice")
+	if !listGone.Success() {
+		t.Fatalf("list after delete failed: %s", listGone.Combined())
+	}
+	if listGone.OutputContains("lifecycle") {
+		t.Errorf("deleted key still listed: %s", listGone.Combined())
+	}
+}
+
+// TestSSHKeysDeleteErrors verifies delete input validation.
+func TestSSHKeysDeleteErrors(t *testing.T) {
+	h := NewSSHTestHelper(t)
+
+	t.Run("missing_name", func(t *testing.T) {
+		result := h.RunSSHKeys("delete", "--scope", "user", "--owner", "alice")
+		if result.Success() {
+			t.Fatal("delete without --name should fail")
+		}
+		if !result.OutputContains("--name is required") {
+			t.Errorf("expected --name-required error, got: %s", result.Combined())
+		}
+	})
+}
+
+// ----------------------------------------------------------------------------
+// xkey ssh keys import
+// ----------------------------------------------------------------------------
+
+// TestSSHKeysImport verifies importing unencrypted ssh-keygen keys of
+// every supported on-disk type.
+func TestSSHKeysImport(t *testing.T) {
+	for _, keyType := range []string{"ed25519", "rsa", "ecdsa"} {
+		t.Run(keyType, func(t *testing.T) {
+			h := NewSSHTestHelper(t)
+
+			keyPath, err := h.CreateTestSSHKey(keyType, "")
+			if err != nil {
+				t.Fatalf("ssh-keygen failed: %v", err)
+			}
+
+			keyName := "imported-" + keyType
+			result := h.RunSSHKeys("import", keyPath,
+				"--scope", "user", "--owner", "alice", "--name", keyName)
+			if !result.Success() {
+				t.Fatalf("import failed: %s", result.Combined())
+			}
+			if !result.OutputContains("Imported SSH key: user/alice/" + keyName) {
+				t.Errorf("missing import confirmation: %s", result.Combined())
+			}
+			if _, ok := ExtractFingerprint(result.Combined()); !ok {
+				t.Errorf("missing fingerprint in import output: %s", result.Combined())
+			}
+
+			// The imported key's exported public half must match the
+			// .pub file ssh-keygen wrote (modulo the comment).
+			export := h.RunSSHKeys("export",
+				"--scope", "user", "--owner", "alice", "--name", keyName)
+			if !export.Success() {
+				t.Fatalf("export of imported key failed: %s", export.Combined())
+			}
+			exported, ok := ExtractPublicKey(export.Stdout)
+			if !ok {
+				t.Fatalf("export output is not an authorized_keys line: %s", export.Stdout)
+			}
+			pubBytes, err := os.ReadFile(keyPath + ".pub")
+			if err != nil {
+				t.Fatalf("read .pub: %v", err)
+			}
+			original, ok := ExtractPublicKey(string(pubBytes))
+			if !ok {
+				t.Fatalf("ssh-keygen .pub unparsable: %s", string(pubBytes))
+			}
+			if exported != original {
+				t.Errorf("exported public key does not match imported key:\n got: %s\nwant: %s",
+					exported, original)
+			}
+		})
+	}
+}
+
+// TestSSHKeysImportEncrypted verifies importing a passphrase-protected
+// key with the passphrase piped on stdin (StdinProvider path).
+func TestSSHKeysImportEncrypted(t *testing.T) {
+	h := NewSSHTestHelper(t)
+
+	const passphrase = "integration-passphrase"
+	keyPath, err := h.CreateTestSSHKey("ed25519", passphrase)
+	if err != nil {
+		t.Fatalf("ssh-keygen failed: %v", err)
+	}
+
+	result := h.RunCommandWithStdin(passphrase+"\n",
+		"ssh", "keys", "import", keyPath,
+		"--scope", "user", "--owner", "alice", "--name", "imported-encrypted")
+	if !result.Success() {
+		t.Fatalf("encrypted import failed: %s", result.Combined())
+	}
+	if !result.OutputContains("Imported SSH key: user/alice/imported-encrypted") {
+		t.Errorf("missing import confirmation: %s", result.Combined())
+	}
+
+	// Wrong passphrase must fail.
+	wrong := h.RunCommandWithStdin("not-the-passphrase\n",
+		"ssh", "keys", "import", keyPath,
+		"--scope", "user", "--owner", "alice", "--name", "imported-encrypted-2")
+	if wrong.Success() {
+		t.Errorf("import with wrong passphrase should fail, got: %s", wrong.Combined())
+	}
+}
+
+// TestSSHKeysImportErrors verifies import input validation.
+func TestSSHKeysImportErrors(t *testing.T) {
+	h := NewSSHTestHelper(t)
+
+	t.Run("missing_file_argument", func(t *testing.T) {
+		result := h.RunSSHKeys("import")
+		if result.Success() {
+			t.Fatal("import without a file argument should fail")
+		}
+	})
+
+	t.Run("nonexistent_file", func(t *testing.T) {
+		result := h.RunSSHKeys("import", filepath.Join(h.TempDir(), "does-not-exist.pem"),
+			"--name", "ghost")
+		if result.Success() {
+			t.Fatal("import of a nonexistent file should fail")
+		}
+	})
+
+	t.Run("invalid_pem", func(t *testing.T) {
+		badPath := filepath.Join(h.TempDir(), "garbage.pem")
+		if err := os.WriteFile(badPath, []byte("this is not a private key"), 0600); err != nil {
+			t.Fatalf("write garbage file: %v", err)
+		}
+		result := h.RunSSHKeys("import", badPath, "--name", "garbage")
+		if result.Success() {
+			t.Fatal("import of garbage PEM should fail")
+		}
+	})
+}
+
+// ----------------------------------------------------------------------------
+// Scope / owner semantics
+// ----------------------------------------------------------------------------
+
+// TestSSHKeysScopeOwnerIsolation verifies that keys are namespaced by
+// (scope, owner) and operations on one namespace never leak into
+// another.
+func TestSSHKeysScopeOwnerIsolation(t *testing.T) {
+	h := NewSSHTestHelper(t)
+
+	namespaces := []struct{ scope, owner, name string }{
+		{"user", "alice", "alice-key"},
+		{"user", "bob", "bob-key"},
+		{"service", "ci-runner", "ci-key"},
+		{"tenant", "acme", "tenant-key"},
+	}
+
+	for _, ns := range namespaces {
+		result := h.RunSSHKeys("generate",
+			"--scope", ns.scope, "--owner", ns.owner,
+			"--name", ns.name, "--type", "ed25519")
+		if !result.Success() {
+			t.Fatalf("generate %s/%s/%s failed: %s",
+				ns.scope, ns.owner, ns.name, result.Combined())
+		}
+	}
+
+	// Owner-filtered list shows only that owner's keys.
+	aliceList := h.RunSSHKeys("list", "--scope", "user", "--owner", "alice")
+	if !aliceList.Success() {
+		t.Fatalf("list alice failed: %s", aliceList.Combined())
+	}
+	if !aliceList.OutputContains("alice-key") {
+		t.Errorf("alice's key missing from her list: %s", aliceList.Combined())
+	}
+	for _, other := range []string{"bob-key", "ci-key", "tenant-key"} {
+		if aliceList.OutputContains(other) {
+			t.Errorf("foreign key %q leaked into alice's list: %s", other, aliceList.Combined())
+		}
+	}
+
+	// Deleting bob's key must not disturb the others.
+	del := h.RunSSHKeys("delete", "--scope", "user", "--owner", "bob", "--name", "bob-key")
+	if !del.Success() {
+		t.Fatalf("delete bob-key failed: %s", del.Combined())
+	}
+	for _, ns := range []struct{ scope, owner, name string }{
+		{"user", "alice", "alice-key"},
+		{"service", "ci-runner", "ci-key"},
+		{"tenant", "acme", "tenant-key"},
+	} {
+		get := h.RunSSHKeys("get", "--scope", ns.scope, "--owner", ns.owner, "--name", ns.name)
+		if !get.Success() {
+			t.Errorf("key %s/%s/%s lost after unrelated delete: %s",
+				ns.scope, ns.owner, ns.name, get.Combined())
+		}
+	}
+}
+
+// TestSSHKeysDefaultScopeOwner verifies the CLI defaults: scope=user,
+// owner=$USER.
+func TestSSHKeysDefaultScopeOwner(t *testing.T) {
+	h := NewSSHTestHelper(t)
+
+	gen := h.RunSSHKeys("generate", "--name", "defaults", "--type", "ed25519")
+	if !gen.Success() {
+		t.Fatalf("generate with defaults failed: %s", gen.Combined())
+	}
+	if !gen.OutputContains("Key: user/" + h.User() + "/defaults") {
+		t.Errorf("expected default scope/owner user/%s, got: %s", h.User(), gen.Combined())
+	}
+
+	get := h.RunSSHKeys("get", "--name", "defaults")
+	if !get.Success() {
+		t.Errorf("get with default scope/owner failed: %s", get.Combined())
+	}
+}
+
+// TestSSHKeysAliases verifies the documented cobra aliases (ls, rm).
+func TestSSHKeysAliases(t *testing.T) {
+	h := NewSSHTestHelper(t)
+
+	gen := h.RunSSHKeys("generate",
+		"--scope", "user", "--owner", "alice", "--name", "aliased", "--type", "ed25519")
+	if !gen.Success() {
+		t.Fatalf("generate failed: %s", gen.Combined())
+	}
+
+	ls := h.RunSSHKeys("ls", "--scope", "user", "--owner", "alice")
+	if !ls.Success() || !ls.OutputContains("aliased") {
+		t.Errorf("keys ls alias failed: %s", ls.Combined())
+	}
+
+	rm := h.RunSSHKeys("rm", "--scope", "user", "--owner", "alice", "--name", "aliased")
+	if !rm.Success() || !rm.OutputContains("Deleted user/alice/aliased") {
+		t.Errorf("keys rm alias failed: %s", rm.Combined())
+	}
+}
+
+// ----------------------------------------------------------------------------
+// xkey ssh host-keys
+// ----------------------------------------------------------------------------
+
+// TestSSHHostKeys drives the host-key pin lifecycle: add, list, remove,
+// including the known-hosts alias.
+func TestSSHHostKeys(t *testing.T) {
+	h := NewSSHTestHelper(t)
+	const (
+		host = "bastion.example.com"
+		fp   = "SHA256:gNZpZodns8KO+9w2XAYG6dvi8FOHV0dDAUF5WfCMyDQ"
+	)
+
+	add := h.RunSSHHostKeys("add",
+		"--scope", "user", "--owner", "alice",
+		"--host", host, "--fingerprint", fp,
+		"--algorithm", "ssh-ed25519", "--source", "manual")
+	if !add.Success() {
+		t.Fatalf("host-keys add failed: %s", add.Combined())
+	}
+	if !add.OutputContainsAll("Pinned", host, fp) {
+		t.Errorf("missing pin confirmation: %s", add.Combined())
+	}
+
+	list := h.RunSSHHostKeys("list", "--scope", "user", "--owner", "alice")
+	if !list.Success() || !list.OutputContainsAll(host, fp, "ssh-ed25519") {
+		t.Errorf("pinned host missing from list: %s", list.Combined())
+	}
+
+	// The known-hosts alias must reach the same data.
+	aliasList := h.RunSSH("known-hosts", "list", "--scope", "user", "--owner", "alice")
+	if !aliasList.Success() || !aliasList.OutputContains(host) {
+		t.Errorf("known-hosts alias list failed: %s", aliasList.Combined())
+	}
+
+	remove := h.RunSSHHostKeys("remove",
+		"--scope", "user", "--owner", "alice", "--host", host)
+	if !remove.Success() || !remove.OutputContains("Removed pin for "+host) {
+		t.Errorf("host-keys remove failed: %s", remove.Combined())
+	}
+
+	gone := h.RunSSHHostKeys("list", "--scope", "user", "--owner", "alice")
+	if !gone.Success() {
+		t.Fatalf("list after remove failed: %s", gone.Combined())
+	}
+	if gone.OutputContains(host) {
+		t.Errorf("removed pin still listed: %s", gone.Combined())
+	}
+}
+
+// TestSSHHostKeysErrors verifies host-key input validation.
+func TestSSHHostKeysErrors(t *testing.T) {
+	h := NewSSHTestHelper(t)
+
+	t.Run("add_missing_host", func(t *testing.T) {
+		result := h.RunSSHHostKeys("add", "--fingerprint", "SHA256:abc")
+		if result.Success() {
+			t.Fatal("add without --host should fail")
+		}
+		if !result.OutputContains("host is required") {
+			t.Errorf("expected host-required error, got: %s", result.Combined())
+		}
+	})
+
+	t.Run("add_missing_fingerprint", func(t *testing.T) {
+		result := h.RunSSHHostKeys("add", "--host", "h.example.com")
+		if result.Success() {
+			t.Fatal("add without --fingerprint should fail")
+		}
+		if !result.OutputContains("fingerprint is required") {
+			t.Errorf("expected fingerprint-required error, got: %s", result.Combined())
+		}
+	})
+
+	t.Run("remove_missing_host", func(t *testing.T) {
+		result := h.RunSSHHostKeys("remove")
+		if result.Success() {
+			t.Fatal("remove without --host should fail")
+		}
+		if !result.OutputContains("host is required") {
+			t.Errorf("expected host-required error, got: %s", result.Combined())
+		}
+	})
+}
+
+// ----------------------------------------------------------------------------
+// xkey ssh authorized-keys
+// ----------------------------------------------------------------------------
+
+// TestSSHAuthorizedKeys drives the authorized_keys lifecycle: add a
+// line exported from a generated key, list it, remove it.
+func TestSSHAuthorizedKeys(t *testing.T) {
+	h := NewSSHTestHelper(t)
+
+	gen := h.RunSSHKeys("generate",
+		"--scope", "user", "--owner", "alice", "--name", "authz-src", "--type", "ed25519")
+	if !gen.Success() {
+		t.Fatalf("generate failed: %s", gen.Combined())
+	}
+	export := h.RunSSHKeys("export",
+		"--scope", "user", "--owner", "alice", "--name", "authz-src")
+	if !export.Success() {
+		t.Fatalf("export failed: %s", export.Combined())
+	}
+	line := strings.TrimSpace(export.Stdout)
+	if line == "" {
+		t.Fatal("export produced an empty authorized_keys line")
+	}
+
+	add := h.RunSSHAuthorized("add", line,
+		"--scope", "user", "--owner", "alice", "--name", "laptop")
+	if !add.Success() {
+		t.Fatalf("authorized-keys add failed: %s", add.Combined())
+	}
+	if !add.OutputContains("Added authorized entry user/alice/laptop") {
+		t.Errorf("missing add confirmation: %s", add.Combined())
+	}
+
+	list := h.RunSSHAuthorized("list", "--scope", "user", "--owner", "alice")
+	if !list.Success() {
+		t.Fatalf("authorized-keys list failed: %s", list.Combined())
+	}
+	listedKey, ok := ExtractPublicKey(list.Stdout)
+	wantKey, _ := ExtractPublicKey(line)
+	if !ok || listedKey != wantKey {
+		t.Errorf("listed entry does not match added line:\n got: %s\nwant: %s",
+			list.Stdout, line)
+	}
+
+	// The "authorized" alias must reach the same data.
+	aliasList := h.RunSSH("authorized", "list", "--scope", "user", "--owner", "alice")
+	if !aliasList.Success() || !aliasList.OutputContains(wantKey) {
+		t.Errorf("authorized alias list failed: %s", aliasList.Combined())
+	}
+
+	remove := h.RunSSHAuthorized("remove",
+		"--scope", "user", "--owner", "alice", "--name", "laptop")
+	if !remove.Success() || !remove.OutputContains("Removed authorized entry user/alice/laptop") {
+		t.Errorf("authorized-keys remove failed: %s", remove.Combined())
+	}
+
+	gone := h.RunSSHAuthorized("list", "--scope", "user", "--owner", "alice")
+	if !gone.Success() {
+		t.Fatalf("list after remove failed: %s", gone.Combined())
+	}
+	if gone.OutputContains(wantKey) {
+		t.Errorf("removed entry still listed: %s", gone.Combined())
+	}
+}
+
+// TestSSHAuthorizedKeysErrors verifies authorized-keys input validation.
+func TestSSHAuthorizedKeysErrors(t *testing.T) {
+	h := NewSSHTestHelper(t)
+
+	t.Run("add_missing_line_argument", func(t *testing.T) {
+		result := h.RunSSHAuthorized("add", "--name", "no-line")
+		if result.Success() {
+			t.Fatal("add without a line argument should fail")
+		}
+	})
+
+	t.Run("add_missing_name", func(t *testing.T) {
+		result := h.RunSSHAuthorized("add", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDummy")
+		if result.Success() {
+			t.Fatal("add without --name should fail")
+		}
+		if !result.OutputContains("--name is required") {
+			t.Errorf("expected --name-required error, got: %s", result.Combined())
+		}
+	})
+
+	t.Run("remove_missing_name", func(t *testing.T) {
+		result := h.RunSSHAuthorized("remove")
+		if result.Success() {
+			t.Fatal("remove without --name should fail")
+		}
+		if !result.OutputContains("--name is required") {
+			t.Errorf("expected --name-required error, got: %s", result.Combined())
+		}
+	})
+}
+
+// ----------------------------------------------------------------------------
+// Embedded store placement
+// ----------------------------------------------------------------------------
+
+// TestSSHEmbeddedStoreLocation verifies the embedded transport roots
+// its file store at $XKEY_HOME/data/ssh and persists across separate
+// CLI invocations.
+func TestSSHEmbeddedStoreLocation(t *testing.T) {
+	h := NewSSHTestHelper(t)
+
+	gen := h.RunSSHKeys("generate",
+		"--scope", "user", "--owner", "alice", "--name", "placed", "--type", "ed25519")
+	if !gen.Success() {
+		t.Fatalf("generate failed: %s", gen.Combined())
+	}
+
+	info, err := os.Stat(h.StoreDir())
+	if err != nil {
+		t.Fatalf("embedded store dir missing at %s: %v", h.StoreDir(), err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("embedded store path %s is not a directory", h.StoreDir())
+	}
+
+	// A second, fresh CLI process against the same XKEY_HOME must see
+	// the persisted key.
+	get := h.RunSSHKeys("get", "--scope", "user", "--owner", "alice", "--name", "placed")
+	if !get.Success() {
+		t.Errorf("key did not persist across CLI invocations: %s", get.Combined())
+	}
+}
+
+// ----------------------------------------------------------------------------
+// REST transport dispatch
+// ----------------------------------------------------------------------------
+
+// restKeyDoc mirrors the wire shape of a key document on the
+// /xkms/v1/ssh REST API.
+type restKeyDoc struct {
+	Scope       string `json:"scope"`
+	Owner       string `json:"owner"`
+	Name        string `json:"name"`
+	Algorithm   string `json:"algorithm"`
+	PublicKey   string `json:"public_key"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+// TestSSHRESTTransport verifies that setting XKMSD_URL switches the
+// CLI to the REST transport, that requests carry the documented path
+// prefix, query parameters and bearer token, and that server-side
+// errors surface as CLI failures. The server half of the contract is
+// covered by go-xkms's pkg/api/rest handler tests; this stub asserts
+// the client/CLI half of the same wire shape.
+func TestSSHRESTTransport(t *testing.T) {
+	type recorded struct {
+		method string
+		path   string
+		query  string
+		auth   string
+	}
+	var lastReq recorded
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lastReq = recorded{
+			method: r.Method,
+			path:   r.URL.Path,
+			query:  r.URL.RawQuery,
+			auth:   r.Header.Get("Authorization"),
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/xkms/v1/ssh/keys":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(map[string][]restKeyDoc{
+				"items": {{
+					Scope:       "user",
+					Owner:       "alice",
+					Name:        "remote-key",
+					Algorithm:   "ed25519",
+					PublicKey:   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDummy",
+					Fingerprint: "SHA256:remotefingerprint",
+				}},
+			}); err != nil {
+				t.Errorf("encode stub response: %v", err)
+			}
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/xkms/v1/ssh/keys/"):
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			if err := json.NewEncoder(w).Encode(map[string]string{
+				"error":    "not_found",
+				"message":  "no such key",
+				"resource": "key",
+			}); err != nil {
+				t.Errorf("encode stub error: %v", err)
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	t.Run("list_via_rest", func(t *testing.T) {
+		h := NewSSHTestHelperREST(t, server.URL, "test-token")
+
+		result := h.RunSSHKeys("list", "--scope", "user", "--owner", "alice")
+		if !result.Success() {
+			t.Fatalf("REST list failed: %s", result.Combined())
+		}
+		if !result.OutputContainsAll("user/alice/remote-key", "ed25519", "SHA256:remotefingerprint") {
+			t.Errorf("REST-listed key missing from output: %s", result.Combined())
+		}
+		if lastReq.method != http.MethodGet || lastReq.path != "/xkms/v1/ssh/keys" {
+			t.Errorf("unexpected request %s %s", lastReq.method, lastReq.path)
+		}
+		if !strings.Contains(lastReq.query, "scope=user") || !strings.Contains(lastReq.query, "owner=alice") {
+			t.Errorf("scope/owner query parameters missing: %q", lastReq.query)
+		}
+		if lastReq.auth != "Bearer test-token" {
+			t.Errorf("bearer token not forwarded, got %q", lastReq.auth)
+		}
+	})
+
+	t.Run("server_error_surfaces", func(t *testing.T) {
+		h := NewSSHTestHelperREST(t, server.URL, "test-token")
+
+		result := h.RunSSHKeys("get",
+			"--scope", "user", "--owner", "alice", "--name", "missing")
+		if result.Success() {
+			t.Fatal("REST get of a missing key should fail")
+		}
+		if !result.OutputContains("not found") {
+			t.Errorf("expected not-found error, got: %s", result.Combined())
+		}
+	})
+
+	t.Run("unreachable_server_fails_without_fallback", func(t *testing.T) {
+		// Port 9 (discard) refuses connections; the CLI must fail
+		// rather than silently falling back to the embedded store.
+		h := NewSSHTestHelperREST(t, "http://127.0.0.1:9", "")
+
+		result := h.RunSSHKeys("list")
+		if result.Success() {
+			t.Fatalf("list against an unreachable XKMSD_URL should fail, got: %s",
+				result.Combined())
+		}
+	})
+}
+
+// ----------------------------------------------------------------------------
+// Help output
+// ----------------------------------------------------------------------------
+
+// TestSSHHelpOutput verifies the command tree advertises the Phase 1c
+// surface: keys, host-keys and authorized-keys.
+func TestSSHHelpOutput(t *testing.T) {
+	h := NewSSHTestHelper(t)
+
+	t.Run("ssh_help", func(t *testing.T) {
+		result := h.RunSSH("--help")
+		if !result.Success() {
+			t.Fatalf("ssh --help failed: %s", result.Combined())
+		}
+		if !result.OutputContainsAll("keys", "host-keys", "authorized-keys") {
+			t.Errorf("ssh help missing subcommands: %s", result.Combined())
+		}
+	})
+
+	t.Run("keys_help", func(t *testing.T) {
+		result := h.RunSSHKeys("--help")
+		if !result.Success() {
+			t.Fatalf("ssh keys --help failed: %s", result.Combined())
+		}
+		if !result.OutputContainsAll("generate", "import", "list", "get", "delete", "export") {
+			t.Errorf("ssh keys help missing subcommands: %s", result.Combined())
+		}
+	})
+
+	t.Run("generate_help", func(t *testing.T) {
+		result := h.RunSSHKeys("generate", "--help")
+		if !result.Success() {
+			t.Fatalf("ssh keys generate --help failed: %s", result.Combined())
+		}
+		if !result.OutputContainsAll("--scope", "--owner", "--name", "--type", "--bits", "--comment") {
+			t.Errorf("ssh keys generate help missing flags: %s", result.Combined())
+		}
+	})
 }

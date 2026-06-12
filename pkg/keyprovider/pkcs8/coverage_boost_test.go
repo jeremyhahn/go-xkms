@@ -14,6 +14,7 @@
 package pkcs8
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
 	"testing"
@@ -44,7 +45,7 @@ func TestRotateKey_NilAttributes(t *testing.T) {
 	be, _ := createTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	err := be.RotateKey(nil)
+	err := be.RotateKey(context.Background(), nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrInvalidAttributes)
 }
@@ -67,11 +68,11 @@ func TestRotateKey_NonExistentKey(t *testing.T) {
 	}
 
 	// RotateKey on a non-existent key should succeed (ignores key-not-found error)
-	err := be.RotateKey(attrs)
+	err := be.RotateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify key now exists
-	_, err = be.GetKey(attrs)
+	_, err = be.GetKey(context.Background(), attrs)
 	require.NoError(t, err)
 }
 
@@ -89,10 +90,10 @@ func TestSigner_Ed25519(t *testing.T) {
 		Hash:         crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(attrs)
+	_, err := be.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := be.Signer(attrs)
+	signer, err := be.Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.NotNil(t, signer)
 	assert.NotNil(t, signer.Public())

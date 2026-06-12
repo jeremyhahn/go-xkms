@@ -205,7 +205,7 @@ func TestJWTIntegration_XKMSIntegration(t *testing.T) {
 		defer setup.Close()
 
 		// Generate RSA key in xkms
-		keyID := "pkcs8:jwt-rsa-key"
+		keyID := "software:signing:rsa:jwt-rsa-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
@@ -239,7 +239,7 @@ func TestJWTIntegration_XKMSIntegration(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		keyID := "pkcs8:jwt-ecdsa-p256-key"
+		keyID := "software:signing:ecdsa-p256:jwt-ecdsa-p256-key"
 		err := setup.GenerateECDSAKey(keyID, elliptic.P256())
 		require.NoError(t, err)
 
@@ -259,7 +259,7 @@ func TestJWTIntegration_XKMSIntegration(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		keyID := "pkcs8:jwt-ed25519-key"
+		keyID := "software:signing:ed25519:jwt-ed25519-key"
 		err := setup.GenerateEd25519Key(keyID)
 		require.NoError(t, err)
 
@@ -279,7 +279,7 @@ func TestJWTIntegration_XKMSIntegration(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		keyID := "pkcs8:jwt-auto-key"
+		keyID := "software:signing:rsa:jwt-auto-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
@@ -301,7 +301,7 @@ func TestJWTIntegration_XKMSIntegration(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		keyID := "pkcs8:jwt-rsa-ps512-key"
+		keyID := "software:signing:rsa:jwt-rsa-ps512-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
@@ -560,7 +560,7 @@ func TestJWTIntegration_ErrorHandling(t *testing.T) {
 		claims := jwtgo.MapClaims{"sub": "user123"}
 
 		// Try to sign with non-existent key
-		_, err := signer.SignWithKeyID("pkcs8:non-existent-key", claims)
+		_, err := signer.SignWithKeyID("software:signing:rsa:non-existent-key", claims)
 		assert.Error(t, err)
 	})
 
@@ -569,7 +569,7 @@ func TestJWTIntegration_ErrorHandling(t *testing.T) {
 		defer setup.Close()
 
 		// Generate a key
-		keyID := "pkcs8:jwt-test-key"
+		keyID := "software:signing:rsa:jwt-test-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
@@ -597,7 +597,7 @@ func TestJWTIntegration_TokenLifecycle(t *testing.T) {
 		defer setup.Close()
 
 		// 1. Generate key
-		keyID := "pkcs8:lifecycle-key"
+		keyID := "software:signing:rsa:lifecycle-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
@@ -680,7 +680,7 @@ func TestJWTIntegration_KIDHeader(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		keyID := "pkcs8:my-signing-key"
+		keyID := "software:signing:rsa:my-signing-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
@@ -694,6 +694,6 @@ func TestJWTIntegration_KIDHeader(t *testing.T) {
 		kid, err := jwt.ExtractKID(tokenString)
 		require.NoError(t, err)
 		assert.Equal(t, keyID, kid)
-		assert.Contains(t, kid, "pkcs8:")
+		assert.Contains(t, kid, "software:")
 	})
 }

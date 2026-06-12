@@ -281,7 +281,7 @@ func (s *StorageService) migrateToEncryptedDirect(sizeGB int, passphrase string,
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpMount)
+	defer func() { _ = os.RemoveAll(tmpMount) }()
 
 	importVol := luks.NewVolumeWithPaths(luksPath, tmpMount)
 
@@ -310,7 +310,9 @@ func (s *StorageService) migrateToEncryptedDirect(sizeGB int, passphrase string,
 		backupDir := dataDir + "-backup"
 		// Remove stale backup from a previous migration.
 		if _, statErr := os.Stat(backupDir); statErr == nil {
-			os.RemoveAll(backupDir)
+			if rmErr := os.RemoveAll(backupDir); rmErr != nil {
+				s.log.Warn("failed to remove stale backup", "dir", backupDir, "error", rmErr)
+			}
 		}
 		if err := os.Rename(dataDir, backupDir); err != nil {
 			s.log.Error("failed to backup original data", "error", err)

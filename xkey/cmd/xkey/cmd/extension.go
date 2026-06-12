@@ -227,7 +227,7 @@ func runExtensionInstall(cmd *cobra.Command, args []string) error {
 		if installErr := nativemsg.InstallManifest(browser, binaryPath); installErr != nil {
 			return fmt.Errorf("%w: %s: %v", ErrExtensionInstallFailed, browser, installErr)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Installed native messaging manifest for %s\n", browser)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Installed native messaging manifest for %s\n", browser)
 	}
 
 	return nil
@@ -244,12 +244,12 @@ func runExtensionUninstall(cmd *cobra.Command, args []string) error {
 	for _, browser := range browsers {
 		if uninstallErr := nativemsg.UninstallManifest(browser); uninstallErr != nil {
 			if errors.Is(uninstallErr, nativemsg.ErrManifestNotFound) {
-				fmt.Fprintf(cmd.OutOrStdout(), "No manifest found for %s (already removed)\n", browser)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "No manifest found for %s (already removed)\n", browser)
 				continue
 			}
 			return fmt.Errorf("%w: %s: %v", ErrExtensionUninstallFailed, browser, uninstallErr)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Uninstalled native messaging manifest for %s\n", browser)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Uninstalled native messaging manifest for %s\n", browser)
 	}
 
 	return nil
@@ -261,7 +261,7 @@ func runExtensionUninstall(cmd *cobra.Command, args []string) error {
 func runExtensionStatus(cmd *cobra.Command, args []string) error {
 	statuses := nativemsg.GetManifestStatus()
 
-	fmt.Fprintf(cmd.OutOrStdout(), "%-10s %-10s %s\n", "BROWSER", "INSTALLED", "PATH")
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%-10s %-10s %s\n", "BROWSER", "INSTALLED", "PATH")
 	for _, s := range statuses {
 		installed := "no"
 		if s.Installed {
@@ -271,7 +271,7 @@ func runExtensionStatus(cmd *cobra.Command, args []string) error {
 		if path == "" {
 			path = "(unavailable)"
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%-10s %-10s %s\n", s.Name, installed, path)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%-10s %-10s %s\n", s.Name, installed, path)
 	}
 
 	return nil
@@ -298,7 +298,7 @@ func runExtensionHost(cmd *cobra.Command, args []string) error {
 			logPath := filepath.Join(logDir, "native-host.log")
 			f, fErr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 			if fErr == nil {
-				defer f.Close()
+				defer func() { _ = f.Close() }()
 				writers = append(writers, f)
 			}
 		}
@@ -363,7 +363,7 @@ func runExtensionUnpair(cmd *cobra.Command, args []string) error {
 	}
 
 	if !pairing.IsPaired() {
-		fmt.Fprintln(cmd.OutOrStdout(), "No extension is currently paired")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No extension is currently paired")
 		return nil
 	}
 
@@ -371,7 +371,7 @@ func runExtensionUnpair(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: %v", ErrExtensionUnpairFailed, err)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Extension unpaired successfully")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Extension unpaired successfully")
 	return nil
 }
 
@@ -391,14 +391,14 @@ func runExtensionPairStatus(cmd *cobra.Command, args []string) error {
 
 	states := pairing.GetStates()
 	if len(states) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "Status: Not paired")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Status: Not paired")
 		return nil
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "%-10s %s (%d extension(s))\n", "Status:", "Paired", len(states))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%-10s %s (%d extension(s))\n", "Status:", "Paired", len(states))
 	for origin, state := range states {
-		fmt.Fprintf(cmd.OutOrStdout(), "  %-10s %s\n", "Origin:", origin)
-		fmt.Fprintf(cmd.OutOrStdout(), "  %-10s %s\n", "Paired at:", state.PairedAt.Format("2006-01-02 15:04:05"))
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-10s %s\n", "Origin:", origin)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-10s %s\n", "Paired at:", state.PairedAt.Format("2006-01-02 15:04:05"))
 	}
 
 	return nil

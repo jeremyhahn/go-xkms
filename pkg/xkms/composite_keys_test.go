@@ -14,6 +14,7 @@
 package xkms_test
 
 import (
+	"context"
 	"crypto"
 	"crypto/elliptic"
 	"crypto/x509"
@@ -74,7 +75,7 @@ func TestCompositeKeyStore_GenerateRSA(t *testing.T) {
 			ks, mockBackend, _ := setupKeyStore()
 			defer func() { _ = ks.Close() }()
 
-			key, err := ks.GenerateRSA(tt.attrs)
+			key, err := ks.GenerateRSA(context.Background(), tt.attrs)
 
 			if tt.expectError {
 				if err == nil {
@@ -142,7 +143,7 @@ func TestCompositeKeyStore_GenerateECDSA(t *testing.T) {
 			ks, mockBackend, _ := setupKeyStore()
 			defer func() { _ = ks.Close() }()
 
-			key, err := ks.GenerateECDSA(tt.attrs)
+			key, err := ks.GenerateECDSA(context.Background(), tt.attrs)
 
 			if tt.expectError {
 				if err == nil {
@@ -207,7 +208,7 @@ func TestCompositeKeyStore_GenerateEd25519(t *testing.T) {
 			ks, mockBackend, _ := setupKeyStore()
 			defer func() { _ = ks.Close() }()
 
-			key, err := ks.GenerateEd25519(tt.attrs)
+			key, err := ks.GenerateEd25519(context.Background(), tt.attrs)
 
 			if tt.expectError {
 				if err == nil {
@@ -269,7 +270,7 @@ func TestCompositeKeyStore_GetKey(t *testing.T) {
 					CertStorage: storagemocks.NewMockCertStorage(),
 				})
 				if err == nil {
-					_, _ = ks.GenerateRSA(attrs)
+					_, _ = ks.GenerateRSA(context.Background(), attrs)
 				}
 			},
 			attrs: &types.KeyAttributes{
@@ -314,7 +315,7 @@ func TestCompositeKeyStore_GetKey(t *testing.T) {
 			})
 			defer func() { _ = ks.Close() }()
 
-			key, err := ks.GetKey(tt.attrs)
+			key, err := ks.GetKey(context.Background(), tt.attrs)
 
 			if tt.expectError {
 				if err == nil {
@@ -370,7 +371,7 @@ func TestCompositeKeyStore_DeleteKey(t *testing.T) {
 					CertStorage: storagemocks.NewMockCertStorage(),
 				})
 				if err == nil {
-					_, _ = ks.GenerateRSA(attrs)
+					_, _ = ks.GenerateRSA(context.Background(), attrs)
 				}
 			},
 			attrs: &types.KeyAttributes{
@@ -415,7 +416,7 @@ func TestCompositeKeyStore_DeleteKey(t *testing.T) {
 			})
 			defer func() { _ = ks.Close() }()
 
-			err := ks.DeleteKey(tt.attrs)
+			err := ks.DeleteKey(context.Background(), tt.attrs)
 
 			if tt.expectError {
 				if err == nil {
@@ -436,7 +437,7 @@ func TestCompositeKeyStore_DeleteKey(t *testing.T) {
 			}
 
 			// Verify deletion by attempting to get the key
-			_, getErr := ks.GetKey(tt.attrs)
+			_, getErr := ks.GetKey(context.Background(), tt.attrs)
 			if getErr == nil || !contains(getErr.Error(), "not found") {
 				t.Errorf("expected 'not found' error after deletion, got: %v", getErr)
 			}
@@ -459,10 +460,10 @@ func TestCompositeKeyStore_ListKeys(t *testing.T) {
 				KeySize: 2048,
 			},
 		}
-		_, _ = ks.GenerateRSA(attrs)
+		_, _ = ks.GenerateRSA(context.Background(), attrs)
 	}
 
-	keys, err := ks.ListKeys()
+	keys, err := ks.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -535,11 +536,11 @@ func TestCompositeKeyStore_RotateKey(t *testing.T) {
 			if tt.attrs != nil {
 				switch tt.attrs.KeyAlgorithm {
 				case x509.RSA:
-					_, _ = ks.GenerateRSA(tt.attrs)
+					_, _ = ks.GenerateRSA(context.Background(), tt.attrs)
 				case x509.ECDSA:
-					_, _ = ks.GenerateECDSA(tt.attrs)
+					_, _ = ks.GenerateECDSA(context.Background(), tt.attrs)
 				case x509.Ed25519:
-					_, _ = ks.GenerateEd25519(tt.attrs)
+					_, _ = ks.GenerateEd25519(context.Background(), tt.attrs)
 				}
 			}
 
@@ -548,7 +549,7 @@ func TestCompositeKeyStore_RotateKey(t *testing.T) {
 			mockBackend.GenerateKeyCalls = nil
 
 			// Rotate the key
-			newKey, err := ks.RotateKey(tt.attrs)
+			newKey, err := ks.RotateKey(context.Background(), tt.attrs)
 
 			if tt.expectError {
 				if err == nil {
@@ -616,7 +617,7 @@ func TestCompositeKeyStore_GenerateRSA_EdgeCases(t *testing.T) {
 			},
 		}
 
-		_, err := ks.GenerateRSA(attrs)
+		_, err := ks.GenerateRSA(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error from backend, got nil")
 		}
@@ -647,7 +648,7 @@ func TestCompositeKeyStore_GenerateRSA_EdgeCases(t *testing.T) {
 			},
 		}
 
-		_, err := ks.GenerateRSA(attrs)
+		_, err := ks.GenerateRSA(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error for nil key, got nil")
 		}
@@ -680,7 +681,7 @@ func TestCompositeKeyStore_GenerateRSA_EdgeCases(t *testing.T) {
 			},
 		}
 
-		_, err := ks.GenerateRSA(attrs)
+		_, err := ks.GenerateRSA(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error for invalid key type, got nil")
 		}
@@ -711,7 +712,7 @@ func TestCompositeKeyStore_GenerateECDSA_EdgeCases(t *testing.T) {
 			},
 		}
 
-		_, err := ks.GenerateECDSA(attrs)
+		_, err := ks.GenerateECDSA(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -742,7 +743,7 @@ func TestCompositeKeyStore_GenerateECDSA_EdgeCases(t *testing.T) {
 			},
 		}
 
-		_, err := ks.GenerateECDSA(attrs)
+		_, err := ks.GenerateECDSA(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -773,7 +774,7 @@ func TestCompositeKeyStore_GenerateEd25519_EdgeCases(t *testing.T) {
 			KeyAlgorithm: x509.Ed25519,
 		}
 
-		_, err := ks.GenerateEd25519(attrs)
+		_, err := ks.GenerateEd25519(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -801,7 +802,7 @@ func TestCompositeKeyStore_GenerateEd25519_EdgeCases(t *testing.T) {
 			KeyAlgorithm: x509.Ed25519,
 		}
 
-		_, err := ks.GenerateEd25519(attrs)
+		_, err := ks.GenerateEd25519(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -832,7 +833,7 @@ func TestCompositeKeyStore_GetKey_EdgeCases(t *testing.T) {
 			KeyAlgorithm: x509.RSA,
 		}
 
-		_, err := ks.GetKey(attrs)
+		_, err := ks.GetKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -860,7 +861,7 @@ func TestCompositeKeyStore_GetKey_EdgeCases(t *testing.T) {
 			KeyAlgorithm: x509.RSA,
 		}
 
-		_, err := ks.GetKey(attrs)
+		_, err := ks.GetKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -884,7 +885,7 @@ func TestCompositeKeyStore_ListKeys_EdgeCases(t *testing.T) {
 		})
 		defer func() { _ = ks.Close() }()
 
-		_, err := ks.ListKeys()
+		_, err := ks.ListKeys(context.Background())
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -897,7 +898,7 @@ func TestCompositeKeyStore_ListKeys_EdgeCases(t *testing.T) {
 		ks, _, _ := setupKeyStore()
 		defer func() { _ = ks.Close() }()
 
-		keys, err := ks.ListKeys()
+		keys, err := ks.ListKeys(context.Background())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -934,7 +935,7 @@ func TestCompositeKeyStore_RotateKey_EdgeCases(t *testing.T) {
 		}
 
 		// Generate initial key
-		_, err := ks.GenerateRSA(attrs)
+		_, err := ks.GenerateRSA(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("failed to generate initial key: %v", err)
 		}
@@ -942,7 +943,7 @@ func TestCompositeKeyStore_RotateKey_EdgeCases(t *testing.T) {
 		// Change algorithm to unsupported value
 		attrs.KeyAlgorithm = x509.UnknownPublicKeyAlgorithm
 
-		_, err = ks.RotateKey(attrs)
+		_, err = ks.RotateKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error for unsupported algorithm, got nil")
 		}
@@ -978,7 +979,7 @@ func TestCompositeKeyStore_RotateKey_EdgeCases(t *testing.T) {
 
 		// Generate initial key (this won't use our delete func)
 		mockBackend.DeleteKeyFunc = nil
-		_, err := ks.GenerateRSA(attrs)
+		_, err := ks.GenerateRSA(context.Background(), attrs)
 		if err != nil {
 			t.Fatalf("failed to generate initial key: %v", err)
 		}
@@ -988,7 +989,7 @@ func TestCompositeKeyStore_RotateKey_EdgeCases(t *testing.T) {
 			return fmt.Errorf("key is locked")
 		}
 
-		_, err = ks.RotateKey(attrs)
+		_, err = ks.RotateKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error during delete, got nil")
 		}
@@ -1020,7 +1021,7 @@ func TestCompositeKeyStore_PublicKeyHelper(t *testing.T) {
 			KeyAlgorithm: x509.RSA,
 		}
 
-		_, err := ks.GetKey(attrs)
+		_, err := ks.GetKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -1049,7 +1050,7 @@ func TestCompositeKeyStore_PublicKeyHelper(t *testing.T) {
 			KeyAlgorithm: x509.RSA,
 		}
 
-		_, err := ks.GetKey(attrs)
+		_, err := ks.GetKey(context.Background(), attrs)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -1066,7 +1067,7 @@ func TestCompositeKeyStore_MultipleKeyTypes(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		genFunc   func(*types.KeyAttributes) (crypto.PrivateKey, error)
+		genFunc   func(context.Context, *types.KeyAttributes) (crypto.PrivateKey, error)
 		attrs     *types.KeyAttributes
 		verifyKey func(crypto.PrivateKey) bool
 	}{
@@ -1135,7 +1136,7 @@ func TestCompositeKeyStore_MultipleKeyTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			key, err := tt.genFunc(tt.attrs)
+			key, err := tt.genFunc(context.Background(), tt.attrs)
 			if err != nil {
 				t.Fatalf("failed to generate key: %v", err)
 			}
@@ -1145,7 +1146,7 @@ func TestCompositeKeyStore_MultipleKeyTypes(t *testing.T) {
 			}
 
 			// Verify we can retrieve it
-			retrieved, err := ks.GetKey(tt.attrs)
+			retrieved, err := ks.GetKey(context.Background(), tt.attrs)
 			if err != nil {
 				t.Fatalf("failed to retrieve key: %v", err)
 			}

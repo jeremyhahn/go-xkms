@@ -78,7 +78,7 @@ func (b *PKCS8Backend) Seal(ctx context.Context, data []byte, opts *types.SealOp
 	keyAttrs := opts.KeyAttributes
 
 	// Load the private key
-	privateKey, err := b.GetKey(keyAttrs)
+	privateKey, err := b.GetKey(ctx, keyAttrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load sealing key: %w", err)
 	}
@@ -181,7 +181,7 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 	}
 
 	// Load the private key
-	privateKey, err := b.GetKey(keyAttrs)
+	privateKey, err := b.GetKey(ctx, keyAttrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load sealing key: %w", err)
 	}

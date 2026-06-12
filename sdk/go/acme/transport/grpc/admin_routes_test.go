@@ -25,8 +25,9 @@ func TestAdminRoutes_DottedServiceNames(t *testing.T) {
 	t.Parallel()
 
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -65,8 +66,9 @@ func TestAdminRoutes_DottedServiceNames_NotACME(t *testing.T) {
 	t.Parallel()
 
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -95,8 +97,9 @@ func TestAdminRoutes_BareServiceNames(t *testing.T) {
 	t.Parallel()
 
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {
@@ -126,8 +129,9 @@ func TestAdminRoutes_UnknownDottedService(t *testing.T) {
 	t.Parallel()
 
 	cfg := &transport.Config{
-		Address:  "localhost:9443",
-		Insecure: true,
+		Address:   "localhost:9443",
+		Insecure:  true,
+		TLSConfig: insecureTestTLSConfig(),
 	}
 	tr, err := NewTransport(cfg)
 	if err != nil {

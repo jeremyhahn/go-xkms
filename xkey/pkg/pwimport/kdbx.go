@@ -46,7 +46,7 @@ func (p *KDBXParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidFile, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	db := gokeepasslib.NewDatabase()
 	db.Credentials = gokeepasslib.NewPasswordCredentials(opts.Password)

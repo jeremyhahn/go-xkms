@@ -191,13 +191,6 @@ func browserDir(kb knownBrowser, home string) string {
 	}
 }
 
-// chromiumDir returns the absolute NativeMessagingHosts directory for a
-// Chromium-based browser given the user's home directory. Retained for
-// backward compatibility with existing tests.
-func chromiumDir(kb knownBrowser, home string) string {
-	return browserDir(kb, home)
-}
-
 // isBrowserInstalled checks if the parent directory of the NativeMessagingHosts
 // directory exists, indicating the browser is installed. For example, for
 // Chrome on Linux it checks if ~/.config/google-chrome exists.

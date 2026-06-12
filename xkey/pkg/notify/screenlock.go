@@ -78,7 +78,7 @@ func NewScreenLockMonitor(logger *slog.Logger, callback func()) (*ScreenLockMoni
 		logger.Warn("failed to add D-Bus match rule for screen lock signal",
 			slog.String("error", call.Err.Error()))
 		conn.RemoveSignal(signalCh)
-		conn.Close()
+		_ = conn.Close()
 		return nil, ErrScreenLockUnavailable
 	}
 

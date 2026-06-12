@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -45,7 +46,7 @@ func main() {
 		},
 	}
 
-	privKey, err := backend.GenerateKey(attrs)
+	privKey, err := backend.GenerateKey(context.Background(), attrs)
 	if err != nil {
 		log.Fatalf("Failed to generate key: %v", err)
 	}
@@ -146,7 +147,7 @@ func main() {
 		},
 	}
 
-	receiverKey, err := backend.GenerateKey(receiverAttrs)
+	receiverKey, err := backend.GenerateKey(context.Background(), receiverAttrs)
 	if err != nil {
 		log.Fatalf("Failed to generate receiver key: %v", err)
 	}

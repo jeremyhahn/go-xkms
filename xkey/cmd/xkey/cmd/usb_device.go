@@ -271,7 +271,7 @@ func runUSBDeviceUHID(ctx context.Context, bridge *ccid.PKCS11Bridge, logger *sl
 		_ = uhidDev.Close()
 		return errors.Join(ErrUSBDeviceStartFailed, err)
 	}
-	defer usbTransport.Close()
+	defer func() { _ = usbTransport.Close() }()
 
 	device, err := ccid.NewCCIDDevice(bridge, usbTransport, logger)
 	if err != nil {
@@ -301,7 +301,7 @@ func runUSBDeviceGadget(ctx context.Context, bridge *ccid.PKCS11Bridge, logger *
 	if err := g.Start(ctx); err != nil {
 		return errors.Join(ErrUSBDeviceStartFailed, err)
 	}
-	defer g.Stop()
+	defer func() { _ = g.Stop() }()
 
 	ccidTransport := g.CCIDTransport()
 	if ccidTransport == nil {
@@ -339,18 +339,18 @@ func runUSBDeviceLoop(ctx context.Context, device *ccid.CCIDDevice, bridge *ccid
 
 // runUSBDeviceStop provides instructions for stopping the device.
 func runUSBDeviceStop(cmd *cobra.Command, _ []string) error {
-	fmt.Fprintln(cmd.OutOrStdout(), "The virtual CCID device runs in the foreground.")
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "To stop a running device:")
-	fmt.Fprintln(cmd.OutOrStdout(), "  1. Press Ctrl+C in the terminal where it is running")
-	fmt.Fprintln(cmd.OutOrStdout(), "  2. Or send SIGTERM: kill -TERM $(pgrep -f 'xkey usb device start')")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "The virtual CCID device runs in the foreground.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "To stop a running device:")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  1. Press Ctrl+C in the terminal where it is running")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  2. Or send SIGTERM: kill -TERM $(pgrep -f 'xkey usb device start')")
 	return nil
 }
 
 // runUSBDeviceStatus shows the virtual device status.
 func runUSBDeviceStatus(cmd *cobra.Command, _ []string) error {
-	fmt.Fprintln(cmd.OutOrStdout(), "Virtual CCID Device Status")
-	fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Virtual CCID Device Status")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 
 	// Check UHID availability.
 	uhidAvailable := checkUHIDAvailable()
@@ -358,7 +358,7 @@ func runUSBDeviceStatus(cmd *cobra.Command, _ []string) error {
 	if !uhidAvailable {
 		uhidStatus = "not available"
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "  UHID interface:  %s\n", uhidStatus)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  UHID interface:  %s\n", uhidStatus)
 
 	// Check USB Gadget (ConfigFS) availability.
 	gadgetAvailable := checkGadgetAvailable()
@@ -366,12 +366,12 @@ func runUSBDeviceStatus(cmd *cobra.Command, _ []string) error {
 	if !gadgetAvailable {
 		gadgetStatus = "not available"
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "  USB Gadget:      %s\n", gadgetStatus)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  USB Gadget:      %s\n", gadgetStatus)
 
 	// Check UDC availability.
 	udcName := detectUDCName()
 	if udcName != "" {
-		fmt.Fprintf(cmd.OutOrStdout(), "  UDC controller:  %s\n", udcName)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  UDC controller:  %s\n", udcName)
 	}
 
 	// Check if a device process appears to be running.
@@ -380,14 +380,14 @@ func runUSBDeviceStatus(cmd *cobra.Command, _ []string) error {
 	if running {
 		runStatus = "running"
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "  CCID device:     %s\n", runStatus)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  CCID device:     %s\n", runStatus)
 
 	// Show device identification.
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintf(cmd.OutOrStdout(), "  Device name:     %s\n", ccid.CCIDDeviceName)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Serial:          %s\n", ccid.CCIDDeviceSerial)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Vendor ID:       0x%04X\n", ccid.VendorIDCCID)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Product ID:      0x%04X\n", ccid.ProductIDCCID)
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Device name:     %s\n", ccid.CCIDDeviceName)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Serial:          %s\n", ccid.CCIDDeviceSerial)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Vendor ID:       0x%04X\n", ccid.VendorIDCCID)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Product ID:      0x%04X\n", ccid.ProductIDCCID)
 
 	return nil
 }

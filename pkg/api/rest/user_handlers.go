@@ -24,7 +24,7 @@ import (
 )
 
 // User management HTTP handlers. xkms presents its own user model; the backing
-// store is the embedded qrdb node, reached through the XKMSService singleton.
+// store is the embedded qrdb node, reached through the injected XKMSService.
 // The CLI (xkmsctl) and webui (xkey) drive these endpoints via the xkms SDK.
 
 // createUserBody is the request payload for creating a user.
@@ -42,11 +42,11 @@ type updateUserBody struct {
 
 // handleCreateUser handles POST /api/v1/users/.
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if s.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
+	svc := s.xkmsService
 	var body createUserBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, err, http.StatusBadRequest)
@@ -67,11 +67,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 // handleListUsers handles GET /api/v1/users/.
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if s.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
+	svc := s.xkmsService
 	resp, err := svc.ListUsers(r.Context())
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
@@ -82,11 +82,11 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 
 // handleGetUser handles GET /api/v1/users/{username}.
 func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if s.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
+	svc := s.xkmsService
 	username := chi.URLParam(r, "username")
 	resp, err := svc.GetUser(r.Context(), username)
 	if err != nil {
@@ -98,11 +98,11 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdateUser handles PUT /api/v1/users/{username} (enable/disable).
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if s.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
+	svc := s.xkmsService
 	username := chi.URLParam(r, "username")
 	var body updateUserBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -113,6 +113,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, ErrMissingTenantID, http.StatusBadRequest)
 		return
 	}
+	var err error
 	if *body.Enabled {
 		err = svc.EnableUser(r.Context(), username)
 	} else {
@@ -132,11 +133,11 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 
 // handleDeleteUser handles DELETE /api/v1/users/{username}.
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if s.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
+	svc := s.xkmsService
 	username := chi.URLParam(r, "username")
 	if err := svc.DeleteUser(r.Context(), username); err != nil {
 		writeError(w, err, http.StatusInternalServerError)
@@ -153,11 +154,11 @@ type bindUserCertBody struct {
 
 // handleBindUserCert handles POST /api/v1/users/{username}/cert-bindings.
 func (s *Server) handleBindUserCert(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if s.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
+	svc := s.xkmsService
 	username := chi.URLParam(r, "username")
 	var body bindUserCertBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -180,11 +181,11 @@ type userCredentialItem struct {
 
 // handleListUserCredentials handles GET /api/v1/users/{username}/credentials.
 func (s *Server) handleListUserCredentials(w http.ResponseWriter, r *http.Request) {
-	svc, err := xkms.Get()
-	if err != nil {
-		writeError(w, err, http.StatusServiceUnavailable)
+	if s.xkmsService == nil {
+		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
+	svc := s.xkmsService
 	username := chi.URLParam(r, "username")
 	resp, err := svc.ListUserCredentials(r.Context(), username)
 	if err != nil {

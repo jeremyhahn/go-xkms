@@ -72,7 +72,7 @@ func setupPINManager(t *testing.T) qrdbsdk.PINBackend {
 
 // newTestService returns a Service with no-op authz and audit.
 func newTestService() *Service {
-	return NewService(nil, nil)
+	return NewService(nil, nil, nil)
 }
 
 // ==================== Setter/Getter Tests ====================

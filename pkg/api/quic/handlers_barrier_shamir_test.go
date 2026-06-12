@@ -17,13 +17,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
+	quicraftShamir "github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -32,6 +35,47 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// testCaptureDistributor implements CeremonyDistributor for use in unit tests.
+// It splits the secret using the real Shamir library and records the share strings
+// so tests can later call UnsealWithShare / RecoverWithKeys.
+type testCaptureDistributor struct {
+	mu     sync.Mutex
+	shares []string
+}
+
+// SealAndDistribute splits secret into total shares with the given threshold,
+// records them, and returns the count.
+func (c *testCaptureDistributor) SealAndDistribute(_ context.Context, secret []byte, threshold, total int) (int, error) {
+	raw, err := quicraftShamir.Split(secret, threshold, total)
+	if err != nil {
+		return 0, fmt.Errorf("shamir split failed: %w", err)
+	}
+	c.mu.Lock()
+	c.shares = make([]string, len(raw))
+	for i, s := range raw {
+		c.shares[i] = s.Value
+	}
+	c.mu.Unlock()
+	return len(raw), nil
+}
+
+// RekeyAndDistribute destroys the prior round and produces fresh shares.
+func (c *testCaptureDistributor) RekeyAndDistribute(ctx context.Context, newSecret []byte, newThreshold, newTotal int) (int, error) {
+	c.mu.Lock()
+	c.shares = nil
+	c.mu.Unlock()
+	return c.SealAndDistribute(ctx, newSecret, newThreshold, newTotal)
+}
+
+// Shares returns the share strings captured by the last SealAndDistribute call.
+func (c *testCaptureDistributor) Shares() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, len(c.shares))
+	copy(out, c.shares)
+	return out
+}
 
 // createTestServerWithShamirBarrier creates a QUIC test server with a
 // StrategyShamir-backed barrier in direct mode. The barrier is initialized
@@ -66,22 +110,31 @@ func createTestServerWithShamirBarrier(t *testing.T) (*Server, []string, *seal.B
 	)
 	require.NoError(t, err)
 
-	// Initialize the barrier to get shares.
-	result, err := barrier.InitializeShamir(context.Background(), seal.Credentials{})
+	// Initialize the barrier. Wire ceremony and recovery distributors so all
+	// Shamir operations (init, rekey, recovery keys) succeed in handler tests.
+	dist := &testCaptureDistributor{}
+	barrier.SetCeremonyDistributor(dist)
+	recoveryDist := &testCaptureDistributor{}
+	barrier.SetRecoveryDistributor(recoveryDist)
+	_, err = barrier.InitializeShamir(context.Background(), seal.Credentials{})
 	require.NoError(t, err)
-	require.Len(t, result.Shares, 3)
+	shares := dist.Shares()
+	require.Len(t, shares, 3)
+
+	svc, _ := xkms.Get()
 
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Barrier:       barrier,
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	return server, result.Shares, barrier
+	return server, shares, barrier
 }
 
 // createTestServerWithSealedShamirBarrier creates a QUIC test server with
@@ -111,10 +164,13 @@ func createTestServerNoBarrier(t *testing.T) *Server {
 	})
 	require.NoError(t, err)
 
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -150,11 +206,19 @@ func createTestServerWithCredentialShamirBarrier(t *testing.T) (*Server, *seal.B
 	)
 	require.NoError(t, err)
 
+	// Wire both ceremony and recovery distributors so HTTP handler
+	// calls to InitializeShamir and GenerateRecoveryKeys succeed.
+	barrier.SetCeremonyDistributor(&testCaptureDistributor{})
+	barrier.SetRecoveryDistributor(&testCaptureDistributor{})
+
+	svc, _ := xkms.Get()
+
 	cfg := &Config{
 		Addr:          "localhost:8444",
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Barrier:       barrier,
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -183,13 +247,9 @@ func TestBarrierShamirInitialize(t *testing.T) {
 		err = json.NewDecoder(w.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.Equal(t, true, resp["success"])
-		assert.NotNil(t, resp["shares"])
 		assert.Equal(t, float64(2), resp["threshold"])
 		assert.Equal(t, float64(3), resp["total_shares"])
-
-		shares, ok := resp["shares"].([]interface{})
-		require.True(t, ok)
-		assert.Len(t, shares, 3)
+		assert.Equal(t, float64(3), resp["share_count"])
 	})
 
 	t.Run("GET method not allowed", func(t *testing.T) {
@@ -460,10 +520,7 @@ func TestBarrierShamirRekey(t *testing.T) {
 		assert.Equal(t, true, resp["success"])
 		assert.Equal(t, float64(3), resp["threshold"])
 		assert.Equal(t, float64(5), resp["total_shares"])
-
-		shares, ok := resp["shares"].([]interface{})
-		require.True(t, ok)
-		assert.Len(t, shares, 5)
+		assert.Equal(t, float64(5), resp["share_count"])
 	})
 
 	t.Run("threshold less than 2 returns bad request", func(t *testing.T) {
@@ -642,10 +699,7 @@ func TestBarrierShamirGenerateRecoveryKeys(t *testing.T) {
 		assert.Equal(t, true, resp["success"])
 		assert.Equal(t, float64(2), resp["threshold"])
 		assert.Equal(t, float64(3), resp["total_shares"])
-
-		shares, ok := resp["shares"].([]interface{})
-		require.True(t, ok)
-		assert.Len(t, shares, 3)
+		assert.Equal(t, float64(3), resp["share_count"])
 	})
 
 	t.Run("threshold less than 2 returns bad request", func(t *testing.T) {
@@ -730,24 +784,22 @@ func TestBarrierShamirRecoverWithKeys(t *testing.T) {
 		server, _, barrier := createTestServerWithShamirBarrier(t)
 		defer xkms.Reset()
 
-		// Generate recovery keys while unsealed
+		// Generate recovery keys while unsealed. The shares are captured by
+		// the testCaptureDistributor that was wired in createTestServerWithShamirBarrier.
 		body, _ := json.Marshal(BarrierGenerateRecoveryKeysRequest{Threshold: 2, Total: 3})
 		genReq := httptest.NewRequest(http.MethodPost, "/api/v1/barrier/recovery-keys/generate", bytes.NewReader(body))
 		genW := httptest.NewRecorder()
 		server.handler.ServeHTTP(genW, genReq)
 		require.Equal(t, http.StatusOK, genW.Code)
 
-		var genResp map[string]interface{}
-		err := json.NewDecoder(genW.Body).Decode(&genResp)
-		require.NoError(t, err)
-		sharesRaw := genResp["shares"].([]interface{})
-		recoveryKeys := make([]string, len(sharesRaw))
-		for i, s := range sharesRaw {
-			recoveryKeys[i] = s.(string)
-		}
+		// Retrieve shares from the recovery distributor (shares are never returned in the HTTP response).
+		recoveryDist, ok := barrier.RecoveryDistributor().(*testCaptureDistributor)
+		require.True(t, ok, "expected *testCaptureDistributor recovery distributor")
+		recoveryKeys := recoveryDist.Shares()
+		require.Len(t, recoveryKeys, 3)
 
 		// Seal the barrier
-		err = barrier.Seal()
+		err := barrier.Seal()
 		require.NoError(t, err)
 
 		// Recover with keys
@@ -953,10 +1005,12 @@ func TestBarrierShamirErrorMapping(t *testing.T) {
 		require.NoError(t, err)
 		defer xkms.Reset()
 
+		svc, _ := xkms.Get()
 		server, err := NewServer(&Config{
 			Addr:          "localhost:8444",
 			Authenticator: auth.NewNoOpAuthenticator(),
 			Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+			XKMSService:   svc,
 		})
 		require.NoError(t, err)
 

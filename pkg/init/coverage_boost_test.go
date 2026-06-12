@@ -14,6 +14,7 @@
 package initialize
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -237,7 +238,7 @@ func TestCAAdapter_IssueCertificate_WithSANs(t *testing.T) {
 		ValidityDays: 365,
 	}
 
-	issued, err := adapter.IssueCertificate(req)
+	issued, err := adapter.IssueCertificate(context.Background(), req)
 	require.NoError(t, err)
 	assert.NotNil(t, issued)
 	assert.NotNil(t, issued.Certificate)
@@ -254,7 +255,7 @@ func TestCAAdapter_IssueCertificate_WithoutSANs(t *testing.T) {
 		ValidityDays: 365,
 	}
 
-	issued, err := adapter.IssueCertificate(req)
+	issued, err := adapter.IssueCertificate(context.Background(), req)
 	require.NoError(t, err)
 	assert.NotNil(t, issued)
 	assert.NotNil(t, issued.Certificate)
@@ -272,7 +273,7 @@ func TestCAAdapter_IssueCertificate_Error(t *testing.T) {
 		ValidityDays: 365,
 	}
 
-	_, err := adapter.IssueCertificate(req)
+	_, err := adapter.IssueCertificate(context.Background(), req)
 	assert.Error(t, err)
 }
 
@@ -288,7 +289,7 @@ func TestCAAdapter_SignCSR_Error(t *testing.T) {
 	adapter := NewCAAdapter(errCA, "")
 
 	csrPEM, _ := generateTestCSR(t, "test-cn")
-	_, err := adapter.SignCSR(csrPEM, &qrdbsdk.SignCSROptions{
+	_, err := adapter.SignCSR(context.Background(), csrPEM, &qrdbsdk.SignCSROptions{
 		ValidityDays: 365,
 	})
 	assert.Error(t, err)
@@ -325,9 +326,9 @@ type mockCAWithSANs struct {
 	lastSANs *ca.SubjectAlternativeNames
 }
 
-func (m *mockCAWithSANs) IssueCertificate(req *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
+func (m *mockCAWithSANs) IssueCertificate(ctx context.Context, req *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
 	m.lastSANs = req.SANS
-	return m.mockCA.IssueCertificate(req)
+	return m.mockCA.IssueCertificate(ctx, req)
 }
 
 func TestCAAdapter_IssueCertificate_SANsPassedThrough(t *testing.T) {
@@ -340,7 +341,7 @@ func TestCAAdapter_IssueCertificate_SANsPassedThrough(t *testing.T) {
 		SANs:       []string{"foo.example.com", "bar.example.com"},
 	}
 
-	_, err := adapter.IssueCertificate(req)
+	_, err := adapter.IssueCertificate(context.Background(), req)
 	require.NoError(t, err)
 	require.NotNil(t, sanCA.lastSANs)
 	assert.Equal(t, []string{"foo.example.com", "bar.example.com"}, sanCA.lastSANs.DNS)
@@ -355,7 +356,7 @@ func TestCAAdapter_IssueCertificate_EmptySANsNotMapped(t *testing.T) {
 		CommonName: "no-sans",
 	}
 
-	_, err := adapter.IssueCertificate(req)
+	_, err := adapter.IssueCertificate(context.Background(), req)
 	require.NoError(t, err)
 	assert.Nil(t, sanCA.lastSANs)
 }

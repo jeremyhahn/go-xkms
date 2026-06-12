@@ -79,10 +79,10 @@ func (p *SSHProxy) Start() error {
 	if _, err := os.Stat(p.socketPath); err == nil {
 		conn, dialErr := net.Dial("unix", p.socketPath)
 		if dialErr == nil {
-			conn.Close()
+			_ = conn.Close()
 			return ErrServerAlreadyRunning
 		}
-		os.Remove(p.socketPath)
+		_ = os.Remove(p.socketPath)
 	}
 
 	listener, err := net.Listen("unix", p.socketPath)
@@ -92,8 +92,8 @@ func (p *SSHProxy) Start() error {
 
 	// Set socket permissions to owner-only.
 	if err := os.Chmod(p.socketPath, 0600); err != nil {
-		listener.Close()
-		os.Remove(p.socketPath)
+		_ = listener.Close()
+		_ = os.Remove(p.socketPath)
 		return &AgentError{Operation: "start_ssh_proxy", Err: err}
 	}
 
@@ -121,10 +121,10 @@ func (p *SSHProxy) Stop() error {
 
 	p.mu.Lock()
 	if p.listener != nil {
-		p.listener.Close()
+		_ = p.listener.Close()
 	}
 	for conn := range p.conns {
-		conn.Close()
+		_ = conn.Close()
 	}
 	p.mu.Unlock()
 
@@ -132,7 +132,7 @@ func (p *SSHProxy) Stop() error {
 	p.wg.Wait()
 	close(p.done)
 
-	os.Remove(p.socketPath)
+	_ = os.Remove(p.socketPath)
 	p.logger.Info("SSH proxy stopped")
 	return nil
 }
@@ -181,7 +181,7 @@ func (p *SSHProxy) handleConnection(conn net.Conn) {
 		p.mu.Lock()
 		delete(p.conns, conn)
 		p.mu.Unlock()
-		conn.Close()
+		_ = conn.Close()
 		p.wg.Done()
 	}()
 
@@ -201,7 +201,7 @@ func (p *SSHProxy) handleConnection(conn net.Conn) {
 			"error", err)
 		return
 	}
-	defer masterConn.Close()
+	defer func() { _ = masterConn.Close() }()
 
 	// Bidirectional proxy.
 	errCh := make(chan error, 2)

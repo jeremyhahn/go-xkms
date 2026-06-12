@@ -14,6 +14,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
 
@@ -30,7 +31,7 @@ import (
 //
 // Common sizes are 2048, 3072, and 4096 bits.
 // The key is stored in the key provider and wrapped in an OpaqueKey for safe use.
-func (c *compositeBackend) GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (c *compositeBackend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}
@@ -39,7 +40,7 @@ func (c *compositeBackend) GenerateRSA(attrs *types.KeyAttributes) (crypto.Priva
 	attrs.KeyAlgorithm = x509.RSA
 
 	// Generate the key using the key provider
-	key, err := c.backend.GenerateKey(attrs)
+	key, err := c.backend.GenerateKey(ctx, attrs)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "generate RSA key", Err: err}
 	}
@@ -63,7 +64,7 @@ func (c *compositeBackend) GenerateRSA(attrs *types.KeyAttributes) (crypto.Priva
 //
 // Common curves include P-256, P-384, and P-521.
 // The key is stored in the key provider and wrapped in an OpaqueKey for safe use.
-func (c *compositeBackend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (c *compositeBackend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}
@@ -72,7 +73,7 @@ func (c *compositeBackend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.Pri
 	attrs.KeyAlgorithm = x509.ECDSA
 
 	// Generate the key using the key provider
-	key, err := c.backend.GenerateKey(attrs)
+	key, err := c.backend.GenerateKey(ctx, attrs)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "generate ECDSA key", Err: err}
 	}
@@ -95,7 +96,7 @@ func (c *compositeBackend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.Pri
 // Ed25519 keys have a fixed size and do not require additional parameters.
 //
 // The key is stored in the key provider and wrapped in an OpaqueKey for safe use.
-func (c *compositeBackend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (c *compositeBackend) GenerateEd25519(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}
@@ -104,7 +105,7 @@ func (c *compositeBackend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.P
 	attrs.KeyAlgorithm = x509.Ed25519
 
 	// Generate the key using the key provider
-	key, err := c.backend.GenerateKey(attrs)
+	key, err := c.backend.GenerateKey(ctx, attrs)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "generate Ed25519 key", Err: err}
 	}
@@ -131,13 +132,13 @@ func (c *compositeBackend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.P
 // Returns an error if the key does not exist.
 //
 // The key is wrapped in an OpaqueKey for safe operations.
-func (c *compositeBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (c *compositeBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}
 
 	// Get the key from the key provider
-	key, err := c.backend.GetKey(attrs)
+	key, err := c.backend.GetKey(ctx, attrs)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "get key", Err: err}
 	}
@@ -158,13 +159,13 @@ func (c *compositeBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey
 
 // DeleteKey removes a key identified by its attributes.
 // Returns an error if the key does not exist.
-func (c *compositeBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (c *compositeBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil {
 		return ErrInvalidKeyAttributes
 	}
 
 	// Delete the key from the key provider
-	if err := c.backend.DeleteKey(attrs); err != nil {
+	if err := c.backend.DeleteKey(ctx, attrs); err != nil {
 		return &ErrKeyOperation{Operation: "delete key", Err: err}
 	}
 
@@ -173,9 +174,9 @@ func (c *compositeBackend) DeleteKey(attrs *types.KeyAttributes) error {
 
 // ListKeys returns attributes for all keys managed by this xkms.
 // Returns an empty slice if no keys exist.
-func (c *compositeBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (c *compositeBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	// Get keys from key provider
-	keys, err := c.backend.ListKeys()
+	keys, err := c.backend.ListKeys(ctx)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "list keys", Err: err}
 	}
@@ -188,7 +189,7 @@ func (c *compositeBackend) ListKeys() ([]*types.KeyAttributes, error) {
 // with the same attributes.
 //
 // Returns the newly generated key wrapped in an OpaqueKey.
-func (c *compositeBackend) RotateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (c *compositeBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}
@@ -196,7 +197,7 @@ func (c *compositeBackend) RotateKey(attrs *types.KeyAttributes) (crypto.Private
 	// Handle symmetric keys first
 	if attrs.IsSymmetric() {
 		// Delete the old key
-		if err := c.DeleteKey(attrs); err != nil {
+		if err := c.DeleteKey(ctx, attrs); err != nil {
 			return nil, &ErrKeyOperation{Operation: "delete old key during rotation", Err: err}
 		}
 		// Generate a new symmetric key
@@ -204,7 +205,7 @@ func (c *compositeBackend) RotateKey(attrs *types.KeyAttributes) (crypto.Private
 		if !ok {
 			return nil, ErrSymmetricNotSupported
 		}
-		key, err := symBackend.GenerateSymmetricKey(attrs)
+		key, err := symBackend.GenerateSymmetricKey(ctx, attrs)
 		if err != nil {
 			return nil, err
 		}
@@ -212,18 +213,18 @@ func (c *compositeBackend) RotateKey(attrs *types.KeyAttributes) (crypto.Private
 	}
 
 	// Delete the old key
-	if err := c.DeleteKey(attrs); err != nil {
+	if err := c.DeleteKey(ctx, attrs); err != nil {
 		return nil, &ErrKeyOperation{Operation: "delete old key during rotation", Err: err}
 	}
 
 	// Generate a new key based on the algorithm
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		return c.GenerateRSA(attrs)
+		return c.GenerateRSA(ctx, attrs)
 	case x509.ECDSA:
-		return c.GenerateECDSA(attrs)
+		return c.GenerateECDSA(ctx, attrs)
 	case x509.Ed25519:
-		return c.GenerateEd25519(attrs)
+		return c.GenerateEd25519(ctx, attrs)
 	default:
 		return nil, ErrUnsupportedKeyAlgorithm
 	}

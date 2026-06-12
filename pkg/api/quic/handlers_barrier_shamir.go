@@ -98,11 +98,14 @@ func (s *Server) handleBarrierInitializeShamir(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Share material is never returned: shares are sealed to enrolled
+	// Security Officers via the CeremonyDistributor (qrdb share-free
+	// contract). Only the threshold/total metadata is reported.
 	s.sendJSON(w, http.StatusOK, map[string]interface{}{
 		"success":      true,
-		"shares":       result.Shares,
 		"threshold":    result.Threshold,
 		"total_shares": result.TotalShares,
+		"share_count":  result.ShareCount,
 	})
 }
 
@@ -226,11 +229,13 @@ func (s *Server) handleBarrierRekey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// New shares are sealed to enrolled Security Officers and never
+	// returned; only the threshold/total metadata is reported.
 	s.sendJSON(w, http.StatusOK, map[string]interface{}{
 		"success":      true,
-		"shares":       result.Shares,
 		"threshold":    result.Threshold,
 		"total_shares": result.TotalShares,
+		"share_count":  result.ShareCount,
 	})
 }
 
@@ -314,11 +319,13 @@ func (s *Server) handleBarrierGenerateRecoveryKeys(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Recovery shares are sealed to enrolled recovery officers and never
+	// returned; only the threshold/total metadata is reported.
 	s.sendJSON(w, http.StatusOK, map[string]interface{}{
 		"success":      true,
-		"shares":       result.Shares,
 		"threshold":    result.Threshold,
 		"total_shares": result.TotalShares,
+		"share_count":  result.ShareCount,
 	})
 }
 

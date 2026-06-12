@@ -130,7 +130,7 @@ func (c *restClient) do(ctx context.Context, method, path string, body any) ([]b
 	if err != nil {
 		return nil, &ProtocolError{Message: "round-trip", Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -327,7 +327,7 @@ func (k *restKeysClient) ExportPublic(ctx context.Context, req ExportRequest) (*
 // server. The public key is fetched once at construction via
 // ExportPublic so PublicKey() calls are zero-cost.
 func (k *restKeysClient) Signer(ctx context.Context, req GetKeyRequest) (gossh.Signer, error) {
-	pub, err := k.ExportPublic(ctx, ExportRequest{Scope: req.Scope, Owner: req.Owner, Name: req.Name})
+	pub, err := k.ExportPublic(ctx, ExportRequest(req))
 	if err != nil {
 		return nil, err
 	}

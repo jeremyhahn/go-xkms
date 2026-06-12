@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -221,10 +222,10 @@ func TestInitGUILogging_Defaults(t *testing.T) {
 
 	// Verify the logger is enabled at info level and not at debug level
 	logger := slog.Default()
-	if !logger.Enabled(nil, slog.LevelInfo) {
+	if !logger.Enabled(context.Background(), slog.LevelInfo) {
 		t.Error("expected info level to be enabled with default settings")
 	}
-	if logger.Enabled(nil, slog.LevelDebug) {
+	if logger.Enabled(context.Background(), slog.LevelDebug) {
 		t.Error("expected debug level to be disabled with default settings")
 	}
 }
@@ -236,7 +237,7 @@ func TestInitGUILogging_DebugLevel(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	if !logger.Enabled(nil, slog.LevelDebug) {
+	if !logger.Enabled(context.Background(), slog.LevelDebug) {
 		t.Error("expected debug level to be enabled after --log-level debug")
 	}
 }

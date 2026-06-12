@@ -143,7 +143,7 @@ func setupAuthzServiceTest(t *testing.T, authorizer *auth.Authorizer, auditLogge
 		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
-	return NewService(authorizer, auditLogger)
+	return NewService(authorizer, auditLogger, nil)
 }
 
 // --- authorize helper tests ---
@@ -340,7 +340,7 @@ func TestAuthz_ExtractRoleEmptySlice(t *testing.T) {
 // --- NewService defaults tests ---
 
 func TestAuthz_NewServiceNilDefaults(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, nil)
 	if svc == nil {
 		t.Fatal("Expected non-nil service")
 	}
@@ -365,7 +365,7 @@ func TestAuthz_NewServiceCustomAuthorizer(t *testing.T) {
 	customAuthz := auth.NewAuthorizer(&fakeRBACClient{})
 	customAudit := &mockAuditLogger{}
 
-	svc := NewService(customAuthz, customAudit)
+	svc := NewService(customAuthz, customAudit, nil)
 	if svc.authorizer != customAuthz {
 		t.Error("Expected custom authorizer to be set")
 	}

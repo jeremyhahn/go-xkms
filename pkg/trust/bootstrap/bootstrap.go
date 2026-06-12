@@ -81,6 +81,15 @@ const (
 	// default trust store. Last-resort fallback only — the server
 	// must already have a publicly trusted certificate.
 	ModeDirect Mode = "direct"
+
+	// ModeTOFU uses trust-on-first-use SPKI pinning. On the first
+	// connection the server's leaf certificate SPKI pin is captured
+	// and persisted via TOFUConfig.PinStore. Subsequent connections
+	// verify the stored pin exactly like ModeSPKI. ModeTOFU requires
+	// explicit configuration of TOFUConfig.PinStore; it is never
+	// included in the ModeAuto fallback chain unless the caller sets
+	// Config.TOFU and includes ModeTOFU in Config.TOFUMethodOrder.
+	ModeTOFU Mode = "tofu"
 )
 
 // DefaultNoisePort is the well-known port the Noise bootstrap channel
@@ -133,6 +142,19 @@ type Config struct {
 	// Direct configures the direct HTTPS mode. Required when
 	// Mode == ModeDirect; optional knob for ModeAuto.
 	Direct *DirectConfig
+
+	// TOFU configures the trust-on-first-use mode. Required when
+	// Mode == ModeTOFU. Under ModeAuto, TOFU is included only when
+	// both TOFU is non-nil and TOFUMethodOrder contains ModeTOFU
+	// (it is absent from the default order by design — a TOFU
+	// fallback in a strictly pinned environment is a security hazard).
+	TOFU *TOFUConfig
+
+	// TOFUMethodOrder overrides the method order under ModeAuto to
+	// include ModeTOFU. Leave nil to use truststrap's DefaultMethodOrder
+	// (which does not include TOFU). Only consulted when Mode == ModeAuto
+	// and TOFU != nil.
+	TOFUMethodOrder []truststrap.Method
 }
 
 // DANEConfig holds the per-mode inputs the DANE/TLSA strategy needs.
@@ -177,6 +199,31 @@ type SPKIConfig struct {
 // can express "direct mode is configured" symmetrically with the
 // other modes (relevant under ModeAuto).
 type DirectConfig struct{}
+
+// TOFUConfig holds the per-mode inputs the trust-on-first-use strategy
+// needs. PinStore is the only required field: it persists captured pins
+// across process restarts.
+//
+// Security caveat: the first connection to a server under TOFU is
+// unauthenticated — no pre-existing trust anchor validates the server's
+// certificate. The captured SPKI pin is then used for all subsequent
+// connections, providing strong continuity guarantees but no first-use
+// authenticity. Use DANE, Noise, or SPKI when a pre-shared trust anchor
+// is available.
+type TOFUConfig struct {
+	// PinStore persists captured pins. Required.
+	// Use NewStoragePinStore to wrap any storage.Backend — including
+	// the in-memory, file, PebbleDB, and qrdb backends. When the
+	// backend is a Raft-replicated qrdb cluster every pin write
+	// replicates through the Raft log.
+	PinStore truststrap.PinStore
+
+	// ConfirmFunc is an optional hook called before a newly captured
+	// pin is persisted. Returning an error causes the bootstrap to
+	// fail with truststrap.ErrTOFURejected and prevents pin storage.
+	// When nil, new pins are auto-accepted with a WARNING log entry.
+	ConfirmFunc func(ctx context.Context, pin *truststrap.Pin) error
+}
 
 // CABundle is the return value from a successful Fetch.
 type CABundle struct {
@@ -260,6 +307,8 @@ func Fetch(ctx context.Context, cfg Config) (*CABundle, error) {
 		return fetchSPKI(ctx, cfg)
 	case ModeDirect:
 		return fetchDirect(ctx, cfg)
+	case ModeTOFU:
+		return fetchTOFU(ctx, cfg)
 	default:
 		return nil, ErrInvalidMode
 	}
@@ -380,6 +429,28 @@ func fetchDirect(ctx context.Context, cfg Config) (*CABundle, error) {
 	return invoke(ctx, ModeDirect, bs)
 }
 
+func fetchTOFU(ctx context.Context, cfg Config) (*CABundle, error) {
+	if cfg.TOFU == nil {
+		return nil, ErrModeNotConfigured
+	}
+	if cfg.ServerURL == "" {
+		return nil, ErrServerURLRequired
+	}
+	bs, err := truststrap.NewTOFUBootstrapper(&truststrap.TOFUConfig{
+		ServerURL:      cfg.ServerURL,
+		PinStore:       cfg.TOFU.PinStore,
+		ConfirmFunc:    cfg.TOFU.ConfirmFunc,
+		ConnectTimeout: cfg.PerMethodTimeout,
+		BundlePath:     cfg.BundlePath,
+		Logger:         cfg.Logger,
+	})
+	if err != nil {
+		return nil, &FetchError{Mode: ModeTOFU, Cause: err}
+	}
+	defer func() { _ = bs.Close() }()
+	return invoke(ctx, ModeTOFU, bs)
+}
+
 func fetchAuto(ctx context.Context, cfg Config) (*CABundle, error) {
 	autoCfg := &truststrap.AutoConfig{
 		PerMethodTimeout: cfg.PerMethodTimeout,
@@ -427,7 +498,18 @@ func fetchAuto(ctx context.Context, cfg Config) (*CABundle, error) {
 			Logger:         cfg.Logger,
 		}
 	}
-	if autoCfg.DANE == nil && autoCfg.Noise == nil && autoCfg.SPKI == nil && autoCfg.Direct == nil {
+	if cfg.TOFU != nil && cfg.TOFU.PinStore != nil && cfg.ServerURL != "" && len(cfg.TOFUMethodOrder) > 0 {
+		autoCfg.TOFU = &truststrap.TOFUConfig{
+			ServerURL:      cfg.ServerURL,
+			PinStore:       cfg.TOFU.PinStore,
+			ConfirmFunc:    cfg.TOFU.ConfirmFunc,
+			ConnectTimeout: cfg.PerMethodTimeout,
+			BundlePath:     cfg.BundlePath,
+			Logger:         cfg.Logger,
+		}
+		autoCfg.MethodOrder = cfg.TOFUMethodOrder
+	}
+	if autoCfg.DANE == nil && autoCfg.Noise == nil && autoCfg.SPKI == nil && autoCfg.Direct == nil && autoCfg.TOFU == nil {
 		return nil, ErrModeNotConfigured
 	}
 

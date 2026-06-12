@@ -285,7 +285,7 @@ func (c *Client) doTokenRequest(ctx context.Context, data url.Values) (*TokenRes
 		}
 
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrTokenRequestFailed, err)
 		}

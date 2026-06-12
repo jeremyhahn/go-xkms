@@ -17,6 +17,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -781,7 +782,7 @@ type mockOCSPResponder struct {
 	err      error
 }
 
-func (m *mockOCSPResponder) HandleRequest(requestBytes []byte) ([]byte, error) {
+func (m *mockOCSPResponder) HandleRequest(_ context.Context, requestBytes []byte) ([]byte, error) {
 	if m.err != nil {
 		return nil, m.err
 	}

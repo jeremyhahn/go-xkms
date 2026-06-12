@@ -1946,6 +1946,184 @@ func TestPathLength(t *testing.T) {
 // hashForSignatureAlgorithm Tests
 // =============================================================================
 
+// =============================================================================
+// VerifyChainAlgorithms Tests (F-08)
+// =============================================================================
+
+// makeWeakCert builds a *x509.Certificate stub with an arbitrary SignatureAlgorithm
+// field. The cert is not cryptographically valid but is sufficient for testing
+// the algorithm-policy check which only inspects cert.SignatureAlgorithm and
+// cert.Subject / cert.Issuer (for self-signed detection).
+func makeWeakCert(subject, issuer string, algo x509.SignatureAlgorithm) *x509.Certificate {
+	return &x509.Certificate{
+		Subject:            pkix.Name{CommonName: subject},
+		Issuer:             pkix.Name{CommonName: issuer},
+		SignatureAlgorithm: algo,
+		SerialNumber:       big.NewInt(1),
+	}
+}
+
+func TestVerifyChainAlgorithms_EmptyChains(t *testing.T) {
+	if err := VerifyChainAlgorithms(nil); err != nil {
+		t.Errorf("VerifyChainAlgorithms(nil) = %v, want nil", err)
+	}
+	if err := VerifyChainAlgorithms([][]*x509.Certificate{}); err != nil {
+		t.Errorf("VerifyChainAlgorithms([]) = %v, want nil", err)
+	}
+}
+
+func TestVerifyChainAlgorithms_StrongAlgorithmsAccepted(t *testing.T) {
+	caKey := generateTestECDSAKey(t)
+	leafKey := generateTestECDSAKey(t)
+	caCert := generateSelfSignedCA(t, caKey)
+	leafCert := generateLeafCertificate(t, caCert, caKey, leafKey)
+
+	// Both certs should have ECDSAWithSHA256 — the chain must pass.
+	chains := [][]*x509.Certificate{{leafCert, caCert}}
+	if err := VerifyChainAlgorithms(chains); err != nil {
+		t.Errorf("VerifyChainAlgorithms(strong chain) = %v, want nil", err)
+	}
+}
+
+func TestVerifyChainAlgorithms_SHA1IntermediateRejected(t *testing.T) {
+	// Build a fake chain: leaf (strong) → intermediate (SHA1WithRSA) → root
+	root := makeWeakCert("Root CA", "Root CA", x509.ECDSAWithSHA256) // self-signed
+	intermediate := makeWeakCert("Intermediate CA", "Root CA", x509.SHA1WithRSA)
+	leaf := makeWeakCert("leaf.example.com", "Intermediate CA", x509.ECDSAWithSHA256)
+
+	chains := [][]*x509.Certificate{{leaf, intermediate, root}}
+	err := VerifyChainAlgorithms(chains)
+	if err == nil {
+		t.Fatal("VerifyChainAlgorithms: expected error for SHA1WithRSA intermediate, got nil")
+	}
+
+	var detail *ErrWeakSignatureAlgorithmDetail
+	if !errors.As(err, &detail) {
+		t.Fatalf("expected *ErrWeakSignatureAlgorithmDetail, got %T: %v", err, err)
+	}
+	if detail.Algorithm != x509.SHA1WithRSA.String() {
+		t.Errorf("Algorithm = %q, want %q", detail.Algorithm, x509.SHA1WithRSA.String())
+	}
+	if detail.Subject != "CN=Intermediate CA" {
+		t.Errorf("Subject = %q, want %q", detail.Subject, "CN=Intermediate CA")
+	}
+	if !errors.Is(err, ErrWeakSignatureAlgorithm) {
+		t.Errorf("errors.Is(ErrWeakSignatureAlgorithm) = false, want true")
+	}
+}
+
+func TestVerifyChainAlgorithms_MD5IntermediateRejected(t *testing.T) {
+	root := makeWeakCert("Root CA", "Root CA", x509.ECDSAWithSHA256)
+	intermediate := makeWeakCert("MD5 Intermediate", "Root CA", x509.MD5WithRSA)
+	leaf := makeWeakCert("leaf.example.com", "MD5 Intermediate", x509.ECDSAWithSHA256)
+
+	chains := [][]*x509.Certificate{{leaf, intermediate, root}}
+	err := VerifyChainAlgorithms(chains)
+	if err == nil {
+		t.Fatal("VerifyChainAlgorithms: expected error for MD5WithRSA intermediate, got nil")
+	}
+
+	var detail *ErrWeakSignatureAlgorithmDetail
+	if !errors.As(err, &detail) {
+		t.Fatalf("expected *ErrWeakSignatureAlgorithmDetail, got %T: %v", err, err)
+	}
+}
+
+func TestVerifyChainAlgorithms_SHA1RootAnchorExempt(t *testing.T) {
+	// Build a REAL self-signed RSA certificate with SHA1WithRSA so that
+	// IsSelfSigned() returns true (it checks RawSubject == RawIssuer and
+	// verifies the signature against the cert's own public key).
+	rsaKey := generateTestRSAKey(t)
+	sha1RootDER, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber:       big.NewInt(9001),
+		Subject:            pkix.Name{CommonName: "SHA1 Legacy Root CA"},
+		NotBefore:          time.Now().Add(-time.Hour),
+		NotAfter:           time.Now().Add(365 * 24 * time.Hour),
+		IsCA:               true,
+		SignatureAlgorithm: x509.SHA1WithRSA,
+		KeyUsage:           x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}, &x509.Certificate{
+		SerialNumber:       big.NewInt(9001),
+		Subject:            pkix.Name{CommonName: "SHA1 Legacy Root CA"},
+		NotBefore:          time.Now().Add(-time.Hour),
+		NotAfter:           time.Now().Add(365 * 24 * time.Hour),
+		IsCA:               true,
+		SignatureAlgorithm: x509.SHA1WithRSA,
+		KeyUsage:           x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}, &rsaKey.PublicKey, rsaKey)
+	if err != nil {
+		t.Fatalf("failed to create SHA1 self-signed cert: %v", err)
+	}
+	sha1Root, err := x509.ParseCertificate(sha1RootDER)
+	if err != nil {
+		t.Fatalf("failed to parse SHA1 root cert: %v", err)
+	}
+
+	// The leaf cert uses a strong algorithm.
+	caKey := generateTestECDSAKey(t)
+	leafKey := generateTestECDSAKey(t)
+	caCert := generateSelfSignedCA(t, caKey)
+	leafCert := generateLeafCertificate(t, caCert, caKey, leafKey)
+
+	// Chain: [leaf (ECDSAWithSHA256), sha1Root (SHA1WithRSA, self-signed)]
+	// The SHA1 root is the trust anchor → it must be exempt.
+	chains := [][]*x509.Certificate{{leafCert, sha1Root}}
+	if err := VerifyChainAlgorithms(chains); err != nil {
+		t.Errorf("VerifyChainAlgorithms: SHA1WithRSA self-signed anchor should be exempt, got: %v", err)
+	}
+}
+
+func TestVerifyChainAlgorithms_SHA1LeafRejected(t *testing.T) {
+	// Even if the root is strong, a SHA1 leaf must be rejected.
+	root := makeWeakCert("Root CA", "Root CA", x509.ECDSAWithSHA256)
+	leaf := makeWeakCert("leaf.example.com", "Root CA", x509.SHA1WithRSA)
+
+	chains := [][]*x509.Certificate{{leaf, root}}
+	err := VerifyChainAlgorithms(chains)
+	if err == nil {
+		t.Fatal("VerifyChainAlgorithms: expected error for SHA1 leaf cert, got nil")
+	}
+
+	var detail *ErrWeakSignatureAlgorithmDetail
+	if !errors.As(err, &detail) {
+		t.Fatalf("expected *ErrWeakSignatureAlgorithmDetail, got %T: %v", err, err)
+	}
+	if detail.Subject != "CN=leaf.example.com" {
+		t.Errorf("Subject = %q, want %q", detail.Subject, "CN=leaf.example.com")
+	}
+}
+
+func TestVerifyChainAlgorithms_AllStrongAlgorithms(t *testing.T) {
+	root := makeWeakCert("Root CA", "Root CA", x509.ECDSAWithSHA256)
+
+	strongAlgos := []x509.SignatureAlgorithm{
+		x509.SHA256WithRSA,
+		x509.SHA384WithRSA,
+		x509.SHA512WithRSA,
+		x509.SHA256WithRSAPSS,
+		x509.SHA384WithRSAPSS,
+		x509.SHA512WithRSAPSS,
+		x509.ECDSAWithSHA256,
+		x509.ECDSAWithSHA384,
+		x509.ECDSAWithSHA512,
+		x509.PureEd25519,
+	}
+
+	for _, algo := range strongAlgos {
+		t.Run(algo.String(), func(t *testing.T) {
+			leaf := makeWeakCert("leaf.example.com", "Root CA", algo)
+			chains := [][]*x509.Certificate{{leaf, root}}
+			if err := VerifyChainAlgorithms(chains); err != nil {
+				t.Errorf("VerifyChainAlgorithms(%s) = %v, want nil", algo, err)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// hashForSignatureAlgorithm Tests
+// =============================================================================
+
 func TestHashForSignatureAlgorithm(t *testing.T) {
 	tests := []struct {
 		name     string
