@@ -24,6 +24,8 @@ import (
 	"encoding/pem"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -43,7 +45,7 @@ func (ca *CA) TLSBundle(ctx context.Context, attrs *types.KeyAttributes) ([]byte
 		return nil, ErrNotInitialized
 	}
 	if attrs == nil {
-		return nil, fmt.Errorf("%w: key attributes required", ErrInvalidTLSOptions)
+		return nil, &errs.Detail{Err: ErrInvalidTLSOptions, Detail: "key attributes required"}
 	}
 
 	var bundle bytes.Buffer
@@ -64,24 +66,23 @@ func (ca *CA) TLSBundle(ctx context.Context, attrs *types.KeyAttributes) ([]byte
 			Type:  "CERTIFICATE",
 			Bytes: cert.Raw,
 		}); err != nil {
-			return nil, fmt.Errorf("%w: failed to encode certificate: %v", ErrTLSConfigFailed, err)
+			return nil, &errs.Detail{Err: ErrTLSConfigFailed, Detail: fmt.Sprintf("failed to encode certificate: %v", err)}
 		}
 	}
 
 	key, err := ca.keyStore.GetKey(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("%w: private key export unsupported by backend: %v",
-			ErrTLSConfigFailed, err)
+		return nil, &errs.Detail{Err: ErrTLSConfigFailed, Detail: fmt.Sprintf("private key export unsupported by backend: %v", err)}
 	}
 	keyBytes, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to marshal private key: %v", ErrTLSConfigFailed, err)
+		return nil, &errs.Detail{Err: ErrTLSConfigFailed, Detail: fmt.Sprintf("failed to marshal private key: %v", err)}
 	}
 	if err := pem.Encode(&bundle, &pem.Block{
 		Type:  "PRIVATE KEY",
 		Bytes: keyBytes,
 	}); err != nil {
-		return nil, fmt.Errorf("%w: failed to encode private key: %v", ErrTLSConfigFailed, err)
+		return nil, &errs.Detail{Err: ErrTLSConfigFailed, Detail: fmt.Sprintf("failed to encode private key: %v", err)}
 	}
 	return bundle.Bytes(), nil
 }
@@ -114,8 +115,7 @@ func (ca *CA) TLSBundleWithCrossSigner(ctx context.Context, attrs *types.KeyAttr
 			Type:  "CERTIFICATE",
 			Bytes: cert.Raw,
 		}); err != nil {
-			return nil, fmt.Errorf("%w: failed to encode cross-signed certificate: %v",
-				ErrTLSConfigFailed, err)
+			return nil, &errs.Detail{Err: ErrTLSConfigFailed, Detail: fmt.Sprintf("failed to encode cross-signed certificate: %v", err)}
 		}
 	}
 	bundle.Write(base)

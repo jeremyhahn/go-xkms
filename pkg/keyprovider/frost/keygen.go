@@ -18,6 +18,8 @@ package frost
 import (
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	gofrost "github.com/jeremyhahn/go-frost/pkg/frost"
 	"github.com/jeremyhahn/go-frost/pkg/frost/keygen"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -44,22 +46,22 @@ type FrostConfig struct {
 // Validate checks if the FROST config is valid.
 func (c *FrostConfig) Validate() error {
 	if c.Threshold < 2 {
-		return fmt.Errorf("threshold must be at least 2, got %d", c.Threshold)
+		return &errs.Message{Msg: fmt.Sprintf("threshold must be at least 2, got %d", c.Threshold)}
 	}
 	if c.Total < c.Threshold {
-		return fmt.Errorf("total (%d) must be >= threshold (%d)", c.Total, c.Threshold)
+		return &errs.Message{Msg: fmt.Sprintf("total (%d) must be >= threshold (%d)", c.Total, c.Threshold)}
 	}
 	if c.Threshold > 255 {
-		return fmt.Errorf("threshold cannot exceed 255, got %d", c.Threshold)
+		return &errs.Message{Msg: fmt.Sprintf("threshold cannot exceed 255, got %d", c.Threshold)}
 	}
 	if c.Total > 255 {
-		return fmt.Errorf("total cannot exceed 255, got %d", c.Total)
+		return &errs.Message{Msg: fmt.Sprintf("total cannot exceed 255, got %d", c.Total)}
 	}
 	if len(c.Participants) > 0 && len(c.Participants) != c.Total {
-		return fmt.Errorf("participants length (%d) must match total (%d)", len(c.Participants), c.Total)
+		return &errs.Message{Msg: fmt.Sprintf("participants length (%d) must match total (%d)", len(c.Participants), c.Total)}
 	}
 	if !c.Algorithm.IsValid() {
-		return fmt.Errorf("invalid algorithm: %s", c.Algorithm)
+		return &errs.Message{Msg: fmt.Sprintf("invalid algorithm: %s", c.Algorithm)}
 	}
 	return nil
 }
@@ -147,7 +149,7 @@ func NewTrustedDealer() *TrustedDealer {
 // This implements RFC 9591 Appendix C.
 func (td *TrustedDealer) Generate(config FrostConfig) ([]*KeyPackage, *PublicKeyPackage, error) {
 	if err := config.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("invalid config: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "invalid config", Err: err}
 	}
 
 	// Get the ciphersuite
@@ -171,7 +173,7 @@ func (td *TrustedDealer) Generate(config FrostConfig) ([]*KeyPackage, *PublicKey
 		identifiers,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("trusted dealer keygen failed: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "trusted dealer keygen failed", Err: err}
 	}
 
 	// Convert to our KeyPackage format
@@ -235,7 +237,7 @@ func (td *TrustedDealer) GenerateSinglePackage(config FrostConfig, participantID
 	}
 
 	if participantID < 1 || participantID > uint32(len(packages)) {
-		return nil, nil, fmt.Errorf("invalid participant ID: %d (must be 1-%d)", participantID, len(packages))
+		return nil, nil, &errs.Message{Msg: fmt.Sprintf("invalid participant ID: %d (must be 1-%d)", participantID, len(packages))}
 	}
 
 	return packages[participantID-1], publicPackage, nil

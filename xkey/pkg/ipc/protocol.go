@@ -85,35 +85,35 @@ type Response struct {
 // if the type is empty, unrecognized, or if required fields are missing.
 func (m *Message) Validate() error {
 	if m.Type == "" {
-		return fmt.Errorf("%w: type is required", ErrInvalidMessage)
+		return &DetailError{Err: ErrInvalidMessage, Detail: ": type is required"}
 	}
 	if !validMessageTypes[m.Type] {
-		return fmt.Errorf("%w: unknown message type %q", ErrInvalidMessage, m.Type)
+		return &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": unknown message type %q", m.Type)}
 	}
 	if m.Type == MessageTypeTypePassword && m.Name == "" {
-		return fmt.Errorf("%w: name is required for type_password", ErrInvalidMessage)
+		return &DetailError{Err: ErrInvalidMessage, Detail: ": name is required for type_password"}
 	}
 	if m.Type == MessageTypePKCS11 {
 		if m.PKCS11 == nil {
-			return fmt.Errorf("%w: pkcs11 payload is required", ErrInvalidMessage)
+			return &DetailError{Err: ErrInvalidMessage, Detail: ": pkcs11 payload is required"}
 		}
 		return m.PKCS11.Validate()
 	}
 	if m.Type == MessageTypeAutofill {
 		if m.Autofill == nil {
-			return fmt.Errorf("%w: autofill payload is required", ErrInvalidMessage)
+			return &DetailError{Err: ErrInvalidMessage, Detail: ": autofill payload is required"}
 		}
 		return m.Autofill.Validate()
 	}
 	if m.Type == MessageTypePairing {
 		if m.Pairing == nil {
-			return fmt.Errorf("%w: pairing payload is required", ErrInvalidMessage)
+			return &DetailError{Err: ErrInvalidMessage, Detail: ": pairing payload is required"}
 		}
 		return m.Pairing.Validate()
 	}
 	if m.Type == MessageTypeUnlock {
 		if m.Unlock == nil {
-			return fmt.Errorf("%w: unlock payload is required", ErrInvalidMessage)
+			return &DetailError{Err: ErrInvalidMessage, Detail: ": unlock payload is required"}
 		}
 		return m.Unlock.Validate()
 	}

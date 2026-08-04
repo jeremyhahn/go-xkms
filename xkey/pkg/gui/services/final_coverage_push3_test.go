@@ -21,7 +21,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -32,6 +31,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

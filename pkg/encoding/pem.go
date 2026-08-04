@@ -18,7 +18,8 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/pem"
-	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // PEM block types
@@ -67,7 +68,7 @@ func EncodePrivateKeyPEM(privateKey crypto.PrivateKey, keyAlgorithm x509.PublicK
 	// Encode to PEM
 	var buf bytes.Buffer
 	if err := pem.Encode(&buf, block); err != nil {
-		return nil, fmt.Errorf("failed to encode PEM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to encode PEM", Err: err}
 	}
 
 	return buf.Bytes(), nil
@@ -122,7 +123,7 @@ func EncodePublicKeyPEM(publicKey crypto.PublicKey) ([]byte, error) {
 	// Encode to PEM
 	var buf bytes.Buffer
 	if err := pem.Encode(&buf, block); err != nil {
-		return nil, fmt.Errorf("failed to encode PEM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to encode PEM", Err: err}
 	}
 
 	return buf.Bytes(), nil
@@ -170,7 +171,7 @@ func EncodeCertificatePEM(cert *x509.Certificate) ([]byte, error) {
 	// Encode to PEM
 	var buf bytes.Buffer
 	if err := pem.Encode(&buf, block); err != nil {
-		return nil, fmt.Errorf("failed to encode certificate PEM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to encode certificate PEM", Err: err}
 	}
 
 	return buf.Bytes(), nil
@@ -195,7 +196,7 @@ func DecodeCertificatePEM(data []byte) (*x509.Certificate, error) {
 	// Parse certificate
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse certificate", Err: err}
 	}
 
 	return cert, nil
@@ -225,7 +226,7 @@ func EncodeCertificateChainPEM(certs []*x509.Certificate) ([]byte, error) {
 		}
 
 		if err := pem.Encode(&buf, block); err != nil {
-			return nil, fmt.Errorf("failed to encode certificate chain PEM: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to encode certificate chain PEM", Err: err}
 		}
 	}
 
@@ -255,7 +256,7 @@ func DecodeCertificateChainPEM(data []byte) ([]*x509.Certificate, error) {
 
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse certificate in chain: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to parse certificate in chain", Err: err}
 		}
 
 		certs = append(certs, cert)

@@ -17,6 +17,8 @@ import (
 	"crypto"
 	"crypto/ecdh"
 	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // PrivateKeyStorage wraps an X25519 private key to implement crypto.PrivateKey.
@@ -28,10 +30,10 @@ type PrivateKeyStorage struct {
 // NewPrivateKeyStorage creates a new PrivateKeyStorage from an X25519 private key.
 func NewPrivateKeyStorage(privateKey *ecdh.PrivateKey) (*PrivateKeyStorage, error) {
 	if privateKey == nil {
-		return nil, fmt.Errorf("private key cannot be nil")
+		return nil, &errs.Message{Msg: "private key cannot be nil"}
 	}
 	if privateKey.Curve() != ecdh.X25519() {
-		return nil, fmt.Errorf("private key must be X25519, got %v", privateKey.Curve())
+		return nil, &errs.Message{Msg: fmt.Sprintf("private key must be X25519, got %v", privateKey.Curve())}
 	}
 	return &PrivateKeyStorage{privateKey: privateKey}, nil
 }
@@ -60,10 +62,10 @@ type PublicKeyStorage struct {
 // NewPublicKeyStorage creates a new PublicKeyStorage from an X25519 public key.
 func NewPublicKeyStorage(publicKey *ecdh.PublicKey) (*PublicKeyStorage, error) {
 	if publicKey == nil {
-		return nil, fmt.Errorf("public key cannot be nil")
+		return nil, &errs.Message{Msg: "public key cannot be nil"}
 	}
 	if publicKey.Curve() != ecdh.X25519() {
-		return nil, fmt.Errorf("public key must be X25519, got %v", publicKey.Curve())
+		return nil, &errs.Message{Msg: fmt.Sprintf("public key must be X25519, got %v", publicKey.Curve())}
 	}
 	return &PublicKeyStorage{publicKey: publicKey}, nil
 }

@@ -97,11 +97,15 @@ backends:
     path: "/data/xkms/software"
 
   tpm2:
-    enabled: false  # Disabled by default, can be enabled per test
-    device_path: "tcp://swtpm:2321"
+    enabled: true  # swtpm simulator container is provisioned by docker-compose
+    use_simulator: true
+    simulator_host: "swtpm"
+    simulator_port: 2321
 
   pkcs11:
-    enabled: false  # Disabled by default, can be enabled per test
-    library: "/usr/local/lib/softhsm/libsofthsm2.so"
+    # PKCS#11 loads in-process: the server container's own SoftHSM2 install
+    # is used (Debian path); the token is initialized by the entrypoint.
+    enabled: true
+    library: "/usr/lib/softhsm/libsofthsm2.so"
     token: "test-token"
     pin: "123456"

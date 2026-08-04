@@ -356,7 +356,7 @@ func checkLUKSVolume() error {
 	if err != nil {
 		return &ConfigError{
 			Operation: "read_passphrase",
-			Err:       fmt.Errorf("%w: %v", ErrLUKSPassphraseRead, err),
+			Err:       &SentinelCauseError{Sentinel: ErrLUKSPassphraseRead, Cause: err},
 		}
 	}
 
@@ -365,7 +365,7 @@ func checkLUKSVolume() error {
 		return &ConfigError{
 			Operation: "unlock_volume",
 			Path:      vol.LUKSPath,
-			Err:       fmt.Errorf("%w: %v", ErrLUKSUnlockFailed, err),
+			Err:       &SentinelCauseError{Sentinel: ErrLUKSUnlockFailed, Cause: err},
 		}
 	}
 

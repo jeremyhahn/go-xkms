@@ -110,6 +110,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/go-jose/go-jose/v4"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 )
@@ -156,7 +158,7 @@ type Encrypter struct {
 //	encrypter, err := jwe.NewEncrypter("ECDH-ES+A256KW", "", ecdsaPublicKey)
 func NewEncrypter(keyEncAlg, encAlg string, recipientKey interface{}) (*Encrypter, error) {
 	if recipientKey == nil {
-		return nil, fmt.Errorf("recipient key cannot be nil")
+		return nil, &errs.Message{Msg: "recipient key cannot be nil"}
 	}
 
 	// Map string algorithms to jose types
@@ -190,7 +192,7 @@ func NewEncrypter(keyEncAlg, encAlg string, recipientKey interface{}) (*Encrypte
 			Key:       key,
 		}
 	default:
-		return nil, fmt.Errorf("unsupported key type: %T (expected *rsa.PublicKey, *ecdsa.PublicKey, or []byte)", recipientKey)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %T (expected *rsa.PublicKey, *ecdsa.PublicKey, or []byte)", recipientKey)}
 	}
 
 	// Create encrypter options
@@ -201,7 +203,7 @@ func NewEncrypter(keyEncAlg, encAlg string, recipientKey interface{}) (*Encrypte
 	// Create go-jose encrypter
 	joseEncrypter, err := jose.NewEncrypter(contentAlg, recipient, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create encrypter: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create encrypter", Err: err}
 	}
 
 	return &Encrypter{
@@ -226,19 +228,19 @@ func NewEncrypter(keyEncAlg, encAlg string, recipientKey interface{}) (*Encrypte
 //	jweString, err := encrypter.Encrypt([]byte("secret data"))
 func (e *Encrypter) Encrypt(plaintext []byte) (string, error) {
 	if plaintext == nil {
-		return "", fmt.Errorf("plaintext cannot be nil")
+		return "", &errs.Message{Msg: "plaintext cannot be nil"}
 	}
 
 	// Encrypt using go-jose
 	jwe, err := e.encrypter.Encrypt(plaintext)
 	if err != nil {
-		return "", fmt.Errorf("encryption failed: %w", err)
+		return "", &errs.Wrapped{Msg: "encryption failed", Err: err}
 	}
 
 	// Return compact serialization
 	serialized, err := jwe.CompactSerialize()
 	if err != nil {
-		return "", fmt.Errorf("failed to serialize JWE: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to serialize JWE", Err: err}
 	}
 
 	return serialized, nil
@@ -262,7 +264,7 @@ func (e *Encrypter) Encrypt(plaintext []byte) (string, error) {
 //	})
 func (e *Encrypter) EncryptWithHeader(plaintext []byte, header map[string]interface{}) (string, error) {
 	if plaintext == nil {
-		return "", fmt.Errorf("plaintext cannot be nil")
+		return "", &errs.Message{Msg: "plaintext cannot be nil"}
 	}
 	if len(header) == 0 {
 		return e.Encrypt(plaintext)
@@ -304,7 +306,7 @@ func (e *Encrypter) EncryptWithHeader(plaintext []byte, header map[string]interf
 			KeyID:     kid,
 		}
 	default:
-		return "", fmt.Errorf("unsupported key type: %T", e.recipientKey)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported key type: %T", e.recipientKey)}
 	}
 
 	// Create encrypter options with extra headers
@@ -316,19 +318,19 @@ func (e *Encrypter) EncryptWithHeader(plaintext []byte, header map[string]interf
 	// Create new encrypter with custom headers
 	customEncrypter, err := jose.NewEncrypter(e.contentAlg, recipient, opts)
 	if err != nil {
-		return "", fmt.Errorf("failed to create encrypter with headers: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to create encrypter with headers", Err: err}
 	}
 
 	// Encrypt using the custom encrypter
 	jwe, err := customEncrypter.Encrypt(plaintext)
 	if err != nil {
-		return "", fmt.Errorf("encryption failed: %w", err)
+		return "", &errs.Wrapped{Msg: "encryption failed", Err: err}
 	}
 
 	// Return compact serialization
 	serialized, err := jwe.CompactSerialize()
 	if err != nil {
-		return "", fmt.Errorf("failed to serialize JWE: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to serialize JWE", Err: err}
 	}
 
 	return serialized, nil
@@ -361,10 +363,10 @@ func NewDecrypter() *Decrypter {
 //	plaintext, err := decrypter.Decrypt(jweString, rsaPrivateKey)
 func (d *Decrypter) Decrypt(jweString string, privateKey interface{}) ([]byte, error) {
 	if jweString == "" {
-		return nil, fmt.Errorf("JWE string cannot be empty")
+		return nil, &errs.Message{Msg: "JWE string cannot be empty"}
 	}
 	if privateKey == nil {
-		return nil, fmt.Errorf("private key cannot be nil")
+		return nil, &errs.Message{Msg: "private key cannot be nil"}
 	}
 
 	// Parse JWE with all supported algorithms
@@ -391,7 +393,7 @@ func (d *Decrypter) Decrypt(jweString string, privateKey interface{}) ([]byte, e
 		jose.A256CBC_HS512,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse JWE: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse JWE", Err: err}
 	}
 
 	// Handle ECDSA wrapper (unwrap for go-jose)
@@ -408,7 +410,7 @@ func (d *Decrypter) Decrypt(jweString string, privateKey interface{}) ([]byte, e
 	// Decrypt using the provided key
 	plaintext, err := jwe.Decrypt(decryptKey)
 	if err != nil {
-		return nil, fmt.Errorf("decryption failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "decryption failed", Err: err}
 	}
 
 	return plaintext, nil
@@ -428,19 +430,19 @@ func (d *Decrypter) Decrypt(jweString string, privateKey interface{}) ([]byte, e
 //	privateKey, err := keyStore.GetKey(kid)
 func ExtractKID(jweString string) (string, error) {
 	if jweString == "" {
-		return "", fmt.Errorf("JWE string cannot be empty")
+		return "", &errs.Message{Msg: "JWE string cannot be empty"}
 	}
 
 	// Parse without decrypting - just extract header
 	parts := strings.Split(jweString, ".")
 	if len(parts) != 5 {
-		return "", fmt.Errorf("invalid JWE format: expected 5 parts, got %d", len(parts))
+		return "", &errs.Message{Msg: fmt.Sprintf("invalid JWE format: expected 5 parts, got %d", len(parts))}
 	}
 
 	// Decode header
 	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return "", fmt.Errorf("failed to decode header: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to decode header", Err: err}
 	}
 
 	// Parse header JSON
@@ -448,7 +450,7 @@ func ExtractKID(jweString string) (string, error) {
 		Kid string `json:"kid,omitempty"`
 	}
 	if err := json.Unmarshal(headerBytes, &header); err != nil {
-		return "", fmt.Errorf("failed to unmarshal header: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to unmarshal header", Err: err}
 	}
 
 	return header.Kid, nil
@@ -485,7 +487,7 @@ func parseKeyAlgorithm(alg string) (jose.KeyAlgorithm, error) {
 	case "dir":
 		return jose.DIRECT, nil
 	default:
-		return "", fmt.Errorf("unsupported key algorithm: %s", alg)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported key algorithm: %s", alg)}
 	}
 }
 
@@ -527,6 +529,6 @@ func parseContentEncryption(enc string) (jose.ContentEncryption, error) {
 		// Fall back to A256GCM for JWE compatibility
 		return jose.A256GCM, nil
 	default:
-		return "", fmt.Errorf("unsupported content encryption algorithm: %s", enc)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported content encryption algorithm: %s", enc)}
 	}
 }

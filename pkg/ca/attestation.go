@@ -44,6 +44,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -60,15 +62,15 @@ const (
 var (
 	// ErrInvalidAttestationBlobType indicates an unrecognised blob type
 	// identifier was supplied to ImportAttestation or VerifyAttestation*.
-	ErrInvalidAttestationBlobType = fmt.Errorf("ca: invalid attestation blob type")
+	ErrInvalidAttestationBlobType = &errs.Message{Msg: "ca: invalid attestation blob type"}
 
 	// ErrInvalidNonce indicates the nonce supplied to VerifyQuote did not
 	// match the nonce returned by the TPM.
-	ErrInvalidNonce = fmt.Errorf("ca: invalid nonce in quote")
+	ErrInvalidNonce = &errs.Message{Msg: "ca: invalid nonce in quote"}
 
 	// ErrInvalidRequest indicates required parameters (KeyAttributes, data,
 	// etc.) were missing or empty on an attestation call.
-	ErrInvalidRequest = fmt.Errorf("ca: invalid request")
+	ErrInvalidRequest = &errs.Message{Msg: "ca: invalid request"}
 )
 
 // ImportAttestation stores a TPM attestation blob (quote, event log or PCRs)
@@ -98,12 +100,12 @@ func (ca *CA) ImportAttestation(ctx context.Context, akAttrs *types.KeyAttribute
 
 	signer, err := ca.Signer(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: failed to get CA signer: %v", ErrSigningFailed, err)
+		return &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("failed to get CA signer: %v", err)}
 	}
 	hashFunc := ca.getSigningHashFunc()
 	signature, err := signer.Sign(nil, digest[:], hashFunc)
 	if err != nil {
-		return fmt.Errorf("%w: failed to sign attestation data: %v", ErrSigningFailed, err)
+		return &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("failed to sign attestation data: %v", err)}
 	}
 
 	dataKey := fmt.Sprintf("%s/%s/data", AttestBlobRoot, blobKey)
@@ -111,13 +113,13 @@ func (ca *CA) ImportAttestation(ctx context.Context, akAttrs *types.KeyAttribute
 	digestKey := fmt.Sprintf("%s/%s/digest", AttestBlobRoot, blobKey)
 
 	if err := ca.objectStore.Put(dataKey, bytes.NewReader(data)); err != nil {
-		return fmt.Errorf("%w: failed to store attestation data: %v", ErrStorageError, err)
+		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store attestation data: %v", err)}
 	}
 	if err := ca.objectStore.Put(sigKey, bytes.NewReader(signature)); err != nil {
-		return fmt.Errorf("%w: failed to store attestation signature: %v", ErrStorageError, err)
+		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store attestation signature: %v", err)}
 	}
 	if err := ca.objectStore.Put(digestKey, bytes.NewReader(digest[:])); err != nil {
-		return fmt.Errorf("%w: failed to store attestation digest: %v", ErrStorageError, err)
+		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store attestation digest: %v", err)}
 	}
 	return nil
 }
@@ -140,32 +142,32 @@ func (ca *CA) ImportAttestationKeyCertificate(ctx context.Context, attrs *types.
 
 	cert, err := x509.ParseCertificate(akDER)
 	if err != nil {
-		return fmt.Errorf("%w: failed to parse AK certificate: %v", ErrInvalidCertificate, err)
+		return &errs.Detail{Err: ErrInvalidCertificate, Detail: fmt.Sprintf("failed to parse AK certificate: %v", err)}
 	}
 
 	certKey := fmt.Sprintf("%s/%s/ak-cert.der", AttestBlobRoot, attrs.CN)
 	if err := ca.objectStore.Put(certKey, bytes.NewReader(akDER)); err != nil {
-		return fmt.Errorf("%w: failed to store AK certificate: %v", ErrStorageError, err)
+		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store AK certificate: %v", err)}
 	}
 
 	digest := sha256.Sum256(akDER)
 	digestKey := fmt.Sprintf("%s/%s/ak-cert.digest", AttestBlobRoot, attrs.CN)
 	if err := ca.objectStore.Put(digestKey, bytes.NewReader(digest[:])); err != nil {
-		return fmt.Errorf("%w: failed to store AK certificate digest: %v", ErrStorageError, err)
+		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store AK certificate digest: %v", err)}
 	}
 
 	signer, err := ca.Signer(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: failed to get CA signer: %v", ErrSigningFailed, err)
+		return &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("failed to get CA signer: %v", err)}
 	}
 	hashFunc := ca.getSigningHashFunc()
 	signature, err := signer.Sign(nil, digest[:], hashFunc)
 	if err != nil {
-		return fmt.Errorf("%w: failed to sign AK certificate: %v", ErrSigningFailed, err)
+		return &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("failed to sign AK certificate: %v", err)}
 	}
 	sigKey := fmt.Sprintf("%s/%s/ak-cert.sig", AttestBlobRoot, attrs.CN)
 	if err := ca.objectStore.Put(sigKey, bytes.NewReader(signature)); err != nil {
-		return fmt.Errorf("%w: failed to store AK certificate signature: %v", ErrStorageError, err)
+		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store AK certificate signature: %v", err)}
 	}
 
 	return ca.ImportCertificate(ctx, cert)
@@ -200,15 +202,15 @@ func (ca *CA) ImportLocalAttestation(ctx context.Context, akAttrs *types.KeyAttr
 		return ErrInvalidRequest
 	}
 	if err := ca.ImportAttestationQuote(ctx, akAttrs, quote.Quoted); err != nil {
-		return fmt.Errorf("failed to import quote: %w", err)
+		return &errs.Wrapped{Msg: "failed to import quote", Err: err}
 	}
 	if len(quote.EventLog) > 0 {
 		if err := ca.ImportAttestationEventLog(ctx, akAttrs, quote.EventLog); err != nil {
-			return fmt.Errorf("failed to import event log: %w", err)
+			return &errs.Wrapped{Msg: "failed to import event log", Err: err}
 		}
 	}
 	if err := ca.ImportAttestationPCRs(ctx, akAttrs, quote.PCRs); err != nil {
-		return fmt.Errorf("failed to import PCRs: %w", err)
+		return &errs.Wrapped{Msg: "failed to import PCRs", Err: err}
 	}
 	return nil
 }
@@ -252,18 +254,18 @@ func (ca *CA) verifyStoredAttestation(akAttrs *types.KeyAttributes, blobType str
 	digestKey := fmt.Sprintf("%s/%s/digest", AttestBlobRoot, blobKey)
 	storedDigest, err := ca.readBlobData(digestKey)
 	if err != nil {
-		return fmt.Errorf("%w: attestation digest not found: %v", ErrCertificateNotFound, err)
+		return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("attestation digest not found: %v", err)}
 	}
 
 	newDigest := sha256.Sum256(data)
 	if !bytes.Equal(storedDigest, newDigest[:]) {
-		return fmt.Errorf("%w: attestation data mismatch", ErrInvalidSignature)
+		return &errs.Detail{Err: ErrInvalidSignature, Detail: "attestation data mismatch"}
 	}
 
 	sigKey := fmt.Sprintf("%s/%s/signature", AttestBlobRoot, blobKey)
 	storedSig, err := ca.readBlobData(sigKey)
 	if err != nil {
-		return fmt.Errorf("%w: attestation signature not found: %v", ErrCertificateNotFound, err)
+		return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("attestation signature not found: %v", err)}
 	}
 
 	caPublic := ca.Public()
@@ -300,7 +302,7 @@ func verifyCASignature(pub crypto.PublicKey, digest, signature []byte) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("%w: unsupported CA key type %T", ErrInvalidSignature, pub)
+		return &errs.Detail{Err: ErrInvalidSignature, Detail: fmt.Sprintf("unsupported CA key type %T", pub)}
 	}
 }
 

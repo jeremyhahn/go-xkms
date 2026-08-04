@@ -10,8 +10,9 @@ package frost_test
 import (
 	"context"
 	"crypto"
-	"fmt"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -395,7 +396,7 @@ func (b *testSecretBackend) GenerateKey(ctx context.Context, attrs *types.KeyAtt
 		if len(data) > 0 {
 			path := "frost/secrets/" + attrs.CN + ".secret"
 			if err := b.store.Put(ctx, path, data); err != nil {
-				return nil, fmt.Errorf("failed to store secret: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to store secret", Err: err}
 			}
 		}
 	}
@@ -406,7 +407,7 @@ func (b *testSecretBackend) GetKey(ctx context.Context, attrs *types.KeyAttribut
 	path := "frost/secrets/" + attrs.CN + ".secret"
 	data, err := b.store.Get(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get secret: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get secret", Err: err}
 	}
 	return data, nil
 }

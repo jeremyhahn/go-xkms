@@ -88,3 +88,50 @@ var (
 	// ErrWritePKCS11Txt is returned when writing pkcs11.txt fails.
 	ErrWritePKCS11Txt = errors.New("nssdb: failed to write pkcs11.txt")
 )
+
+// DetailError appends detail text directly after a wrapped error while
+// preserving errors.Is / errors.As matching of the wrapped error through
+// Unwrap. The detail text carries its own leading separator.
+type DetailError struct {
+	Err    error
+	Detail string
+}
+
+// Error implements the error interface.
+func (e *DetailError) Error() string {
+	return e.Err.Error() + e.Detail
+}
+
+// Unwrap returns the wrapped cause.
+func (e *DetailError) Unwrap() error {
+	return e.Err
+}
+
+// MessageError is a typed error that carries a preformatted message. It
+// replaces inline formatted-error constructions that do not wrap a cause.
+type MessageError struct {
+	Msg string
+}
+
+// Error implements the error interface.
+func (e *MessageError) Error() string {
+	return e.Msg
+}
+
+// WrappedError wraps an underlying cause with a contextual message while
+// preserving errors.Is / errors.As matching through Unwrap. It replaces
+// inline formatted-error constructions that wrap another error.
+type WrappedError struct {
+	Msg string
+	Err error
+}
+
+// Error implements the error interface.
+func (e *WrappedError) Error() string {
+	return e.Msg + ": " + e.Err.Error()
+}
+
+// Unwrap returns the wrapped cause.
+func (e *WrappedError) Unwrap() error {
+	return e.Err
+}

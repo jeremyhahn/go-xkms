@@ -42,6 +42,18 @@ type mockTenantClient struct {
 	barrierStatusErr  error
 	connectErr        error
 	closeCalled       bool
+
+	// Captured requests for assertion.
+	gotCreateReq      *transport.CreateTenantRequest
+	gotBarrierInitReq *transport.TenantBarrierInitRequest
+
+	tenantBarrierStatusResp *transport.TenantBarrierStatusResponse
+	tenantBarrierStatusErr  error
+
+	updateEntitlementsResp *transport.UpdateTenantEntitlementsResponse
+	updateEntitlementsErr  error
+	updateQuotasResp       *transport.UpdateTenantQuotasResponse
+	updateQuotasErr        error
 }
 
 func (m *mockTenantClient) Connect(ctx context.Context) error {
@@ -54,6 +66,7 @@ func (m *mockTenantClient) Close() error {
 }
 
 func (m *mockTenantClient) CreateTenant(ctx context.Context, req *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
+	m.gotCreateReq = req
 	return m.createTenantResp, m.createTenantErr
 }
 
@@ -70,6 +83,7 @@ func (m *mockTenantClient) DeleteTenant(ctx context.Context, tenantID string) er
 }
 
 func (m *mockTenantClient) TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error {
+	m.gotBarrierInitReq = req
 	return m.barrierInitErr
 }
 
@@ -77,8 +91,62 @@ func (m *mockTenantClient) TenantBarrierUnseal(ctx context.Context, req *transpo
 	return m.barrierUnsealErr
 }
 
+func (m *mockTenantClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
+	return m.tenantBarrierStatusResp, m.tenantBarrierStatusErr
+}
+
+func (m *mockTenantClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	return m.updateEntitlementsResp, m.updateEntitlementsErr
+}
+
+func (m *mockTenantClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return m.updateQuotasResp, m.updateQuotasErr
+}
+
 func (m *mockTenantClient) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
 	return m.barrierStatusResp, m.barrierStatusErr
+}
+
+// --- New isolation / strategy flag plumbing ---
+
+func TestTenantCreate_ForwardsIsolationAndAutoUnseal(t *testing.T) {
+	mock := &mockTenantClient{
+		createTenantResp: &transport.CreateTenantResponse{Tenant: transport.TenantInfo{ID: "acme", Name: "Acme"}},
+	}
+	cfg := &Config{
+		OutputFormat:  "text",
+		ClientFactory: func(c *Config) (client.Client, error) { return mock, nil },
+	}
+	tenantCreate(cfg, NewPrinter("text", new(bytes.Buffer)), "acme", "Acme", "volume", true)
+
+	if mock.gotCreateReq == nil {
+		t.Fatal("CreateTenant was not called")
+	}
+	if string(mock.gotCreateReq.IsolationType) != "volume" {
+		t.Errorf("IsolationType = %q, want %q", mock.gotCreateReq.IsolationType, "volume")
+	}
+	if !mock.gotCreateReq.BarrierAutoUnseal {
+		t.Error("BarrierAutoUnseal = false, want true")
+	}
+}
+
+func TestTenantBarrierInit_ForwardsPassphraseAndStrategy(t *testing.T) {
+	mock := &mockTenantClient{}
+	cfg := &Config{
+		OutputFormat:  "text",
+		ClientFactory: func(c *Config) (client.Client, error) { return mock, nil },
+	}
+	tenantBarrierInit(cfg, NewPrinter("text", new(bytes.Buffer)), "acme", "s3cret", "tpm2", 0, 0)
+
+	if mock.gotBarrierInitReq == nil {
+		t.Fatal("TenantBarrierInit was not called")
+	}
+	if mock.gotBarrierInitReq.Passphrase != "s3cret" {
+		t.Errorf("Passphrase = %q, want %q", mock.gotBarrierInitReq.Passphrase, "s3cret")
+	}
+	if mock.gotBarrierInitReq.Strategy != "tpm2" {
+		t.Errorf("Strategy = %q, want %q", mock.gotBarrierInitReq.Strategy, "tpm2")
+	}
 }
 
 // --- Command existence and properties ---
@@ -102,13 +170,15 @@ func TestTenantCmd_Subcommands(t *testing.T) {
 	subcommands := tenantCmd.Commands()
 
 	expected := map[string]bool{
-		"create":         false,
-		"list":           false,
-		"show":           false,
-		"delete":         false,
-		"barrier-init":   false,
-		"barrier-unseal": false,
-		"barrier-status": false,
+		"create":              false,
+		"list":                false,
+		"show":                false,
+		"delete":              false,
+		"barrier-init":        false,
+		"barrier-unseal":      false,
+		"barrier-status":      false,
+		"update-entitlements": false,
+		"update-quotas":       false,
 	}
 
 	for _, cmd := range subcommands {
@@ -124,8 +194,8 @@ func TestTenantCmd_Subcommands(t *testing.T) {
 		}
 	}
 
-	if len(expected) != 7 {
-		t.Errorf("expected 7 subcommands, got %d", len(expected))
+	if len(expected) != 9 {
+		t.Errorf("expected 9 subcommands, got %d", len(expected))
 	}
 }
 
@@ -154,7 +224,7 @@ func TestTenantCreate_Success(t *testing.T) {
 		},
 	}
 
-	tenantCreate(cfg, printer, "acme", "Acme Corporation")
+	tenantCreate(cfg, printer, "acme", "Acme Corporation", "", false)
 
 	output := buf.String()
 	if !strings.Contains(output, "Acme Corporation") {
@@ -187,7 +257,7 @@ func TestTenantCreate_ClientError(t *testing.T) {
 		},
 	}
 
-	tenantCreate(cfg, printer, "acme", "Acme Corporation")
+	tenantCreate(cfg, printer, "acme", "Acme Corporation", "", false)
 	// Should not panic; handleError is called internally
 }
 
@@ -210,7 +280,7 @@ func TestTenantCreate_APIError(t *testing.T) {
 		},
 	}
 
-	tenantCreate(cfg, printer, "acme", "Acme Corporation")
+	tenantCreate(cfg, printer, "acme", "Acme Corporation", "", false)
 	// handleError is called, no panic
 }
 
@@ -422,7 +492,7 @@ func TestTenantBarrierInit_Success(t *testing.T) {
 		},
 	}
 
-	tenantBarrierInit(cfg, printer, "acme", 3, 5)
+	tenantBarrierInit(cfg, printer, "acme", "", "", 3, 5)
 
 	output := buf.String()
 	if !strings.Contains(output, "acme") {
@@ -452,7 +522,7 @@ func TestTenantBarrierInit_Error(t *testing.T) {
 		},
 	}
 
-	tenantBarrierInit(cfg, printer, "acme", 3, 5)
+	tenantBarrierInit(cfg, printer, "acme", "", "", 3, 5)
 	// handleError is called, no panic
 }
 
@@ -556,11 +626,14 @@ func TestTenantBarrierUnseal_Error(t *testing.T) {
 
 func TestTenantBarrierStatus_Success(t *testing.T) {
 	mock := &mockTenantClient{
-		barrierStatusResp: &transport.BarrierStatusResponse{
-			Sealed:         false,
-			Strategy:       "shamir",
-			HardwareBacked: true,
-			InitializedAt:  "2025-01-15T10:30:00Z",
+		tenantBarrierStatusResp: &transport.TenantBarrierStatusResponse{
+			TenantID:        "acme",
+			Sealed:          false,
+			Initialized:     true,
+			Strategy:        "shamir",
+			HardwareBacked:  true,
+			ShamirThreshold: 3,
+			ShamirTotal:     5,
 		},
 	}
 
@@ -589,8 +662,8 @@ func TestTenantBarrierStatus_Success(t *testing.T) {
 	if !strings.Contains(output, "true") {
 		t.Error("output should indicate hardware backed status")
 	}
-	if !strings.Contains(output, "2025-01-15T10:30:00Z") {
-		t.Error("output should contain the initialized_at timestamp")
+	if !strings.Contains(output, "3-of-5") {
+		t.Error("output should contain the Shamir quorum")
 	}
 }
 
@@ -600,7 +673,7 @@ func TestTenantBarrierStatus_Error(t *testing.T) {
 	defer func() { exitFunc = originalExitFunc }()
 
 	mock := &mockTenantClient{
-		barrierStatusErr: errors.New("not found"),
+		tenantBarrierStatusErr: errors.New("not found"),
 	}
 
 	buf := new(bytes.Buffer)
@@ -812,17 +885,18 @@ func TestPrintTenantList_Text_Empty(t *testing.T) {
 // --- Output helpers: printTenantBarrierStatus ---
 
 func TestPrintTenantBarrierStatus_JSON(t *testing.T) {
-	resp := &transport.BarrierStatusResponse{
+	resp := &transport.TenantBarrierStatusResponse{
+		TenantID:       "acme",
 		Sealed:         true,
 		Strategy:       "shamir",
 		HardwareBacked: false,
-		InitializedAt:  "2025-01-15T10:30:00Z",
+		Initialized:    true,
 	}
 
 	buf := new(bytes.Buffer)
 	printer := NewPrinter("json", buf)
 
-	printTenantBarrierStatus(printer, "acme", resp)
+	printTenantBarrierStatus(printer, resp)
 
 	output := buf.String()
 	if !strings.Contains(output, `"tenant_id"`) {
@@ -840,42 +914,47 @@ func TestPrintTenantBarrierStatus_JSON(t *testing.T) {
 	if !strings.Contains(output, `"hardware_backed"`) {
 		t.Error("JSON output should contain 'hardware_backed' field")
 	}
-	if !strings.Contains(output, `"initialized_at"`) {
-		t.Error("JSON output should contain 'initialized_at' when set")
+	if !strings.Contains(output, `"initialized"`) {
+		t.Error("JSON output should contain 'initialized' field")
 	}
 }
 
-func TestPrintTenantBarrierStatus_JSON_NoInitializedAt(t *testing.T) {
-	resp := &transport.BarrierStatusResponse{
+func TestPrintTenantBarrierStatus_JSON_NotInitialized(t *testing.T) {
+	resp := &transport.TenantBarrierStatusResponse{
+		TenantID:       "globex",
 		Sealed:         false,
 		Strategy:       "aes-gcm",
 		HardwareBacked: true,
-		InitializedAt:  "",
+		Initialized:    false,
 	}
 
 	buf := new(bytes.Buffer)
 	printer := NewPrinter("json", buf)
 
-	printTenantBarrierStatus(printer, "globex", resp)
+	printTenantBarrierStatus(printer, resp)
 
 	output := buf.String()
-	if strings.Contains(output, `"initialized_at"`) {
-		t.Error("JSON output should NOT contain 'initialized_at' when empty")
+	if !strings.Contains(output, `"initialized"`) {
+		t.Error("JSON output should contain 'initialized' field")
+	}
+	if !strings.Contains(output, `"globex"`) {
+		t.Error("JSON output should contain tenant ID value")
 	}
 }
 
 func TestPrintTenantBarrierStatus_Text_Sealed(t *testing.T) {
-	resp := &transport.BarrierStatusResponse{
+	resp := &transport.TenantBarrierStatusResponse{
+		TenantID:       "acme",
 		Sealed:         true,
 		Strategy:       "shamir",
 		HardwareBacked: false,
-		InitializedAt:  "2025-01-15T10:30:00Z",
+		Initialized:    true,
 	}
 
 	buf := new(bytes.Buffer)
 	printer := NewPrinter("text", buf)
 
-	printTenantBarrierStatus(printer, "acme", resp)
+	printTenantBarrierStatus(printer, resp)
 
 	output := buf.String()
 	if !strings.Contains(output, "Tenant Barrier Status:") {
@@ -893,23 +972,24 @@ func TestPrintTenantBarrierStatus_Text_Sealed(t *testing.T) {
 	if !strings.Contains(output, "Hardware Backed: false") {
 		t.Error("text output should contain hardware backed status")
 	}
-	if !strings.Contains(output, "Initialized At:") {
-		t.Error("text output should contain initialized_at when set")
+	if !strings.Contains(output, "Initialized:     true") {
+		t.Error("text output should contain initialized status")
 	}
 }
 
 func TestPrintTenantBarrierStatus_Text_Unsealed(t *testing.T) {
-	resp := &transport.BarrierStatusResponse{
+	resp := &transport.TenantBarrierStatusResponse{
+		TenantID:       "globex",
 		Sealed:         false,
 		Strategy:       "aes-gcm",
 		HardwareBacked: true,
-		InitializedAt:  "",
+		Initialized:    false,
 	}
 
 	buf := new(bytes.Buffer)
 	printer := NewPrinter("text", buf)
 
-	printTenantBarrierStatus(printer, "globex", resp)
+	printTenantBarrierStatus(printer, resp)
 
 	output := buf.String()
 	if !strings.Contains(output, "State:           unsealed") {
@@ -918,23 +998,24 @@ func TestPrintTenantBarrierStatus_Text_Unsealed(t *testing.T) {
 	if !strings.Contains(output, "Hardware Backed: true") {
 		t.Error("text output should show hardware backed as true")
 	}
-	if strings.Contains(output, "Initialized At:") {
-		t.Error("text output should NOT contain 'Initialized At' when empty")
+	if !strings.Contains(output, "Initialized:     false") {
+		t.Error("text output should show initialized as false")
 	}
 }
 
 func TestPrintTenantBarrierStatus_Table(t *testing.T) {
-	resp := &transport.BarrierStatusResponse{
+	resp := &transport.TenantBarrierStatusResponse{
+		TenantID:       "acme",
 		Sealed:         true,
 		Strategy:       "shamir",
 		HardwareBacked: true,
-		InitializedAt:  "2025-06-01T00:00:00Z",
+		Initialized:    true,
 	}
 
 	buf := new(bytes.Buffer)
 	printer := NewPrinter("table", buf)
 
-	printTenantBarrierStatus(printer, "acme", resp)
+	printTenantBarrierStatus(printer, resp)
 
 	output := buf.String()
 	// Table format uses the same code path as text for printTenantBarrierStatus
@@ -1050,7 +1131,7 @@ func TestTenantCreate_JSONFormat(t *testing.T) {
 		},
 	}
 
-	tenantCreate(cfg, printer, "test-tenant", "Test Tenant")
+	tenantCreate(cfg, printer, "test-tenant", "Test Tenant", "", false)
 
 	output := buf.String()
 	if !strings.Contains(output, `"id"`) {
@@ -1129,7 +1210,7 @@ func TestTenantBarrierInit_JSONFormat(t *testing.T) {
 		},
 	}
 
-	tenantBarrierInit(cfg, printer, "acme", 2, 3)
+	tenantBarrierInit(cfg, printer, "acme", "", "", 2, 3)
 
 	output := buf.String()
 	if !strings.Contains(output, "success") {
@@ -1191,7 +1272,7 @@ func TestTenantCreate_CloseIsCalled(t *testing.T) {
 		},
 	}
 
-	tenantCreate(cfg, printer, "acme", "Acme")
+	tenantCreate(cfg, printer, "acme", "Acme", "", false)
 
 	if !mock.closeCalled {
 		t.Error("client.Close() should be called via deferred cleanup")
@@ -1224,7 +1305,8 @@ func TestTenantList_CloseIsCalled(t *testing.T) {
 
 func TestTenantBarrierStatus_CloseIsCalled(t *testing.T) {
 	mock := &mockTenantClient{
-		barrierStatusResp: &transport.BarrierStatusResponse{
+		tenantBarrierStatusResp: &transport.TenantBarrierStatusResponse{
+			TenantID: "acme",
 			Sealed:   false,
 			Strategy: "static",
 		},

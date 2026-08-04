@@ -7,12 +7,13 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/asn1"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 	"math/big"
 	"strings"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -26,7 +27,7 @@ func (tpm *TPM2) EK() (crypto.PublicKey, error) {
 	}
 	pub, err := x509.ParsePKIXPublicKey(tpm.ekAttrs.TPMAttributes.PublicKeyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEKNotInitialized, err)
+		return nil, &errs.Detail{Err: ErrEKNotInitialized, Detail: fmt.Sprintf("%v", err)}
 	}
 	return pub, nil
 }
@@ -40,7 +41,7 @@ func (tpm *TPM2) EKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 	name, pub, err := tpm.ReadHandle(ekHandle)
 	if err != nil {
 		tpm.logger.Error("failed to read EK public", slog.String("error", err.Error()))
-		return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, fmt.Errorf("%w: %v", ErrEKPublicRead, err)
+		return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, &errs.Detail{Err: ErrEKPublicRead, Detail: fmt.Sprintf("%v", err)}
 	}
 	return name, pub, nil
 }
@@ -50,22 +51,22 @@ func (tpm *TPM2) EKRSA() (*rsa.PublicKey, error) {
 	if tpm.ekRSAPubKey == nil {
 		_, ekPub, err := tpm.EKPublic()
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrEKRSAParse, err)
+			return nil, &errs.Detail{Err: ErrEKRSAParse, Detail: fmt.Sprintf("%v", err)}
 		}
 		rsaDetail, err := ekPub.Parameters.RSADetail()
 		if err != nil {
 			tpm.logger.Error("failed to get RSA detail", slog.String("error", err.Error()))
-			return nil, fmt.Errorf("%w: %v", ErrEKRSAParse, err)
+			return nil, &errs.Detail{Err: ErrEKRSAParse, Detail: fmt.Sprintf("%v", err)}
 		}
 		rsaUnique, err := ekPub.Unique.RSA()
 		if err != nil {
 			tpm.logger.Error("failed to get RSA unique", slog.String("error", err.Error()))
-			return nil, fmt.Errorf("%w: %v", ErrEKRSAParse, err)
+			return nil, &errs.Detail{Err: ErrEKRSAParse, Detail: fmt.Sprintf("%v", err)}
 		}
 		rsaPub, err := tpm2.RSAPub(rsaDetail, rsaUnique)
 		if err != nil {
 			tpm.logger.Error("failed to create RSA public key", slog.String("error", err.Error()))
-			return nil, fmt.Errorf("%w: %v", ErrEKRSAParse, err)
+			return nil, &errs.Detail{Err: ErrEKRSAParse, Detail: fmt.Sprintf("%v", err)}
 		}
 		tpm.ekRSAPubKey = rsaPub
 	}
@@ -77,22 +78,22 @@ func (tpm *TPM2) EKECC() (*ecdsa.PublicKey, error) {
 	if tpm.ekECCPubKey == nil {
 		_, ekPub, err := tpm.EKPublic()
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrEKECCParse, err)
+			return nil, &errs.Detail{Err: ErrEKECCParse, Detail: fmt.Sprintf("%v", err)}
 		}
 		ecDetail, err := ekPub.Parameters.ECCDetail()
 		if err != nil {
 			tpm.logger.Error("failed to get ECC detail", slog.String("error", err.Error()))
-			return nil, fmt.Errorf("%w: %v", ErrEKECCParse, err)
+			return nil, &errs.Detail{Err: ErrEKECCParse, Detail: fmt.Sprintf("%v", err)}
 		}
 		curve, err := ecDetail.CurveID.Curve()
 		if err != nil {
 			tpm.logger.Error("failed to get curve", slog.String("error", err.Error()))
-			return nil, fmt.Errorf("%w: %v", ErrEKECCParse, err)
+			return nil, &errs.Detail{Err: ErrEKECCParse, Detail: fmt.Sprintf("%v", err)}
 		}
 		eccUnique, err := ekPub.Unique.ECC()
 		if err != nil {
 			tpm.logger.Error("failed to get ECC unique", slog.String("error", err.Error()))
-			return nil, fmt.Errorf("%w: %v", ErrEKECCParse, err)
+			return nil, &errs.Detail{Err: ErrEKECCParse, Detail: fmt.Sprintf("%v", err)}
 		}
 		eccPub := &ecdsa.PublicKey{
 			Curve: curve,
@@ -110,7 +111,7 @@ func (tpm *TPM2) SSRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 	name, pub, err := tpm.ReadHandle(srkHandle)
 	if err != nil {
 		tpm.logger.Error("failed to read SSRK public", slog.String("error", err.Error()))
-		return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, fmt.Errorf("%w: %v", ErrSRKPublicRead, err)
+		return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, &errs.Detail{Err: ErrSRKPublicRead, Detail: fmt.Sprintf("%v", err)}
 	}
 	return name, pub, nil
 }
@@ -164,7 +165,7 @@ func (tpm *TPM2) IAK() (crypto.PublicKey, error) {
 	pub, err := x509.ParsePKIXPublicKey(tpm.iakAttrs.TPMAttributes.PublicKeyBytes)
 	if err != nil {
 		tpm.logger.Error("failed to parse IAK public key", slog.String("error", err.Error()))
-		return nil, fmt.Errorf("%w: %v", ErrIAKPublicParse, err)
+		return nil, &errs.Detail{Err: ErrIAKPublicParse, Detail: fmt.Sprintf("%v", err)}
 	}
 	return pub, nil
 }
@@ -200,7 +201,7 @@ func (tpm *TPM2) IDevID() (crypto.PublicKey, error) {
 	pub, err := x509.ParsePKIXPublicKey(tpm.idevidAttrs.TPMAttributes.PublicKeyBytes)
 	if err != nil {
 		tpm.logger.Error("failed to parse IDevID public key", slog.String("error", err.Error()))
-		return nil, fmt.Errorf("%w: %v", ErrIDevIDPublicParse, err)
+		return nil, &errs.Detail{Err: ErrIDevIDPublicParse, Detail: fmt.Sprintf("%v", err)}
 	}
 	return pub, nil
 }
@@ -770,7 +771,7 @@ func (tpm *TPM2) CreateIAK(
 		&policyDigest)
 	if err != nil {
 		tpm.logger.Error("failed to create IAK attributes from config", slog.String("error", err.Error()))
-		return nil, fmt.Errorf("%w: %v", ErrIAKConfigFailed, err)
+		return nil, &errs.Detail{Err: ErrIAKConfigFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	iakAttrs.Parent = ekAttrs
 
@@ -1480,7 +1481,7 @@ func (tpm *TPM2) DeleteKey(
 		keyAttrs.TPMAttributes.HandleType == tpm2.TPMHTPersistent {
 
 		if tpm.transport == nil {
-			return errors.New("TPM transport not initialized")
+			return ErrInstallTransportNotInitialized
 		}
 
 		var err error

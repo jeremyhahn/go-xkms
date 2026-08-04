@@ -14,6 +14,7 @@
 package keys
 
 import (
+	"context"
 	"io"
 	"sync/atomic"
 
@@ -106,6 +107,35 @@ func (k *Key) SignerWithClose() (ssh.Signer, func(), error) {
 		ps.inner = nil
 	}
 	return ps, closer, nil
+}
+
+// BackendSigner returns an ssh.Signer for a backend-backed key by resolving
+// the key's crypto.Signer from the supplied BackendProvider and wrapping it
+// via ssh.NewSignerFromSigner. The private key never crosses the boundary —
+// for tpm2/pkcs11/cloud backends every Sign call is delegated to the device.
+//
+// Returns *NilInputError when the key is not backend-backed (use Signer for
+// software keys) or p is nil, and *KeyMaterialError when the backend lookup
+// or signer construction fails.
+func (k *Key) BackendSigner(ctx context.Context, p BackendProvider) (ssh.Signer, error) {
+	if k == nil {
+		return nil, &NilInputError{Field: "key"}
+	}
+	if !k.IsBackendBacked() {
+		return nil, &NilInputError{Field: "key.BackendID"}
+	}
+	if p == nil {
+		return nil, &NilInputError{Field: "provider"}
+	}
+	cs, err := p.Signer(ctx, k.BackendID, k.BackendKeyID, k.Algorithm)
+	if err != nil {
+		return nil, &KeyMaterialError{Op: "resolve backend signer", Err: err}
+	}
+	sshSigner, err := ssh.NewSignerFromSigner(cs)
+	if err != nil {
+		return nil, &KeyMaterialError{Op: "ssh.NewSignerFromSigner", Err: err}
+	}
+	return sshSigner, nil
 }
 
 // enclaveSigner implements ssh.Signer by re-opening the underlying

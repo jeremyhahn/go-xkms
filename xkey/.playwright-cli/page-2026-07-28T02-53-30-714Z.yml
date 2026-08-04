@@ -1,0 +1,38 @@
+- generic [ref=e125]:
+  - generic [ref=e126]:
+    - generic [ref=e127]:
+      - generic [ref=e128]: "1"
+      - generic [ref=e129]: Welcome
+    - generic [ref=e131]:
+      - generic [ref=e132]: "2"
+      - generic [ref=e133]: Deployment
+    - generic [ref=e135]:
+      - generic [ref=e136]: "3"
+      - generic [ref=e137]: Mode
+    - generic [ref=e139]:
+      - generic [ref=e140]: "4"
+      - generic [ref=e141]: Security
+    - generic [ref=e143]:
+      - generic [ref=e144]: "5"
+      - generic [ref=e145]: Storage
+    - generic [ref=e147]:
+      - generic [ref=e148]: "6"
+      - generic [ref=e149]: Summary
+  - generic [ref=e151]:
+    - img [ref=e153]
+    - heading "Welcome to xKey" [level=2] [ref=e154]
+    - paragraph [ref=e155]: Your personal key management system. This wizard will help you configure xKey for first use.
+    - generic [ref=e156]:
+      - generic [ref=e157]:
+        - generic [ref=e158]: TPM 2.0
+        - generic [ref=e159]: Available
+      - generic [ref=e160]:
+        - generic [ref=e161]: Encrypted Storage
+        - generic [ref=e162]: Available
+      - generic [ref=e163]:
+        - generic [ref=e164]: Platform
+        - generic [ref=e165]: linux/amd64
+    - generic [ref=e166]:
+      - button "Skip Setup" [ref=e167] [cursor=pointer]
+      - button "Quick Setup" [ref=e168] [cursor=pointer]
+      - button "Next" [ref=e169] [cursor=pointer]

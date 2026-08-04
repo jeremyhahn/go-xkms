@@ -451,6 +451,8 @@ var (
 	ErrPlatformKeyStoreCreateSRK          = tpm2.ErrPlatformKeyStoreCreateSRK
 	ErrPlatformKeyStoreSRKConfig          = tpm2.ErrPlatformKeyStoreSRKConfig
 	ErrPlatformKeyStorePINManager         = tpm2.ErrPlatformKeyStorePINManager
+	ErrPlatformSRKAlreadyEnrolled         = tpm2.ErrPlatformSRKAlreadyEnrolled
+	ErrPlatformSRKEnrollEmptyPIN          = tpm2.ErrPlatformSRKEnrollEmptyPIN
 )
 
 // ---------------------------------------------------------------------------

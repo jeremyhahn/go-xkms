@@ -18,9 +18,10 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/stretchr/testify/assert"
@@ -913,7 +914,7 @@ type NoAttestedCredDataMockDevice struct {
 
 func (d *NoAttestedCredDataMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -1053,5 +1054,5 @@ func (d *NoAttestedCredDataMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }

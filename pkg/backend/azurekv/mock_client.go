@@ -29,6 +29,8 @@ import (
 	"math/big"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 )
@@ -125,7 +127,7 @@ func (m *MockKeyVaultClient) CreateKey(ctx context.Context, name string, params 
 
 	// Check if key already exists
 	if _, exists := m.keys[name]; exists {
-		return azkeys.CreateKeyResponse{}, fmt.Errorf("key already exists: %s", name)
+		return azkeys.CreateKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key already exists: %s", name)}
 	}
 
 	// Create the key based on type
@@ -168,7 +170,7 @@ func (m *MockKeyVaultClient) CreateKey(ctx context.Context, name string, params 
 			case azkeys.CurveNameP521:
 				curve = elliptic.P521()
 			default:
-				return azkeys.CreateKeyResponse{}, fmt.Errorf("unsupported curve: %v", *params.Curve)
+				return azkeys.CreateKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("unsupported curve: %v", *params.Curve)}
 			}
 		} else {
 			// Default to P-256
@@ -206,7 +208,7 @@ func (m *MockKeyVaultClient) CreateKey(ctx context.Context, name string, params 
 		mock.publicKey = nil
 
 	default:
-		return azkeys.CreateKeyResponse{}, fmt.Errorf("unsupported key type: %v", *params.Kty)
+		return azkeys.CreateKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %v", *params.Kty)}
 
 	}
 
@@ -243,7 +245,7 @@ func (m *MockKeyVaultClient) GetKey(ctx context.Context, name, version string, o
 
 	mock, exists := m.keys[name]
 	if !exists {
-		return azkeys.GetKeyResponse{}, fmt.Errorf("key not found: %s", name)
+		return azkeys.GetKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", name)}
 	}
 
 	// For symmetric keys, we skip public key encoding (oct keys have no public component)
@@ -275,7 +277,7 @@ func (m *MockKeyVaultClient) GetKey(ctx context.Context, name, version string, o
 	case *ecdsa.PublicKey:
 		pubKeyBytes, err = x509.MarshalPKIXPublicKey(pub)
 	default:
-		return azkeys.GetKeyResponse{}, fmt.Errorf("unsupported public key type")
+		return azkeys.GetKeyResponse{}, &errs.Message{Msg: "unsupported public key type"}
 	}
 
 	if err != nil {
@@ -314,7 +316,7 @@ func (m *MockKeyVaultClient) DeleteKey(ctx context.Context, name string, options
 
 	mock, exists := m.keys[name]
 	if !exists {
-		return azkeys.DeleteKeyResponse{}, fmt.Errorf("key not found: %s", name)
+		return azkeys.DeleteKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", name)}
 	}
 
 	delete(m.keys, name)
@@ -348,7 +350,7 @@ func (m *MockKeyVaultClient) Sign(ctx context.Context, keyName, keyVersion strin
 
 	mock, exists := m.keys[keyName]
 	if !exists {
-		return azkeys.SignResponse{}, fmt.Errorf("key not found: %s", keyName)
+		return azkeys.SignResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyName)}
 	}
 
 	// Perform signing based on key type
@@ -367,7 +369,7 @@ func (m *MockKeyVaultClient) Sign(ctx context.Context, keyName, keyVersion strin
 		case 64: // SHA-512
 			hashType = crypto.SHA512
 		default:
-			return azkeys.SignResponse{}, fmt.Errorf("unsupported hash size: %d bytes", len(params.Value))
+			return azkeys.SignResponse{}, &errs.Message{Msg: fmt.Sprintf("unsupported hash size: %d bytes", len(params.Value))}
 		}
 
 		// Check if PSS algorithm is requested
@@ -398,7 +400,7 @@ func (m *MockKeyVaultClient) Sign(ctx context.Context, keyName, keyVersion strin
 			signature, err = encodeECDSASignature(r, s)
 		}
 	default:
-		return azkeys.SignResponse{}, fmt.Errorf("unsupported private key type")
+		return azkeys.SignResponse{}, &errs.Message{Msg: "unsupported private key type"}
 	}
 
 	if err != nil {
@@ -423,7 +425,7 @@ func (m *MockKeyVaultClient) Verify(ctx context.Context, keyName, keyVersion str
 
 	mock, exists := m.keys[keyName]
 	if !exists {
-		return azkeys.VerifyResponse{}, fmt.Errorf("key not found: %s", keyName)
+		return azkeys.VerifyResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyName)}
 	}
 
 	// If a specific version is requested, use only that version
@@ -469,7 +471,7 @@ func (m *MockKeyVaultClient) Verify(ctx context.Context, keyName, keyVersion str
 			case 64: // SHA-512
 				hashType = crypto.SHA512
 			default:
-				return azkeys.VerifyResponse{}, fmt.Errorf("unsupported hash size: %d bytes", len(params.Digest))
+				return azkeys.VerifyResponse{}, &errs.Message{Msg: fmt.Sprintf("unsupported hash size: %d bytes", len(params.Digest))}
 			}
 
 			// Check if PSS algorithm is requested
@@ -506,7 +508,7 @@ func (m *MockKeyVaultClient) Verify(ctx context.Context, keyName, keyVersion str
 				break // Verification succeeded with this version
 			}
 		default:
-			return azkeys.VerifyResponse{}, fmt.Errorf("unsupported public key type")
+			return azkeys.VerifyResponse{}, &errs.Message{Msg: "unsupported public key type"}
 		}
 	}
 
@@ -526,12 +528,12 @@ func (m *MockKeyVaultClient) GetPublicKey(ctx context.Context, name, version str
 
 	mock, exists := m.keys[name]
 	if !exists {
-		return nil, fmt.Errorf("key not found: %s", name)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", name)}
 	}
 
 	// Symmetric keys do not have a public key component
 	if mock.publicKey == nil {
-		return nil, fmt.Errorf("symmetric keys do not have public keys: %s", name)
+		return nil, &errs.Message{Msg: fmt.Sprintf("symmetric keys do not have public keys: %s", name)}
 	}
 
 	// Marshal public key to PKIX format
@@ -585,7 +587,7 @@ func (m *MockKeyVaultClient) Decrypt(ctx context.Context, keyName, keyVersion st
 
 	mock, exists := m.keys[keyName]
 	if !exists {
-		return azkeys.DecryptResponse{}, fmt.Errorf("key not found: %s", keyName)
+		return azkeys.DecryptResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyName)}
 	}
 
 	// Perform decryption based on key type and algorithm
@@ -596,7 +598,7 @@ func (m *MockKeyVaultClient) Decrypt(ctx context.Context, keyName, keyVersion st
 	case *rsa.PrivateKey:
 		// Determine decryption algorithm from params
 		if params.Algorithm == nil {
-			return azkeys.DecryptResponse{}, fmt.Errorf("algorithm must be specified")
+			return azkeys.DecryptResponse{}, &errs.Message{Msg: "algorithm must be specified"}
 		}
 
 		switch *params.Algorithm {
@@ -610,10 +612,10 @@ func (m *MockKeyVaultClient) Decrypt(ctx context.Context, keyName, keyVersion st
 			// OAEP with SHA256
 			plaintext, err = rsa.DecryptOAEP(crypto.SHA256.New(), rand.Reader, priv, params.Value, nil)
 		default:
-			return azkeys.DecryptResponse{}, fmt.Errorf("unsupported encryption algorithm: %v", *params.Algorithm)
+			return azkeys.DecryptResponse{}, &errs.Message{Msg: fmt.Sprintf("unsupported encryption algorithm: %v", *params.Algorithm)}
 		}
 	default:
-		return azkeys.DecryptResponse{}, fmt.Errorf("unsupported private key type for decryption")
+		return azkeys.DecryptResponse{}, &errs.Message{Msg: "unsupported private key type for decryption"}
 	}
 
 	if err != nil {
@@ -642,7 +644,7 @@ func (m *MockKeyVaultClient) WrapKey(ctx context.Context, keyName, keyVersion st
 
 	mock, exists := m.keys[keyName]
 	if !exists {
-		return azkeys.WrapKeyResponse{}, fmt.Errorf("key not found: %s", keyName)
+		return azkeys.WrapKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyName)}
 	}
 
 	// For symmetric keys (oct type), perform AES key wrapping
@@ -680,7 +682,7 @@ func (m *MockKeyVaultClient) UnwrapKey(ctx context.Context, keyName, keyVersion 
 
 	mock, exists := m.keys[keyName]
 	if !exists {
-		return azkeys.UnwrapKeyResponse{}, fmt.Errorf("key not found: %s", keyName)
+		return azkeys.UnwrapKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyName)}
 	}
 
 	// For symmetric keys (oct type), perform AES key unwrapping
@@ -725,7 +727,7 @@ func (m *MockKeyVaultClient) RotateKey(ctx context.Context, name string, options
 
 	mock, exists := m.keys[name]
 	if !exists {
-		return azkeys.RotateKeyResponse{}, fmt.Errorf("key not found: %s", name)
+		return azkeys.RotateKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", name)}
 	}
 
 	// Initialize versions map if not present (for keys created before this fix)
@@ -776,7 +778,7 @@ func (m *MockKeyVaultClient) RotateKey(ctx context.Context, name string, options
 			case azkeys.CurveNameP521:
 				curve = elliptic.P521()
 			default:
-				return azkeys.RotateKeyResponse{}, fmt.Errorf("unsupported curve: %v", *mock.curve)
+				return azkeys.RotateKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("unsupported curve: %v", *mock.curve)}
 			}
 		} else {
 			curve = elliptic.P256()
@@ -789,7 +791,7 @@ func (m *MockKeyVaultClient) RotateKey(ctx context.Context, name string, options
 		newPublicKey = &newPrivateKey.(*ecdsa.PrivateKey).PublicKey
 
 	default:
-		return azkeys.RotateKeyResponse{}, fmt.Errorf("key rotation not supported for key type: %v", mock.keyType)
+		return azkeys.RotateKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key rotation not supported for key type: %v", mock.keyType)}
 	}
 
 	// Store the new version
@@ -833,13 +835,13 @@ func (m *MockKeyVaultClient) ImportKey(ctx context.Context, name string, params 
 
 	// Check if key already exists
 	if _, exists := m.keys[name]; exists {
-		return azkeys.ImportKeyResponse{}, fmt.Errorf("key already exists: %s", name)
+		return azkeys.ImportKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key already exists: %s", name)}
 	}
 
 	// Import the key from JWK format
 	jwk := params.Key
 	if jwk == nil {
-		return azkeys.ImportKeyResponse{}, fmt.Errorf("key cannot be nil")
+		return azkeys.ImportKeyResponse{}, &errs.Message{Msg: "key cannot be nil"}
 	}
 
 	mock := &mockKey{
@@ -882,7 +884,7 @@ func (m *MockKeyVaultClient) ImportKey(ctx context.Context, name string, params 
 			case azkeys.CurveNameP521:
 				curve = elliptic.P521()
 			default:
-				return azkeys.ImportKeyResponse{}, fmt.Errorf("unsupported curve: %v", *jwk.Crv)
+				return azkeys.ImportKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("unsupported curve: %v", *jwk.Crv)}
 			}
 		} else {
 			curve = elliptic.P256()
@@ -902,7 +904,7 @@ func (m *MockKeyVaultClient) ImportKey(ctx context.Context, name string, params 
 		}
 
 	default:
-		return azkeys.ImportKeyResponse{}, fmt.Errorf("unsupported key type for import: %v", *jwk.Kty)
+		return azkeys.ImportKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("unsupported key type for import: %v", *jwk.Kty)}
 	}
 
 	m.keys[name] = mock

@@ -19,6 +19,8 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // TrustedRootCertPool returns a certificate pool containing the root CA
@@ -48,7 +50,7 @@ func (ca *CA) TrustedRootCertPool(cert *x509.Certificate) (*x509.CertPool, error
 		Bytes: rootCert.Raw,
 	})
 	if !pool.AppendCertsFromPEM(pemBytes) {
-		return nil, fmt.Errorf("%w: failed to append root certificate to pool", ErrInvalidCertificateChain)
+		return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: "failed to append root certificate to pool"}
 	}
 
 	return pool, nil
@@ -85,7 +87,7 @@ func (ca *CA) TrustedIntermediateCertPool(cert *x509.Certificate) (*x509.CertPoo
 		Bytes: intermediateCert.Raw,
 	})
 	if !pool.AppendCertsFromPEM(pemBytes) {
-		return nil, fmt.Errorf("%w: failed to append intermediate certificate to pool", ErrInvalidCertificateChain)
+		return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: "failed to append intermediate certificate to pool"}
 	}
 
 	return pool, nil
@@ -100,12 +102,12 @@ func (ca *CA) TrustedIntermediateCertPool(cert *x509.Certificate) (*x509.CertPoo
 func (ca *CA) CABundleCertPool() (*x509.CertPool, error) {
 	bundlePEM, err := ca.CABundle()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidCertificateChain, err)
+		return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(bundlePEM) {
-		return nil, fmt.Errorf("%w: no valid certificates in bundle", ErrInvalidCertificateChain)
+		return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: "no valid certificates in bundle"}
 	}
 
 	return pool, nil
@@ -123,10 +125,10 @@ func (ca *CA) CABundleCertPool() (*x509.CertPool, error) {
 func (ca *CA) OSTrustStore() (*x509.CertPool, error) {
 	pool, err := x509.SystemCertPool()
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to load OS trust store: %v", ErrInvalidCertificateChain, err)
+		return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: fmt.Sprintf("failed to load OS trust store: %v", err)}
 	}
 	if pool == nil {
-		return nil, fmt.Errorf("%w: OS trust store is not available on this platform", ErrInvalidCertificateChain)
+		return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: "OS trust store is not available on this platform"}
 	}
 	return pool, nil
 }

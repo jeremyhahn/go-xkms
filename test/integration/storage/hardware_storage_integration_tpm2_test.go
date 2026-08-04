@@ -22,6 +22,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 )
@@ -73,7 +75,7 @@ func openRemoteTPM2(host, port string) (transport.TPMCloser, error) {
 	addr := net.JoinHostPort(host, port)
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to TPM simulator at %s: %w", addr, err)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to connect to TPM simulator at %s", addr), Err: err}
 	}
 
 	// Wrap the connection with TPM transport
@@ -100,7 +102,7 @@ func openLocalTPM2() (transport.TPMCloser, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("no local TPM2 device found")
+	return nil, &errs.Message{Msg: "no local TPM2 device found"}
 }
 
 // tpm2StorageWrapper wraps TPM2 storage with cleanup logic

@@ -29,8 +29,8 @@ The ACME client package provides a complete implementation for interacting with 
 
 ```go
 import (
-    "github.com/jeremyhahn/go-trusted-ca/pkg/acme/client"
-    "github.com/jeremyhahn/go-trusted-ca/pkg/acme/storage/objstore"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/client"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 )
 
 // Create client configuration

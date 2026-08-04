@@ -18,8 +18,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
@@ -58,6 +58,14 @@ func TestKHMismatchError_Error(t *testing.T) {
 	}
 	if e.Error() == "" {
 		t.Fatal("MismatchError.Error() empty")
+	}
+}
+
+func TestKHRejectedError_Error(t *testing.T) {
+	e := &known_hosts.RejectedError{Host: "bastion.example.com", Fingerprint: "SHA256:abc"}
+	want := "ssh/known_hosts: host key rejected for bastion.example.com: SHA256:abc"
+	if e.Error() != want {
+		t.Fatalf("got %q, want %q", e.Error(), want)
 	}
 }
 
@@ -412,8 +420,8 @@ var khErrFail = errors.New("injected backend failure")
 // khFailingBackend always fails on every operation.
 type khFailingBackend struct{}
 
-func (khFailingBackend) Get(_ context.Context, _ string) ([]byte, error)  { return nil, khErrFail }
-func (khFailingBackend) Put(_ context.Context, _ string, _ []byte) error  { return khErrFail }
+func (khFailingBackend) Get(_ context.Context, _ string) ([]byte, error) { return nil, khErrFail }
+func (khFailingBackend) Put(_ context.Context, _ string, _ []byte) error { return khErrFail }
 func (khFailingBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
 	return false, khErrFail
 }
@@ -425,7 +433,7 @@ func (khFailingBackend) Scan(_ context.Context, _ string, _ func(string, []byte)
 	return khErrFail
 }
 func (khFailingBackend) Exists(_ context.Context, _ string) (bool, error) { return false, khErrFail }
-func (khFailingBackend) Close() error                                       { return nil }
+func (khFailingBackend) Close() error                                     { return nil }
 
 // khCorruptBackend returns corrupt JSON from Get and Scan.
 type khCorruptBackend struct{ khFailingBackend }
@@ -447,7 +455,7 @@ func (khPutFailBackend) Exists(_ context.Context, _ string) (bool, error) { retu
 type khRemoveErrBackend struct{ khFailingBackend }
 
 func (khRemoveErrBackend) Exists(_ context.Context, _ string) (bool, error) { return false, nil }
-func (khRemoveErrBackend) Delete(_ context.Context, _ string) error          { return khErrFail }
+func (khRemoveErrBackend) Delete(_ context.Context, _ string) error         { return khErrFail }
 
 // khPayloadBackend returns caller-provided bytes for Get.
 type khPayloadBackend struct {
@@ -460,14 +468,14 @@ func (b *khPayloadBackend) Get(_ context.Context, _ string) ([]byte, error) {
 func (b *khPayloadBackend) Scan(_ context.Context, _ string, fn func(string, []byte) error) error {
 	return fn("k", b.data)
 }
-func (b *khPayloadBackend) Put(_ context.Context, _ string, _ []byte) error        { return nil }
+func (b *khPayloadBackend) Put(_ context.Context, _ string, _ []byte) error { return nil }
 func (b *khPayloadBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
 	return true, nil
 }
-func (b *khPayloadBackend) Delete(_ context.Context, _ string) error          { return nil }
+func (b *khPayloadBackend) Delete(_ context.Context, _ string) error           { return nil }
 func (b *khPayloadBackend) List(_ context.Context, _ string) ([]string, error) { return nil, nil }
-func (b *khPayloadBackend) Exists(_ context.Context, _ string) (bool, error)  { return true, nil }
-func (b *khPayloadBackend) Close() error                                        { return nil }
+func (b *khPayloadBackend) Exists(_ context.Context, _ string) (bool, error)   { return true, nil }
+func (b *khPayloadBackend) Close() error                                       { return nil }
 
 // Compile-time check that test backends implement storage.Backend.
 var (

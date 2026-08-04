@@ -26,6 +26,10 @@ export function ResetLockout(arg1) {
   return window['go']['services']['PINService']['ResetLockout'](arg1);
 }
 
+export function SOPINSupported() {
+  return window['go']['services']['PINService']['SOPINSupported']();
+}
+
 export function SetAuditLogger(arg1) {
   return window['go']['services']['PINService']['SetAuditLogger'](arg1);
 }
@@ -48,6 +52,10 @@ export function SetSOPIN(arg1, arg2) {
 
 export function SetUserPIN(arg1, arg2) {
   return window['go']['services']['PINService']['SetUserPIN'](arg1, arg2);
+}
+
+export function Strategy() {
+  return window['go']['services']['PINService']['Strategy']();
 }
 
 export function VerifyFIDO2Hash(arg1) {

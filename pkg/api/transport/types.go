@@ -1314,6 +1314,41 @@ type BarrierRootTokenResponse struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// BarrierEnableEncryptionRequest enables at-rest encryption on a
+// previously-unencrypted (none-strategy) barrier by migrating its data to a
+// keyed strategy in place. An empty TenantID targets the system barrier
+// (admin authority); a non-empty TenantID targets that tenant's dedicated
+// barrier.
+type BarrierEnableEncryptionRequest struct {
+	// TenantID selects the tenant barrier to migrate. Empty means the system
+	// barrier.
+	TenantID string `json:"tenant_id,omitempty"`
+	// Strategy is the keyed target strategy id (e.g. "passphrase", "shamir",
+	// "tpm2"). Must not be "none".
+	Strategy string `json:"strategy"`
+	// Mechanism selects the physical re-encryption approach ("swap" or
+	// "in-place"). Defaults to "swap" when empty.
+	Mechanism string `json:"mechanism,omitempty"`
+	// Availability selects write behaviour during migration ("quiesced" or
+	// "online"). Defaults to "quiesced" when empty.
+	Availability string `json:"availability,omitempty"`
+	// Passphrase carries the secret for a passphrase-target migration.
+	Passphrase string `json:"passphrase,omitempty"`
+	// ShamirThreshold / ShamirTotal configure the M-of-N scheme for a
+	// Shamir-target migration.
+	ShamirThreshold int `json:"shamir_threshold,omitempty"`
+	ShamirTotal     int `json:"shamir_total,omitempty"`
+}
+
+// BarrierEnableEncryptionResponse acknowledges that the migration has started.
+// The migration runs asynchronously (a system-scope migration tears down and
+// reopens the barrier); clients poll BarrierStatus and observe completion when
+// the reported strategy changes from "none" to the keyed target.
+type BarrierEnableEncryptionResponse struct {
+	Status string `json:"status"`
+	Scope  string `json:"scope"`
+}
+
 // PIN Operations
 
 // SetSOPINRequest contains parameters for setting the Security Officer PIN.

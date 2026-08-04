@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -52,7 +54,7 @@ func (b *Backend) CanSeal() bool {
 // Returns SealedData containing the encrypted payload, or error.
 func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
 	if opts == nil || opts.KeyAttributes == nil {
-		return nil, fmt.Errorf("seal options with KeyAttributes required")
+		return nil, &errs.Message{Msg: "seal options with KeyAttributes required"}
 	}
 
 	if err := b.initClient(ctx); err != nil {
@@ -63,13 +65,13 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 
 	// Validate that the key is a symmetric key
 	if !keyAttrs.IsSymmetric() {
-		return nil, fmt.Errorf("AWS KMS sealing requires a symmetric key, got %s", keyAttrs.KeyAlgorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("AWS KMS sealing requires a symmetric key, got %s", keyAttrs.KeyAlgorithm)}
 	}
 
 	// Get the symmetric encrypter for this key
 	encrypter, err := b.SymmetricEncrypter(ctx, keyAttrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get symmetric encrypter: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get symmetric encrypter", Err: err}
 	}
 
 	// Set up encryption options
@@ -80,7 +82,7 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 	// Encrypt the data via AWS KMS
 	encrypted, err := encrypter.Encrypt(data, encOpts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt data: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to encrypt data", Err: err}
 	}
 
 	// Build the sealed data result
@@ -118,15 +120,15 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 // Returns the original plaintext data, or error if unsealing fails.
 func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
-		return nil, fmt.Errorf("sealed data is required")
+		return nil, &errs.Message{Msg: "sealed data is required"}
 	}
 
 	if sealed.Backend != types.BackendTypeAWSKMS {
-		return nil, fmt.Errorf("sealed data was not created by AWS KMS backend (got %s)", sealed.Backend)
+		return nil, &errs.Message{Msg: fmt.Sprintf("sealed data was not created by AWS KMS backend (got %s)", sealed.Backend)}
 	}
 
 	if opts == nil || opts.KeyAttributes == nil {
-		return nil, fmt.Errorf("unseal options with KeyAttributes required")
+		return nil, &errs.Message{Msg: "unseal options with KeyAttributes required"}
 	}
 
 	if err := b.initClient(ctx); err != nil {
@@ -137,19 +139,18 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 
 	// Verify key ID matches if present
 	if sealed.KeyID != "" && sealed.KeyID != keyAttrs.ID() {
-		return nil, fmt.Errorf("key ID mismatch: sealed with %s, attempting unseal with %s",
-			sealed.KeyID, keyAttrs.ID())
+		return nil, &errs.Message{Msg: fmt.Sprintf("key ID mismatch: sealed with %s, attempting unseal with %s", sealed.KeyID, keyAttrs.ID())}
 	}
 
 	// Validate that the key is a symmetric key
 	if !keyAttrs.IsSymmetric() {
-		return nil, fmt.Errorf("AWS KMS unsealing requires a symmetric key, got %s", keyAttrs.KeyAlgorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("AWS KMS unsealing requires a symmetric key, got %s", keyAttrs.KeyAlgorithm)}
 	}
 
 	// Get the symmetric encrypter for this key
 	encrypter, err := b.SymmetricEncrypter(ctx, keyAttrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get symmetric encrypter: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get symmetric encrypter", Err: err}
 	}
 
 	// Reconstruct encrypted data
@@ -171,7 +172,7 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 	// Decrypt the data via AWS KMS
 	plaintext, err := encrypter.Decrypt(encrypted, decOpts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt data (check key and AAD): %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decrypt data (check key and AAD)", Err: err}
 	}
 
 	return plaintext, nil

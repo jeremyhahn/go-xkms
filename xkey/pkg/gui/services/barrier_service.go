@@ -15,13 +15,14 @@ package services
 
 import (
 	"context"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
@@ -288,7 +289,7 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 	}
 
 	ctx := s.context()
-	if initErr := barrier.Initialize(ctx, xkms.SealCredentials{Secret: password}); initErr != nil {
+	if initErr := barrier.Initialize(ctx, xkms.SealCredentials{Secret: []byte(password)}); initErr != nil {
 		_ = base.Close()
 		s.log.Error("barrier: barrier.Initialize failed",
 			"strategy", strategyID, "error", initErr)
@@ -381,7 +382,7 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	}
 
 	ctx := s.context()
-	if err := barrier.Unseal(ctx, xkms.SealCredentials{Secret: password}); err != nil {
+	if err := barrier.Unseal(ctx, xkms.SealCredentials{Secret: []byte(password)}); err != nil {
 		_ = base.Close()
 		s.mu.Unlock()
 		s.logBarrierEvent(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": strategyID})
@@ -438,7 +439,7 @@ func (s *BarrierService) ChangePassword(newPassword string) error {
 	}
 
 	ctx := s.context()
-	if err := s.barrier.ChangePassword(ctx, xkms.SealCredentials{Secret: newPassword}); err != nil {
+	if err := s.barrier.ChangePassword(ctx, xkms.SealCredentials{Secret: []byte(newPassword)}); err != nil {
 		s.logBarrierEvent(audit.OpBarrierPasswordChanged, false, err, nil)
 		return err
 	}

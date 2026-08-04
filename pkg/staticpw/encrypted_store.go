@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -218,12 +220,12 @@ func (s *EncryptedStore) encryptPassword(plaintext string) (string, error) {
 
 	encData, err := s.encrypter.Encrypt([]byte(plaintext), nil)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrEncryptFailed, err)
+		return "", &errs.Detail{Err: ErrEncryptFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	jsonBytes, err := json.Marshal(encData)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrMarshalFailed, err)
+		return "", &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return encryptedPrefix + base64.StdEncoding.EncodeToString(jsonBytes), nil
@@ -240,17 +242,17 @@ func (s *EncryptedStore) decryptPassword(stored string) (string, error) {
 	encoded := strings.TrimPrefix(stored, encryptedPrefix)
 	jsonBytes, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrDecryptFailed, err)
+		return "", &errs.Detail{Err: ErrDecryptFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	var encData types.EncryptedData
 	if err := json.Unmarshal(jsonBytes, &encData); err != nil {
-		return "", fmt.Errorf("%w: %v", ErrDecryptFailed, err)
+		return "", &errs.Detail{Err: ErrDecryptFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	plaintext, err := s.encrypter.Decrypt(&encData, nil)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrDecryptFailed, err)
+		return "", &errs.Detail{Err: ErrDecryptFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return string(plaintext), nil

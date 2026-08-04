@@ -256,8 +256,13 @@ func createBackend(config BackendConfig) (types.KeyProvider, error) {
 // They use build tags appropriately so backends compile conditionally.
 
 func createPKCS8Backend(config BackendConfig) (types.KeyProvider, error) {
-	keyDir, ok := config.Config["key_dir"].(string)
-	if !ok || keyDir == "" {
+	var keyDir string
+	var allowPlaintext bool
+	if config.Config != nil {
+		keyDir, _ = config.Config["key_dir"].(string)
+		allowPlaintext, _ = config.Config["allow_plaintext_keys"].(bool)
+	}
+	if keyDir == "" {
 		keyDir = "/tmp/keystore/pkcs8"
 	}
 
@@ -267,7 +272,8 @@ func createPKCS8Backend(config BackendConfig) (types.KeyProvider, error) {
 	}
 
 	pkcs8Config := &pkcs8.Config{
-		KeyStorage: keyStorage,
+		KeyStorage:         keyStorage,
+		AllowPlaintextKeys: allowPlaintext,
 	}
 
 	return pkcs8.NewBackend(pkcs8Config)

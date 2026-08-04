@@ -1,0 +1,139 @@
+- generic [ref=e3]:
+  - navigation "Main navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e9]: xKey
+      - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+        - img [ref=e11]
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: OVERVIEW
+        - button "Dashboard" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - generic [ref=e19]: Dashboard
+        - button "Pairing" [ref=e20] [cursor=pointer]:
+          - img [ref=e21]
+          - generic [ref=e23]: Pairing
+        - button "TPM 2.0" [ref=e234] [cursor=pointer]:
+          - img [ref=e235]
+          - generic [ref=e237]: TPM 2.0
+      - generic [ref=e24]:
+        - generic [ref=e25]: STORE
+        - button "Keys" [ref=e26] [cursor=pointer]:
+          - img [ref=e27]
+          - generic [ref=e29]: Keys
+        - button "Trust Store" [ref=e30] [cursor=pointer]:
+          - img [ref=e31]
+          - generic [ref=e33]: Trust Store
+        - button "Certificates" [ref=e34] [cursor=pointer]:
+          - img [ref=e35]
+          - generic [ref=e37]: Certificates
+      - generic [ref=e38]:
+        - generic [ref=e39]: APPLICATIONS
+        - button "SSH" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+          - generic [ref=e43]: SSH
+        - button "FIDO2" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: FIDO2
+        - button "OATH" [ref=e48] [cursor=pointer]:
+          - img [ref=e49]
+          - generic [ref=e51]: OATH
+        - button "PIV" [ref=e52] [cursor=pointer]:
+          - img [ref=e53]
+          - generic [ref=e55]: PIV
+        - button "Passwords" [ref=e56] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: Passwords
+        - button "Sealed Data" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e63]: Sealed Data
+        - button "Browser" [ref=e64] [cursor=pointer]:
+          - img [ref=e65]
+          - generic [ref=e67]: Browser
+      - generic [ref=e68]:
+        - generic [ref=e69]: MANAGEMENT
+        - button "Audit Log" [ref=e70] [cursor=pointer]:
+          - img [ref=e71]
+          - generic [ref=e73]: Audit Log
+        - button "Admin" [ref=e74] [cursor=pointer]:
+          - img [ref=e75]
+          - generic [ref=e77]: Admin
+      - generic [ref=e78]:
+        - generic [ref=e79]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e80] [cursor=pointer]:
+          - img [ref=e81]
+          - generic [ref=e83]: OIDC
+        - button "API Explorer" [ref=e84] [cursor=pointer]:
+          - img [ref=e85]
+          - generic [ref=e87]: API Explorer
+    - generic [ref=e88]:
+      - generic "Standalone mode" [ref=e89]:
+        - generic [ref=e91]: Standalone
+      - button "Theme" [ref=e92] [cursor=pointer]:
+        - img [ref=e93]
+        - generic [ref=e95]: Theme
+      - button "Settings" [ref=e96] [cursor=pointer]:
+        - img [ref=e97]
+        - generic [ref=e99]: Settings
+  - main [ref=e100]:
+    - generic [ref=e102]:
+      - button "Lock app" [ref=e103] [cursor=pointer]:
+        - img [ref=e104]
+        - generic [ref=e106]: Lock
+      - button "No touch pending" [disabled] [ref=e107]:
+        - img [ref=e109]
+    - generic [ref=e419]:
+      - generic [ref=e422]:
+        - heading "Passwords" [level=1] [ref=e423]
+        - paragraph [ref=e424]: Static password management
+      - generic [ref=e425]:
+        - button "Import" [ref=e426] [cursor=pointer]:
+          - img [ref=e427]
+          - generic [ref=e429]: Import
+        - button "Restore" [ref=e430] [cursor=pointer]:
+          - img [ref=e431]
+          - generic [ref=e433]: Restore
+        - button "Backup" [ref=e434] [cursor=pointer]:
+          - img [ref=e435]
+          - generic [ref=e437]: Backup
+        - button "Add Password" [ref=e438] [cursor=pointer]:
+          - img [ref=e439]
+          - generic [ref=e441]: Add Password
+      - generic [ref=e443]:
+        - complementary [ref=e444]:
+          - tree "Folders" [ref=e445]:
+            - treeitem "All Passwords" [selected] [ref=e446] [cursor=pointer]:
+              - img [ref=e448]
+              - generic [ref=e450]: All Passwords
+            - group
+            - button "New Folder" [ref=e453] [cursor=pointer]:
+              - img [ref=e455]
+              - generic [ref=e457]: New Folder
+          - generic [ref=e458]:
+            - generic [ref=e459]:
+              - generic [ref=e460]:
+                - img [ref=e461]
+                - text: Teams
+              - button "Create team" [ref=e463] [cursor=pointer]:
+                - img [ref=e464]
+            - paragraph [ref=e466]: No teams yet.
+        - generic [ref=e467]:
+          - generic [ref=e469]:
+            - img [ref=e471]
+            - textbox "Search passwords..." [ref=e473]
+          - option "chrometest-entry testuser" [ref=e475] [cursor=pointer]:
+            - generic [ref=e477]:
+              - generic [ref=e479]: chrometest-entry
+              - generic [ref=e480]: testuser
+            - generic [ref=e481]:
+              - button "Copy password" [ref=e482]:
+                - img [ref=e483]
+              - button "Delete" [ref=e485]:
+                - img [ref=e486]
+        - complementary [ref=e488]:
+          - generic [ref=e491]:
+            - img [ref=e493]
+            - heading "Select a password" [level=3] [ref=e495]
+            - paragraph [ref=e496]: Choose a password from the list to view its details.

@@ -22,13 +22,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/assert"

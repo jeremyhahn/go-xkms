@@ -33,6 +33,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -54,7 +56,7 @@ func crossSignedStoreKey(issuerCN, subjectCN string) string {
 // Thread-safe: Yes
 func (ca *CA) ImportXSignedCertificate(issuerCN string, cert *x509.Certificate) error {
 	if issuerCN == "" {
-		return fmt.Errorf("%w: issuer common name required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "issuer common name required"}
 	}
 	if cert == nil {
 		return ErrInvalidCertificate
@@ -68,12 +70,12 @@ func (ca *CA) ImportXSignedCertificate(issuerCN string, cert *x509.Certificate) 
 		Bytes: cert.Raw,
 	})
 	if pemData == nil {
-		return fmt.Errorf("%w: failed to encode cross-signed certificate", ErrStorageError)
+		return &errs.Detail{Err: ErrStorageError, Detail: "failed to encode cross-signed certificate"}
 	}
 
 	key := crossSignedStoreKey(issuerCN, cert.Subject.CommonName)
 	if err := ca.objectStore.Put(key, bytes.NewReader(pemData)); err != nil {
-		return fmt.Errorf("%w: failed to store cross-signed certificate: %v", ErrStorageError, err)
+		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store cross-signed certificate: %v", err)}
 	}
 	return nil
 }
@@ -86,7 +88,7 @@ func (ca *CA) ImportXSignedCertificate(issuerCN string, cert *x509.Certificate) 
 // Thread-safe: Yes
 func (ca *CA) XSignedRootCertificate(issuerCN string, cert *x509.Certificate) (*x509.Certificate, error) {
 	if issuerCN == "" {
-		return nil, fmt.Errorf("%w: issuer common name required", ErrInvalidConfig)
+		return nil, &errs.Detail{Err: ErrInvalidConfig, Detail: "issuer common name required"}
 	}
 	if cert == nil {
 		return nil, ErrInvalidCertificate
@@ -115,7 +117,7 @@ func (ca *CA) XSignedRootCertificate(issuerCN string, cert *x509.Certificate) (*
 // Thread-safe: Yes
 func (ca *CA) XSignedIntermediateCertificates(issuerCN string, cert *x509.Certificate) ([]*x509.Certificate, error) {
 	if issuerCN == "" {
-		return nil, fmt.Errorf("%w: issuer common name required", ErrInvalidConfig)
+		return nil, &errs.Detail{Err: ErrInvalidConfig, Detail: "issuer common name required"}
 	}
 	if cert == nil {
 		return nil, ErrInvalidCertificate
@@ -148,10 +150,10 @@ func (ca *CA) XSignedIntermediateCertificates(issuerCN string, cert *x509.Certif
 // Thread-safe: Yes
 func (ca *CA) XSignedCertificate(issuerCN string, attrs *types.KeyAttributes) (*x509.Certificate, error) {
 	if issuerCN == "" {
-		return nil, fmt.Errorf("%w: issuer common name required", ErrInvalidConfig)
+		return nil, &errs.Detail{Err: ErrInvalidConfig, Detail: "issuer common name required"}
 	}
 	if attrs == nil || attrs.CN == "" {
-		return nil, fmt.Errorf("%w: key attributes with CN required", ErrInvalidCertificate)
+		return nil, &errs.Detail{Err: ErrInvalidCertificate, Detail: "key attributes with CN required"}
 	}
 	if ca.objectStore == nil {
 		return nil, ErrObjectStoreRequired
@@ -168,7 +170,7 @@ func (ca *CA) XSignedCertificate(issuerCN string, attrs *types.KeyAttributes) (*
 // Thread-safe: Yes
 func (ca *CA) CrossSignedPEM(attrs *types.KeyAttributes) ([]byte, error) {
 	if attrs == nil || attrs.CN == "" {
-		return nil, fmt.Errorf("%w: key attributes with CN required", ErrInvalidCertificate)
+		return nil, &errs.Detail{Err: ErrInvalidCertificate, Detail: "key attributes with CN required"}
 	}
 	if ca.objectStore == nil {
 		return nil, ErrObjectStoreRequired
@@ -176,7 +178,7 @@ func (ca *CA) CrossSignedPEM(attrs *types.KeyAttributes) ([]byte, error) {
 
 	items, err := ca.objectStore.List("cross-signed/")
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to list cross-signed certificates: %v", ErrStorageError, err)
+		return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to list cross-signed certificates: %v", err)}
 	}
 
 	var bundle strings.Builder
@@ -198,7 +200,7 @@ func (ca *CA) CrossSignedPEM(attrs *types.KeyAttributes) ([]byte, error) {
 	}
 
 	if bundle.Len() == 0 {
-		return nil, fmt.Errorf("%w: no cross-signed certificates for %s", ErrCertificateNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("no cross-signed certificates for %s", attrs.CN)}
 	}
 	return []byte(bundle.String()), nil
 }
@@ -210,24 +212,22 @@ func (ca *CA) readCrossSignedCertificate(issuerCN, subjectCN string) (*x509.Cert
 	key := crossSignedStoreKey(issuerCN, subjectCN)
 	reader, err := ca.objectStore.Get(key)
 	if err != nil {
-		return nil, fmt.Errorf("%w: cross-signed certificate %s (issuer %s): %v",
-			ErrCertificateNotFound, subjectCN, issuerCN, err)
+		return nil, &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("cross-signed certificate %s (issuer %s): %v", subjectCN, issuerCN, err)}
 	}
 	defer func() { _ = reader.Close() }()
 
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to read cross-signed certificate: %v", ErrStorageError, err)
+		return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to read cross-signed certificate: %v", err)}
 	}
 
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, fmt.Errorf("%w: invalid PEM for cross-signed certificate %s", ErrInvalidPEM, subjectCN)
+		return nil, &errs.Detail{Err: ErrInvalidPEM, Detail: fmt.Sprintf("invalid PEM for cross-signed certificate %s", subjectCN)}
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to parse cross-signed certificate %s: %v",
-			ErrInvalidCertificate, subjectCN, err)
+		return nil, &errs.Detail{Err: ErrInvalidCertificate, Detail: fmt.Sprintf("failed to parse cross-signed certificate %s: %v", subjectCN, err)}
 	}
 	return cert, nil
 }

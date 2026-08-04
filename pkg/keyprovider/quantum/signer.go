@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
 	"github.com/cloudflare/circl/sign/mldsa/mldsa65"
 	"github.com/cloudflare/circl/sign/mldsa/mldsa87"
@@ -98,7 +100,7 @@ func (k *MLDSAPrivateKey) Verify(message, signature []byte) (bool, error) {
 
 	vf, ok := verifyDispatch[k.Algorithm]
 	if !ok {
-		return false, fmt.Errorf("%w: %s", ErrUnsupportedAlgorithm, k.Algorithm)
+		return false, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", k.Algorithm)}
 	}
 
 	return vf(k.pk, message, signature), nil
@@ -186,7 +188,7 @@ func (k *MLKEMPrivateKey) Encapsulate(recipientPublicKey []byte) (ciphertext, sh
 
 	encap, ok := encapsulateDispatch[k.Algorithm]
 	if !ok {
-		return nil, nil, fmt.Errorf("%w: %s", ErrUnsupportedAlgorithm, k.Algorithm)
+		return nil, nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", k.Algorithm)}
 	}
 
 	ciphertext, sharedSecret, err = encap(recipientPublicKey)
@@ -209,7 +211,7 @@ func (k *MLKEMPrivateKey) Decapsulate(ciphertext []byte) (sharedSecret []byte, e
 	case *mlkem.DecapsulationKey1024:
 		sharedSecret, err = dk.Decapsulate(ciphertext)
 	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedAlgorithm, k.Algorithm)
+		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", k.Algorithm)}
 	}
 
 	if err != nil {
@@ -255,7 +257,7 @@ func (k *MLKEMPrivateKey) Encrypt(plaintext []byte, recipientPublicKey []byte) (
 	// Step 1: Encapsulate to establish shared secret
 	kemCiphertext, sharedSecret, err := k.Encapsulate(recipientPublicKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("encapsulation failed: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "encapsulation failed", Err: err}
 	}
 	defer func() {
 		for i := range sharedSecret {
@@ -266,7 +268,7 @@ func (k *MLKEMPrivateKey) Encrypt(plaintext []byte, recipientPublicKey []byte) (
 	// Step 2: Encrypt plaintext using shared secret as AES-256 key
 	encryptedData, err = encryptWithAESGCM(plaintext, sharedSecret, nil, k.tracker, k.keyID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("AES-GCM encryption failed: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "AES-GCM encryption failed", Err: err}
 	}
 
 	return kemCiphertext, encryptedData, nil
@@ -291,7 +293,7 @@ func (k *MLKEMPrivateKey) Decrypt(kemCiphertext, encryptedData []byte) (plaintex
 	// Step 1: Decapsulate to recover shared secret
 	sharedSecret, err := k.Decapsulate(kemCiphertext)
 	if err != nil {
-		return nil, fmt.Errorf("decapsulation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "decapsulation failed", Err: err}
 	}
 	defer func() {
 		for i := range sharedSecret {
@@ -302,7 +304,7 @@ func (k *MLKEMPrivateKey) Decrypt(kemCiphertext, encryptedData []byte) (plaintex
 	// Step 2: Decrypt using shared secret as AES-256 key
 	plaintext, err = decryptWithAESGCM(encryptedData, sharedSecret, nil)
 	if err != nil {
-		return nil, fmt.Errorf("AES-GCM decryption failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "AES-GCM decryption failed", Err: err}
 	}
 
 	return plaintext, nil
@@ -318,7 +320,7 @@ func (k *MLKEMPrivateKey) EncryptWithAAD(plaintext, aad []byte, recipientPublicK
 	// Step 1: Encapsulate to establish shared secret
 	kemCiphertext, sharedSecret, err := k.Encapsulate(recipientPublicKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("encapsulation failed: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "encapsulation failed", Err: err}
 	}
 	defer func() {
 		for i := range sharedSecret {
@@ -329,7 +331,7 @@ func (k *MLKEMPrivateKey) EncryptWithAAD(plaintext, aad []byte, recipientPublicK
 	// Step 2: Encrypt with AAD
 	encryptedData, err = encryptWithAESGCM(plaintext, sharedSecret, aad, k.tracker, k.keyID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("AES-GCM encryption failed: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "AES-GCM encryption failed", Err: err}
 	}
 
 	return kemCiphertext, encryptedData, nil
@@ -345,7 +347,7 @@ func (k *MLKEMPrivateKey) DecryptWithAAD(kemCiphertext, encryptedData, aad []byt
 	// Step 1: Decapsulate to recover shared secret
 	sharedSecret, err := k.Decapsulate(kemCiphertext)
 	if err != nil {
-		return nil, fmt.Errorf("decapsulation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "decapsulation failed", Err: err}
 	}
 	defer func() {
 		for i := range sharedSecret {
@@ -356,7 +358,7 @@ func (k *MLKEMPrivateKey) DecryptWithAAD(kemCiphertext, encryptedData, aad []byt
 	// Step 2: Decrypt with AAD validation
 	plaintext, err = decryptWithAESGCM(encryptedData, sharedSecret, aad)
 	if err != nil {
-		return nil, fmt.Errorf("AES-GCM decryption failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "AES-GCM decryption failed", Err: err}
 	}
 
 	return plaintext, nil
@@ -374,30 +376,30 @@ func (k *MLKEMPrivateKey) DecryptWithAAD(kemCiphertext, encryptedData, aad []byt
 func encryptWithAESGCM(plaintext, key, aad []byte, tracker types.AEADSafetyTracker, keyID string) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create AES cipher", Err: err}
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 	}
 
 	// AEAD Safety: Check nonce hasn't been used (if tracker available)
 	if tracker != nil && keyID != "" {
 		if err := tracker.CheckNonce(keyID, nonce); err != nil {
-			return nil, fmt.Errorf("nonce reuse detected: %w (CRITICAL SECURITY VIOLATION)", err)
+			return nil, &errs.Affix{Prefix: "nonce reuse detected: ", Err: err, Suffix: " (CRITICAL SECURITY VIOLATION)"}
 		}
 	}
 
 	// AEAD Safety: Check bytes limit (if tracker available)
 	if tracker != nil && keyID != "" {
 		if err := tracker.IncrementBytes(keyID, int64(len(plaintext))); err != nil {
-			return nil, fmt.Errorf("bytes limit exceeded: %w (key rotation required)", err)
+			return nil, &errs.Affix{Prefix: "bytes limit exceeded: ", Err: err, Suffix: " (key rotation required)"}
 		}
 	}
 
@@ -420,17 +422,17 @@ func encryptWithAESGCM(plaintext, key, aad []byte, tracker types.AEADSafetyTrack
 func decryptWithAESGCM(ciphertext, key, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create AES cipher", Err: err}
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	nonceSize := gcm.NonceSize()
 	if len(ciphertext) < nonceSize {
-		return nil, fmt.Errorf("ciphertext too short")
+		return nil, &errs.Message{Msg: "ciphertext too short"}
 	}
 
 	nonce := ciphertext[:nonceSize]
@@ -438,7 +440,7 @@ func decryptWithAESGCM(ciphertext, key, aad []byte) ([]byte, error) {
 
 	plaintext, err := gcm.Open(nil, nonce, actualCiphertext, aad)
 	if err != nil {
-		return nil, fmt.Errorf("decryption failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "decryption failed", Err: err}
 	}
 
 	return plaintext, nil

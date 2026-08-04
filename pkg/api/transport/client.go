@@ -198,6 +198,11 @@ type BarrierService interface {
 
 	// BarrierGenerateRootToken generates a new root token using Shamir shares.
 	BarrierGenerateRootToken(ctx context.Context, req *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error)
+
+	// BarrierEnableEncryption migrates a previously-unencrypted barrier to a
+	// keyed strategy in place. The migration runs asynchronously; the response
+	// acknowledges the start and clients poll BarrierStatus for completion.
+	BarrierEnableEncryption(ctx context.Context, req *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error)
 }
 
 // PIVService handles Personal Identity Verification operations.
@@ -499,6 +504,15 @@ type TenantService interface {
 
 	// TenantBarrierUnseal unseals a per-tenant barrier.
 	TenantBarrierUnseal(ctx context.Context, req *TenantBarrierUnsealRequest) error
+
+	// TenantBarrierStatus reports the current state of a per-tenant barrier.
+	TenantBarrierStatus(ctx context.Context, tenantID string) (*TenantBarrierStatusResponse, error)
+
+	// UpdateTenantEntitlements updates a tenant's feature entitlements.
+	UpdateTenantEntitlements(ctx context.Context, req *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error)
+
+	// UpdateTenantQuotas updates a tenant's resource quotas.
+	UpdateTenantQuotas(ctx context.Context, req *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error)
 }
 
 // Client composes all service sub-interfaces into a unified client.

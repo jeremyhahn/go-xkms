@@ -1,0 +1,176 @@
+- generic [ref=e3]:
+  - navigation "Main navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e9]: xKey
+      - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+        - img [ref=e11]
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: OVERVIEW
+        - button "Dashboard" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - generic [ref=e19]: Dashboard
+        - button "Pairing" [ref=e20] [cursor=pointer]:
+          - img [ref=e21]
+          - generic [ref=e23]: Pairing
+        - button "TPM 2.0" [ref=e124] [cursor=pointer]:
+          - img [ref=e125]
+          - generic [ref=e127]: TPM 2.0
+      - generic [ref=e24]:
+        - generic [ref=e25]: STORE
+        - button "Keys" [ref=e26] [cursor=pointer]:
+          - img [ref=e27]
+          - generic [ref=e29]: Keys
+        - button "Trust Store" [ref=e30] [cursor=pointer]:
+          - img [ref=e31]
+          - generic [ref=e33]: Trust Store
+        - button "Certificates" [ref=e34] [cursor=pointer]:
+          - img [ref=e35]
+          - generic [ref=e37]: Certificates
+      - generic [ref=e38]:
+        - generic [ref=e39]: APPLICATIONS
+        - button "SSH" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+          - generic [ref=e43]: SSH
+        - button "FIDO2" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: FIDO2
+        - button "OATH" [ref=e48] [cursor=pointer]:
+          - img [ref=e49]
+          - generic [ref=e51]: OATH
+        - button "PIV" [ref=e52] [cursor=pointer]:
+          - img [ref=e53]
+          - generic [ref=e55]: PIV
+        - button "Passwords" [ref=e56] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: Passwords
+        - button "Sealed Data" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e63]: Sealed Data
+        - button "Browser" [ref=e64] [cursor=pointer]:
+          - img [ref=e65]
+          - generic [ref=e67]: Browser
+      - generic [ref=e68]:
+        - generic [ref=e69]: MANAGEMENT
+        - button "Audit Log" [ref=e70] [cursor=pointer]:
+          - img [ref=e71]
+          - generic [ref=e73]: Audit Log
+        - button "Admin" [ref=e74] [cursor=pointer]:
+          - img [ref=e75]
+          - generic [ref=e77]: Admin
+      - generic [ref=e78]:
+        - generic [ref=e79]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e80] [cursor=pointer]:
+          - img [ref=e81]
+          - generic [ref=e83]: OIDC
+        - button "API Explorer" [ref=e84] [cursor=pointer]:
+          - img [ref=e85]
+          - generic [ref=e87]: API Explorer
+    - generic [ref=e88]:
+      - generic "Standalone mode" [ref=e89]:
+        - generic [ref=e91]: Standalone
+      - button "Theme" [ref=e92] [cursor=pointer]:
+        - img [ref=e93]
+        - generic [ref=e95]: Theme
+      - button "Settings" [ref=e96] [cursor=pointer]:
+        - img [ref=e97]
+        - generic [ref=e99]: Settings
+  - main [ref=e100]:
+    - generic [ref=e102]:
+      - button "Lock app" [ref=e103] [cursor=pointer]:
+        - img [ref=e104]
+        - generic [ref=e106]: Lock
+      - button "No touch pending" [disabled] [ref=e107]:
+        - img [ref=e109]
+    - generic [ref=e258]:
+      - generic [ref=e261]:
+        - heading "TPM 2.0" [level=1] [ref=e262]
+        - paragraph [ref=e263]: Trusted Platform Module management
+      - generic [ref=e264]:
+        - navigation [ref=e265]:
+          - button "Overview" [ref=e266] [cursor=pointer]:
+            - img [ref=e267]
+            - generic [ref=e269]: Overview
+          - button "Platform Keys" [ref=e270] [cursor=pointer]:
+            - img [ref=e271]
+            - generic [ref=e273]: Platform Keys
+          - button "Measurements" [ref=e274] [cursor=pointer]:
+            - img [ref=e275]
+            - generic [ref=e277]: Measurements
+          - button "Key Handles" [ref=e278] [cursor=pointer]:
+            - img [ref=e279]
+            - generic [ref=e281]: Key Handles
+          - button "NV Storage" [ref=e282] [cursor=pointer]:
+            - img [ref=e283]
+            - generic [ref=e285]: NV Storage
+          - button "Policies" [active] [ref=e286] [cursor=pointer]:
+            - img [ref=e287]
+            - generic [ref=e289]: Policies
+          - button "Attestation" [ref=e290] [cursor=pointer]:
+            - img [ref=e291]
+            - generic [ref=e293]: Attestation
+          - button "Lockout" [ref=e294] [cursor=pointer]:
+            - img [ref=e295]
+            - generic [ref=e297]: Lockout
+          - button "Authorization" [ref=e298] [cursor=pointer]:
+            - img [ref=e299]
+            - generic [ref=e301]: Authorization
+          - button "Verification" [ref=e302] [cursor=pointer]:
+            - img [ref=e303]
+            - generic [ref=e305]: Verification
+        - generic [ref=e1326]:
+          - generic [ref=e1327]:
+            - heading "Policies" [level=2] [ref=e1328]:
+              - img [ref=e1329]
+              - text: Policies
+            - generic [ref=e1331]:
+              - button "Import" [ref=e1332] [cursor=pointer]:
+                - img [ref=e1333]
+                - generic [ref=e1335]: Import
+              - button "Create Policy" [ref=e1336] [cursor=pointer]:
+                - img [ref=e1337]
+                - generic [ref=e1339]: Create Policy
+          - table [ref=e1341]:
+            - rowgroup [ref=e1342]:
+              - row "Name Type PCRs Status Created Actions" [ref=e1343]:
+                - columnheader "Name" [ref=e1344] [cursor=pointer]
+                - columnheader "Type" [ref=e1345]
+                - columnheader "PCRs" [ref=e1346]
+                - columnheader "Status" [ref=e1347]
+                - columnheader "Created" [ref=e1348] [cursor=pointer]
+                - columnheader "Actions" [ref=e1349]
+            - rowgroup [ref=e1350]:
+              - row "Platform Policy Platform PCR-based seal/unseal policy Platform System PCR 0 (sha256) PCR 7 (sha256) PCR 9 (sha256) Digests (3) Valid 7/27/2026 Update Export Assign Delete" [ref=e1351] [cursor=pointer]:
+                - cell "Platform Policy Platform PCR-based seal/unseal policy" [ref=e1352]:
+                  - generic [ref=e1353]:
+                    - generic [ref=e1354]: Platform Policy
+                    - generic [ref=e1355]: Platform PCR-based seal/unseal policy
+                - cell "Platform System" [ref=e1356]:
+                  - generic [ref=e1357]: Platform
+                  - generic [ref=e1358]: System
+                - cell "PCR 0 (sha256) PCR 7 (sha256) PCR 9 (sha256) Digests (3)" [ref=e1359]:
+                  - generic [ref=e1360]:
+                    - generic [ref=e1361]: PCR 0 (sha256)
+                    - generic [ref=e1362]: PCR 7 (sha256)
+                    - generic [ref=e1363]: PCR 9 (sha256)
+                    - button "Digests (3)" [ref=e1364]:
+                      - img [ref=e1365]
+                      - generic [ref=e1367]: Digests (3)
+                - cell "Valid" [ref=e1368]:
+                  - generic [ref=e1369]: Valid
+                - cell "7/27/2026" [ref=e1370]
+                - cell "Update Export Assign Delete" [ref=e1371]:
+                  - button "Update" [ref=e1372]:
+                    - img [ref=e1373]
+                    - generic [ref=e1375]: Update
+                  - button "Export" [ref=e1376]:
+                    - img [ref=e1377]
+                    - generic [ref=e1379]: Export
+                  - button "Assign" [ref=e1380]:
+                    - img [ref=e1381]
+                    - generic [ref=e1383]: Assign
+                  - button "Delete" [ref=e1384]:
+                    - img [ref=e1385]
+                    - generic [ref=e1387]: Delete

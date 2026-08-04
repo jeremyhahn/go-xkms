@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"hash"
 	"sort"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // Policy digest computation errors.
@@ -110,7 +112,7 @@ func ComputePolicyPCRDigest(bank string, pcrIndices []int, pcrDigests map[string
 		if d, ok := pcrDigests[key]; ok {
 			b, err := hex.DecodeString(d)
 			if err != nil {
-				return nil, fmt.Errorf("%w: %s", ErrPolicyInvalidDigest, key)
+				return nil, &errs.Detail{Err: ErrPolicyInvalidDigest, Detail: fmt.Sprintf("%s", key)}
 			}
 			pcrComposite = append(pcrComposite, b...)
 		} else {

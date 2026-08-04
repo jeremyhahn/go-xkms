@@ -264,14 +264,14 @@ func (c *Client) doTokenRequest(ctx context.Context, data url.Values) (*TokenRes
 			Nonce:      c.dpopNonce,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrTokenRequestFailed, err)
+			return nil, &SentinelCauseError{Sentinel: ErrTokenRequestFailed, Cause: err}
 		}
 
 		// Create request
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint,
 			strings.NewReader(data.Encode()))
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrTokenRequestFailed, err)
+			return nil, &SentinelCauseError{Sentinel: ErrTokenRequestFailed, Cause: err}
 		}
 
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -281,13 +281,13 @@ func (c *Client) doTokenRequest(ctx context.Context, data url.Values) (*TokenRes
 		// Perform request
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrTokenRequestFailed, err)
+			return nil, &SentinelCauseError{Sentinel: ErrTokenRequestFailed, Cause: err}
 		}
 
 		body, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrTokenRequestFailed, err)
+			return nil, &SentinelCauseError{Sentinel: ErrTokenRequestFailed, Cause: err}
 		}
 
 		// Check for DPoP nonce in response header
@@ -316,7 +316,7 @@ func (c *Client) doTokenRequest(ctx context.Context, data url.Values) (*TokenRes
 			if errMsg == "" {
 				errMsg = tokenResp.Error
 			}
-			return nil, fmt.Errorf("%w: %s", ErrTokenRequestFailed, errMsg)
+			return nil, &DetailError{Err: ErrTokenRequestFailed, Detail: fmt.Sprintf(": %s", errMsg)}
 		}
 
 		return tokenResp, nil

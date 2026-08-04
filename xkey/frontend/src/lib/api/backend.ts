@@ -98,6 +98,12 @@ export interface AutoUnsealResult {
 }
 
 export interface BarrierAutoUnsealStatus {
+  /** False only when no PCR policy store has been wired yet (e.g. very
+   * early in startup); the frontend should render an "unavailable" panel
+   * instead of retrying indefinitely. */
+  available: boolean;
+  /** Human-readable explanation, populated only when available is false. */
+  reason?: string;
   tpm_available: boolean;
   barrier_sealed: boolean;
   policy_configured: boolean;
@@ -675,8 +681,8 @@ export interface NVIndexEntry {
 }
 
 export interface NVSummary {
-  defined: number;
-  max: number;
+  indexes_defined: number;
+  indexes_max: number;
   indexes: NVIndexEntry[];
 }
 
@@ -965,6 +971,7 @@ export interface PINStatus {
   user_pin_set: boolean;
   initialized: boolean;
   strategy: string;
+  so_pin_supported: boolean;
 }
 
 export interface LockoutStatus {
@@ -1049,6 +1056,273 @@ export interface TeamInfo {
 export interface CreateTeamParams {
   name: string;
 }
+
+// SSH key management types.
+
+export interface SSHKeyInfo {
+  name: string;
+  algorithm: string;
+  public_key: string;
+  fingerprint: string;
+  comment: string;
+  backend: string;
+  /** Underlying backend key CN for a backend-backed key; '' for software keys. */
+  backend_key_id: string;
+  created_at: string;
+}
+
+export interface SSHBackendInfo {
+  id: string;
+  display_name: string;
+  category: string;
+  location: string;
+  is_default: boolean;
+}
+
+export interface SSHGenerateParams {
+  name: string;
+  algorithm: string;
+  rsa_bits: number;
+  comment: string;
+  backend: string;
+}
+
+// SSH profile management types.
+
+export interface SSHProfileEntry {
+  id: string;
+  name: string;
+  folder_path: string;
+  host: string;
+  port: number;
+  user: string;
+  key_scope: string;
+  key_owner: string;
+  key_name: string;
+  /** '' = xkey-managed key (key_name); 'local' = operator's agent/~/.ssh keys. */
+  key_source: '' | 'local';
+  /** ssh_config Host alias used when key_source is 'local' (optional). */
+  ssh_config_alias: string;
+  /**
+   * Pins one specific local key when key_source is 'local': an identity file
+   * path or "agent:<SHA256-fingerprint>". Empty offers every local identity.
+   */
+  local_identity: string;
+  /**
+   * Records embedded-console sessions from this profile in the persistent
+   * session store (tabs restored after reload/restart). Default false =
+   * memory-only sessions.
+   */
+  persist_session: boolean;
+  options?: string[];
+  notes: string;
+  /** Per-profile console mode override. Empty string means use the global default. */
+  console_mode: 'system' | 'embedded' | '';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SSHProfileParams {
+  id?: string;
+  name: string;
+  folder_path: string;
+  host: string;
+  port: number;
+  user: string;
+  key_scope: string;
+  key_owner: string;
+  key_name: string;
+  /** '' = xkey-managed key (key_name); 'local' = operator's agent/~/.ssh keys. */
+  key_source?: '' | 'local';
+  /** ssh_config Host alias used when key_source is 'local' (optional). */
+  ssh_config_alias?: string;
+  /** Identity file path or "agent:<fp>" pin when key_source is 'local'. */
+  local_identity?: string;
+  /** Persist embedded-console sessions from this profile (default false). */
+  persist_session?: boolean;
+  options?: string[];
+  notes: string;
+  /** Per-profile console mode override. Empty string means use the global default. */
+  console_mode: 'system' | 'embedded' | '';
+}
+
+/** Response from SSHConsoleService.OpenProfileConsole / OpenConsole. */
+export interface SSHConsoleInfo {
+  url: string;
+  token: string;
+}
+
+/**
+ * A persisted embedded-console session: a display title plus its reconnect
+ * origin (one-time connection fields, a profile ID, or an ssh_config alias).
+ * Only sessions explicitly started with persistence enabled are recorded.
+ */
+export interface SSHConsoleSessionRecord {
+  id?: string;
+  title: string;
+  host?: string;
+  port?: number;
+  user?: string;
+  key_scope?: string;
+  key_owner?: string;
+  key_name?: string;
+  key_source?: string;
+  local_identity?: string;
+  profile_id?: string;
+  alias?: string;
+  created_at?: string;
+  last_connected_at?: string;
+}
+
+// SSH one-time connection params.
+
+export interface SSHConnectParams {
+  host: string;
+  port: number;
+  user: string;
+  key_scope: string;
+  key_owner: string;
+  key_name: string;
+  /** '' = xkey-managed key (key_name); 'local' = operator's agent/~/.ssh keys. */
+  key_source?: '' | 'local';
+  /** ssh_config Host alias for a 'local' passthrough connection (optional). */
+  ssh_config_alias?: string;
+  /** Identity file path or "agent:<fp>" pin when key_source is 'local'. */
+  local_identity?: string;
+}
+
+// SSH local-integration types (ssh-agent + ~/.ssh discovery).
+
+/** A key discovered from the local ssh-agent or ~/.ssh directory (read-only). */
+export interface SSHLocalKeyInfo {
+  source: 'agent' | 'file';
+  path: string;
+  key_type: string;
+  fingerprint: string;
+  comment: string;
+}
+
+/** A host entry parsed from ~/.ssh/config. */
+export interface SSHConfigHostEntry {
+  alias: string;
+  hostname: string;
+  user: string;
+  port: number;
+  identity_files: string[];
+}
+
+// SSHProfileService wraps the Go SSHProfileService Wails bindings.
+export const SSHProfileService = {
+  async listProfiles(): Promise<SSHProfileEntry[] | null> {
+    return callBackend<SSHProfileEntry[]>('SSHProfileService', 'ListProfiles');
+  },
+  async listProfilesByFolder(folderPath: string): Promise<SSHProfileEntry[] | null> {
+    return callBackend<SSHProfileEntry[]>('SSHProfileService', 'ListProfilesByFolder', folderPath);
+  },
+  async listFolders(): Promise<string[] | null> {
+    return callBackend<string[]>('SSHProfileService', 'ListFolders');
+  },
+  async getProfile(idOrName: string): Promise<SSHProfileEntry | null> {
+    return callBackend<SSHProfileEntry>('SSHProfileService', 'GetProfile', idOrName);
+  },
+  async addProfile(params: SSHProfileParams): Promise<SSHProfileEntry | null> {
+    return callBackend<SSHProfileEntry>('SSHProfileService', 'AddProfile', params);
+  },
+  async updateProfile(params: SSHProfileParams): Promise<boolean> {
+    return callBackendVoid('SSHProfileService', 'UpdateProfile', params);
+  },
+  async deleteProfile(idOrName: string): Promise<boolean> {
+    return callBackendVoid('SSHProfileService', 'DeleteProfile', idOrName);
+  },
+  async moveProfile(idOrName: string, folderPath: string): Promise<boolean> {
+    return callBackendVoid('SSHProfileService', 'MoveProfile', idOrName, folderPath);
+  },
+  async createFolder(path: string): Promise<boolean> {
+    return callBackendVoid('SSHProfileService', 'CreateFolder', path);
+  },
+  async renameFolder(oldPath: string, newPath: string): Promise<boolean> {
+    return callBackendVoid('SSHProfileService', 'RenameFolder', oldPath, newPath);
+  },
+  async deleteFolder(path: string): Promise<boolean> {
+    return callBackendVoid('SSHProfileService', 'DeleteFolder', path);
+  },
+  async searchProfiles(query: string): Promise<SSHProfileEntry[] | null> {
+    return callBackend<SSHProfileEntry[]>('SSHProfileService', 'SearchProfiles', query);
+  },
+};
+
+// SSHConnectService wraps the Go SSHConnectService Wails bindings.
+export const SSHConnectService = {
+  async connectProfile(profileID: string): Promise<boolean> {
+    return callBackendVoid('SSHConnectService', 'ConnectProfile', profileID);
+  },
+  async connectOneTime(params: SSHConnectParams): Promise<boolean> {
+    return callBackendVoid('SSHConnectService', 'ConnectOneTime', params);
+  },
+  async connectOneTimeWithError(params: SSHConnectParams): Promise<{ ok: boolean; error?: string }> {
+    return callBackendVoidWithError('SSHConnectService', 'ConnectOneTime', params);
+  },
+  async setTerminalCommand(cmd: string): Promise<boolean> {
+    return callBackendVoid('SSHConnectService', 'SetTerminalCommand', cmd);
+  },
+  async setStrictHostKeyChecking(policy: string): Promise<boolean> {
+    return callBackendVoid('SSHConnectService', 'SetStrictHostKeyChecking', policy);
+  },
+  async setKnownHostsPolicy(policy: string): Promise<boolean> {
+    return callBackendVoid('SSHConnectService', 'SetKnownHostsPolicy', policy);
+  },
+  async connectConfigHost(alias: string): Promise<boolean> {
+    return callBackendVoid('SSHConnectService', 'ConnectConfigHost', alias);
+  },
+};
+
+// SSHConsoleService wraps the Go SSHConsoleService Wails bindings.
+export const SSHConsoleService = {
+  async openProfileConsole(profileID: string): Promise<SSHConsoleInfo | null> {
+    return callBackend<SSHConsoleInfo>('SSHConsoleService', 'OpenProfileConsole', profileID);
+  },
+  async openProfileConsoleWithError(profileID: string): Promise<{ result: SSHConsoleInfo | null; error?: string }> {
+    return callBackendWithError<SSHConsoleInfo>('SSHConsoleService', 'OpenProfileConsole', profileID);
+  },
+  async openConsole(params: SSHConnectParams): Promise<SSHConsoleInfo | null> {
+    return callBackend<SSHConsoleInfo>('SSHConsoleService', 'OpenConsole', params);
+  },
+  async openConsoleWithError(params: SSHConnectParams): Promise<{ result: SSHConsoleInfo | null; error?: string }> {
+    return callBackendWithError<SSHConsoleInfo>('SSHConsoleService', 'OpenConsole', params);
+  },
+  async openConfigHostConsole(alias: string): Promise<SSHConsoleInfo | null> {
+    return callBackend<SSHConsoleInfo>('SSHConsoleService', 'OpenConfigHostConsole', alias);
+  },
+  async openConfigHostConsoleWithError(alias: string): Promise<{ result: SSHConsoleInfo | null; error?: string }> {
+    return callBackendWithError<SSHConsoleInfo>('SSHConsoleService', 'OpenConfigHostConsole', alias);
+  },
+  async setHostKeyPolicy(policy: string): Promise<boolean> {
+    return callBackendVoid('SSHConsoleService', 'SetHostKeyPolicy', policy);
+  },
+  async saveSession(record: SSHConsoleSessionRecord): Promise<SSHConsoleSessionRecord | null> {
+    return callBackend<SSHConsoleSessionRecord>('SSHConsoleService', 'SaveSession', record);
+  },
+  async listSessions(): Promise<SSHConsoleSessionRecord[] | null> {
+    return callBackend<SSHConsoleSessionRecord[]>('SSHConsoleService', 'ListSessions');
+  },
+  async deleteSession(id: string): Promise<boolean> {
+    return callBackendVoid('SSHConsoleService', 'DeleteSession', id);
+  },
+  async setKnownHostsPolicy(policy: string): Promise<boolean> {
+    return callBackendVoid('SSHConsoleService', 'SetKnownHostsPolicy', policy);
+  },
+};
+
+// SSHLocalService wraps the Go SSHLocalService Wails bindings (ssh-agent +
+// ~/.ssh discovery: local keys and ssh_config hosts).
+export const SSHLocalService = {
+  async listConfigHosts(): Promise<SSHConfigHostEntry[] | null> {
+    return callBackend<SSHConfigHostEntry[]>('SSHLocalService', 'ListConfigHosts');
+  },
+  async listLocalKeys(): Promise<SSHLocalKeyInfo[] | null> {
+    return callBackend<SSHLocalKeyInfo[]>('SSHLocalService', 'ListLocalKeys');
+  },
+};
 
 // TeamService wraps the Go TeamService Wails bindings.
 export const TeamService = {

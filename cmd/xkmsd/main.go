@@ -69,6 +69,8 @@ func main() {
 	daemonShort := flag.Bool("d", false, "Run as daemon (short)")
 	pidFile := flag.String("pid-file", "", "Path to PID file")
 	showVersion := flag.Bool("version", false, "Show version information")
+	insecure := flag.Bool("insecure", false, "Allow starting with an insecure, non-compliant configuration (DEVELOPMENT ONLY)")
+	sealPassphrase := flag.String("seal-passphrase", "", "Barrier auto-unseal passphrase (prefer XKMS_SEAL_PASSPHRASE env or a credential:// reference; passing a secret on the command line is discouraged)")
 	flag.Parse()
 
 	// Handle short flag aliases
@@ -114,6 +116,33 @@ func main() {
 		slog.Any("backends", cfg.GetEnabledBackends()),
 		slog.String("default_backend", string(cfg.Default)))
 
+	// The --seal-passphrase flag takes precedence over XKMS_SEAL_PASSPHRASE and
+	// the config file (CLI > env > config), giving an operator an explicit
+	// override for the barrier auto-unseal secret.
+	if *sealPassphrase != "" {
+		cfg.Barrier.Passphrase = *sealPassphrase
+	}
+
+	// Secure-by-default gate: refuse to serve a non-compliant configuration
+	// (no encryption-at-rest / TLS / authentication / CA) unless the operator
+	// explicitly opts into development mode. This is the deployment-unit
+	// enforcement point — the library stays permissive for embedded/test use.
+	// XKMS_INSECURE=true is honored as an env equivalent of --insecure.
+	if os.Getenv("XKMS_INSECURE") == "true" {
+		*insecure = true
+	}
+	if gaps := cfg.ComplianceGaps(); len(gaps) > 0 {
+		if !*insecure {
+			logger.Error("xkmsd refuses to start with an insecure configuration; "+
+				"FedRAMP/PCI-DSS/HIPAA require encryption-at-rest, TLS, authentication, and a CA. "+
+				"Run `xkmsd init` to provision a secure deployment, or pass --insecure (XKMS_INSECURE=true) for development.",
+				slog.Any("gaps", gaps))
+			os.Exit(1)
+		}
+		logger.Warn("starting with an INSECURE configuration (--insecure); NOT suitable for production",
+			slog.Any("gaps", gaps))
+	}
+
 	// Write PID file if specified
 	if *pidFile != "" {
 		if err := writePIDFile(*pidFile); err != nil {
@@ -147,7 +176,7 @@ func main() {
 	// Handle config reload
 	go func() {
 		for range configReloadCh {
-			if err := reloadConfiguration(srv, *configPath, logger); err != nil {
+			if err := reloadConfiguration(srv, *configPath, *insecure, logger); err != nil {
 				logger.Error("Failed to reload configuration", slog.Any("error", err))
 			} else {
 				logger.Info("Configuration reloaded successfully")
@@ -220,22 +249,31 @@ func setupSignalHandler(logger *slog.Logger) (context.Context, chan os.Signal) {
 	return ctx, reloadCh
 }
 
-// reloadConfiguration attempts to reload the server configuration
-func reloadConfiguration(srv *server.Server, configPath string, logger *slog.Logger) error {
-	// Load new configuration
+// reloadConfiguration attempts to reload the server configuration. It re-applies
+// the secure-by-default gate so a SIGHUP cannot quietly drop the daemon to a
+// non-compliant posture (no encryption-at-rest / TLS / authentication / CA); an
+// insecure reload is refused unless the daemon was started in insecure
+// (development) mode.
+func reloadConfiguration(srv *server.Server, configPath string, insecure bool, logger *slog.Logger) error {
+	// Load new configuration (config.Load validates before returning).
 	newCfg, err := config.Load(configPath)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+		return &WrappedError{Sentinel: ErrConfigLoad, Err: err}
 	}
 
-	// Validate new configuration
-	if err := newCfg.Validate(); err != nil {
-		return fmt.Errorf("invalid configuration: %w", err)
+	// Secure-by-default gate, mirrored from startup: refuse to swap in a
+	// non-compliant configuration unless the operator opted into insecure mode.
+	if gaps := newCfg.ComplianceGaps(); len(gaps) > 0 {
+		if !insecure {
+			return &InsecureReloadError{Gaps: gaps}
+		}
+		logger.Warn("reloading an INSECURE configuration (--insecure); NOT suitable for production",
+			slog.Any("gaps", gaps))
 	}
 
 	// Attempt to reload the server with new configuration
 	if err := srv.Reload(newCfg); err != nil {
-		return fmt.Errorf("failed to apply configuration: %w", err)
+		return &WrappedError{Sentinel: ErrConfigApply, Err: err}
 	}
 
 	logger.Info("Configuration reloaded",
@@ -250,7 +288,7 @@ func writePIDFile(path string) error {
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0750); err != nil {
-		return fmt.Errorf("failed to create PID file directory: %w", err)
+		return &WrappedError{Sentinel: ErrPIDDirCreate, Err: err}
 	}
 
 	// Write PID to file
@@ -259,7 +297,7 @@ func writePIDFile(path string) error {
 
 	// #nosec G306 - PID file should be readable by all
 	if err := os.WriteFile(path, content, 0644); err != nil {
-		return fmt.Errorf("failed to write PID file: %w", err)
+		return &WrappedError{Sentinel: ErrPIDFileWrite, Err: err}
 	}
 
 	return nil

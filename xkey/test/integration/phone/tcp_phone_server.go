@@ -295,7 +295,7 @@ func NewTCPPhoneServer() (*TCPPhoneServer, error) {
 		RequestHandler: handler,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create TCP pairing server: %w", err)
+		return nil, &WrappedError{Msg: "failed to create TCP pairing server", Err: err}
 	}
 
 	return &TCPPhoneServer{

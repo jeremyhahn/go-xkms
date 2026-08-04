@@ -17,9 +17,10 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -76,28 +77,28 @@ type ServiceParams struct {
 // NewService creates a new WebAuthn service with the provided dependencies.
 func NewService(params ServiceParams) (*Service, error) {
 	if params.Config == nil {
-		return nil, fmt.Errorf("config is required")
+		return nil, &errs.Message{Msg: "config is required"}
 	}
 	if params.UserStore == nil {
-		return nil, fmt.Errorf("user store is required")
+		return nil, &errs.Message{Msg: "user store is required"}
 	}
 	if params.SessionStore == nil {
-		return nil, fmt.Errorf("session store is required")
+		return nil, &errs.Message{Msg: "session store is required"}
 	}
 	if params.CredentialStore == nil {
-		return nil, fmt.Errorf("credential store is required")
+		return nil, &errs.Message{Msg: "credential store is required"}
 	}
 
 	// Set defaults and validate
 	params.Config.SetDefaults()
 	if err := params.Config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid config", Err: err}
 	}
 
 	// Create the go-webauthn instance
 	wa, err := webauthn.New(params.Config.ToWebAuthnConfig())
 	if err != nil {
-		return nil, fmt.Errorf("failed to create webauthn instance: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create webauthn instance", Err: err}
 	}
 
 	logger := params.Logger

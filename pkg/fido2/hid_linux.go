@@ -23,6 +23,8 @@ import (
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // LinuxHIDDevice implements HIDDevice for Linux using raw HID access
@@ -57,7 +59,7 @@ func (e *LinuxHIDDeviceEnumerator) Enumerate(vendorID, productID uint16) ([]HIDD
 	hidrawPath := "/sys/class/hidraw"
 	entries, err := os.ReadDir(hidrawPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read hidraw devices: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to read hidraw devices", Err: err}
 	}
 
 	for _, entry := range entries {
@@ -117,7 +119,7 @@ func (e *LinuxHIDDeviceEnumerator) Open(path string) (HIDDevice, error) {
 	// Open the device
 	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open HID device %s: %w", path, err)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to open HID device %s", path), Err: err}
 	}
 
 	return &LinuxHIDDevice{
@@ -134,7 +136,7 @@ func (e *LinuxHIDDeviceEnumerator) Open(path string) (HIDDevice, error) {
 // Write sends data to the HID device
 func (d *LinuxHIDDevice) Write(data []byte) (int, error) {
 	if d.file == nil {
-		return 0, fmt.Errorf("device not open")
+		return 0, &errs.Message{Msg: "device not open"}
 	}
 	return d.file.Write(data)
 }
@@ -142,7 +144,7 @@ func (d *LinuxHIDDevice) Write(data []byte) (int, error) {
 // Read reads data from the HID device
 func (d *LinuxHIDDevice) Read(data []byte) (int, error) {
 	if d.file == nil {
-		return 0, fmt.Errorf("device not open")
+		return 0, &errs.Message{Msg: "device not open"}
 	}
 	return d.file.Read(data)
 }
@@ -312,13 +314,13 @@ func checkModaliasFIDO(sysPath string) bool {
 // SetNonBlocking sets the device to non-blocking mode
 func (d *LinuxHIDDevice) SetNonBlocking(nonBlocking bool) error {
 	if d.file == nil {
-		return fmt.Errorf("device not open")
+		return &errs.Message{Msg: "device not open"}
 	}
 
 	fd := d.file.Fd()
 	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
 	if errno != 0 {
-		return fmt.Errorf("failed to get file flags: %w", errno)
+		return &errs.Wrapped{Msg: "failed to get file flags", Err: errno}
 	}
 
 	if nonBlocking {
@@ -329,7 +331,7 @@ func (d *LinuxHIDDevice) SetNonBlocking(nonBlocking bool) error {
 
 	_, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETFL, flags)
 	if errno != 0 {
-		return fmt.Errorf("failed to set file flags: %w", errno)
+		return &errs.Wrapped{Msg: "failed to set file flags", Err: errno}
 	}
 
 	return nil
@@ -355,7 +357,7 @@ type hidrawDevInfo struct {
 // GetRawInfo gets the raw HID device info using ioctl
 func (d *LinuxHIDDevice) GetRawInfo() (bustype uint32, vendor, product int16, err error) {
 	if d.file == nil {
-		return 0, 0, 0, fmt.Errorf("device not open")
+		return 0, 0, 0, &errs.Message{Msg: "device not open"}
 	}
 
 	var info hidrawDevInfo
@@ -366,7 +368,7 @@ func (d *LinuxHIDDevice) GetRawInfo() (bustype uint32, vendor, product int16, er
 		uintptr(unsafe.Pointer(&info)),
 	)
 	if errno != 0 {
-		return 0, 0, 0, fmt.Errorf("ioctl HIDIOCGRAWINFO failed: %w", errno)
+		return 0, 0, 0, &errs.Wrapped{Msg: "ioctl HIDIOCGRAWINFO failed", Err: errno}
 	}
 
 	return info.bustype, info.vendor, info.product, nil

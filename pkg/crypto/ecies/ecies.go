@@ -50,6 +50,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/ecdh"
 )
 
@@ -96,49 +98,49 @@ var (
 // Returns encrypted data that can be decrypted by the private key holder.
 func Encrypt(random io.Reader, publicKey *ecdsa.PublicKey, plaintext, aad []byte) ([]byte, error) {
 	if random == nil {
-		return nil, fmt.Errorf("random source cannot be nil")
+		return nil, &errs.Message{Msg: "random source cannot be nil"}
 	}
 	if publicKey == nil {
-		return nil, fmt.Errorf("public key cannot be nil")
+		return nil, &errs.Message{Msg: "public key cannot be nil"}
 	}
 	if plaintext == nil {
-		return nil, fmt.Errorf("plaintext cannot be nil")
+		return nil, &errs.Message{Msg: "plaintext cannot be nil"}
 	}
 
 	// Generate ephemeral key pair on the same curve
 	ephemeralPriv, err := ecdsa.GenerateKey(publicKey.Curve, random)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate ephemeral key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate ephemeral key", Err: err}
 	}
 
 	// Perform ECDH: ephemeral_private × recipient_public
 	sharedSecret, err := ecdh.DeriveSharedSecret(ephemeralPriv, publicKey)
 	if err != nil {
-		return nil, fmt.Errorf("ECDH failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "ECDH failed", Err: err}
 	}
 
 	// Derive AES-256 encryption key using HKDF
 	encKey, err := deriveKeyFunc(sharedSecret, nil, []byte("ecies-encryption"), aesKeySize)
 	if err != nil {
-		return nil, fmt.Errorf("key derivation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "key derivation failed", Err: err}
 	}
 
 	// Create AES cipher
 	block, err := newAESCipherFunc(encKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	// Create GCM mode
 	gcm, err := newGCMFunc(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// Generate random nonce
 	nonce := make([]byte, nonceSize)
 	if _, err := io.ReadFull(random, nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 	}
 
 	// Encrypt plaintext (GCM appends tag to ciphertext)
@@ -153,7 +155,7 @@ func Encrypt(random io.Reader, publicKey *ecdsa.PublicKey, plaintext, aad []byte
 	// Serialize ephemeral public key using modern crypto/ecdh (Go 1.20+)
 	ecdhPub, err := ephemeralPriv.PublicKey.ECDH()
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert ephemeral public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to convert ephemeral public key", Err: err}
 	}
 	ephemeralPubBytes := ecdhPub.Bytes()
 
@@ -184,10 +186,10 @@ func Encrypt(random io.Reader, publicKey *ecdsa.PublicKey, plaintext, aad []byte
 // Returns the original plaintext or an error if decryption fails.
 func Decrypt(privateKey *ecdsa.PrivateKey, ciphertext, aad []byte) ([]byte, error) {
 	if privateKey == nil {
-		return nil, fmt.Errorf("private key cannot be nil")
+		return nil, &errs.Message{Msg: "private key cannot be nil"}
 	}
 	if ciphertext == nil {
-		return nil, fmt.Errorf("ciphertext cannot be nil")
+		return nil, &errs.Message{Msg: "ciphertext cannot be nil"}
 	}
 
 	// Determine ephemeral public key size based on curve
@@ -195,8 +197,7 @@ func Decrypt(privateKey *ecdsa.PrivateKey, ciphertext, aad []byte) ([]byte, erro
 	minSize := pubKeySize + nonceSize + tagSize
 
 	if len(ciphertext) < minSize {
-		return nil, fmt.Errorf("ciphertext too short: got %d bytes, need at least %d",
-			len(ciphertext), minSize)
+		return nil, &errs.Message{Msg: fmt.Sprintf("ciphertext too short: got %d bytes, need at least %d", len(ciphertext), minSize)}
 	}
 
 	// Extract components
@@ -208,37 +209,37 @@ func Decrypt(privateKey *ecdsa.PrivateKey, ciphertext, aad []byte) ([]byte, erro
 	// Convert recipient private key to ECDH using modern Go 1.20+ API
 	recipientECDH, err := privateKey.ECDH()
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert recipient private key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to convert recipient private key", Err: err}
 	}
 
 	// Parse ephemeral public key using modern crypto/ecdh API
 	ephemeralPub, err := recipientECDH.Curve().NewPublicKey(ephemeralPubBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse ephemeral public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse ephemeral public key", Err: err}
 	}
 
 	// Perform ECDH: recipient_private × ephemeral_public using modern API
 	sharedSecret, err := recipientECDH.ECDH(ephemeralPub)
 	if err != nil {
-		return nil, fmt.Errorf("ECDH failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "ECDH failed", Err: err}
 	}
 
 	// Derive AES-256 encryption key using HKDF (same as encryption)
 	encKey, err := deriveKeyFunc(sharedSecret, nil, []byte("ecies-encryption"), aesKeySize)
 	if err != nil {
-		return nil, fmt.Errorf("key derivation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "key derivation failed", Err: err}
 	}
 
 	// Create AES cipher
 	block, err := newAESCipherFunc(encKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	// Create GCM mode
 	gcm, err := newGCMFunc(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// Reconstruct ciphertext with tag for GCM
@@ -247,7 +248,7 @@ func Decrypt(privateKey *ecdsa.PrivateKey, ciphertext, aad []byte) ([]byte, erro
 	// Decrypt and verify
 	plaintext, err := gcm.Open(nil, nonce, fullCiphertext, aad)
 	if err != nil {
-		return nil, fmt.Errorf("decryption failed (authentication error): %w", err)
+		return nil, &errs.Wrapped{Msg: "decryption failed (authentication error)", Err: err}
 	}
 
 	return plaintext, nil

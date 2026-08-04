@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
@@ -42,6 +44,7 @@ type Backend struct {
 	config      *Config
 	tpm         pkgtpm2.TrustedPlatformModule
 	keyBackend  store.KeyBackend
+	keyDir      string // directory holding key blobs; used by ListKeys for enumeration
 	logger      *slog.Logger
 	srkAttrs    *types.KeyAttributes
 	tracker     types.AEADSafetyTracker
@@ -58,6 +61,12 @@ type ExternalTPMConfig struct {
 	// KeyBackend is the storage backend for TPM key blobs
 	KeyBackend store.KeyBackend
 
+	// KeyDir is the directory where the KeyBackend persists key blobs. It is
+	// optional; when set, ListKeys can enumerate keys for this backend. When
+	// empty, ListKeys returns no keys (enumeration is unavailable) rather than
+	// failing — the store.KeyBackend interface itself exposes no List operation.
+	KeyDir string
+
 	// Logger is the logger instance to use (optional)
 	Logger *slog.Logger
 
@@ -73,13 +82,13 @@ type ExternalTPMConfig struct {
 // The backend will not close the TPM when Backend.Close() is called.
 func NewBackendWithTPM(config *ExternalTPMConfig) (*Backend, error) {
 	if config == nil {
-		return nil, fmt.Errorf("%w: config is nil", ErrInvalidConfig)
+		return nil, &errs.Detail{Err: ErrInvalidConfig, Detail: "config is nil"}
 	}
 	if config.TPM == nil {
-		return nil, fmt.Errorf("%w: TPM is nil", ErrInvalidConfig)
+		return nil, &errs.Detail{Err: ErrInvalidConfig, Detail: "TPM is nil"}
 	}
 	if config.KeyBackend == nil {
-		return nil, fmt.Errorf("%w: KeyBackend is nil", ErrInvalidConfig)
+		return nil, &errs.Detail{Err: ErrInvalidConfig, Detail: "KeyBackend is nil"}
 	}
 
 	// Create logger if not provided
@@ -97,13 +106,14 @@ func NewBackendWithTPM(config *ExternalTPMConfig) (*Backend, error) {
 	// Get the SRK attributes for key creation
 	srkAttrs, err := config.TPM.SSRKAttributes()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get SRK attributes: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get SRK attributes", Err: err}
 	}
 
 	return &Backend{
 		config:      nil, // No config when using external TPM
 		tpm:         config.TPM,
 		keyBackend:  config.KeyBackend,
+		keyDir:      config.KeyDir, // optional; enables ListKeys enumeration
 		logger:      log,
 		srkAttrs:    srkAttrs,
 		tracker:     tracker,
@@ -115,7 +125,7 @@ func NewBackendWithTPM(config *ExternalTPMConfig) (*Backend, error) {
 // The backend is initialized and ready for use upon return.
 func NewBackend(config *Config) (*Backend, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
+		return nil, &errs.Detail{Err: ErrInvalidConfig, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Create logger if not provided
@@ -132,13 +142,13 @@ func NewBackend(config *Config) (*Backend, error) {
 
 	// Ensure key directory exists
 	if err := os.MkdirAll(config.KeyDir, 0700); err != nil {
-		return nil, fmt.Errorf("failed to create key directory: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create key directory", Err: err}
 	}
 
 	// Create file-based key backend for storing TPM key blobs
 	fsBackend, err := file.New(config.KeyDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create storage backend: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create storage backend", Err: err}
 	}
 	keyBackend := store.NewFileBackend(log, fsBackend)
 
@@ -153,36 +163,77 @@ func NewBackend(config *Config) (*Backend, error) {
 		Tracker: tracker,
 	})
 	if err != nil {
-		// Close the TPM if it was partially initialized (e.g., simulator opened
-		// but TPM not provisioned). NewTPM2 may return a non-nil tpm with
+		// First-boot simulator path: NewTPM2 returns a non-nil tpm with
 		// ErrNotInitialized when the simulator opens successfully but the
-		// endorsement key is not found. Without closing, the simulator's global
-		// mutex is never released, causing deadlocks in subsequent calls.
-		if tpm != nil {
-			_ = tpm.Close()
+		// endorsement key is not found. An uninitialized simulator is by
+		// definition a fresh dev/test device, so provision EK+SRK in place
+		// (mirrors the seal first-boot recipe in go-quicbaas). Real hardware
+		// is NEVER auto-provisioned — boot-time provisioning of physical TPMs
+		// is an operator action (`xkmsd init`).
+		if err == pkgtpm2.ErrNotInitialized && config.UseSimulator && tpm != nil {
+			if perr := provisionSimulatorEKSRK(tpm, tpmConfig); perr != nil {
+				_ = tpm.Close()
+				return nil, &errs.Joined{Lead: ErrNotInitialized, Detail: "simulator provisioning failed", Cause: perr}
+			}
+		} else {
+			// Close the TPM if it was partially initialized. Without closing,
+			// the simulator's global mutex is never released, causing
+			// deadlocks in subsequent calls.
+			if tpm != nil {
+				_ = tpm.Close()
+			}
+			// Check for initialization error - TPM may need provisioning
+			if err == pkgtpm2.ErrNotInitialized {
+				return nil, &errs.Detail{Err: ErrNotInitialized, Detail: "TPM needs provisioning"}
+			}
+			return nil, &errs.Wrapped{Msg: "failed to initialize TPM", Err: err}
 		}
-		// Check for initialization error - TPM may need provisioning
-		if err == pkgtpm2.ErrNotInitialized {
-			return nil, fmt.Errorf("%w: TPM needs provisioning", ErrNotInitialized)
-		}
-		return nil, fmt.Errorf("failed to initialize TPM: %w", err)
 	}
 
 	// Get the SRK attributes for key creation
 	srkAttrs, err := tpm.SSRKAttributes()
 	if err != nil {
 		_ = tpm.Close()
-		return nil, fmt.Errorf("failed to get SRK attributes: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get SRK attributes", Err: err}
 	}
 
 	return &Backend{
 		config:     config,
 		tpm:        tpm,
 		keyBackend: keyBackend,
+		keyDir:     config.KeyDir,
 		logger:     log,
 		srkAttrs:   srkAttrs,
 		tracker:    tracker,
 	}, nil
+}
+
+// provisionSimulatorEKSRK provisions the endorsement key and storage root key
+// on a freshly-reset TPM simulator. It mirrors the proven first-boot recipe
+// used by the sshbackend/fido2 integration suites and the go-quicbaas seal
+// factory: EKAttributesFromConfig → CreateEK → SRKAttributesFromConfig
+// (parented to the EK) → CreateSRK. Callers must only invoke this for
+// simulator-backed configs; physical TPMs are provisioned by an operator.
+func provisionSimulatorEKSRK(tpm pkgtpm2.TrustedPlatformModule, cfg *pkgtpm2.Config) error {
+	if cfg.EK == nil || cfg.SSRK == nil {
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "simulator provisioning requires EK and SSRK configs"}
+	}
+	ekAttrs, err := pkgtpm2.EKAttributesFromConfig(*cfg.EK, nil, nil)
+	if err != nil {
+		return &errs.Wrapped{Msg: "EK attributes", Err: err}
+	}
+	if err := tpm.CreateEK(ekAttrs); err != nil {
+		return &errs.Wrapped{Msg: "create EK", Err: err}
+	}
+	srkAttrs, err := pkgtpm2.SRKAttributesFromConfig(*cfg.SSRK, nil)
+	if err != nil {
+		return &errs.Wrapped{Msg: "SRK attributes", Err: err}
+	}
+	srkAttrs.Parent = ekAttrs
+	if err := tpm.CreateSRK(srkAttrs); err != nil {
+		return &errs.Wrapped{Msg: "create SRK", Err: err}
+	}
+	return nil
 }
 
 // Type returns the backend type (TPM2).
@@ -228,7 +279,7 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 	case x509.RSA:
 		pub, err := b.tpm.CreateRSA(attrs, b.keyBackend, false)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create RSA key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create RSA key", Err: err}
 		}
 		// Return a TPM signer that wraps the key
 		return &tpm2Signer{
@@ -246,7 +297,7 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 		}
 		pub, err := b.tpm.CreateECDSA(attrs, b.keyBackend, false)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create ECDSA key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create ECDSA key", Err: err}
 		}
 		// Return a TPM signer that wraps the key
 		return &tpm2Signer{
@@ -256,7 +307,7 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedKeyAlgorithm, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
 	}
 }
 
@@ -285,19 +336,19 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	// Try to load the key from the backend to verify it exists
 	_, err := b.keyBackend.Get(attrs, store.FSEXT_PRIVATE_BLOB)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	// Get the public blob to determine key type
 	pubData, err := b.keyBackend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	// Parse the public key to determine algorithm
 	pubKey, err := b.parsePublicKey(pubData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
 	return &tpm2Signer{
@@ -327,7 +378,7 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 
 	// Delete the key using TPM2 library
 	if err := b.tpm.DeleteKey(attrs, b.keyBackend); err != nil {
-		return fmt.Errorf("failed to delete key: %w", err)
+		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
 	}
 
 	return nil
@@ -342,14 +393,25 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		return nil, ErrNotInitialized
 	}
 
-	// List files in the key directory with .blob extension (private blobs)
-	keyDir := b.config.KeyDir
+	// List files in the key directory with .blob extension (private blobs).
+	// Prefer the keyDir field (set by both constructors); fall back to the
+	// config for backends built directly with a Config. When a backend is
+	// created with an external TPM and no KeyDir, enumeration is unavailable
+	// (the KeyBackend interface exposes no List operation), so report no keys
+	// rather than dereferencing a nil config.
+	keyDir := b.keyDir
+	if keyDir == "" && b.config != nil {
+		keyDir = b.config.KeyDir
+	}
+	if keyDir == "" {
+		return []*types.KeyAttributes{}, nil
+	}
 	entries, err := os.ReadDir(keyDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []*types.KeyAttributes{}, nil
 		}
-		return nil, fmt.Errorf("failed to list key directory: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list key directory", Err: err}
 	}
 
 	var keys []*types.KeyAttributes
@@ -431,7 +493,7 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("%w: key does not implement crypto.Signer", ErrUnsupportedOperation)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: "key does not implement crypto.Signer"}
 	}
 	return signer, nil
 }
@@ -445,7 +507,7 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 	}
 	decrypter, ok := key.(crypto.Decrypter)
 	if !ok {
-		return nil, fmt.Errorf("%w: key does not implement crypto.Decrypter", ErrDecryptionNotSupported)
+		return nil, &errs.Detail{Err: ErrDecryptionNotSupported, Detail: "key does not implement crypto.Decrypter"}
 	}
 	return decrypter, nil
 }
@@ -470,7 +532,7 @@ func (b *Backend) Close() error {
 	// The caller is responsible for managing its lifecycle
 	if b.tpm != nil && !b.externalTPM {
 		if err := b.tpm.Close(); err != nil {
-			return fmt.Errorf("failed to close TPM: %w", err)
+			return &errs.Wrapped{Msg: "failed to close TPM", Err: err}
 		}
 	}
 
@@ -544,7 +606,7 @@ func (s *tpm2Signer) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts)
 	// Sign using TPM
 	signature, err := s.backend.tpm.Sign(rand, digest, signerOpts)
 	if err != nil {
-		return nil, fmt.Errorf("TPM sign failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "TPM sign failed", Err: err}
 	}
 
 	return signature, nil
@@ -569,7 +631,7 @@ func (d *tpm2Decrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.D
 		// Load the key first to get the handle
 		loadResp, err := d.backend.tpm.LoadKeyPair(d.attrs, nil, d.backend.keyBackend)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to load key", Err: err}
 		}
 		defer d.backend.tpm.Flush(loadResp.ObjectHandle)
 
@@ -578,18 +640,18 @@ func (d *tpm2Decrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.D
 			ObjectHandle: loadResp.ObjectHandle,
 		}.Execute(d.backend.tpm.Transport())
 		if err != nil {
-			return nil, fmt.Errorf("failed to read public: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to read public", Err: err}
 		}
 
 		// Decrypt
 		plaintext, err := d.backend.tpm.RSADecrypt(loadResp.ObjectHandle, pub.Name, ciphertext)
 		if err != nil {
-			return nil, fmt.Errorf("TPM decrypt failed: %w", err)
+			return nil, &errs.Wrapped{Msg: "TPM decrypt failed", Err: err}
 		}
 		return plaintext, nil
 	}
 
-	return nil, fmt.Errorf("%w: only RSA decryption is supported", ErrDecryptionNotSupported)
+	return nil, &errs.Detail{Err: ErrDecryptionNotSupported, Detail: "only RSA decryption is supported"}
 }
 
 // =============================================================================
@@ -625,7 +687,7 @@ func (b *Backend) DeriveKeyECDH(ctx context.Context, privateKeyAttrs *types.KeyA
 	}
 
 	if len(peerPublicKey) == 0 {
-		return nil, fmt.Errorf("%w: peer public key is empty", ErrInvalidKeyAttributes)
+		return nil, &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "peer public key is empty"}
 	}
 
 	if kdfParams == nil {
@@ -634,7 +696,7 @@ func (b *Backend) DeriveKeyECDH(ctx context.Context, privateKeyAttrs *types.KeyA
 
 	// Validate KDF params
 	if err := kdfParams.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid KDF parameters: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid KDF parameters", Err: err}
 	}
 
 	// Set parent to SRK if not specified
@@ -648,29 +710,26 @@ func (b *Backend) DeriveKeyECDH(ctx context.Context, privateKeyAttrs *types.KeyA
 	// Parse the peer's public key to extract the curve and point coordinates
 	eccPoint, curve, err := b.parsePeerPublicKey(peerPublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse peer public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse peer public key", Err: err}
 	}
 
 	// Verify the curve matches the private key's curve (if specified)
 	if privateKeyAttrs.ECCAttributes != nil && privateKeyAttrs.ECCAttributes.Curve != nil {
 		if privateKeyAttrs.ECCAttributes.Curve.Params().Name != curve.Params().Name {
-			return nil, fmt.Errorf("%w: private key curve %s does not match peer public key curve %s",
-				ErrUnsupportedOperation,
-				privateKeyAttrs.ECCAttributes.Curve.Params().Name,
-				curve.Params().Name)
+			return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("private key curve %s does not match peer public key curve %s", privateKeyAttrs.ECCAttributes.Curve.Params().Name, curve.Params().Name)}
 		}
 	}
 
 	// Perform ECDH key agreement using TPM2_ECDH_ZGen
 	sharedSecret, err := b.tpm.ECDHZGen(privateKeyAttrs, eccPoint, b.keyBackend)
 	if err != nil {
-		return nil, fmt.Errorf("ECDH key agreement failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "ECDH key agreement failed", Err: err}
 	}
 
 	// Apply KDF to derive the final key
 	derivedKey, err := b.applyKDF(sharedSecret, kdfParams)
 	if err != nil {
-		return nil, fmt.Errorf("KDF failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "KDF failed", Err: err}
 	}
 
 	return derivedKey, nil
@@ -696,7 +755,7 @@ func (b *Backend) parsePeerPublicKey(peerPublicKey []byte) (*tpm2.TPMSECCPoint, 
 	if err == nil {
 		ecdsaPub, ok := pub.(*ecdsa.PublicKey)
 		if !ok {
-			return nil, nil, fmt.Errorf("%w: expected ECDSA public key, got %T", ErrUnsupportedKeyAlgorithm, pub)
+			return nil, nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("expected ECDSA public key, got %T", pub)}
 		}
 		return &tpm2.TPMSECCPoint{
 			X: tpm2.TPM2BECCParameter{Buffer: ecdsaPub.X.Bytes()}, //nolint:staticcheck // TPM2 wire format requires raw EC coordinates
@@ -725,7 +784,7 @@ func (b *Backend) parsePeerPublicKey(peerPublicKey []byte) (*tpm2.TPMSECCPoint, 
 			curve = elliptic.P521()
 			coordLen = 66
 		default:
-			return nil, nil, fmt.Errorf("%w: unsupported SEC1 point length %d", ErrUnsupportedKeyAlgorithm, pointLen)
+			return nil, nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("unsupported SEC1 point length %d", pointLen)}
 		}
 
 		x := peerPublicKey[1 : 1+coordLen]
@@ -737,7 +796,7 @@ func (b *Backend) parsePeerPublicKey(peerPublicKey []byte) (*tpm2.TPMSECCPoint, 
 		}, curve, nil
 	}
 
-	return nil, nil, fmt.Errorf("%w: unable to parse public key (not DER or SEC1 format)", ErrUnsupportedKeyAlgorithm)
+	return nil, nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: "unable to parse public key (not DER or SEC1 format)"}
 }
 
 // applyKDF applies the specified KDF to derive a key from the shared secret.
@@ -745,7 +804,7 @@ func (b *Backend) applyKDF(sharedSecret []byte, params *types.KDFParams) ([]byte
 	// Get hash function
 	hashFunc, err := types.AvailableHashes()[params.Hash]
 	if !err {
-		return nil, fmt.Errorf("unsupported hash algorithm: %s", params.Hash)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", params.Hash)}
 	}
 
 	switch params.Algorithm {
@@ -754,7 +813,7 @@ func (b *Backend) applyKDF(sharedSecret []byte, params *types.KDFParams) ([]byte
 		kdf := hkdf.New(hashFunc.New, sharedSecret, params.Salt, params.Info)
 		key := make([]byte, params.KeyLength)
 		if _, err := io.ReadFull(kdf, key); err != nil {
-			return nil, fmt.Errorf("HKDF key derivation failed: %w", err)
+			return nil, &errs.Wrapped{Msg: "HKDF key derivation failed", Err: err}
 		}
 		return key, nil
 
@@ -765,12 +824,12 @@ func (b *Backend) applyKDF(sharedSecret []byte, params *types.KDFParams) ([]byte
 		kdf := hkdf.New(hashFunc.New, sharedSecret, params.Salt, params.Info)
 		key := make([]byte, params.KeyLength)
 		if _, err := io.ReadFull(kdf, key); err != nil {
-			return nil, fmt.Errorf("SP800-108 key derivation failed: %w", err)
+			return nil, &errs.Wrapped{Msg: "SP800-108 key derivation failed", Err: err}
 		}
 		return key, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported KDF algorithm: %s", params.Algorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported KDF algorithm: %s", params.Algorithm)}
 	}
 }
 

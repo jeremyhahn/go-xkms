@@ -35,7 +35,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-xkms/pkg/health"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -45,20 +45,20 @@ import (
 
 // mockHealthChecker implements HealthChecker for testing
 type mockHealthChecker struct {
-	LiveResult    health.CheckResult
-	ReadyResults  []health.CheckResult
-	StartupResult health.CheckResult
+	LiveResult    qrdbsdk.HealthCheckResult
+	ReadyResults  []qrdbsdk.HealthCheckResult
+	StartupResult qrdbsdk.HealthCheckResult
 }
 
-func (m *mockHealthChecker) Live(ctx context.Context) health.CheckResult {
+func (m *mockHealthChecker) Live(ctx context.Context) qrdbsdk.HealthCheckResult {
 	return m.LiveResult
 }
 
-func (m *mockHealthChecker) Ready(ctx context.Context) []health.CheckResult {
+func (m *mockHealthChecker) Ready(ctx context.Context) []qrdbsdk.HealthCheckResult {
 	return m.ReadyResults
 }
 
-func (m *mockHealthChecker) Startup(ctx context.Context) health.CheckResult {
+func (m *mockHealthChecker) Startup(ctx context.Context) qrdbsdk.HealthCheckResult {
 	return m.StartupResult
 }
 

@@ -20,6 +20,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // spkiHexLength is the length of a hex-encoded SHA-256 SPKI hash.
@@ -43,11 +45,10 @@ func NormalizePin(pin string) (string, error) {
 	clean = strings.ReplaceAll(clean, ":", "")
 	clean = strings.ReplaceAll(clean, " ", "")
 	if len(clean) != spkiHexLength {
-		return "", fmt.Errorf("%w: expected %d hex chars, got %d",
-			ErrInvalidPin, spkiHexLength, len(clean))
+		return "", &errs.Detail{Err: ErrInvalidPin, Detail: fmt.Sprintf("expected %d hex chars, got %d", spkiHexLength, len(clean))}
 	}
 	if _, err := hex.DecodeString(clean); err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInvalidPin, err)
+		return "", &errs.Detail{Err: ErrInvalidPin, Detail: fmt.Sprintf("%v", err)}
 	}
 	return clean, nil
 }
@@ -62,12 +63,11 @@ func PinVerifier(pin string) func(rawCerts [][]byte, _ [][]*x509.Certificate) er
 		}
 		leaf, err := x509.ParseCertificate(rawCerts[0])
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrPinMismatch, err)
+			return &errs.Detail{Err: ErrPinMismatch, Detail: fmt.Sprintf("%v", err)}
 		}
 		got := SPKIHash(leaf)
 		if got != pin {
-			return fmt.Errorf("%w: expected %s, got %s",
-				ErrPinMismatch, pin, got)
+			return &errs.Detail{Err: ErrPinMismatch, Detail: fmt.Sprintf("expected %s, got %s", pin, got)}
 		}
 		return nil
 	}

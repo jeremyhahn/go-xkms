@@ -102,16 +102,6 @@ func Dial(ctx context.Context, req DialRequest) (Session, error) {
 	if err := req.validate(); err != nil {
 		return nil, err
 	}
-	port := req.Port
-	if port == 0 {
-		port = defaultPort
-	}
-	timeout := req.Timeout
-	if timeout <= 0 {
-		timeout = defaultTimeout
-	}
-
-	addr := net.JoinHostPort(req.Host, fmt.Sprintf("%d", port))
 
 	// Signer is enclave-backed and only reaches plaintext inside a
 	// single stack frame per Sign call. See pkg/ssh/keys.Signer.
@@ -119,58 +109,126 @@ func Dial(ctx context.Context, req DialRequest) (Session, error) {
 	if err != nil {
 		return nil, &HandshakeError{Host: req.Host, User: req.User, Err: err}
 	}
-
 	hostCallback := known_hosts.Callback(ctx, req.KnownHostsStore, req.HostKeyScope, req.HostKeyOwner)
-	cfg := buildClientConfig(req, signer, hostCallback)
 
-	// TCP dial with context. We bound the dial by min(ctx deadline,
-	// timeout) so an unresponsive server does not hang beyond timeout.
+	client, err := DialClient(ctx, ClientParams{
+		Host:            req.Host,
+		Port:            req.Port,
+		User:            req.User,
+		Signer:          signer,
+		HostKeyCallback: hostCallback,
+		Timeout:         req.Timeout,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Transfer Key ownership to the Session. We register Key.Destroy
+	// as a closer so Session.Close destroys the enclave in LIFO order.
+	key := req.Key
+	return &session{
+		host:    req.Host,
+		user:    req.User,
+		client:  client,
+		closers: []func(){key.Destroy},
+	}, nil
+}
+
+// ClientParams are the inputs to DialClient — a signer-based, key-material-
+// agnostic SSH dial. The signer is already resolved (software enclave OR a
+// hardware-backed crypto.Signer), so DialClient supports any key type,
+// including TPM/PKCS#11/cloud keys whose private half never leaves the device.
+type ClientParams struct {
+	Host   string
+	Port   int
+	User   string
+	Signer ssh.Signer
+
+	// Signers are additional candidate signers offered alongside Signer
+	// during public-key authentication, in order — the way the OpenSSH
+	// client offers every agent/identity key until the server accepts one.
+	// At least one of Signer/Signers must be set.
+	Signers []ssh.Signer
+
+	HostKeyCallback ssh.HostKeyCallback
+	Timeout         time.Duration
+}
+
+// DialClient performs TCP dial + SSH handshake + host-key verification and
+// returns a live *ssh.Client. The CALLER owns Close on the returned client.
+// It is the shared building block used by Dial (software keys) and the
+// interactive console (pkg/ssh/console, any key) so both reuse one
+// handshake/verification path.
+func DialClient(ctx context.Context, p ClientParams) (*ssh.Client, error) {
+	if p.Host == "" {
+		return nil, &NilInputError{Field: "Host"}
+	}
+	if p.User == "" {
+		return nil, &NilInputError{Field: "User"}
+	}
+	if p.Signer == nil && len(p.Signers) == 0 {
+		return nil, &NilInputError{Field: "Signer"}
+	}
+	if p.HostKeyCallback == nil {
+		return nil, &NilInputError{Field: "HostKeyCallback"}
+	}
+	port := p.Port
+	if port == 0 {
+		port = defaultPort
+	}
+	timeout := p.Timeout
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	addr := net.JoinHostPort(p.Host, fmt.Sprintf("%d", port))
+
+	signers := make([]ssh.Signer, 0, 1+len(p.Signers))
+	if p.Signer != nil {
+		signers = append(signers, p.Signer)
+	}
+	signers = append(signers, p.Signers...)
+
+	cfg := &ssh.ClientConfig{
+		User:            p.User,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signers...)},
+		HostKeyCallback: p.HostKeyCallback,
+		Timeout:         timeout,
+	}
+
+	// TCP dial with context, bounded by min(ctx deadline, timeout).
 	dialer := net.Dialer{Timeout: timeout}
 	netConn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, &TimeoutError{Host: req.Host, Duration: timeout, Err: ctx.Err()}
+			return nil, &TimeoutError{Host: p.Host, Duration: timeout, Err: ctx.Err()}
 		}
-		return nil, &DialError{Host: req.Host, Err: err}
+		return nil, &DialError{Host: p.Host, Err: err}
 	}
 
-	// Set a handshake deadline derived from the smaller of ctx
-	// deadline and timeout.
 	deadline := time.Now().Add(timeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
 	if derr := netConn.SetDeadline(deadline); derr != nil {
 		_ = netConn.Close()
-		return nil, &DialError{Host: req.Host, Err: derr}
+		return nil, &DialError{Host: p.Host, Err: derr}
 	}
 
 	sshConn, chans, reqs, hsErr := ssh.NewClientConn(netConn, addr, cfg)
 	if hsErr != nil {
 		_ = netConn.Close()
 		if ctx.Err() != nil {
-			return nil, &TimeoutError{Host: req.Host, Duration: timeout, Err: ctx.Err()}
+			return nil, &TimeoutError{Host: p.Host, Duration: timeout, Err: ctx.Err()}
 		}
-		return nil, &HandshakeError{Host: req.Host, User: req.User, Err: hsErr}
+		return nil, &HandshakeError{Host: p.Host, User: p.User, Err: hsErr}
 	}
 
-	// Handshake complete — clear the deadline so long-lived channels
-	// are not affected by it.
+	// Handshake complete — clear the deadline so long-lived channels are
+	// not affected by it.
 	if derr := netConn.SetDeadline(time.Time{}); derr != nil {
 		_ = sshConn.Close()
-		return nil, &DialError{Host: req.Host, Err: derr}
+		return nil, &DialError{Host: p.Host, Err: derr}
 	}
 
-	client := ssh.NewClient(sshConn, chans, reqs)
-
-	// Transfer Key ownership to the Session. We register Key.Destroy
-	// as a closer so Session.Close destroys the enclave in LIFO order.
-	key := req.Key
-	s := &session{
-		host:    req.Host,
-		user:    req.User,
-		client:  client,
-		closers: []func(){key.Destroy},
-	}
-	return s, nil
+	return ssh.NewClient(sshConn, chans, reqs), nil
 }

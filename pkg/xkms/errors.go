@@ -312,6 +312,12 @@ var (
 	// ErrNilRequest indicates a nil request was provided to a servicer method.
 	ErrNilRequest = errors.New("keystore: request cannot be nil")
 
+	// ErrMigrationInProgress indicates an enable-encryption migration is already
+	// running for the requested barrier scope. The async migration is
+	// single-flight per scope to prevent two concurrent migrations from
+	// corrupting the partially-migrated barrier.
+	ErrMigrationInProgress = errors.New("keystore: encryption migration already in progress for this scope")
+
 	// ErrNilData indicates nil or empty data was provided where data is required.
 	ErrNilData = errors.New("keystore: data cannot be nil or empty")
 
@@ -330,6 +336,11 @@ var (
 	// ErrBarrierRegistryNotConfigured is returned when tenant operations are attempted
 	// but the barrier registry has not been configured.
 	ErrBarrierRegistryNotConfigured = errors.New("keystore: barrier registry not configured")
+
+	// ErrTenantServiceNotConfigured is returned when an operation that requires
+	// the composed go-qrdb TenantService (entitlement/quota management) is
+	// attempted but only the legacy barrier-registry path is wired.
+	ErrTenantServiceNotConfigured = errors.New("keystore: tenant service not configured")
 
 	// ErrTenantPassphraseRequired is returned when a tenant barrier is
 	// initialized or unsealed with the passphrase (software) strategy but the

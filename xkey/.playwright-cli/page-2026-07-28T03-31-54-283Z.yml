@@ -1,0 +1,217 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - navigation "Main navigation" [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - img [ref=e8]
+          - generic [ref=e9]: xKey
+        - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+          - img [ref=e11]
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: OVERVIEW
+          - button "Dashboard" [ref=e16] [cursor=pointer]:
+            - img [ref=e17]
+            - generic [ref=e19]: Dashboard
+          - button "Pairing" [ref=e20] [cursor=pointer]:
+            - img [ref=e21]
+            - generic [ref=e23]: Pairing
+          - button "TPM 2.0" [ref=e124] [cursor=pointer]:
+            - img [ref=e125]
+            - generic [ref=e127]: TPM 2.0
+        - generic [ref=e24]:
+          - generic [ref=e25]: STORE
+          - button "Keys" [ref=e26] [cursor=pointer]:
+            - img [ref=e27]
+            - generic [ref=e29]: Keys
+          - button "Trust Store" [ref=e30] [cursor=pointer]:
+            - img [ref=e31]
+            - generic [ref=e33]: Trust Store
+          - button "Certificates" [ref=e34] [cursor=pointer]:
+            - img [ref=e35]
+            - generic [ref=e37]: Certificates
+        - generic [ref=e38]:
+          - generic [ref=e39]: APPLICATIONS
+          - button "SSH" [ref=e40] [cursor=pointer]:
+            - img [ref=e41]
+            - generic [ref=e43]: SSH
+          - button "FIDO2" [ref=e44] [cursor=pointer]:
+            - img [ref=e45]
+            - generic [ref=e47]: FIDO2
+          - button "OATH" [ref=e48] [cursor=pointer]:
+            - img [ref=e49]
+            - generic [ref=e51]: OATH
+          - button "PIV" [ref=e52] [cursor=pointer]:
+            - img [ref=e53]
+            - generic [ref=e55]: PIV
+          - button "Passwords" [ref=e56] [cursor=pointer]:
+            - img [ref=e57]
+            - generic [ref=e59]: Passwords
+          - button "Sealed Data" [ref=e60] [cursor=pointer]:
+            - img [ref=e61]
+            - generic [ref=e63]: Sealed Data
+          - button "Browser" [ref=e64] [cursor=pointer]:
+            - img [ref=e65]
+            - generic [ref=e67]: Browser
+        - generic [ref=e68]:
+          - generic [ref=e69]: MANAGEMENT
+          - button "Audit Log" [ref=e70] [cursor=pointer]:
+            - img [ref=e71]
+            - generic [ref=e73]: Audit Log
+          - button "Admin" [ref=e74] [cursor=pointer]:
+            - img [ref=e75]
+            - generic [ref=e77]: Admin
+        - generic [ref=e78]:
+          - generic [ref=e79]: DEVELOPER TOOLS
+          - button "OIDC" [ref=e80] [cursor=pointer]:
+            - img [ref=e81]
+            - generic [ref=e83]: OIDC
+          - button "API Explorer" [ref=e84] [cursor=pointer]:
+            - img [ref=e85]
+            - generic [ref=e87]: API Explorer
+      - generic [ref=e88]:
+        - generic "Standalone mode" [ref=e89]:
+          - generic [ref=e91]: Standalone
+        - button "Theme" [ref=e92] [cursor=pointer]:
+          - img [ref=e93]
+          - generic [ref=e95]: Theme
+        - button "Settings" [ref=e96] [cursor=pointer]:
+          - img [ref=e97]
+          - generic [ref=e99]: Settings
+    - main [ref=e100]:
+      - generic [ref=e102]:
+        - button "Lock app" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+          - generic [ref=e106]: Lock
+        - button "No touch pending" [disabled] [ref=e107]:
+          - img [ref=e109]
+      - generic [ref=e1783]:
+        - generic [ref=e1786]:
+          - heading "Settings" [level=1] [ref=e1787]
+          - paragraph [ref=e1788]: Application configuration
+        - generic [ref=e1789]:
+          - navigation [ref=e1790]:
+            - button "General" [ref=e1791] [cursor=pointer]:
+              - img [ref=e1792]
+              - generic [ref=e1794]: General
+            - button "Identity" [ref=e1795] [cursor=pointer]:
+              - img [ref=e1796]
+              - generic [ref=e1798]: Identity
+            - button "Appearance" [ref=e1799] [cursor=pointer]:
+              - img [ref=e1800]
+              - generic [ref=e1802]: Appearance
+            - button "Browser" [ref=e1803] [cursor=pointer]:
+              - img [ref=e1804]
+              - generic [ref=e1806]: Browser
+            - button "API Explorer" [ref=e1807] [cursor=pointer]:
+              - img [ref=e1808]
+              - generic [ref=e1810]: API Explorer
+            - button "Server" [ref=e1811] [cursor=pointer]:
+              - img [ref=e1812]
+              - generic [ref=e1814]: Server
+            - button "Phone" [ref=e1815] [cursor=pointer]:
+              - img [ref=e1816]
+              - generic [ref=e1818]: Phone
+            - button "Security" [ref=e1819] [cursor=pointer]:
+              - img [ref=e1820]
+              - generic [ref=e1822]: Security
+            - button "PIN Management" [ref=e1823] [cursor=pointer]:
+              - img [ref=e1824]
+              - generic [ref=e1826]: PIN Management
+            - button "Storage" [ref=e1827] [cursor=pointer]:
+              - img [ref=e1828]
+              - generic [ref=e1830]: Storage
+            - button "Notifications" [ref=e1831] [cursor=pointer]:
+              - img [ref=e1832]
+              - generic [ref=e1834]: Notifications
+            - button "SSH" [ref=e1835] [cursor=pointer]:
+              - img [ref=e1836]
+              - generic [ref=e1838]: SSH
+            - button "Advanced" [ref=e1839] [cursor=pointer]:
+              - img [ref=e1840]
+              - generic [ref=e1842]: Advanced
+          - generic [ref=e1843]:
+            - generic [ref=e1845]:
+              - heading "LUKS Encrypted Storage" [level=2] [ref=e1846]
+              - generic [ref=e1847]:
+                - generic [ref=e1848]:
+                  - generic [ref=e1849]: Volume
+                  - generic [ref=e1850]: Not created
+                - generic [ref=e1851]:
+                  - generic [ref=e1852]: Encryption
+                  - generic [ref=e1853]: Not encrypted
+                - generic [ref=e1854]:
+                  - generic [ref=e1855]: State
+                  - status "Disconnected" [ref=e1856]:
+                    - generic [ref=e1858]: Disconnected
+                - generic [ref=e1859]:
+                  - generic [ref=e1860]: Volume Path
+                  - generic [ref=e1861]: /home/jhahn/.xkey.luks
+                - generic [ref=e1862]:
+                  - generic [ref=e1863]: Mount Point
+                  - generic [ref=e1864]: /home/jhahn/.xkey
+            - generic [ref=e1866]:
+              - heading "Actions" [level=2] [ref=e1867]
+              - generic [ref=e1869]:
+                - generic [ref=e1870]:
+                  - generic [ref=e1871]: Create Encrypted Volume
+                  - generic [ref=e1872]: Create a LUKS-encrypted volume and migrate existing data from ~/.xkey/data/ into it
+                - button "Create & Migrate" [ref=e1873] [cursor=pointer]:
+                  - img [ref=e1874]
+                  - generic [ref=e1876]: Create & Migrate
+            - generic [ref=e1878]:
+              - heading "Auto-Unseal with TPM" [level=2] [ref=e1879]
+              - generic [ref=e1880]:
+                - generic [ref=e1881]:
+                  - generic [ref=e1882]: TPM Available
+                  - generic [ref=e1883]: TPM detected on this system
+                - status "Connected" [ref=e1884]:
+                  - generic [ref=e1886]: Connected
+              - generic [ref=e1888]:
+                - generic [ref=e1889]:
+                  - generic [ref=e1890]: Enable Auto-Unseal
+                  - generic [ref=e1891]: Create an encrypted LUKS volume first before enabling auto-unseal
+                - button "Enable" [disabled]:
+                  - img
+                  - generic: Enable
+            - generic [ref=e1893]:
+              - heading "Barrier Auto-Unseal" [level=2] [ref=e1894]
+              - generic [ref=e1920]:
+                - generic [ref=e1921]:
+                  - generic [ref=e1922]: TPM Available
+                  - generic [ref=e1923]: TPM detected on this system
+                - status "Connected" [ref=e1924]:
+                  - generic [ref=e1926]: Connected
+              - generic [ref=e1927]:
+                - generic [ref=e1928]:
+                  - generic [ref=e1929]: Active Policy
+                  - generic [ref=e1930]: chrometest-boot-policy
+                - status "Verified" [ref=e1931]:
+                  - generic [ref=e1933]: Verified
+              - generic [ref=e1934]:
+                - generic [ref=e1935]:
+                  - generic [ref=e1936]: PCR State
+                  - generic [ref=e1937]: PCR values do not match — auto-unseal will not activate
+                - status "Warning" [ref=e1938]:
+                  - generic [ref=e1940]: Warning
+              - generic [ref=e1941]:
+                - generic [ref=e1943]:
+                  - generic [ref=e1944]: Change Policy
+                  - generic [ref=e1945]: Switch to a different PCR policy for auto-unseal
+                - generic [ref=e1946]:
+                  - combobox [ref=e1947] [cursor=pointer]:
+                    - option "chrometest-boot-policy" [selected]
+                  - button "Apply" [disabled]:
+                    - img
+                    - generic: Apply
+              - generic [ref=e1949]:
+                - generic [ref=e1950]:
+                  - generic [ref=e1951]: Disable Barrier Auto-Unseal
+                  - generic [ref=e1952]: Remove the PCR policy binding — the barrier will require a PIN on next startup
+                - button "Disable" [ref=e1953] [cursor=pointer]:
+                  - generic [ref=e1954]: Disable
+  - alert [ref=e1955]:
+    - img [ref=e1957]
+    - generic [ref=e1959]: Barrier auto-unseal policy set to "chrometest-boot-policy"
+    - button "Dismiss notification" [ref=e1960] [cursor=pointer]:
+      - img [ref=e1961]

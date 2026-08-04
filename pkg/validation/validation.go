@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 var (
@@ -256,19 +258,5 @@ func ValidateBackendName(backend string) error {
 }
 
 // SanitizeForLog sanitizes a string for safe logging (prevents log injection).
-func SanitizeForLog(s string) string {
-	// Remove control characters and null bytes
-	s = strings.Map(func(r rune) rune {
-		if r < 32 || r == 127 {
-			return -1
-		}
-		return r
-	}, s)
-
-	// Limit length to prevent log flooding
-	if len(s) > 1000 {
-		s = s[:1000] + "...[truncated]"
-	}
-
-	return s
-}
+// It is the shared stack-wide implementation re-exported from the qrdb SDK.
+var SanitizeForLog = qrdbsdk.SanitizeForLog

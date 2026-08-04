@@ -16,8 +16,9 @@ package services
 import (
 	"context"
 	"errors"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"testing"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/stretchr/testify/assert"

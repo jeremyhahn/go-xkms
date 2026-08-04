@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"strconv"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -75,7 +76,21 @@ func writeErrorWithMessage(w http.ResponseWriter, err error, message string, sta
 
 // mapErrorToStatusCode maps errors to HTTP status codes.
 func mapErrorToStatusCode(err error) int {
+	// Tenant entitlement / barrier-mode / quota denials propagated from the
+	// embedded go-qrdb TenantService. Map them to precise client-facing statuses
+	// instead of a generic 500 so operators see the actual denial reason.
+	var entErr *qrdbsdk.EntitlementError
 	switch {
+	case errors.As(err, &entErr):
+		// Plan does not entitle the requested isolation mode / barrier mode /
+		// feature.
+		return http.StatusForbidden
+	case errors.Is(err, qrdbsdk.ErrSharedBarrierImmutable):
+		// A shared-barrier tenant's barrier mode cannot be changed in place.
+		return http.StatusConflict
+	case qrdbsdk.IsQuotaExceeded(err):
+		// Resource quota for the tenant's plan is exhausted.
+		return http.StatusTooManyRequests
 	case errors.Is(err, storage.ErrNotFound),
 		errors.Is(err, backend.ErrKeyNotFound):
 		return http.StatusNotFound

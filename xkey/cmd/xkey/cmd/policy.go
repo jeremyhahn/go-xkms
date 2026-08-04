@@ -32,6 +32,17 @@ import (
 // Default policy storage path relative to the data directory.
 const defaultPolicyStorePath = "./data/policies"
 
+var (
+	// policyTPMDevice is the --tpm-device flag for policy commands that read
+	// current PCR values from a TPM (create, verify, refresh). It mirrors
+	// the `barrier` command group's --tpm-device flag.
+	policyTPMDevice string
+
+	// policyTPMSimulator is the --tpm-simulator flag for policy commands.
+	// It mirrors the `barrier` command group's --tpm-simulator flag.
+	policyTPMSimulator bool
+)
+
 // Valid PCR hash banks accepted by the CLI. The store normalises to
 // upper-case internally; the CLI is case-insensitive for convenience.
 var validPCRBanks = map[string]bool{
@@ -265,6 +276,10 @@ func init() {
 	// Persistent store flag for all subcommands.
 	PolicyCmd.PersistentFlags().String("store", defaultPolicyStorePath,
 		"Path to policy store directory")
+	PolicyCmd.PersistentFlags().StringVar(&policyTPMDevice, "tpm-device", "",
+		"TPM device path used to read current PCR values (default: $TPM_DEVICE_PATH or /dev/tpmrm0)")
+	PolicyCmd.PersistentFlags().BoolVar(&policyTPMSimulator, "tpm-simulator", false,
+		"Use the in-process TPM simulator instead of a hardware device (requires a simulator build)")
 
 	// policy create flags.
 	policyCreateCmd.Flags().String("pcrs", "",
@@ -306,9 +321,9 @@ func runPolicyCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Read current PCR values from TPM.
-	values, err := readCurrentPCRValues(pcrIndices, bank)
+	values, err := readCurrentPCRValues(pcrIndices, bank, policyTPMDevice, policyTPMSimulator)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyCreateFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyCreateFailed, Cause: err}
 	}
 
 	// Convert hex string map to raw bytes map for the store entity.
@@ -317,7 +332,7 @@ func runPolicyCreate(cmd *cobra.Command, args []string) error {
 	// Open the store.
 	store, err := policyStoreFactory(storePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyStoreOpenFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyStoreOpenFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
@@ -328,7 +343,7 @@ func runPolicyCreate(cmd *cobra.Command, args []string) error {
 
 	entity, err := store.Create(ctx, name, bankUpper, pcrBytes)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyCreateFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyCreateFailed, Cause: err}
 	}
 
 	out := cmd.OutOrStdout()
@@ -362,7 +377,7 @@ func runPolicyList(cmd *cobra.Command, args []string) error {
 	// Full list mode.
 	policies, err := store.List(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyListFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyListFailed, Cause: err}
 	}
 
 	if len(policies) == 0 {
@@ -403,7 +418,7 @@ func runPolicyListPaginated(cmd *cobra.Command, store pcrpolicy.PolicyStore, ctx
 		PageSize: pageSize,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyListFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyListFailed, Cause: err}
 	}
 
 	if len(result.Entities) == 0 {
@@ -447,7 +462,7 @@ func runPolicyGet(cmd *cobra.Command, args []string) error {
 
 	store, err := policyStoreFactory(storePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyGetFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyGetFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
@@ -456,9 +471,9 @@ func runPolicyGet(cmd *cobra.Command, args []string) error {
 	entity, err := store.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, pcrpolicy.ErrPolicyNotFound) {
-			return fmt.Errorf("%w: %s", ErrPolicyNotFound, name)
+			return &DetailError{Err: ErrPolicyNotFound, Detail: fmt.Sprintf(": %s", name)}
 		}
-		return fmt.Errorf("%w: %v", ErrPolicyGetFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyGetFailed, Cause: err}
 	}
 
 	autoTag := ""
@@ -491,7 +506,7 @@ func runPolicyDelete(cmd *cobra.Command, args []string) error {
 
 	store, err := policyStoreFactory(storePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyDeleteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyDeleteFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
@@ -499,13 +514,12 @@ func runPolicyDelete(cmd *cobra.Command, args []string) error {
 
 	if err := store.Delete(ctx, name); err != nil {
 		if errors.Is(err, pcrpolicy.ErrPolicyNotFound) {
-			return fmt.Errorf("%w: %s", ErrPolicyNotFound, name)
+			return &DetailError{Err: ErrPolicyNotFound, Detail: fmt.Sprintf(": %s", name)}
 		}
 		if errors.Is(err, pcrpolicy.ErrDeleteAutoUnseal) {
-			return fmt.Errorf("%w: %s is the active auto-unseal policy; run 'xkey policy clear-auto-unseal' first",
-				ErrPolicyDeleteFailed, name)
+			return &DetailError{Err: ErrPolicyDeleteFailed, Detail: fmt.Sprintf(": %s is the active auto-unseal policy; run 'xkey policy clear-auto-unseal' first", name)}
 		}
-		return fmt.Errorf("%w: %v", ErrPolicyDeleteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyDeleteFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Deleted policy: %s\n", name)
@@ -519,7 +533,7 @@ func runPolicySetAutoUnseal(cmd *cobra.Command, args []string) error {
 
 	store, err := policyStoreFactory(storePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyAutoUnsealFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyAutoUnsealFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
@@ -527,9 +541,9 @@ func runPolicySetAutoUnseal(cmd *cobra.Command, args []string) error {
 
 	if err := store.SetAutoUnseal(ctx, name); err != nil {
 		if errors.Is(err, pcrpolicy.ErrPolicyNotFound) {
-			return fmt.Errorf("%w: %s", ErrPolicyNotFound, name)
+			return &DetailError{Err: ErrPolicyNotFound, Detail: fmt.Sprintf(": %s", name)}
 		}
-		return fmt.Errorf("%w: %v", ErrPolicyAutoUnsealFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyAutoUnsealFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Auto-unseal policy set: %s\n", name)
@@ -542,14 +556,14 @@ func runPolicyClearAutoUnseal(cmd *cobra.Command, args []string) error {
 
 	store, err := policyStoreFactory(storePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyClearAutoFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyClearAutoFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 
 	if err := store.ClearAutoUnseal(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyClearAutoFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyClearAutoFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Auto-unseal policy cleared.")
@@ -563,7 +577,7 @@ func runPolicyRefresh(cmd *cobra.Command, args []string) error {
 
 	store, err := policyStoreFactory(storePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyRefreshFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyRefreshFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
@@ -572,9 +586,9 @@ func runPolicyRefresh(cmd *cobra.Command, args []string) error {
 	entity, err := store.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, pcrpolicy.ErrPolicyNotFound) {
-			return fmt.Errorf("%w: %s", ErrPolicyNotFound, name)
+			return &DetailError{Err: ErrPolicyNotFound, Detail: fmt.Sprintf(": %s", name)}
 		}
-		return fmt.Errorf("%w: %v", ErrPolicyRefreshFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyRefreshFailed, Cause: err}
 	}
 
 	// Build the PCR indices from the entity.
@@ -584,10 +598,10 @@ func runPolicyRefresh(cmd *cobra.Command, args []string) error {
 
 	// Read current PCR values from TPM.
 	bankLower := strings.ToLower(entity.Bank)
-	values, err := readCurrentPCRValues(uintIndices, bankLower)
+	values, err := readCurrentPCRValues(uintIndices, bankLower, policyTPMDevice, policyTPMSimulator)
 
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyRefreshFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyRefreshFailed, Cause: err}
 	}
 
 	// Update the entity PCR values.
@@ -595,7 +609,7 @@ func runPolicyRefresh(cmd *cobra.Command, args []string) error {
 
 	// Re-create (upsert) with the updated values.
 	if _, err := store.Create(ctx, entity.Name, entity.Bank, entity.PCRs); err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyRefreshFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyRefreshFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Refreshed policy: %s\n", name)
@@ -610,7 +624,7 @@ func runPolicyVerify(cmd *cobra.Command, args []string) error {
 
 	store, err := policyStoreFactory(storePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyVerifyFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyVerifyFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
@@ -619,9 +633,9 @@ func runPolicyVerify(cmd *cobra.Command, args []string) error {
 	entity, err := store.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, pcrpolicy.ErrPolicyNotFound) {
-			return fmt.Errorf("%w: %s", ErrPolicyNotFound, name)
+			return &DetailError{Err: ErrPolicyNotFound, Detail: fmt.Sprintf(": %s", name)}
 		}
-		return fmt.Errorf("%w: %v", ErrPolicyVerifyFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyVerifyFailed, Cause: err}
 	}
 
 	// Build PCR indices from the entity.
@@ -631,10 +645,10 @@ func runPolicyVerify(cmd *cobra.Command, args []string) error {
 
 	// Read current PCR values from TPM.
 	bankLower := strings.ToLower(entity.Bank)
-	currentHex, err := readCurrentPCRValues(uintIndices, bankLower)
+	currentHex, err := readCurrentPCRValues(uintIndices, bankLower, policyTPMDevice, policyTPMSimulator)
 
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyVerifyFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyVerifyFailed, Cause: err}
 	}
 
 	// Compare stored entity bytes against current hex values.
@@ -653,7 +667,7 @@ func runPolicyVerify(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(out, "    Current:  %s\n", m.current)
 	}
 
-	return fmt.Errorf("%w: %d PCR value(s) do not match", ErrPolicyVerifyFailed, len(mismatches))
+	return &DetailError{Err: ErrPolicyVerifyFailed, Detail: fmt.Sprintf(": %d PCR value(s) do not match", len(mismatches))}
 }
 
 // runPolicyExport executes the policy export command.
@@ -663,7 +677,7 @@ func runPolicyExport(cmd *cobra.Command, args []string) error {
 
 	store, err := policyStoreFactory(storePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyExportFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyExportFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
@@ -672,9 +686,9 @@ func runPolicyExport(cmd *cobra.Command, args []string) error {
 	entity, err := store.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, pcrpolicy.ErrPolicyNotFound) {
-			return fmt.Errorf("%w: %s", ErrPolicyNotFound, name)
+			return &DetailError{Err: ErrPolicyNotFound, Detail: fmt.Sprintf(": %s", name)}
 		}
-		return fmt.Errorf("%w: %v", ErrPolicyExportFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyExportFailed, Cause: err}
 	}
 
 	// Build an export-friendly representation with hex-encoded PCR values.
@@ -690,7 +704,7 @@ func runPolicyExport(cmd *cobra.Command, args []string) error {
 	encoder := json.NewEncoder(cmd.OutOrStdout())
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(export); err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyExportFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyExportFailed, Cause: err}
 	}
 
 	return nil
@@ -749,17 +763,20 @@ func comparePCRByteValues(expected, current map[uint][]byte) []pcrMismatch {
 // ---------------------------------------------------------------------------
 
 // readCurrentPCRValues reads PCR values from the TPM for the given indices
-// and bank. Returns a map from PCR index to hex-encoded value.
-func readCurrentPCRValues(indices []uint, bank string) (map[int]string, error) {
-	tpm, err := openTPMForProvisioning()
+// and bank. Returns a map from PCR index to hex-encoded value. device and
+// useSimulator select which TPM to open (see resolveTPMDevice for the
+// flag > TPM_DEVICE_PATH env > default precedence), independent of the
+// `tpm` command group's own --device/--simulator flags.
+func readCurrentPCRValues(indices []uint, bank, device string, useSimulator bool) (map[int]string, error) {
+	tpm, err := openTPMForProvisioningWithDeviceAndPCROverrides(resolveTPMDevice(device), useSimulator, "", nil, 0)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPolicyReadCurrentFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrPolicyReadCurrentFailed, Cause: err}
 	}
 	defer func() { _ = tpm.Close() }()
 
 	banks, err := tpm.ReadPCRs(indices)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPolicyReadCurrentFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrPolicyReadCurrentFailed, Cause: err}
 	}
 
 	values := make(map[int]string)
@@ -773,7 +790,7 @@ func readCurrentPCRValues(indices []uint, bank string) (map[int]string, error) {
 	}
 
 	if len(values) == 0 {
-		return nil, fmt.Errorf("%w: no values returned for bank %s", ErrPolicyReadCurrentFailed, bank)
+		return nil, &DetailError{Err: ErrPolicyReadCurrentFailed, Detail: fmt.Sprintf(": no values returned for bank %s", bank)}
 	}
 
 	return values, nil

@@ -16,11 +16,12 @@ package services
 import (
 	"context"
 	"encoding/json"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"sync"
 	"testing"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

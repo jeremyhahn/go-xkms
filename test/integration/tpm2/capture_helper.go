@@ -63,6 +63,10 @@ func NewTPM2TestSetup(t *testing.T, encryptSession bool) *TPM2TestSetup {
 	// Create PKCS8 backend
 	pkcs8Config := &pkcs8.Config{
 		KeyStorage: keyStorage,
+		// Direct backend construction without a barrier/sealed store; permit
+		// unencrypted PKCS#8 persistence so the seal-default guard does not
+		// refuse key generation in this capture harness.
+		AllowPlaintextKeys: true,
 	}
 	pkcs8Backend, err := pkcs8.NewBackend(pkcs8Config)
 	require.NoError(t, err, "Failed to create PKCS8 backend")

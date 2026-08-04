@@ -29,6 +29,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 )
 
@@ -156,24 +158,24 @@ func (a *FederationAgent) EscrowKey(ctx context.Context, req *escrow.EscrowReque
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to marshal request: %s", escrow.ErrEscrowFailed, err)
+		return nil, &errs.Detail{Err: escrow.ErrEscrowFailed, Detail: fmt.Sprintf("failed to marshal request: %s", err)}
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint+apiPrefix, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to create HTTP request: %s", escrow.ErrEscrowFailed, err)
+		return nil, &errs.Detail{Err: escrow.ErrEscrowFailed, Detail: fmt.Sprintf("failed to create HTTP request: %s", err)}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", escrow.ErrAgentUnavailable, err)
+		return nil, &errs.Detail{Err: escrow.ErrAgentUnavailable, Detail: fmt.Sprintf("%s", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to read response: %s", escrow.ErrEscrowFailed, err)
+		return nil, &errs.Detail{Err: escrow.ErrEscrowFailed, Detail: fmt.Sprintf("failed to read response: %s", err)}
 	}
 
 	if resp.StatusCode == http.StatusConflict {
@@ -183,13 +185,12 @@ func (a *FederationAgent) EscrowKey(ctx context.Context, req *escrow.EscrowReque
 		return nil, escrow.ErrAuthenticationFailed
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%w: server returned status %d: %s",
-			escrow.ErrEscrowFailed, resp.StatusCode, string(respBody))
+		return nil, &errs.Detail{Err: escrow.ErrEscrowFailed, Detail: fmt.Sprintf("server returned status %d: %s", resp.StatusCode, string(respBody))}
 	}
 
 	var receipt escrow.EscrowReceipt
 	if err := json.Unmarshal(respBody, &receipt); err != nil {
-		return nil, fmt.Errorf("%w: failed to unmarshal receipt: %s", escrow.ErrEscrowFailed, err)
+		return nil, &errs.Detail{Err: escrow.ErrEscrowFailed, Detail: fmt.Sprintf("failed to unmarshal receipt: %s", err)}
 	}
 
 	return &receipt, nil
@@ -209,24 +210,24 @@ func (a *FederationAgent) RecoverKey(ctx context.Context, req *escrow.RecoverReq
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to marshal request: %s", escrow.ErrRecoverFailed, err)
+		return nil, &errs.Detail{Err: escrow.ErrRecoverFailed, Detail: fmt.Sprintf("failed to marshal request: %s", err)}
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint+apiPrefix+"/recover", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to create HTTP request: %s", escrow.ErrRecoverFailed, err)
+		return nil, &errs.Detail{Err: escrow.ErrRecoverFailed, Detail: fmt.Sprintf("failed to create HTTP request: %s", err)}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", escrow.ErrAgentUnavailable, err)
+		return nil, &errs.Detail{Err: escrow.ErrAgentUnavailable, Detail: fmt.Sprintf("%s", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to read response: %s", escrow.ErrRecoverFailed, err)
+		return nil, &errs.Detail{Err: escrow.ErrRecoverFailed, Detail: fmt.Sprintf("failed to read response: %s", err)}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
@@ -236,13 +237,12 @@ func (a *FederationAgent) RecoverKey(ctx context.Context, req *escrow.RecoverReq
 		return nil, escrow.ErrAuthenticationFailed
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%w: server returned status %d: %s",
-			escrow.ErrRecoverFailed, resp.StatusCode, string(respBody))
+		return nil, &errs.Detail{Err: escrow.ErrRecoverFailed, Detail: fmt.Sprintf("server returned status %d: %s", resp.StatusCode, string(respBody))}
 	}
 
 	var recoverResp escrow.RecoverResponse
 	if err := json.Unmarshal(respBody, &recoverResp); err != nil {
-		return nil, fmt.Errorf("%w: failed to unmarshal response: %s", escrow.ErrRecoverFailed, err)
+		return nil, &errs.Detail{Err: escrow.ErrRecoverFailed, Detail: fmt.Sprintf("failed to unmarshal response: %s", err)}
 	}
 
 	return &recoverResp, nil
@@ -256,31 +256,30 @@ func (a *FederationAgent) ListEscrowed(ctx context.Context) ([]escrow.EscrowReco
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, a.endpoint+apiPrefix, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to create HTTP request: %s", escrow.ErrRecoverFailed, err)
+		return nil, &errs.Detail{Err: escrow.ErrRecoverFailed, Detail: fmt.Sprintf("failed to create HTTP request: %s", err)}
 	}
 
 	resp, err := a.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", escrow.ErrAgentUnavailable, err)
+		return nil, &errs.Detail{Err: escrow.ErrAgentUnavailable, Detail: fmt.Sprintf("%s", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to read response: %s", escrow.ErrRecoverFailed, err)
+		return nil, &errs.Detail{Err: escrow.ErrRecoverFailed, Detail: fmt.Sprintf("failed to read response: %s", err)}
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return nil, escrow.ErrAuthenticationFailed
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%w: server returned status %d: %s",
-			escrow.ErrRecoverFailed, resp.StatusCode, string(respBody))
+		return nil, &errs.Detail{Err: escrow.ErrRecoverFailed, Detail: fmt.Sprintf("server returned status %d: %s", resp.StatusCode, string(respBody))}
 	}
 
 	var records []escrow.EscrowRecord
 	if err := json.Unmarshal(respBody, &records); err != nil {
-		return nil, fmt.Errorf("%w: failed to unmarshal response: %s", escrow.ErrRecoverFailed, err)
+		return nil, &errs.Detail{Err: escrow.ErrRecoverFailed, Detail: fmt.Sprintf("failed to unmarshal response: %s", err)}
 	}
 
 	return records, nil
@@ -297,18 +296,18 @@ func (a *FederationAgent) RevokeEscrow(ctx context.Context, escrowID string) err
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, a.endpoint+apiPrefix+"/"+escrowID, nil)
 	if err != nil {
-		return fmt.Errorf("%w: failed to create HTTP request: %s", escrow.ErrRevokeFailed, err)
+		return &errs.Detail{Err: escrow.ErrRevokeFailed, Detail: fmt.Sprintf("failed to create HTTP request: %s", err)}
 	}
 
 	resp, err := a.client.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("%w: %s", escrow.ErrAgentUnavailable, err)
+		return &errs.Detail{Err: escrow.ErrAgentUnavailable, Detail: fmt.Sprintf("%s", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 	if err != nil {
-		return fmt.Errorf("%w: failed to read response: %s", escrow.ErrRevokeFailed, err)
+		return &errs.Detail{Err: escrow.ErrRevokeFailed, Detail: fmt.Sprintf("failed to read response: %s", err)}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
@@ -318,8 +317,7 @@ func (a *FederationAgent) RevokeEscrow(ctx context.Context, escrowID string) err
 		return escrow.ErrAuthenticationFailed
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("%w: server returned status %d: %s",
-			escrow.ErrRevokeFailed, resp.StatusCode, string(respBody))
+		return &errs.Detail{Err: escrow.ErrRevokeFailed, Detail: fmt.Sprintf("server returned status %d: %s", resp.StatusCode, string(respBody))}
 	}
 
 	return nil
@@ -342,8 +340,7 @@ func buildTransport(config *FederationConfig) (*http.Transport, error) {
 	if config.ClientCert != "" && config.ClientKey != "" {
 		cert, err := tls.LoadX509KeyPair(config.ClientCert, config.ClientKey)
 		if err != nil {
-			return nil, fmt.Errorf("%w: failed to load client certificate: %s",
-				escrow.ErrAuthenticationFailed, err)
+			return nil, &errs.Detail{Err: escrow.ErrAuthenticationFailed, Detail: fmt.Sprintf("failed to load client certificate: %s", err)}
 		}
 		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
@@ -352,13 +349,11 @@ func buildTransport(config *FederationConfig) (*http.Transport, error) {
 	if config.CACert != "" {
 		caCert, err := os.ReadFile(config.CACert)
 		if err != nil {
-			return nil, fmt.Errorf("%w: failed to read CA certificate: %s",
-				escrow.ErrAuthenticationFailed, err)
+			return nil, &errs.Detail{Err: escrow.ErrAuthenticationFailed, Detail: fmt.Sprintf("failed to read CA certificate: %s", err)}
 		}
 		caCertPool := x509.NewCertPool()
 		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("%w: failed to parse CA certificate",
-				escrow.ErrAuthenticationFailed)
+			return nil, &errs.Detail{Err: escrow.ErrAuthenticationFailed, Detail: "failed to parse CA certificate"}
 		}
 		tlsConfig.RootCAs = caCertPool
 	}

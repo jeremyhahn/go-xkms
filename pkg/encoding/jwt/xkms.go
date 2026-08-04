@@ -21,6 +21,8 @@ import (
 	"crypto/rsa"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 )
@@ -70,7 +72,7 @@ func (ks *XKMSSigner) SignWithKeyID(keyID string, claims jwt.Claims) (string, er
 	// Get the signer from xkms
 	signer, err := ks.getSigner(keyID)
 	if err != nil {
-		return "", fmt.Errorf("failed to get signer for key %s: %w", keyID, err)
+		return "", &errs.Wrapped{Msg: fmt.Sprintf("failed to get signer for key %s", keyID), Err: err}
 	}
 
 	// Determine algorithm from signer's public key
@@ -81,7 +83,7 @@ func (ks *XKMSSigner) SignWithKeyID(keyID string, claims jwt.Claims) (string, er
 
 	method := jwt.GetSigningMethod(string(alg))
 	if method == nil {
-		return "", fmt.Errorf("unsupported algorithm: %s", alg)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported algorithm: %s", alg)}
 	}
 
 	// Create token with kid in header
@@ -102,12 +104,12 @@ func (ks *XKMSSigner) SignWithKeyIDAndAlgorithm(keyID string, claims jwt.Claims,
 	// Get the signer from xkms
 	signer, err := ks.getSigner(keyID)
 	if err != nil {
-		return "", fmt.Errorf("failed to get signer for key %s: %w", keyID, err)
+		return "", &errs.Wrapped{Msg: fmt.Sprintf("failed to get signer for key %s", keyID), Err: err}
 	}
 
 	method := jwt.GetSigningMethod(string(alg))
 	if method == nil {
-		return "", fmt.Errorf("unsupported algorithm: %s", alg)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported algorithm: %s", alg)}
 	}
 
 	// Create token with kid in header
@@ -146,7 +148,7 @@ func (kv *XKMSVerifier) VerifyWithKeyID(tokenString, keyID string) (*jwt.Token, 
 	// Get the key from xkms
 	key, err := kv.getKey(keyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get key %s: %w", keyID, err)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get key %s", keyID), Err: err}
 	}
 
 	// Extract public key
@@ -154,7 +156,7 @@ func (kv *XKMSVerifier) VerifyWithKeyID(tokenString, keyID string) (*jwt.Token, 
 	if pk, ok := key.(interface{ Public() crypto.PublicKey }); ok {
 		publicKey = pk.Public()
 	} else {
-		return nil, fmt.Errorf("key does not expose public key")
+		return nil, &errs.Message{Msg: "key does not expose public key"}
 	}
 
 	// Parse and verify token
@@ -162,7 +164,7 @@ func (kv *XKMSVerifier) VerifyWithKeyID(tokenString, keyID string) (*jwt.Token, 
 		return publicKey, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to verify token: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to verify token", Err: err}
 	}
 
 	return token, nil
@@ -178,10 +180,10 @@ func (kv *XKMSVerifier) VerifyWithAutoKeyID(tokenString string) (*jwt.Token, err
 	// Extract kid from token
 	kid, err := ExtractKID(tokenString)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract kid: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to extract kid", Err: err}
 	}
 	if kid == "" {
-		return nil, fmt.Errorf("token does not contain kid header")
+		return nil, &errs.Message{Msg: "token does not contain kid header"}
 	}
 
 	// Verify using the extracted kid
@@ -198,7 +200,7 @@ func (kv *XKMSVerifier) VerifyWithJWK(tokenString string, key *jwk.JWK) (*jwt.To
 	// Convert JWK to public key
 	publicKey, err := key.ToPublicKey()
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert JWK to public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to convert JWK to public key", Err: err}
 	}
 
 	// Parse and verify token
@@ -206,7 +208,7 @@ func (kv *XKMSVerifier) VerifyWithJWK(tokenString string, key *jwk.JWK) (*jwt.To
 		return publicKey, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to verify token: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to verify token", Err: err}
 	}
 
 	return token, nil
@@ -222,7 +224,7 @@ func signingMethodFromPublicKey(pub crypto.PublicKey) (Algorithm, error) {
 	case ed25519.PublicKey:
 		return EdDSA, nil
 	default:
-		return "", fmt.Errorf("unsupported public key type: %T", pub)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported public key type: %T", pub)}
 	}
 }
 
@@ -236,6 +238,6 @@ func signingMethodFromECDSAPublic(key *ecdsa.PublicKey) (Algorithm, error) {
 	case elliptic.P521():
 		return ES512, nil
 	default:
-		return "", fmt.Errorf("unsupported ECDSA curve: %s", key.Curve.Params().Name)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported ECDSA curve: %s", key.Curve.Params().Name)}
 	}
 }

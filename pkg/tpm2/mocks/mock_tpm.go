@@ -23,6 +23,8 @@ import (
 	"math/big"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -417,7 +419,7 @@ func (m *MockTPM) Send(input []byte) ([]byte, error) {
 	// The mock doesn't support wire protocol - tests should not call command.Execute(mock)
 	// Instead, tests should set up the mock with Setup* methods and the code under test
 	// will get the responses via Execute()
-	return nil, fmt.Errorf("mock tpm: Send() not supported - wire protocol not implemented. Use mock.Execute() or integration tests with real TPM")
+	return nil, &errs.Message{Msg: "mock tpm: Send() not supported - wire protocol not implemented. Use mock.Execute() or integration tests with real TPM"}
 }
 
 // Execute executes a TPM command and returns the response.
@@ -454,7 +456,7 @@ func (m *MockTPM) handleCommand(cmd any) (any, error) {
 		if m.createPrimaryResponse != nil {
 			return m.createPrimaryResponse, nil
 		}
-		return nil, fmt.Errorf("mock tpm: CreatePrimary not configured")
+		return nil, &errs.Message{Msg: "mock tpm: CreatePrimary not configured"}
 
 	case tpm2.Create:
 		if m.createError != nil {
@@ -463,7 +465,7 @@ func (m *MockTPM) handleCommand(cmd any) (any, error) {
 		if m.createResponse != nil {
 			return m.createResponse, nil
 		}
-		return nil, fmt.Errorf("mock tpm: Create not configured")
+		return nil, &errs.Message{Msg: "mock tpm: Create not configured"}
 
 	case tpm2.Load:
 		if m.loadError != nil {
@@ -472,7 +474,7 @@ func (m *MockTPM) handleCommand(cmd any) (any, error) {
 		if m.loadResponse != nil {
 			return m.loadResponse, nil
 		}
-		return nil, fmt.Errorf("mock tpm: Load not configured")
+		return nil, &errs.Message{Msg: "mock tpm: Load not configured"}
 
 	case tpm2.Sign:
 		if m.signError != nil {
@@ -481,7 +483,7 @@ func (m *MockTPM) handleCommand(cmd any) (any, error) {
 		if m.signResponse != nil {
 			return m.signResponse, nil
 		}
-		return nil, fmt.Errorf("mock tpm: Sign not configured")
+		return nil, &errs.Message{Msg: "mock tpm: Sign not configured"}
 
 	case tpm2.RSADecrypt:
 		if m.rsaDecryptError != nil {
@@ -490,7 +492,7 @@ func (m *MockTPM) handleCommand(cmd any) (any, error) {
 		if m.rsaDecryptResponse != nil {
 			return m.rsaDecryptResponse, nil
 		}
-		return nil, fmt.Errorf("mock tpm: RSADecrypt not configured")
+		return nil, &errs.Message{Msg: "mock tpm: RSADecrypt not configured"}
 
 	case tpm2.Unseal:
 		if m.unsealError != nil {
@@ -499,7 +501,7 @@ func (m *MockTPM) handleCommand(cmd any) (any, error) {
 		if m.unsealResponse != nil {
 			return m.unsealResponse, nil
 		}
-		return nil, fmt.Errorf("mock tpm: Unseal not configured")
+		return nil, &errs.Message{Msg: "mock tpm: Unseal not configured"}
 
 	case tpm2.ReadPublic:
 		if m.readPublicError != nil {
@@ -508,7 +510,7 @@ func (m *MockTPM) handleCommand(cmd any) (any, error) {
 		if m.readPublicResponse != nil {
 			return m.readPublicResponse, nil
 		}
-		return nil, fmt.Errorf("mock tpm: ReadPublic not configured")
+		return nil, &errs.Message{Msg: "mock tpm: ReadPublic not configured"}
 
 	case tpm2.FlushContext:
 		return &tpm2.FlushContextResponse{}, m.flushContextError
@@ -520,7 +522,7 @@ func (m *MockTPM) handleCommand(cmd any) (any, error) {
 		return &tpm2.EvictControlResponse{}, nil
 
 	default:
-		return nil, fmt.Errorf("mock tpm: unsupported command type: %T", cmd)
+		return nil, &errs.Message{Msg: fmt.Sprintf("mock tpm: unsupported command type: %T", cmd)}
 	}
 }
 
@@ -529,7 +531,7 @@ func (m *MockTPM) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	if m.GenerateSymmetricKeyFunc != nil {
 		return m.GenerateSymmetricKeyFunc(attrs)
 	}
-	return nil, fmt.Errorf("mock tpm: GenerateSymmetricKey not configured")
+	return nil, &errs.Message{Msg: "mock tpm: GenerateSymmetricKey not configured"}
 }
 
 // GetSymmetricKey mocks the symmetric key retrieval operation.
@@ -537,7 +539,7 @@ func (m *MockTPM) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 	if m.GetSymmetricKeyFunc != nil {
 		return m.GetSymmetricKeyFunc(attrs)
 	}
-	return nil, fmt.Errorf("mock tpm: GetSymmetricKey not configured")
+	return nil, &errs.Message{Msg: "mock tpm: GetSymmetricKey not configured"}
 }
 
 // SymmetricEncrypter mocks the symmetric encrypter creation operation.
@@ -545,7 +547,7 @@ func (m *MockTPM) SymmetricEncrypter(attrs *types.KeyAttributes) (types.Symmetri
 	if m.SymmetricEncrypterFunc != nil {
 		return m.SymmetricEncrypterFunc(attrs)
 	}
-	return nil, fmt.Errorf("mock tpm: SymmetricEncrypter not configured")
+	return nil, &errs.Message{Msg: "mock tpm: SymmetricEncrypter not configured"}
 }
 
 // Close closes the TPM connection.

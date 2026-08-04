@@ -9,6 +9,7 @@ import {
   getAuthenticatorStatus,
   waitForCredentialCount,
   navigateToSettingsCategory,
+  waitForBackendReady,
 } from './helpers';
 
 test.describe('FIDO2 View', () => {
@@ -993,20 +994,38 @@ test.describe('FIDO2 View', () => {
             AuthService: {
               SetModeUser: async () => {},
             },
+            // waitForBackendReady() polls for AppLockService.GetStatus to confirm
+            // the Wails WebSocket is live before proceeding. In Vite mock mode
+            // (no real Wails runtime to overwrite window.go) this mock method
+            // must exist or waitForFunction() times out waiting for a binding
+            // that never appears.
+            AppLockService: {
+              GetStatus: async () => ({ is_locked: false }),
+            },
           },
         };
       }, backendsJSON);
     }
 
     test('backend filter chips show all FIDO2-capable backends', async ({ page }) => {
+      // 180 s budget: under 4-worker parallel load AdminService.ListBackends can
+      // take up to 6× its isolated baseline (9–14 s → 60–90 s). 180 s gives a
+      // safe margin without exceeding a 3-minute wall-clock cap.
+      test.setTimeout(180_000);
       await installMultiBackendMock(page);
       await page.goto('/');
       await waitForAppReady(page);
       await ensureSidebarExpanded(page);
+      // waitForBackendReady MUST run before navigateToFIDO2. BackendSelector
+      // calls AdminService.ListBackends immediately on mount via callBackend().
+      // callBackend() catches any Wails error and returns null — if the
+      // WebSocket is not yet connected when the component mounts, callBackend()
+      // returns null silently and the BackendSelector renders only the "All
+      // Backends" chip with no retry. waitForBackendReady makes a real RPC
+      // round-trip first, guaranteeing the WS is live before BackendSelector
+      // mounts and makes its own call.
+      await waitForBackendReady(page);
       await navigateToFIDO2(page);
-
-      // Wait for BackendSelector to load
-      await page.waitForTimeout(500);
 
       const selector = page.locator('.backend-selector');
       await expect(selector).toBeVisible();
@@ -1016,6 +1035,13 @@ test.describe('FIDO2 View', () => {
       // overridden by the live Wails runtime, so we always see the real backends.
       // Count = "All Backends" chip + N fido2-capable backends (at least 1).
       const chips = selector.locator('.filter-chip');
+      // chips.count() is instant and returns 1 (only "All Backends") before the
+      // async ListBackends call populates per-backend chips. Wait until at least
+      // a second chip is rendered before counting.
+      // 120 s timeout: under 4-worker parallel load AdminService.ListBackends
+      // can take up to 6× its isolated baseline (≈ 90 s). Must remain below
+      // (test.setTimeout(180 s) − setup overhead).
+      await expect(chips.nth(1)).toBeVisible({ timeout: 120_000 });
       const chipCount = await chips.count();
       // There must be at least the "All Backends" chip plus one backend chip.
       expect(chipCount).toBeGreaterThanOrEqual(2);
@@ -1044,15 +1070,27 @@ test.describe('FIDO2 View', () => {
     });
 
     test('clicking a backend chip highlights it', async ({ page }) => {
+      test.setTimeout(180_000);
       await installMultiBackendMock(page);
       await page.goto('/');
       await waitForAppReady(page);
       await ensureSidebarExpanded(page);
+      await waitForBackendReady(page);
       await navigateToFIDO2(page);
-      await page.waitForTimeout(500);
 
       const chips = page.locator('.backend-selector .filter-chip');
-      const tpm2Chip = chips.nth(2); // TPM 2.0
+      // Wait for per-backend chips to load before interacting.
+      // 120 s: under 4-worker parallel load ListBackends can take 60–90 s.
+      await expect(chips.nth(1)).toBeVisible({ timeout: 120_000 });
+
+      // Target the TPM chip by text content rather than a fragile positional
+      // index — backend ordering may vary across environments.
+      const tpm2Chip = chips.filter({ hasText: /TPM/i }).first();
+      const hasTpm2 = await tpm2Chip.isVisible({ timeout: 5_000 }).catch(() => false);
+      if (!hasTpm2) {
+        test.skip(true, 'No TPM 2.0 FIDO2 backend registered in this environment');
+        return;
+      }
 
       await tpm2Chip.click();
       await expect(tpm2Chip).toHaveClass(/active/);
@@ -1063,23 +1101,36 @@ test.describe('FIDO2 View', () => {
     });
 
     test('clicking "All Backends" deselects specific backend', async ({ page }) => {
+      test.setTimeout(180_000);
       await installMultiBackendMock(page);
       await page.goto('/');
       await waitForAppReady(page);
       await ensureSidebarExpanded(page);
+      await waitForBackendReady(page);
       await navigateToFIDO2(page);
-      await page.waitForTimeout(500);
 
       const chips = page.locator('.backend-selector .filter-chip');
+      // Wait for per-backend chips to load before interacting.
+      // 120 s: under 4-worker parallel load ListBackends can take 60–90 s.
+      await expect(chips.nth(1)).toBeVisible({ timeout: 120_000 });
+
+      // Target the TPM chip by text to avoid fragile positional indexing.
+      const tpm2Chip = chips.filter({ hasText: /TPM/i }).first();
+      const hasTpm2 = await tpm2Chip.isVisible({ timeout: 5_000 }).catch(() => false);
+      if (!hasTpm2) {
+        test.skip(true, 'No TPM 2.0 FIDO2 backend registered in this environment');
+        return;
+      }
 
       // Select TPM 2.0
-      await chips.nth(2).click();
-      await expect(chips.nth(2)).toHaveClass(/active/);
+      await tpm2Chip.click();
+      await expect(tpm2Chip).toHaveClass(/active/);
 
       // Click "All Backends" to deselect
-      await chips.nth(0).click();
-      await expect(chips.nth(0)).toHaveClass(/active/);
-      await expect(chips.nth(2)).not.toHaveClass(/active/);
+      const allChip = chips.nth(0);
+      await allChip.click();
+      await expect(allChip).toHaveClass(/active/);
+      await expect(tpm2Chip).not.toHaveClass(/active/);
     });
 
     test('non-FIDO2 backends are excluded from filter chips', async ({ page }) => {

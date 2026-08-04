@@ -105,7 +105,7 @@ func NewBrowserService(configPath string, logger *slog.Logger) (*BrowserService,
 	if configPath == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrBrowserConfigLoad, err)
+			return nil, &SentinelCauseError{Sentinel: ErrBrowserConfigLoad, Cause: err}
 		}
 		configPath = filepath.Join(home, ".xkey", "config", "browser.json")
 	}
@@ -125,7 +125,7 @@ func NewBrowserService(configPath string, logger *slog.Logger) (*BrowserService,
 	if err := svc.loadConfig(); err != nil {
 		// If the file does not exist, use defaults silently.
 		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %w", ErrBrowserConfigLoad, err)
+			return nil, &SentinelCauseError{Sentinel: ErrBrowserConfigLoad, Cause: err}
 		}
 		svc.logger.Debug("no browser config found, using defaults", "path", configPath)
 	}
@@ -260,7 +260,7 @@ func (s *BrowserService) openCustomCommand(ctx context.Context, command, url str
 			"url", url,
 			"error", err,
 		)
-		return fmt.Errorf("%w: %w", ErrBrowserLaunchFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBrowserLaunchFailed, Cause: err}
 	}
 
 	return nil
@@ -282,7 +282,7 @@ func (s *BrowserService) openSystemBrowser(ctx context.Context, url string) erro
 		name = "rundll32"
 		args = []string{"url.dll,FileProtocolHandler", url}
 	default:
-		return fmt.Errorf("%w: unsupported platform %s", ErrBrowserLaunchFailed, runtime.GOOS)
+		return &DetailError{Err: ErrBrowserLaunchFailed, Detail: fmt.Sprintf(": unsupported platform %s", runtime.GOOS)}
 	}
 
 	cmd := s.execCommand(ctx, name, args...)
@@ -293,7 +293,7 @@ func (s *BrowserService) openSystemBrowser(ctx context.Context, url string) erro
 			"url", url,
 			"error", err,
 		)
-		return fmt.Errorf("%w: %w", ErrBrowserLaunchFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBrowserLaunchFailed, Cause: err}
 	}
 
 	return nil
@@ -309,7 +309,7 @@ func (s *BrowserService) openBrowserBinary(ctx context.Context, binary, url stri
 			"url", url,
 			"error", err,
 		)
-		return fmt.Errorf("%w: %w", ErrBrowserLaunchFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBrowserLaunchFailed, Cause: err}
 	}
 
 	return nil
@@ -374,16 +374,16 @@ func (s *BrowserService) loadConfig() error {
 func (s *BrowserService) saveConfig(config BrowserConfig) error {
 	dir := filepath.Dir(s.configPath)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("%w: %w", ErrBrowserConfigSave, err)
+		return &SentinelCauseError{Sentinel: ErrBrowserConfigSave, Cause: err}
 	}
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrBrowserConfigSave, err)
+		return &SentinelCauseError{Sentinel: ErrBrowserConfigSave, Cause: err}
 	}
 
 	if err := os.WriteFile(s.configPath, data, 0o600); err != nil {
-		return fmt.Errorf("%w: %w", ErrBrowserConfigSave, err)
+		return &SentinelCauseError{Sentinel: ErrBrowserConfigSave, Cause: err}
 	}
 
 	return nil

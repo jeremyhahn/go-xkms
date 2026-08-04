@@ -15,10 +15,15 @@ package server
 
 import (
 	"fmt"
+	"path/filepath"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
 // buildXKMSQRDBConfig translates the xkms configuration into the qrdb node
@@ -54,10 +59,38 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 		{Name: "default", Engine: "mvcc", Backend: innerBackend},
 	}
 
-	// The node carries no barrier of its own; xkms's StorageBarrier is the
-	// single barrier (see initializeBarrier). Leaving Seal.Enabled false lets
-	// the node boot fully so node.Client() is immediately available.
-	qcfg.Seal.Enabled = false
+	// Barrier: when the flip is engaged (resolveNodeSeal set nodeSealEnabled —
+	// Storage.Backend=="qrdb" + Barrier.Enabled + auto-unseal creds), the node's
+	// OWN barrier encrypts the data-plane KV (encfs) and auto-unseals at
+	// construction, so node.Client() is immediately available and every backend
+	// key store is encrypted at rest. Otherwise Seal stays disabled and xkms's
+	// own StorageBarrier (initializeBarrier) is the barrier — identical to the
+	// prior behavior.
+	if s.nodeSealEnabled {
+		qcfg.Seal.Enabled = true
+		if s.config.Barrier.SealStrategy() == "none" {
+			qcfg.Seal.Strategy = "none"
+		} else {
+			// passphrase native, or hardware injected via WithSealStrategy (the
+			// node consults the injected strategy only for a non-shamir/non-none
+			// Strategy, so leave it at the passphrase default).
+			qcfg.Seal.Strategy = "passphrase"
+		}
+		if s.config.Barrier.RootKeyPath != "" {
+			qcfg.Seal.RootKeyPath = s.config.Barrier.RootKeyPath
+		}
+		// Provision a default volume pool so dedicated-isolation tenants draw
+		// per-tenant Pebble storage from the node's own registry (replacing
+		// xkms's buildVolumePool).
+		if s.config.Storage.Path != "" && len(qcfg.Storage.VolumePools) == 0 {
+			qcfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{{
+				Name:  "default",
+				Paths: []string{filepath.Join(s.config.Storage.Path, "tenant-volumes")},
+			}}
+		}
+	} else {
+		qcfg.Seal.Enabled = false
+	}
 
 	// Map cluster configuration onto the qrdb Raft config. These fields are
 	// consumed only by the clustered node path (built with -tags raft); for a
@@ -143,6 +176,29 @@ func (s *Server) initEmbeddedQRDBNode() error {
 		qrdbsdk.WithFactorRegistry(s.factorRegistry),
 	}
 
+	// Node-barrier flip: feed the resolved seal material so the node builds and
+	// auto-unseals its own barrier (encrypting the data-plane KV), and owns the
+	// barrier registry + tenant service. Mirrors go-quicbaas's embedded-node
+	// seal wiring so both products drive the identical shared mechanism.
+	if s.nodeSealEnabled {
+		if s.nodeSealStrategy != nil {
+			nodeOpts = append(nodeOpts, qrdbnode.WithSealStrategy(s.nodeSealStrategy))
+			// The per-tenant StrategyRegistry lets a tenant barrier be sealed
+			// with the same hardware strategy the system barrier uses.
+			if hwReg, regErr := seal.NewHardwareStrategyRegistry(s.nodeSealStrategy); regErr == nil {
+				serverOpts = append(serverOpts, qrdbsdk.WithStrategyRegistry(hwReg))
+			} else {
+				s.logger.Warn("node barrier: could not build hardware strategy registry", "error", regErr)
+			}
+		}
+		if len(s.nodeSealPassphrase) > 0 {
+			nodeOpts = append(nodeOpts, qrdbnode.WithSealPassphrase(s.nodeSealPassphrase))
+		}
+		// Enable per-tenant isolation on the node so it builds the volume pool +
+		// tenant service and restores dedicated-isolation tenants itself.
+		nodeOpts = append(nodeOpts, qrdbnode.WithTenantIsolation())
+	}
+
 	// newQRDBNode is build-tag specific: the default (!raft) build hosts a
 	// standalone node; the -tags raft build hosts a clustered node when
 	// Cluster.Enabled, falling back to standalone otherwise.
@@ -152,6 +208,29 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	}
 
 	s.qrdbNode = node
+
+	// Node-barrier flip: adopt the node's barrier + registry + tenant service as
+	// xkms's own, replacing the hand-rolled barrier subsystem (initializeBarrier
+	// / initializeBarrierRegistry / buildVolumePool skip themselves when
+	// nodeSealEnabled). We gated on auto-unseal credentials, so the node must be
+	// unsealed here; if it is not, the supplied credentials did not unlock it
+	// (wrong passphrase or a TPM PCR mismatch) — fail closed rather than proceed
+	// with a nil client.
+	if s.nodeSealEnabled {
+		if node.IsSealed() {
+			return &QRDBNodeError{Stage: "node barrier auto-unseal", Err: &NodeSealError{
+				Reason: "barrier did not auto-unseal with the supplied credentials (check the passphrase or TPM PCR state)"}}
+		}
+		if inner := node.BarrierRegistry(); inner != nil {
+			s.barrier = inner.SystemBarrier()
+			s.barrierRegistry = seal.WrapBarrierRegistry(inner, s.barrier)
+		}
+		if svcNode := node.Services(); svcNode != nil {
+			s.tenantService = svcNode.Tenant
+		}
+		s.logger.Info("adopted the qrdb node barrier (single barrier; data plane encrypted at rest)")
+	}
+
 	s.qrdbClient = node.Client()
 	s.logger.Info("qrdb engine started in-process",
 		"data_dir", qcfg.Raft.DataDir, "clustered", s.config.Cluster.Enabled)
@@ -188,7 +267,7 @@ func (s *Server) waitForClusterLeader() error {
 		if time.Now().After(deadline) {
 			return &QRDBNodeError{
 				Stage: "await cluster leader",
-				Err:   fmt.Errorf("no leader elected for shard %d within %s", shardID, timeout),
+				Err:   &errs.Message{Msg: fmt.Sprintf("no leader elected for shard %d within %s", shardID, timeout)},
 			}
 		}
 		select {
@@ -218,6 +297,16 @@ func (s *Server) stopQRDBNode() error {
 	if sink != nil {
 		if err := sink.Close(); err != nil {
 			return &QRDBNodeError{Stage: "close audit sink", Err: err}
+		}
+	}
+	// Release the single autodetect TPM open LAST, after the node (whose barrier
+	// seal strategy used it) and the tpm2 backend (which shared the connection)
+	// are both closed. externalTPM kept those from closing it early.
+	if s.nodeSealClose != nil {
+		closeFn := s.nodeSealClose
+		s.nodeSealClose = nil
+		if err := closeFn(); err != nil {
+			s.logger.Warn("node barrier: failed to close the shared TPM open", "error", err)
 		}
 	}
 	return nil

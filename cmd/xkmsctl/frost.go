@@ -189,7 +189,7 @@ Examples:
 
 		// Validate
 		if len(participants) > 0 && len(participants) != total {
-			handleError(fmt.Errorf("number of participants (%d) must match total (%d)", len(participants), total))
+			handleError(&ParticipantCountError{Count: len(participants), Total: total})
 			return
 		}
 
@@ -197,7 +197,7 @@ Examples:
 		isDealerMode := exportDir != "" || participantID == 0
 
 		if isDealerMode && exportDir == "" {
-			handleError(fmt.Errorf("dealer mode requires --export-dir to specify where to save packages"))
+			handleError(ErrDealerModeExportDirRequired)
 			return
 		}
 
@@ -215,14 +215,14 @@ Examples:
 
 		packages, pubPkg, err := td.Generate(frostConfig)
 		if err != nil {
-			handleError(fmt.Errorf("failed to generate FROST packages: %w", err))
+			handleError(&WrappedError{Sentinel: ErrGenerateFROSTPackagesFailed, Err: err})
 			return
 		}
 
 		if isDealerMode {
 			// Dealer mode: export all packages to files
 			if err := os.MkdirAll(exportDir, 0700); err != nil {
-				handleError(fmt.Errorf("failed to create export directory: %w", err))
+				handleError(&WrappedError{Sentinel: ErrCreateExportDirectoryFailed, Err: err})
 				return
 			}
 
@@ -261,12 +261,12 @@ Examples:
 
 				data, err := json.MarshalIndent(export, "", "  ")
 				if err != nil {
-					handleError(fmt.Errorf("failed to marshal package: %w", err))
+					handleError(&WrappedError{Sentinel: ErrMarshalPackageFailed, Err: err})
 					return
 				}
 
 				if err := os.WriteFile(filePath, data, 0600); err != nil {
-					handleError(fmt.Errorf("failed to write package file: %w", err))
+					handleError(&WrappedError{Sentinel: ErrWritePackageFileFailed, Err: err})
 					return
 				}
 
@@ -293,7 +293,7 @@ Examples:
 		} else {
 			// Participant mode: store this participant's package locally
 			if participantID < 1 || int(participantID) > total {
-				handleError(fmt.Errorf("participant-id must be between 1 and %d", total))
+				handleError(&ParticipantIDRangeError{Total: total})
 				return
 			}
 
@@ -306,14 +306,14 @@ Examples:
 				}
 			}
 			if myPackage == nil {
-				handleError(fmt.Errorf("package for participant %d not found", participantID))
+				handleError(&ParticipantPackageNotFoundError{ID: participantID})
 				return
 			}
 
 			// Create backend and store
 			be, err := createFrostBackend(cfg, client.FrostAlgorithm(algorithm), participantID, threshold, total, participants)
 			if err != nil {
-				handleError(fmt.Errorf("failed to create FROST backend: %w", err))
+				handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 				return
 			}
 			defer func() { _ = be.Close() }()
@@ -334,7 +334,7 @@ Examples:
 
 			key, err := be.GenerateKey(cmd.Context(), attrs)
 			if err != nil {
-				handleError(fmt.Errorf("failed to generate FROST key: %w", err))
+				handleError(&WrappedError{Sentinel: ErrGenerateFROSTKeyFailed, Err: err})
 				return
 			}
 
@@ -380,13 +380,13 @@ Example:
 		// Read package file
 		data, err := os.ReadFile(packagePath)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read package file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrReadPackageFileFailed, Err: err})
 			return
 		}
 
 		var pkg KeyPackageExport
 		if err := json.Unmarshal(data, &pkg); err != nil {
-			handleError(fmt.Errorf("failed to parse package file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrParsePackageFileFailed, Err: err})
 			return
 		}
 
@@ -396,13 +396,13 @@ Example:
 		// Decode hex values
 		secretShare, err := hex.DecodeString(pkg.SecretShare)
 		if err != nil {
-			handleError(fmt.Errorf("failed to decode secret share: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDecodeSecretShareFailed, Err: err})
 			return
 		}
 
 		groupPublicKey, err := hex.DecodeString(pkg.GroupPublicKey)
 		if err != nil {
-			handleError(fmt.Errorf("failed to decode group public key: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDecodeGroupPublicKeyFailed, Err: err})
 			return
 		}
 
@@ -410,7 +410,7 @@ Example:
 		for id, vsHex := range pkg.VerificationShares {
 			vs, err := hex.DecodeString(vsHex)
 			if err != nil {
-				handleError(fmt.Errorf("failed to decode verification share %d: %w", id, err))
+				handleError(&VerificationShareDecodeError{ID: id, Err: err})
 				return
 			}
 			verificationShares[id] = vs
@@ -419,25 +419,25 @@ Example:
 		// Create storage backends
 		publicDir := filepath.Join(cfg.KeyDir, "frost", "public")
 		if err := os.MkdirAll(publicDir, 0755); err != nil {
-			handleError(fmt.Errorf("failed to create public directory: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreatePublicDirectoryFailed, Err: err})
 			return
 		}
 
 		secretDir := filepath.Join(cfg.KeyDir, "frost", "secrets")
 		if err := os.MkdirAll(secretDir, 0700); err != nil {
-			handleError(fmt.Errorf("failed to create secret directory: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateSecretDirectoryFailed, Err: err})
 			return
 		}
 
 		publicStorage, err := client.NewFileStorageBackend(publicDir)
 		if err != nil {
-			handleError(fmt.Errorf("failed to create public storage: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreatePublicStorageFailed, Err: err})
 			return
 		}
 
 		secretStorage, err := client.NewFileStorageBackend(secretDir)
 		if err != nil {
-			handleError(fmt.Errorf("failed to create secret storage: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateSecretStorageFailed, Err: err})
 			return
 		}
 
@@ -469,7 +469,7 @@ Example:
 		}
 
 		if err := ks.StoreKeyPackage(cmd.Context(), pkg.KeyID, keyPackage, metadata); err != nil {
-			handleError(fmt.Errorf("failed to store key package: %w", err))
+			handleError(&WrappedError{Sentinel: ErrStoreKeyPackageFailed, Err: err})
 			return
 		}
 
@@ -504,14 +504,14 @@ var frostListCmd = &cobra.Command{
 
 		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
-			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = be.Close() }()
 
 		keys, err := be.ListKeys(cmd.Context())
 		if err != nil {
-			handleError(fmt.Errorf("failed to list keys: %w", err))
+			handleError(&WrappedError{Sentinel: ErrListKeysFailed, Err: err})
 			return
 		}
 
@@ -558,7 +558,7 @@ var frostInfoCmd = &cobra.Command{
 
 		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
-			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = be.Close() }()
@@ -571,7 +571,7 @@ var frostInfoCmd = &cobra.Command{
 
 		key, err := be.GetKey(cmd.Context(), attrs)
 		if err != nil {
-			handleError(fmt.Errorf("failed to get key: %w", err))
+			handleError(&WrappedError{Sentinel: ErrGetKeyFailed, Err: err})
 			return
 		}
 
@@ -617,7 +617,7 @@ var frostDeleteCmd = &cobra.Command{
 
 		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
-			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = be.Close() }()
@@ -629,7 +629,7 @@ var frostDeleteCmd = &cobra.Command{
 		}
 
 		if err := be.DeleteKey(cmd.Context(), attrs); err != nil {
-			handleError(fmt.Errorf("failed to delete key: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDeleteKeyFailed, Err: err})
 			return
 		}
 
@@ -669,7 +669,7 @@ var frostRound1Cmd = &cobra.Command{
 
 		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
-			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = be.Close() }()
@@ -677,7 +677,7 @@ var frostRound1Cmd = &cobra.Command{
 		// Generate nonces
 		noncePackage, err := be.GenerateNonces(keyID)
 		if err != nil {
-			handleError(fmt.Errorf("failed to generate nonces: %w", err))
+			handleError(&WrappedError{Sentinel: ErrGenerateNoncesFailed, Err: err})
 			return
 		}
 
@@ -690,12 +690,12 @@ var frostRound1Cmd = &cobra.Command{
 
 		commitmentData, err := json.MarshalIndent(commitmentFile, "", "  ")
 		if err != nil {
-			handleError(fmt.Errorf("failed to marshal commitment: %w", err))
+			handleError(&WrappedError{Sentinel: ErrMarshalCommitmentFailed, Err: err})
 			return
 		}
 
 		if err := os.WriteFile(outputPath, commitmentData, 0644); err != nil {
-			handleError(fmt.Errorf("failed to write commitment file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrWriteCommitmentFileFailed, Err: err})
 			return
 		}
 
@@ -709,12 +709,12 @@ var frostRound1Cmd = &cobra.Command{
 		noncePath := outputPath + ".nonces"
 		nonceData, err := json.MarshalIndent(nonceFile, "", "  ")
 		if err != nil {
-			handleError(fmt.Errorf("failed to marshal nonces: %w", err))
+			handleError(&WrappedError{Sentinel: ErrMarshalNoncesFailed, Err: err})
 			return
 		}
 
 		if err := os.WriteFile(noncePath, nonceData, 0600); err != nil {
-			handleError(fmt.Errorf("failed to write nonce file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrWriteNonceFileFailed, Err: err})
 			return
 		}
 
@@ -754,7 +754,7 @@ var frostRound2Cmd = &cobra.Command{
 
 		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
-			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = be.Close() }()
@@ -767,13 +767,13 @@ var frostRound2Cmd = &cobra.Command{
 
 		nonceData, err := os.ReadFile(noncePath)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read nonce file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrReadNonceFileFailed, Err: err})
 			return
 		}
 
 		var nonceFile NonceFile
 		if err := json.Unmarshal(nonceData, &nonceFile); err != nil {
-			handleError(fmt.Errorf("failed to parse nonce file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrParseNonceFileFailed, Err: err})
 			return
 		}
 
@@ -781,13 +781,13 @@ var frostRound2Cmd = &cobra.Command{
 		commitmentPath := strings.TrimSuffix(noncesPath, ".nonces")
 		commitmentData, err := os.ReadFile(commitmentPath)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read commitment file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrReadCommitmentFileFailed, Err: err})
 			return
 		}
 
 		var myCommitment CommitmentFile
 		if err := json.Unmarshal(commitmentData, &myCommitment); err != nil {
-			handleError(fmt.Errorf("failed to parse commitment file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrParseCommitmentFileFailed, Err: err})
 			return
 		}
 
@@ -806,13 +806,13 @@ var frostRound2Cmd = &cobra.Command{
 			cf = strings.TrimSpace(cf)
 			data, err := os.ReadFile(cf)
 			if err != nil {
-				handleError(fmt.Errorf("failed to read commitment file %s: %w", cf, err))
+				handleError(&CommitmentFileReadError{Path: cf, Err: err})
 				return
 			}
 
 			var c CommitmentFile
 			if err := json.Unmarshal(data, &c); err != nil {
-				handleError(fmt.Errorf("failed to parse commitment file %s: %w", cf, err))
+				handleError(&CommitmentFileParseError{Path: cf, Err: err})
 				return
 			}
 
@@ -825,7 +825,7 @@ var frostRound2Cmd = &cobra.Command{
 		// Generate signature share
 		share, err := be.SignRound(keyID, message, noncePackage, commitments)
 		if err != nil {
-			handleError(fmt.Errorf("failed to generate signature share: %w", err))
+			handleError(&WrappedError{Sentinel: ErrGenerateSignatureShareFailed, Err: err})
 			return
 		}
 
@@ -838,12 +838,12 @@ var frostRound2Cmd = &cobra.Command{
 
 		shareData, err := json.MarshalIndent(shareFile, "", "  ")
 		if err != nil {
-			handleError(fmt.Errorf("failed to marshal share: %w", err))
+			handleError(&WrappedError{Sentinel: ErrMarshalShareFailed, Err: err})
 			return
 		}
 
 		if err := os.WriteFile(outputPath, shareData, 0644); err != nil {
-			handleError(fmt.Errorf("failed to write share file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrShareFileWrite, Err: err})
 			return
 		}
 
@@ -891,7 +891,7 @@ var frostAggregateCmd = &cobra.Command{
 
 		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
-			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = be.Close() }()
@@ -903,13 +903,13 @@ var frostAggregateCmd = &cobra.Command{
 			cf = strings.TrimSpace(cf)
 			data, err := os.ReadFile(cf)
 			if err != nil {
-				handleError(fmt.Errorf("failed to read commitment file %s: %w", cf, err))
+				handleError(&CommitmentFileReadError{Path: cf, Err: err})
 				return
 			}
 
 			var c CommitmentFile
 			if err := json.Unmarshal(data, &c); err != nil {
-				handleError(fmt.Errorf("failed to parse commitment file %s: %w", cf, err))
+				handleError(&CommitmentFileParseError{Path: cf, Err: err})
 				return
 			}
 
@@ -926,19 +926,19 @@ var frostAggregateCmd = &cobra.Command{
 			sf = strings.TrimSpace(sf)
 			data, err := os.ReadFile(sf)
 			if err != nil {
-				handleError(fmt.Errorf("failed to read share file %s: %w", sf, err))
+				handleError(&ShareFileReadError{Path: sf, Err: err})
 				return
 			}
 
 			var s ShareFile
 			if err := json.Unmarshal(data, &s); err != nil {
-				handleError(fmt.Errorf("failed to parse share file %s: %w", sf, err))
+				handleError(&ShareFileParseError{Path: sf, Err: err})
 				return
 			}
 
 			shareBytes, err := hex.DecodeString(s.SignatureShare)
 			if err != nil {
-				handleError(fmt.Errorf("failed to decode share from %s: %w", sf, err))
+				handleError(&ShareDecodeError{Path: sf, Err: err})
 				return
 			}
 
@@ -952,14 +952,14 @@ var frostAggregateCmd = &cobra.Command{
 		// Aggregate
 		signature, err := be.Aggregate(keyID, message, commitments, shares)
 		if err != nil {
-			handleError(fmt.Errorf("failed to aggregate signatures: %w", err))
+			handleError(&WrappedError{Sentinel: ErrAggregateSignaturesFailed, Err: err})
 			return
 		}
 
 		// Verify if requested
 		if verify {
 			if err := be.Verify(keyID, message, signature); err != nil {
-				handleError(fmt.Errorf("signature verification failed: %w", err))
+				handleError(&WrappedError{Sentinel: ErrSignatureVerificationFailed, Err: err})
 				return
 			}
 			printVerbose("Signature verified successfully")
@@ -977,7 +977,7 @@ var frostAggregateCmd = &cobra.Command{
 		}
 
 		if err := os.WriteFile(outputPath, outputData, 0644); err != nil {
-			handleError(fmt.Errorf("failed to write signature file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrWriteSignatureFileFailed, Err: err})
 			return
 		}
 
@@ -1019,13 +1019,13 @@ var frostVerifyCmd = &cobra.Command{
 		if sigHex != "" {
 			signature, err = hex.DecodeString(strings.TrimPrefix(sigHex, "0x"))
 			if err != nil {
-				handleError(fmt.Errorf("invalid signature hex: %w", err))
+				handleError(&WrappedError{Sentinel: ErrInvalidSignatureHex, Err: err})
 				return
 			}
 		} else if sigFile != "" {
 			signature, err = os.ReadFile(sigFile)
 			if err != nil {
-				handleError(fmt.Errorf("failed to read signature file: %w", err))
+				handleError(&WrappedError{Sentinel: ErrReadSignatureFileFailed, Err: err})
 				return
 			}
 			// Try to detect format
@@ -1035,19 +1035,19 @@ var frostVerifyCmd = &cobra.Command{
 				signature = decoded
 			}
 		} else {
-			handleError(fmt.Errorf("either --signature or --signature-hex is required"))
+			handleError(ErrSignatureInputRequired)
 			return
 		}
 
 		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
-			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = be.Close() }()
 
 		if err := be.Verify(keyID, message, signature); err != nil {
-			handleError(fmt.Errorf("signature verification FAILED: %w", err))
+			handleError(&WrappedError{Sentinel: ErrFROSTVerifyFailed, Err: err})
 			return
 		}
 
@@ -1076,7 +1076,7 @@ func getMessage(cmd *cobra.Command) ([]byte, error) {
 	if msgFile != "" {
 		data, err := os.ReadFile(msgFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read message file: %w", err)
+			return nil, &WrappedError{Sentinel: ErrReadMessageFileFailed, Err: err}
 		}
 		// Hash file contents for signing
 		hash := sha256.Sum256(data)
@@ -1086,12 +1086,12 @@ func getMessage(cmd *cobra.Command) ([]byte, error) {
 	if msgHex != "" {
 		data, err := hex.DecodeString(strings.TrimPrefix(msgHex, "0x"))
 		if err != nil {
-			return nil, fmt.Errorf("invalid message hex: %w", err)
+			return nil, &WrappedError{Sentinel: ErrInvalidMessageHex, Err: err}
 		}
 		return data, nil
 	}
 
-	return nil, fmt.Errorf("one of --message, --message-file, or --message-hex is required")
+	return nil, ErrMessageInputRequired
 }
 
 // truncateMessage truncates a message for display
@@ -1107,23 +1107,23 @@ func createFrostBackend(cfg *Config, algorithm client.FrostAlgorithm, participan
 	// Create public storage
 	publicDir := filepath.Join(cfg.KeyDir, "frost", "public")
 	if err := os.MkdirAll(publicDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create public directory: %w", err)
+		return nil, &WrappedError{Sentinel: ErrCreatePublicDirectoryFailed, Err: err}
 	}
 
 	publicStorage, err := client.NewFileStorageBackend(publicDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create public storage: %w", err)
+		return nil, &WrappedError{Sentinel: ErrCreatePublicStorageFailed, Err: err}
 	}
 
 	// Create secret storage (using pkcs8 backend for secret shares)
 	secretDir := filepath.Join(cfg.KeyDir, "frost", "secrets")
 	if err := os.MkdirAll(secretDir, 0700); err != nil {
-		return nil, fmt.Errorf("failed to create secret directory: %w", err)
+		return nil, &WrappedError{Sentinel: ErrCreateSecretDirectoryFailed, Err: err}
 	}
 
 	secretStorage, err := client.NewFileStorageBackend(secretDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create secret storage: %w", err)
+		return nil, &WrappedError{Sentinel: ErrCreateSecretStorageFailed, Err: err}
 	}
 
 	// Create a simple file-based secret backend
@@ -1175,7 +1175,7 @@ func (b *fileSecretBackend) GenerateKey(ctx context.Context, attrs *client.KeyAt
 		if len(data) > 0 {
 			path := "frost/secrets/" + attrs.CN + ".secret"
 			if err := b.storage.Put(ctx, path, data); err != nil {
-				return nil, fmt.Errorf("failed to store secret: %w", err)
+				return nil, &WrappedError{Sentinel: ErrStoreSecretFailed, Err: err}
 			}
 		}
 		return nil, nil
@@ -1188,7 +1188,7 @@ func (b *fileSecretBackend) GetKey(ctx context.Context, attrs *client.KeyAttribu
 	path := "frost/secrets/" + attrs.CN + ".secret"
 	data, err := b.storage.Get(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get secret: %w", err)
+		return nil, &WrappedError{Sentinel: ErrGetSecretFailed, Err: err}
 	}
 
 	// Return the raw bytes as the "private key"
@@ -1206,11 +1206,11 @@ func (b *fileSecretBackend) ListKeys(ctx context.Context) ([]*client.KeyAttribut
 }
 
 func (b *fileSecretBackend) Signer(ctx context.Context, attrs *client.KeyAttributes) (crypto.Signer, error) {
-	return nil, fmt.Errorf("not implemented for file secret backend")
+	return nil, ErrFileSecretBackendUnsupported
 }
 
 func (b *fileSecretBackend) Decrypter(ctx context.Context, attrs *client.KeyAttributes) (crypto.Decrypter, error) {
-	return nil, fmt.Errorf("not implemented for file secret backend")
+	return nil, ErrFileSecretBackendUnsupported
 }
 
 func (b *fileSecretBackend) RotateKey(ctx context.Context, attrs *client.KeyAttributes) error {

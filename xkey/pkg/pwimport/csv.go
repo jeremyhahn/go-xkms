@@ -15,7 +15,6 @@ package pwimport
 
 import (
 	"encoding/csv"
-	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -52,7 +51,7 @@ func (p *CSVParser) Format() string {
 func (p *CSVParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidFile, err)
+		return nil, &SentinelCauseError{Sentinel: ErrInvalidFile, Cause: err}
 	}
 	defer func() { _ = file.Close() }()
 
@@ -62,7 +61,7 @@ func (p *CSVParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry,
 
 	records, err := reader.ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrParseError, err)
+		return nil, &SentinelCauseError{Sentinel: ErrParseError, Cause: err}
 	}
 
 	if len(records) < 2 {
@@ -137,12 +136,12 @@ func (p *CSVParser) parseHeader(header []string) (*csvColumnIndex, error) {
 
 	// Password is required.
 	if idx.Password == -1 {
-		return nil, fmt.Errorf("%w: missing password column", ErrInvalidCSVHeader)
+		return nil, &DetailError{Err: ErrInvalidCSVHeader, Detail: ": missing password column"}
 	}
 
 	// At least one identifier (title or username) is required.
 	if idx.Title == -1 && idx.Username == -1 {
-		return nil, fmt.Errorf("%w: missing title or username column", ErrInvalidCSVHeader)
+		return nil, &DetailError{Err: ErrInvalidCSVHeader, Detail: ": missing title or username column"}
 	}
 
 	return idx, nil

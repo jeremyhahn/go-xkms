@@ -16,7 +16,7 @@
 package vault
 
 import (
-	"fmt"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -54,19 +54,19 @@ type Config struct {
 // Validate checks if the configuration is valid.
 func (c *Config) Validate() error {
 	if c.Address == "" {
-		return fmt.Errorf("vault address is required")
+		return &errs.Message{Msg: "vault address is required"}
 	}
 	if c.Token == "" {
-		return fmt.Errorf("vault token is required")
+		return &errs.Message{Msg: "vault token is required"}
 	}
 	if c.TransitPath == "" {
 		c.TransitPath = "transit"
 	}
 	if c.KeyStorage == nil {
-		return fmt.Errorf("key storage is required")
+		return &errs.Message{Msg: "key storage is required"}
 	}
 	if c.CertStorage == nil {
-		return fmt.Errorf("certificate storage is required")
+		return &errs.Message{Msg: "certificate storage is required"}
 	}
 	return nil
 }

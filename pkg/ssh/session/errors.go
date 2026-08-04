@@ -109,6 +109,38 @@ func (e *SessionError) Error() string {
 // Unwrap returns the underlying error.
 func (e *SessionError) Unwrap() error { return e.Err }
 
+// UploadError is returned when streaming an upload fails before the
+// remote command completes — for example, the local reader errored mid
+// stream or the stdin pipe could not be flushed. A non-zero remote exit
+// surfaces a CommandError instead; a cancelled context surfaces a
+// TimeoutError.
+type UploadError struct {
+	Path string
+	Err  error
+}
+
+// Error implements the error interface.
+func (e *UploadError) Error() string {
+	return "ssh/session: upload to " + e.Path + ": " + e.Err.Error()
+}
+
+// Unwrap returns the underlying error.
+func (e *UploadError) Unwrap() error { return e.Err }
+
+// UnsafePathError is returned when a remote path cannot be safely embedded
+// in a single-quoted remote shell argument (e.g., it contains a
+// single-quote character). Upload fails closed rather than attempt fragile
+// escaping.
+type UnsafePathError struct {
+	Path   string
+	Reason string
+}
+
+// Error implements the error interface.
+func (e *UnsafePathError) Error() string {
+	return "ssh/session: unsafe remote path " + e.Path + ": " + e.Reason
+}
+
 // ClosedError is returned by Session methods called after Close has
 // completed.
 type ClosedError struct{}

@@ -33,12 +33,13 @@ const (
 	// for biometric verification on the phone.
 	DefaultUSBOperationTimeout = 60 * time.Second
 
-	// MaxUSBMessageSize is the maximum message payload size (1 MB),
-	// matching the Android UsbAccessoryServer framing.
-	MaxUSBMessageSize = 1024 * 1024
+	// MaxUSBMessageSize is the maximum message payload size (65535 bytes),
+	// matching the Noise protocol maximum message size (flynn/noise MaxMsgLen)
+	// and the Android UsbAccessoryServer framing.
+	MaxUSBMessageSize = 65535
 
-	// usbFrameHeaderSize is the size of the 4-byte big-endian length prefix.
-	usbFrameHeaderSize = 4
+	// usbFrameHeaderSize is the size of the 2-byte big-endian length prefix.
+	usbFrameHeaderSize = 2
 
 	// usbBulkTransferSize is the maximum size for a single USB bulk transfer.
 	usbBulkTransferSize = 16384
@@ -215,7 +216,7 @@ func (t *USBTransport) findAOADevice(usbCtx *gousb.Context) (*gousb.Device, erro
 	}
 
 	if len(devs) == 0 {
-		return nil, fmt.Errorf("no AOA device found")
+		return nil, &MessageError{Msg: "no AOA device found"}
 	}
 
 	// Use the first matching device, close extras.
@@ -234,7 +235,7 @@ func (t *USBTransport) switchToAOA(usbCtx *gousb.Context) error {
 		return true // Open all devices, filter below
 	})
 	if err != nil {
-		return fmt.Errorf("failed to enumerate USB devices: %w", err)
+		return &WrappedError{Msg: "failed to enumerate USB devices", Err: err}
 	}
 
 	defer func() {
@@ -279,7 +280,7 @@ func (t *USBTransport) switchToAOA(usbCtx *gousb.Context) error {
 				AOARequestSendString, 0, s.index, data,
 			)
 			if err != nil {
-				return fmt.Errorf("failed to send AOA string %d: %w", s.index, err)
+				return &WrappedError{Msg: fmt.Sprintf("failed to send AOA string %d", s.index), Err: err}
 			}
 		}
 
@@ -289,7 +290,7 @@ func (t *USBTransport) switchToAOA(usbCtx *gousb.Context) error {
 			AOARequestStart, 0, 0, nil,
 		)
 		if err != nil {
-			return fmt.Errorf("failed to start AOA mode: %w", err)
+			return &WrappedError{Msg: "failed to start AOA mode", Err: err}
 		}
 
 		t.log.Info("AOA switchover initiated")
@@ -319,9 +320,9 @@ func (t *USBTransport) Send(ctx context.Context, message []byte) error {
 		return ErrNotConnected
 	}
 
-	// Build the framed message: [4-byte big-endian length][payload]
+	// Build the framed message: [2-byte big-endian length][payload]
 	frame := make([]byte, usbFrameHeaderSize+len(message))
-	binary.BigEndian.PutUint32(frame[:usbFrameHeaderSize], uint32(len(message)))
+	binary.BigEndian.PutUint16(frame[:usbFrameHeaderSize], uint16(len(message)))
 	copy(frame[usbFrameHeaderSize:], message)
 
 	// Write in chunks matching bulk transfer size.
@@ -359,19 +360,15 @@ func (t *USBTransport) Receive(ctx context.Context) ([]byte, error) {
 		return nil, ErrNotConnected
 	}
 
-	// Read the 4-byte length header.
+	// Read the 2-byte length header.
 	header := make([]byte, usbFrameHeaderSize)
 	if err := t.readFull(ctx, inEP, header); err != nil {
 		return nil, err
 	}
 
-	length := binary.BigEndian.Uint32(header)
+	length := binary.BigEndian.Uint16(header)
 	if length == 0 {
 		return []byte{}, nil
-	}
-	if length > MaxUSBMessageSize {
-		t.log.Error("USB message too large", "size", length)
-		return nil, ErrProtocolError
 	}
 
 	// Read the payload.

@@ -20,13 +20,14 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -287,7 +288,7 @@ func (s *TrustService) ImportCertificateFile() (int, error) {
 	}
 	if s.ctx == nil {
 		s.log.Error("ImportCertificateFile: Wails context not set; cannot open file dialog")
-		return 0, fmt.Errorf("trust: Wails context not initialized")
+		return 0, &MessageError{Msg: "trust: Wails context not initialized"}
 	}
 
 	s.log.Debug("ImportCertificateFile: opening native file dialog")
@@ -300,7 +301,7 @@ func (s *TrustService) ImportCertificateFile() (int, error) {
 	})
 	if err != nil {
 		s.log.Error("ImportCertificateFile: OpenFileDialog failed", "error", err)
-		return 0, fmt.Errorf("open file dialog: %w", err)
+		return 0, &WrappedError{Msg: "open file dialog", Err: err}
 	}
 
 	// User cancelled the dialog.
@@ -313,7 +314,7 @@ func (s *TrustService) ImportCertificateFile() (int, error) {
 	data, err := os.ReadFile(filePath) // #nosec G304 -- user-selected file via native dialog
 	if err != nil {
 		s.log.Error("ImportCertificateFile: file read failed", "path", filePath, "error", err)
-		return 0, fmt.Errorf("read %s: %w", filePath, err)
+		return 0, &WrappedError{Msg: fmt.Sprintf("read %s", filePath), Err: err}
 	}
 
 	// Detect PEM vs DER by checking for the PEM header.
@@ -321,7 +322,7 @@ func (s *TrustService) ImportCertificateFile() (int, error) {
 		n, addErr := s.store.AddPEM(data)
 		if addErr != nil {
 			s.log.Error("ImportCertificateFile: AddPEM failed", "path", filePath, "error", addErr)
-			return 0, fmt.Errorf("parse PEM from %s: %w", filePath, addErr)
+			return 0, &WrappedError{Msg: fmt.Sprintf("parse PEM from %s", filePath), Err: addErr}
 		}
 		if n > 0 {
 			s.notifyMutate()
@@ -333,12 +334,12 @@ func (s *TrustService) ImportCertificateFile() (int, error) {
 	cert, err := x509.ParseCertificate(data)
 	if err != nil {
 		s.log.Error("ImportCertificateFile: DER parse failed", "path", filePath, "error", err)
-		return 0, fmt.Errorf("parse DER from %s: %w", filePath, err)
+		return 0, &WrappedError{Msg: fmt.Sprintf("parse DER from %s", filePath), Err: err}
 	}
 
 	if err := s.store.AddCertificate(cert); err != nil {
 		s.log.Error("ImportCertificateFile: AddCertificate failed", "path", filePath, "error", err)
-		return 0, fmt.Errorf("add certificate from %s: %w", filePath, err)
+		return 0, &WrappedError{Msg: fmt.Sprintf("add certificate from %s", filePath), Err: err}
 	}
 	s.notifyMutate()
 	return 1, nil
@@ -405,7 +406,7 @@ func (s *TrustService) ImportFromTrustStrap(req TrustStrapImportRequest) (int, e
 
 	bundle, err := xkms.TrustBootstrapFetch(ctx, cfg)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrTrustStrapFetch, err)
+		return 0, &SentinelCauseError{Sentinel: ErrTrustStrapFetch, Cause: err}
 	}
 	if bundle == nil || len(bundle.PEM) == 0 {
 		return 0, ErrTrustStrapEmptyBundle
@@ -453,7 +454,7 @@ func (s *TrustService) buildBootstrapConfig(req TrustStrapImportRequest) (xkms.T
 		cfg.Mode = xkms.TrustBootstrapModeDirect
 		cfg.Direct = &xkms.TrustBootstrapDirectConfig{}
 	default:
-		return xkms.TrustBootstrapConfig{}, fmt.Errorf("%w: %q", ErrTrustStrapUnsupportedMethod, req.Method)
+		return xkms.TrustBootstrapConfig{}, &DetailError{Err: ErrTrustStrapUnsupportedMethod, Detail: fmt.Sprintf(": %q", req.Method)}
 	}
 	return cfg, nil
 }
@@ -563,11 +564,11 @@ func (s *TrustService) ExportBrowserTrustBundle(bundlePath string) (int, error) 
 
 	dir := filepath.Dir(bundlePath)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrBrowserTrustBundleExport, err)
+		return 0, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleExport, Cause: err}
 	}
 
 	if err := os.WriteFile(bundlePath, pemData, 0o600); err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrBrowserTrustBundleExport, err)
+		return 0, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleExport, Cause: err}
 	}
 
 	// Write manifest sidecar for staleness detection.

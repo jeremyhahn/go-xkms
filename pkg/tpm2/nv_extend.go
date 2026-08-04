@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 )
@@ -119,24 +121,24 @@ func nvExtendExecute(
 	// Read response
 	rsp, err := t.Send(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to send NV_Extend command: %w", err)
+		return &errs.Wrapped{Msg: "failed to send NV_Extend command", Err: err}
 	}
 
 	// Parse response header
 	if len(rsp) < 10 {
-		return fmt.Errorf("response too short: %d bytes", len(rsp))
+		return &errs.Message{Msg: fmt.Sprintf("response too short: %d bytes", len(rsp))}
 	}
 
 	// Check response tag
 	respTag := binary.BigEndian.Uint16(rsp[0:2])
 	if respTag != 0x8002 && respTag != 0x8001 {
-		return fmt.Errorf("unexpected response tag: 0x%04x", respTag)
+		return &errs.Message{Msg: fmt.Sprintf("unexpected response tag: 0x%04x", respTag)}
 	}
 
 	// Check response size
 	respSize := binary.BigEndian.Uint32(rsp[2:6])
 	if uint32(len(rsp)) < respSize {
-		return fmt.Errorf("response truncated: got %d, expected %d", len(rsp), respSize)
+		return &errs.Message{Msg: fmt.Sprintf("response truncated: got %d, expected %d", len(rsp), respSize)}
 	}
 
 	// Check response code

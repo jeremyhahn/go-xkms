@@ -26,6 +26,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
@@ -54,7 +56,7 @@ var _ backend.ImportExportBackend = (*Backend)(nil)
 //   - A 24-hour expiration time
 func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	if attrs == nil {
-		return nil, fmt.Errorf("attributes cannot be nil")
+		return nil, &errs.Message{Msg: "attributes cannot be nil"}
 	}
 
 	// Validate wrapping algorithm
@@ -65,7 +67,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		// Supported
 	default:
-		return nil, fmt.Errorf("%w: Azure Key Vault does not support wrapping algorithm %s", backend.ErrNotSupported, algorithm)
+		return nil, &errs.Detail{Err: backend.ErrNotSupported, Detail: fmt.Sprintf("Azure Key Vault does not support wrapping algorithm %s", algorithm)}
 	}
 
 	// Generate a temporary RSA key pair for wrapping
@@ -73,7 +75,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 	wrappingKeySize := 2048
 	wrappingPrivateKey, err := rsa.GenerateKey(rand.Reader, wrappingKeySize)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate wrapping key pair: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate wrapping key pair", Err: err}
 	}
 
 	// Serialize the private key as the import token
@@ -123,19 +125,19 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 // is sent during the ImportKey operation.
 func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if len(keyMaterial) == 0 {
-		return nil, fmt.Errorf("key material cannot be empty")
+		return nil, &errs.Message{Msg: "key material cannot be empty"}
 	}
 	if params == nil {
-		return nil, fmt.Errorf("import parameters cannot be nil")
+		return nil, &errs.Message{Msg: "import parameters cannot be nil"}
 	}
 	if params.WrappingPublicKey == nil {
-		return nil, fmt.Errorf("wrapping public key cannot be nil")
+		return nil, &errs.Message{Msg: "wrapping public key cannot be nil"}
 	}
 
 	// Extract the RSA public key from the interface
 	rsaPubKey, ok := params.WrappingPublicKey.(*rsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("wrapping public key must be an *rsa.PublicKey")
+		return nil, &errs.Message{Msg: "wrapping public key must be an *rsa.PublicKey"}
 	}
 
 	var wrappedKey []byte
@@ -153,11 +155,11 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 		wrappedKey, err = wrapping.WrapRSAAES(keyMaterial, rsaPubKey, params.Algorithm)
 
 	default:
-		return nil, fmt.Errorf("%w: %s", ErrInvalidAlgorithm, params.Algorithm)
+		return nil, &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", params.Algorithm)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to wrap key material", Err: err}
 	}
 
 	return &backend.WrappedKeyMaterial{
@@ -178,19 +180,19 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 // canonical handling pattern.
 func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if wrapped == nil {
-		return nil, fmt.Errorf("wrapped key material cannot be nil")
+		return nil, &errs.Message{Msg: "wrapped key material cannot be nil"}
 	}
 	if params == nil {
-		return nil, fmt.Errorf("import parameters cannot be nil")
+		return nil, &errs.Message{Msg: "import parameters cannot be nil"}
 	}
 	if len(wrapped.ImportToken) == 0 {
-		return nil, fmt.Errorf("import token is required")
+		return nil, &errs.Message{Msg: "import token is required"}
 	}
 
 	// Parse the private key from the import token
 	privateKey, err := x509.ParsePKCS1PrivateKey(wrapped.ImportToken)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse private key from import token: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse private key from import token", Err: err}
 	}
 
 	var keyMaterial []byte
@@ -207,11 +209,11 @@ func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMate
 		keyMaterial, err = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
 
 	default:
-		return nil, fmt.Errorf("%w: %s", ErrInvalidAlgorithm, wrapped.Algorithm)
+		return nil, &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to unwrap key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to unwrap key material", Err: err}
 	}
 
 	return keyMaterial, nil
@@ -229,16 +231,16 @@ func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMate
 // other Azure Key Vault key.
 func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	if attrs == nil {
-		return fmt.Errorf("attributes cannot be nil")
+		return &errs.Message{Msg: "attributes cannot be nil"}
 	}
 	if wrapped == nil {
-		return fmt.Errorf("wrapped key material cannot be nil")
+		return &errs.Message{Msg: "wrapped key material cannot be nil"}
 	}
 	if len(wrapped.ImportToken) == 0 {
-		return fmt.Errorf("import token is required")
+		return &errs.Message{Msg: "import token is required"}
 	}
 	if len(wrapped.WrappedKey) == 0 {
-		return fmt.Errorf("wrapped key material is empty")
+		return &errs.Message{Msg: "wrapped key material is empty"}
 	}
 
 	if err := b.initClient(ctx); err != nil {
@@ -256,15 +258,15 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	}
 	keyMaterial, err := b.UnwrapKey(ctx, wrapped, params)
 	if err != nil {
-		return fmt.Errorf("failed to unwrap key material: %w", err)
+		return &errs.Wrapped{Msg: "failed to unwrap key material", Err: err}
 	}
 	if len(keyMaterial) == 0 {
-		return fmt.Errorf("unwrapped key material is empty")
+		return &errs.Message{Msg: "unwrapped key material is empty"}
 	}
 	keyBuf, err := secure.NewBuffer(len(keyMaterial))
 	if err != nil {
 		secure.Wipe(keyMaterial)
-		return fmt.Errorf("failed to allocate secure buffer: %w", err)
+		return &errs.Wrapped{Msg: "failed to allocate secure buffer", Err: err}
 	}
 	copy(keyBuf.Bytes(), keyMaterial)
 	secure.Wipe(keyMaterial)
@@ -279,7 +281,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		return b.importECDSAKey(ctx, attrs, keyBuf)
 	default:
 		keyBuf.Destroy()
-		return fmt.Errorf("%w: cannot import keys of type %s", backend.ErrNotSupported, attrs.KeyAlgorithm)
+		return &errs.Detail{Err: backend.ErrNotSupported, Detail: fmt.Sprintf("cannot import keys of type %s", attrs.KeyAlgorithm)}
 	}
 }
 
@@ -301,19 +303,19 @@ func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, 
 		// Try PKCS#1 format
 		privateKey, err = x509.ParsePKCS1PrivateKey(keyMaterial)
 		if err != nil {
-			return fmt.Errorf("failed to parse RSA private key: %w", err)
+			return &errs.Wrapped{Msg: "failed to parse RSA private key", Err: err}
 		}
 	}
 
 	rsaKey, ok := privateKey.(*rsa.PrivateKey)
 	if !ok {
-		return fmt.Errorf("key material is not an RSA private key")
+		return &errs.Message{Msg: "key material is not an RSA private key"}
 	}
 
 	// Convert to standard JWK format using the jwk package
 	standardJWK, err := jwk.FromPrivateKey(rsaKey)
 	if err != nil {
-		return fmt.Errorf("failed to convert RSA key to JWK: %w", err)
+		return &errs.Wrapped{Msg: "failed to convert RSA key to JWK", Err: err}
 	}
 
 	// Set key operations based on key type
@@ -335,7 +337,7 @@ func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, 
 	// Convert standard JWK to Azure's JWK format
 	azureJWK, err := convertToAzureJWK(standardJWK, keyOps)
 	if err != nil {
-		return fmt.Errorf("failed to convert JWK to Azure format: %w", err)
+		return &errs.Wrapped{Msg: "failed to convert JWK to Azure format", Err: err}
 	}
 
 	// Import the key
@@ -348,7 +350,7 @@ func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, 
 
 	_, err = b.client.ImportKey(ctx, attrs.CN, params, nil)
 	if err != nil {
-		return fmt.Errorf("failed to import RSA key into Azure Key Vault: %w", err)
+		return &errs.Wrapped{Msg: "failed to import RSA key into Azure Key Vault", Err: err}
 	}
 
 	// Store metadata
@@ -362,7 +364,7 @@ func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, 
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	b.mu.Lock()
@@ -391,19 +393,19 @@ func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes
 		// Try EC private key format
 		privateKey, err = x509.ParseECPrivateKey(keyMaterial)
 		if err != nil {
-			return fmt.Errorf("failed to parse ECDSA private key: %w", err)
+			return &errs.Wrapped{Msg: "failed to parse ECDSA private key", Err: err}
 		}
 	}
 
 	ecKey, ok := privateKey.(*ecdsa.PrivateKey)
 	if !ok {
-		return fmt.Errorf("key material is not an ECDSA private key")
+		return &errs.Message{Msg: "key material is not an ECDSA private key"}
 	}
 
 	// Convert to standard JWK format using the jwk package
 	standardJWK, err := jwk.FromPrivateKey(ecKey)
 	if err != nil {
-		return fmt.Errorf("failed to convert ECDSA key to JWK: %w", err)
+		return &errs.Wrapped{Msg: "failed to convert ECDSA key to JWK", Err: err}
 	}
 
 	// Set key operations
@@ -415,7 +417,7 @@ func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes
 	// Convert standard JWK to Azure's JWK format
 	azureJWK, err := convertToAzureJWK(standardJWK, keyOps)
 	if err != nil {
-		return fmt.Errorf("failed to convert JWK to Azure format: %w", err)
+		return &errs.Wrapped{Msg: "failed to convert JWK to Azure format", Err: err}
 	}
 
 	// Import the key
@@ -428,7 +430,7 @@ func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes
 
 	_, err = b.client.ImportKey(ctx, attrs.CN, params, nil)
 	if err != nil {
-		return fmt.Errorf("failed to import ECDSA key into Azure Key Vault: %w", err)
+		return &errs.Wrapped{Msg: "failed to import ECDSA key into Azure Key Vault", Err: err}
 	}
 
 	// Store metadata
@@ -442,7 +444,7 @@ func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	b.mu.Lock()
@@ -507,13 +509,13 @@ func convertToAzureJWK(standardJWK *jwk.JWK, keyOps []*azkeys.KeyOperation) (*az
 		// Decode base64url-encoded fields to raw bytes
 		n, err := base64.RawURLEncoding.DecodeString(standardJWK.N)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode N: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to decode N", Err: err}
 		}
 		azureJWK.N = n
 
 		e, err := base64.RawURLEncoding.DecodeString(standardJWK.E)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode E: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to decode E", Err: err}
 		}
 		azureJWK.E = e
 
@@ -521,37 +523,37 @@ func convertToAzureJWK(standardJWK *jwk.JWK, keyOps []*azkeys.KeyOperation) (*az
 		if standardJWK.D != "" {
 			d, err := base64.RawURLEncoding.DecodeString(standardJWK.D)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decode D: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to decode D", Err: err}
 			}
 			azureJWK.D = d
 
 			p, err := base64.RawURLEncoding.DecodeString(standardJWK.P)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decode P: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to decode P", Err: err}
 			}
 			azureJWK.P = p
 
 			q, err := base64.RawURLEncoding.DecodeString(standardJWK.Q)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decode Q: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to decode Q", Err: err}
 			}
 			azureJWK.Q = q
 
 			dp, err := base64.RawURLEncoding.DecodeString(standardJWK.DP)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decode DP: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to decode DP", Err: err}
 			}
 			azureJWK.DP = dp
 
 			dq, err := base64.RawURLEncoding.DecodeString(standardJWK.DQ)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decode DQ: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to decode DQ", Err: err}
 			}
 			azureJWK.DQ = dq
 
 			qi, err := base64.RawURLEncoding.DecodeString(standardJWK.QI)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decode QI: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to decode QI", Err: err}
 			}
 			azureJWK.QI = qi
 		}
@@ -570,20 +572,20 @@ func convertToAzureJWK(standardJWK *jwk.JWK, keyOps []*azkeys.KeyOperation) (*az
 		case string(jwk.CurveP521):
 			curveName = azkeys.CurveNameP521
 		default:
-			return nil, fmt.Errorf("unsupported curve: %s", standardJWK.Crv)
+			return nil, &errs.Message{Msg: fmt.Sprintf("unsupported curve: %s", standardJWK.Crv)}
 		}
 		azureJWK.Crv = &curveName
 
 		// Decode coordinates
 		x, err := base64.RawURLEncoding.DecodeString(standardJWK.X)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode X: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to decode X", Err: err}
 		}
 		azureJWK.X = x
 
 		y, err := base64.RawURLEncoding.DecodeString(standardJWK.Y)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode Y: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to decode Y", Err: err}
 		}
 		azureJWK.Y = y
 
@@ -591,13 +593,13 @@ func convertToAzureJWK(standardJWK *jwk.JWK, keyOps []*azkeys.KeyOperation) (*az
 		if standardJWK.D != "" {
 			d, err := base64.RawURLEncoding.DecodeString(standardJWK.D)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decode D: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to decode D", Err: err}
 			}
 			azureJWK.D = d
 		}
 
 	default:
-		return nil, fmt.Errorf("unsupported key type: %s", standardJWK.Kty)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %s", standardJWK.Kty)}
 	}
 
 	return azureJWK, nil
@@ -607,7 +609,7 @@ func convertToAzureJWK(standardJWK *jwk.JWK, keyOps []*azkeys.KeyOperation) (*az
 // This is useful for exporting keys from Azure Key Vault.
 func convertFromAzureJWK(azureJWK *azkeys.JSONWebKey) (*jwk.JWK, error) {
 	if azureJWK.Kty == nil {
-		return nil, fmt.Errorf("key type is required")
+		return nil, &errs.Message{Msg: "key type is required"}
 	}
 
 	standardJWK := &jwk.JWK{}
@@ -657,7 +659,7 @@ func convertFromAzureJWK(azureJWK *azkeys.JSONWebKey) (*jwk.JWK, error) {
 			case azkeys.CurveNameP521:
 				standardJWK.Crv = string(jwk.CurveP521)
 			default:
-				return nil, fmt.Errorf("unsupported curve: %v", *azureJWK.Crv)
+				return nil, &errs.Message{Msg: fmt.Sprintf("unsupported curve: %v", *azureJWK.Crv)}
 			}
 		}
 
@@ -675,7 +677,7 @@ func convertFromAzureJWK(azureJWK *azkeys.JSONWebKey) (*jwk.JWK, error) {
 		}
 
 	default:
-		return nil, fmt.Errorf("unsupported key type: %v", *azureJWK.Kty)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %v", *azureJWK.Kty)}
 	}
 
 	return standardJWK, nil

@@ -15,8 +15,9 @@ package ca
 
 import (
 	"errors"
-	"fmt"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // =============================================================================
@@ -209,22 +210,22 @@ func TestErrors_WorkWithWrappedErrors(t *testing.T) {
 	}{
 		{
 			name:   "wrapped ErrNotInitialized",
-			err:    fmt.Errorf("operation failed: %w", ErrNotInitialized),
+			err:    &errs.Wrapped{Msg: "operation failed", Err: ErrNotInitialized},
 			target: ErrNotInitialized,
 		},
 		{
 			name:   "wrapped ErrCertificateNotFound",
-			err:    fmt.Errorf("could not retrieve certificate: %w", ErrCertificateNotFound),
+			err:    &errs.Wrapped{Msg: "could not retrieve certificate", Err: ErrCertificateNotFound},
 			target: ErrCertificateNotFound,
 		},
 		{
 			name:   "wrapped ErrInvalidCSR",
-			err:    fmt.Errorf("CSR validation failed: %w", ErrInvalidCSR),
+			err:    &errs.Wrapped{Msg: "CSR validation failed", Err: ErrInvalidCSR},
 			target: ErrInvalidCSR,
 		},
 		{
 			name:   "double wrapped ErrSerialCollision",
-			err:    fmt.Errorf("generation failed: %w", fmt.Errorf("serial issue: %w", ErrSerialCollision)),
+			err:    &errs.Wrapped{Msg: "generation failed", Err: &errs.Wrapped{Msg: "serial issue", Err: ErrSerialCollision}},
 			target: ErrSerialCollision,
 		},
 	}

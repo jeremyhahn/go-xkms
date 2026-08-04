@@ -33,37 +33,12 @@ COPY --from=go-qrdb      . /go-qrdb
 COPY --from=go-quicraft  . /go-quicraft
 COPY --from=go-truststrap . /go-truststrap
 
-# Write a build-time Go workspace so all in-house modules resolve locally.
+# Write a build-time Go workspace via the single canonical generator
+# (scripts/gen-gowork.sh) so all in-house modules resolve locally and the
+# replace set cannot drift. Repo root is /build here.
 ENV GOWORK=/tmp/go.work
-RUN cat > /tmp/go.work <<'EOF'
-go 1.26.4
-
-use (
-	/build
-	/build/sdk/go
-	/build/xkey
-	/go-codec
-	/go-frost
-	/go-objstore
-	/go-qrdb
-	/go-qrdb/sdk/go
-	/go-quicraft
-	/go-truststrap
-)
-
-replace (
-	github.com/jeremyhahn/go-codec v0.0.0 => /go-codec
-	github.com/jeremyhahn/go-frost v0.0.0 => /go-frost
-	github.com/jeremyhahn/go-objstore v0.0.0 => /go-objstore
-	github.com/jeremyhahn/go-qrdb v0.0.0 => /go-qrdb
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0 => /go-qrdb/sdk/go
-	github.com/jeremyhahn/go-quicraft v0.0.0 => /go-quicraft
-	github.com/jeremyhahn/go-truststrap v0.0.0 => /go-truststrap
-	github.com/jeremyhahn/go-xkms v0.0.0 => /build
-	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0 => /build/sdk/go
-	github.com/jeremyhahn/go-xkms/xkey v0.0.0 => /build/xkey
-)
-EOF
+COPY scripts/gen-gowork.sh ./scripts/gen-gowork.sh
+RUN bash scripts/gen-gowork.sh /build /tmp/go.work
 
 RUN go mod download
 

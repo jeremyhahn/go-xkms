@@ -123,7 +123,7 @@ func GetDistroConfig() (*DistroConfig, error) {
 	}
 	cfg, ok := distroConfigs[distro]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedDistro, string(distro))
+		return nil, &DetailError{Err: ErrUnsupportedDistro, Detail: fmt.Sprintf(": %s", string(distro))}
 	}
 	return &DistroConfig{
 		CertDir:    cfg.certDir,
@@ -171,7 +171,7 @@ func NewLinuxCertStore() (*LinuxCertStore, error) {
 
 	cfg, ok := distroConfigs[distro]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedDistro, string(distro))
+		return nil, &DetailError{Err: ErrUnsupportedDistro, Detail: fmt.Sprintf(": %s", string(distro))}
 	}
 
 	return &LinuxCertStore{
@@ -208,7 +208,7 @@ func NewOSCertStore() (OSCertStore, error) {
 // directory, followed by a trust store refresh.
 func (s *LinuxCertStore) Install(cert *x509.Certificate, label string) error {
 	if cert == nil {
-		return fmt.Errorf("%w: certificate is nil", ErrInstallFailed)
+		return &DetailError{Err: ErrInstallFailed, Detail: ": certificate is nil"}
 	}
 
 	if err := validateLabel(label); err != nil {
@@ -217,9 +217,9 @@ func (s *LinuxCertStore) Install(cert *x509.Certificate, label string) error {
 
 	if err := os.MkdirAll(s.certDir, osCertDirMode); err != nil {
 		if os.IsPermission(err) {
-			return fmt.Errorf("%w: %v", ErrPermissionDenied, err)
+			return &SentinelCauseError{Sentinel: ErrPermissionDenied, Cause: err}
 		}
-		return fmt.Errorf("%w: failed to create certificate directory: %v", ErrInstallFailed, err)
+		return &DetailError{Err: ErrInstallFailed, Detail: fmt.Sprintf(": failed to create certificate directory: %v", err)}
 	}
 
 	certPath := s.certPath(label)
@@ -232,9 +232,9 @@ func (s *LinuxCertStore) Install(cert *x509.Certificate, label string) error {
 
 	if err := os.WriteFile(certPath, pemBytes, osCertFileMode); err != nil {
 		if os.IsPermission(err) {
-			return fmt.Errorf("%w: %v", ErrPermissionDenied, err)
+			return &SentinelCauseError{Sentinel: ErrPermissionDenied, Cause: err}
 		}
-		return fmt.Errorf("%w: failed to write certificate: %v", ErrInstallFailed, err)
+		return &DetailError{Err: ErrInstallFailed, Detail: fmt.Sprintf(": failed to write certificate: %v", err)}
 	}
 
 	if err := s.RefreshSystemStore(); err != nil {
@@ -258,12 +258,12 @@ func (s *LinuxCertStore) Remove(label string) error {
 
 	if err := os.Remove(certPath); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("%w: certificate %q not found", ErrRemoveFailed, label)
+			return &DetailError{Err: ErrRemoveFailed, Detail: fmt.Sprintf(": certificate %q not found", label)}
 		}
 		if os.IsPermission(err) {
-			return fmt.Errorf("%w: %v", ErrPermissionDenied, err)
+			return &SentinelCauseError{Sentinel: ErrPermissionDenied, Cause: err}
 		}
-		return fmt.Errorf("%w: %v", ErrRemoveFailed, err)
+		return &SentinelCauseError{Sentinel: ErrRemoveFailed, Cause: err}
 	}
 
 	if err := s.RefreshSystemStore(); err != nil {
@@ -286,7 +286,7 @@ func (s *LinuxCertStore) IsInstalled(label string) (bool, error) {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("%w: %v", ErrStorageRead, err)
+		return false, &SentinelCauseError{Sentinel: ErrStorageRead, Cause: err}
 	}
 
 	return true, nil
@@ -298,7 +298,7 @@ func (s *LinuxCertStore) RefreshSystemStore() error {
 	cmd := exec.Command(s.updateCmd, s.updateArgs...) // #nosec G204 -- trusted system command
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%w: %s: %s", ErrSystemStoreRefresh, err.Error(), strings.TrimSpace(string(output)))
+		return &DetailError{Err: ErrSystemStoreRefresh, Detail: fmt.Sprintf(": %s: %s", err.Error(), strings.TrimSpace(string(output)))}
 	}
 
 	return nil
@@ -314,7 +314,7 @@ func (s *LinuxCertStore) certPath(label string) string {
 // hyphens, and underscores.
 func validateLabel(label string) error {
 	if !labelPattern.MatchString(label) {
-		return fmt.Errorf("%w: label must contain only alphanumeric characters, hyphens, and underscores", ErrInvalidLabel)
+		return &DetailError{Err: ErrInvalidLabel, Detail: ": label must contain only alphanumeric characters, hyphens, and underscores"}
 	}
 	return nil
 }
@@ -324,7 +324,7 @@ func validateLabel(label string) error {
 func detectDistro() (linuxDistro, error) {
 	data, err := os.ReadFile(osReleaseFile)
 	if err != nil {
-		return distroUnknown, fmt.Errorf("%w: failed to read %s: %v", ErrUnsupportedDistro, osReleaseFile, err)
+		return distroUnknown, &DetailError{Err: ErrUnsupportedDistro, Detail: fmt.Sprintf(": failed to read %s: %v", osReleaseFile, err)}
 	}
 
 	id, idLike := parseOSRelease(string(data))
@@ -343,7 +343,7 @@ func detectDistro() (linuxDistro, error) {
 		}
 	}
 
-	return distroUnknown, fmt.Errorf("%w: unrecognized distribution ID=%q ID_LIKE=%q", ErrUnsupportedDistro, id, idLike)
+	return distroUnknown, &DetailError{Err: ErrUnsupportedDistro, Detail: fmt.Sprintf(": unrecognized distribution ID=%q ID_LIKE=%q", id, idLike)}
 }
 
 // parseOSRelease extracts the ID and ID_LIKE values from the contents

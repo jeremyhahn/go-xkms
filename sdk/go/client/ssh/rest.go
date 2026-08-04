@@ -96,6 +96,14 @@ func (c *restClient) AuthorizedKeys() AuthorizedKeysClient {
 // returns *NotImplementedError — see the package doc for rationale.
 func (c *restClient) Session() SessionClient { return &restSessionClient{} }
 
+// Console is not supported by the REST/QUIC Go client: the interactive console
+// over HTTP is served by the WebSocket bridge (NewConsoleWSHandler) and consumed
+// by an HTTP/WS client or sdk/ts in the browser, not this request/response
+// client.
+func (c *restClient) Console(_ context.Context, _ ConsoleConnectRequest, _ ConsoleConfig) (ConsoleSession, error) {
+	return nil, &ConsoleUnsupportedError{Transport: "rest"}
+}
+
 // Close releases any resources held by the client. The REST transport
 // holds no long-lived server-side state, so this is a no-op.
 func (c *restClient) Close() error { return nil }
@@ -331,9 +339,9 @@ func (k *restKeysClient) Signer(ctx context.Context, req GetKeyRequest) (gossh.S
 	if err != nil {
 		return nil, err
 	}
-	sshPub, _, _, _, perr := gossh.ParseAuthorizedKey([]byte(pub.Line))
-	if perr != nil {
-		return nil, &ProtocolError{Message: "parse exported public key", Err: perr}
+	sshPub, err := parseExportedPublicKey(pub.Line)
+	if err != nil {
+		return nil, err
 	}
 	return &restSigner{
 		c:     k.c,

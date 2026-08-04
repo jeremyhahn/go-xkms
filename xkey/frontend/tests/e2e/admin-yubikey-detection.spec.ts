@@ -96,7 +96,7 @@ test.describe('YubiKey FIDO2 capability suppression', () => {
   test('pkcs11mgr registerSlotBackends never sets CapFIDO2 for slot backends', async () => {
     const fs = await import('fs');
     const mgr = fs.readFileSync(
-      `${REPO_ROOT}/xkey/pkg/pkcs11mgr/manager_impl.go`,
+      `${REPO_ROOT}/xkey/pkg/pkcs11mgr/manager_pkcs11.go`,
       'utf8'
     );
     // Extract the registerSlotBackends function body and assert CapFIDO2 is

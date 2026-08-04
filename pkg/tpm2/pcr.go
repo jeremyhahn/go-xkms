@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 )
 
@@ -64,7 +66,7 @@ func (tpm *TPM2) IsPlatformPCRExtended() (bool, error) {
 // Returns an error if the PCR extension fails.
 func (tpm *TPM2) ExtendPCR(pcrIndex int, hashAlg string, data []byte) error {
 	if len(data) == 0 {
-		return fmt.Errorf("tpm: ExtendPCR: data cannot be nil or empty")
+		return &errs.Message{Msg: "tpm: ExtendPCR: data cannot be nil or empty"}
 	}
 
 	hashAlgID, err := ParsePCRBankAlgID(hashAlg)
@@ -88,7 +90,7 @@ func (tpm *TPM2) ExtendPCR(pcrIndex int, hashAlg string, data []byte) error {
 		h := sha512.Sum512(data)
 		digest = h[:]
 	default:
-		return fmt.Errorf("unsupported hash algorithm: %s", hashAlg)
+		return &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", hashAlg)}
 	}
 
 	tpm.logger.Debug("tpm: ExtendPCR - extending PCR",

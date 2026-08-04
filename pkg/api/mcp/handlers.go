@@ -26,6 +26,8 @@ import (
 	"net"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
@@ -37,7 +39,7 @@ import (
 func (s *Server) findKeyByCN(ctx context.Context, keyID string) (*types.KeyAttributes, error) {
 	keys, err := s.keystore.ListKeys(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
 
 	for _, attr := range keys {
@@ -46,19 +48,19 @@ func (s *Server) findKeyByCN(ctx context.Context, keyID string) (*types.KeyAttri
 		}
 	}
 
-	return nil, fmt.Errorf("key not found: %s", keyID)
+	return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyID)}
 }
 
 // findKeyInBackend searches for a key by CN in a specific backend
 func (s *Server) findKeyInBackend(ctx context.Context, keyID string, backendName string) (*types.KeyAttributes, error) {
 	ks, err := s.xkmsService.LookupBackend(backendName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
 	}
 
 	keys, err := ks.ListKeys(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
 
 	for _, attr := range keys {
@@ -67,7 +69,7 @@ func (s *Server) findKeyInBackend(ctx context.Context, keyID string, backendName
 		}
 	}
 
-	return nil, fmt.Errorf("key not found: %s", keyID)
+	return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyID)}
 }
 
 // handleHealth handles the health check method
@@ -114,11 +116,11 @@ func (s *Server) handleListBackends(ctx context.Context, req *JSONRPCRequest) (i
 func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GenerateKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	// Create key attributes based on backend type
@@ -131,7 +133,7 @@ func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (in
 	if params.Backend != "" {
 		storeType := types.ParseStoreType(params.Backend)
 		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
 		}
 		attrs.StoreType = storeType
 	} else {
@@ -175,7 +177,7 @@ func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (in
 		if params.Curve != "" {
 			curve, curveErr := types.ParseCurve(params.Curve)
 			if curveErr != nil {
-				return nil, fmt.Errorf("invalid curve: %s", params.Curve)
+				return nil, &errs.Message{Msg: fmt.Sprintf("invalid curve: %s", params.Curve)}
 			}
 			attrs.ECCAttributes.Curve = curve
 		} else {
@@ -195,11 +197,11 @@ func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (in
 		}
 		ks, ksErr := s.xkmsService.LookupBackend(backendName)
 		if ksErr != nil {
-			return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: ksErr}
 		}
 		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 		if !ok {
-			return nil, fmt.Errorf("backend %s does not support symmetric operations", backendName)
+			return nil, &errs.Message{Msg: fmt.Sprintf("backend %s does not support symmetric operations", backendName)}
 		}
 
 		// Use algorithm field or default to AES256-GCM
@@ -215,7 +217,7 @@ func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (in
 		// Generate symmetric key
 		_, err = symBackend.GenerateSymmetricKey(ctx, attrs)
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate symmetric key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to generate symmetric key", Err: err}
 		}
 
 		// Notify subscribers
@@ -234,13 +236,13 @@ func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (in
 	default:
 		// Report the most informative error message
 		if algorithm != "" {
-			return nil, fmt.Errorf("unsupported algorithm: %s", algorithm)
+			return nil, &errs.Message{Msg: fmt.Sprintf("unsupported algorithm: %s", algorithm)}
 		}
-		return nil, fmt.Errorf("unsupported key type: %s", algorithmDiscriminator)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %s", algorithmDiscriminator)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 
 	// Extract public key PEM
@@ -275,22 +277,22 @@ func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (in
 func (s *Server) handleGetKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	// Look up the key to get full attributes
 	attrs, err := s.findKeyByCN(ctx, params.KeyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	privKey, err := s.keystore.GetKey(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get key", Err: err}
 	}
 
 	// Extract public key PEM
@@ -318,11 +320,11 @@ func (s *Server) handleGetKey(ctx context.Context, req *JSONRPCRequest) (interfa
 func (s *Server) handleDeleteKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params DeleteKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	// Get the backend - try to find key in specified backend or search all backends
@@ -347,7 +349,7 @@ func (s *Server) handleDeleteKey(ctx context.Context, req *JSONRPCRequest) (inte
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	// Get the correct keystore
@@ -355,12 +357,12 @@ func (s *Server) handleDeleteKey(ctx context.Context, req *JSONRPCRequest) (inte
 	if backendName != "" {
 		ks, err = s.xkmsService.LookupBackend(backendName)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
 		}
 	}
 
 	if err := ks.DeleteKey(ctx, attrs); err != nil {
-		return nil, fmt.Errorf("failed to delete key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to delete key", Err: err}
 	}
 
 	// Notify subscribers
@@ -393,7 +395,7 @@ func (s *Server) handleListKeys(ctx context.Context, req *JSONRPCRequest) (inter
 		// Single-backend listing
 		backendKeys, err := s.listKeysFromBackend(ctx, params.Backend)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list keys from backend %s: %w", params.Backend, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to list keys from backend %s", params.Backend), Err: err}
 		}
 		keys = backendKeys
 	} else {
@@ -427,12 +429,12 @@ func (s *Server) handleListKeys(ctx context.Context, req *JSONRPCRequest) (inter
 func (s *Server) listKeysFromBackend(ctx context.Context, backendName string) ([]KeyInfo, error) {
 	ks, err := s.xkmsService.LookupBackend(backendName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
 	}
 
 	keyAttrs, err := ks.ListKeys(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
 
 	keys := make([]KeyInfo, 0, len(keyAttrs))
@@ -466,11 +468,11 @@ func (s *Server) listKeysFromBackend(ctx context.Context, backendName string) ([
 func (s *Server) handleSign(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params SignParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	// Look up the key to get full attributes
@@ -482,19 +484,19 @@ func (s *Server) handleSign(ctx context.Context, req *JSONRPCRequest) (interface
 		attrs, err = s.findKeyByCN(ctx, params.KeyID)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	signer, err := s.keystore.Signer(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get signer: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get signer", Err: err}
 	}
 
 	// Ed25519 uses pure signing (no prehashing) - pass raw message with Hash(0)
 	if attrs.KeyAlgorithm == x509.Ed25519 {
 		signature, err := signer.Sign(nil, params.Data, crypto.Hash(0))
 		if err != nil {
-			return nil, fmt.Errorf("failed to sign: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to sign", Err: err}
 		}
 		return SignResult{
 			Signature: signature,
@@ -514,7 +516,7 @@ func (s *Server) handleSign(ctx context.Context, req *JSONRPCRequest) (interface
 	// Sign the digest
 	signature, err := signer.Sign(nil, digest, hash)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to sign", Err: err}
 	}
 
 	return SignResult{
@@ -526,11 +528,11 @@ func (s *Server) handleSign(ctx context.Context, req *JSONRPCRequest) (interface
 func (s *Server) handleVerify(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params VerifyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	// Look up the key to get full attributes
@@ -542,18 +544,18 @@ func (s *Server) handleVerify(ctx context.Context, req *JSONRPCRequest) (interfa
 		attrs, err = s.findKeyByCN(ctx, params.KeyID)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	// Get the key
 	privKey, err := s.keystore.GetKey(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get key", Err: err}
 	}
 
 	pubKey, err := extractPublicKey(privKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to extract public key", Err: err}
 	}
 
 	// Convert signature to bytes
@@ -588,7 +590,7 @@ func (s *Server) handleVerify(ctx context.Context, req *JSONRPCRequest) (interfa
 	if attrs.KeyAlgorithm == x509.Ed25519 {
 		valid, err := verifySignature(pubKey, params.Data, sigBytes, crypto.Hash(0))
 		if err != nil {
-			return nil, fmt.Errorf("failed to verify: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to verify", Err: err}
 		}
 		return VerifyResult{Valid: valid}, nil
 	}
@@ -606,7 +608,7 @@ func (s *Server) handleVerify(ctx context.Context, req *JSONRPCRequest) (interfa
 	// Verify signature
 	valid, err := verifySignature(pubKey, digest, sigBytes, hash)
 	if err != nil {
-		return nil, fmt.Errorf("failed to verify: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to verify", Err: err}
 	}
 
 	return VerifyResult{
@@ -618,7 +620,7 @@ func (s *Server) handleVerify(ctx context.Context, req *JSONRPCRequest) (interfa
 func (s *Server) handleSubscribe(ctx context.Context, req *JSONRPCRequest, conn net.Conn) (interface{}, error) {
 	var params SubscribeParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	// Create or update subscriber
@@ -651,23 +653,23 @@ func (s *Server) handleSubscribe(ctx context.Context, req *JSONRPCRequest, conn 
 func (s *Server) handleRotateKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params RotateKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	// Look up the key to get full attributes
 	attrs, err := s.findKeyByCN(ctx, params.KeyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	if params.Backend != "" {
 		storeType := types.ParseStoreType(params.Backend)
 		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
 		}
 		attrs.StoreType = storeType
 	}
@@ -675,7 +677,7 @@ func (s *Server) handleRotateKey(ctx context.Context, req *JSONRPCRequest) (inte
 	// Rotate the key
 	privKey, err := s.keystore.RotateKey(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to rotate key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to rotate key", Err: err}
 	}
 
 	// Extract public key PEM
@@ -710,11 +712,11 @@ func (s *Server) handleRotateKey(ctx context.Context, req *JSONRPCRequest) (inte
 func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params DecryptParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	// Get the backend and find the key
@@ -726,7 +728,7 @@ func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interf
 		// Backend specified, look up key in that backend
 		attrs, err = s.findKeyInBackend(ctx, params.KeyID, backendName)
 		if err != nil {
-			return nil, fmt.Errorf("failed to find key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 		}
 	} else {
 		// No backend specified, search both symmetric and software backends
@@ -734,7 +736,7 @@ func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interf
 		if err != nil {
 			attrs, err = s.findKeyInBackend(ctx, params.KeyID, "software")
 			if err != nil {
-				return nil, fmt.Errorf("failed to find key: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 			}
 			backendName = "software"
 		} else {
@@ -744,7 +746,7 @@ func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interf
 
 	ks, ksErr := s.xkmsService.LookupBackend(backendName)
 	if ksErr != nil {
-		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: ksErr}
 	}
 
 	storeType := types.ParseStoreType(backendName)
@@ -757,12 +759,12 @@ func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interf
 		// Symmetric decryption
 		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 		if !ok {
-			return nil, fmt.Errorf("backend %s does not support symmetric operations", backendName)
+			return nil, &errs.Message{Msg: fmt.Sprintf("backend %s does not support symmetric operations", backendName)}
 		}
 
 		encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get symmetric encrypter: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to get symmetric encrypter", Err: err}
 		}
 
 		encryptedData := &types.EncryptedData{
@@ -777,7 +779,7 @@ func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interf
 
 		plaintext, err := encrypter.Decrypt(encryptedData, decryptOpts)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to decrypt", Err: err}
 		}
 
 		return DecryptResult{
@@ -788,12 +790,12 @@ func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interf
 	// Asymmetric decryption
 	decrypter, err := ks.Decrypter(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get decrypter: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get decrypter", Err: err}
 	}
 
 	plaintext, err := decrypter.Decrypt(nil, params.Ciphertext, &rsa.OAEPOptions{Hash: crypto.SHA256})
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decrypt", Err: err}
 	}
 
 	return DecryptResult{
@@ -805,15 +807,15 @@ func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interf
 func (s *Server) handleEncrypt(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params EncryptParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	if len(params.Plaintext) == 0 {
-		return nil, fmt.Errorf("plaintext is required")
+		return nil, &errs.Message{Msg: "plaintext is required"}
 	}
 
 	// Get the correct backend for symmetric operations
@@ -825,12 +827,12 @@ func (s *Server) handleEncrypt(ctx context.Context, req *JSONRPCRequest) (interf
 	// Look up the key in the symmetric backend to get full attributes
 	attrs, err := s.findKeyInBackend(ctx, params.KeyID, backendName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	ks, ksErr := s.xkmsService.LookupBackend(backendName)
 	if ksErr != nil {
-		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: ksErr}
 	}
 
 	storeType := types.ParseStoreType(backendName)
@@ -841,13 +843,13 @@ func (s *Server) handleEncrypt(ctx context.Context, req *JSONRPCRequest) (interf
 	// Get symmetric backend
 	symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 	if !ok {
-		return nil, fmt.Errorf("backend %s does not support symmetric operations", backendName)
+		return nil, &errs.Message{Msg: fmt.Sprintf("backend %s does not support symmetric operations", backendName)}
 	}
 
 	// Get encrypter
 	encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get symmetric encrypter: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get symmetric encrypter", Err: err}
 	}
 
 	// Prepare encryption options
@@ -858,7 +860,7 @@ func (s *Server) handleEncrypt(ctx context.Context, req *JSONRPCRequest) (interf
 	// Encrypt
 	encryptedData, err := encrypter.Encrypt(params.Plaintext, encryptOpts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to encrypt", Err: err}
 	}
 
 	return EncryptResult{
@@ -872,30 +874,30 @@ func (s *Server) handleEncrypt(ctx context.Context, req *JSONRPCRequest) (interf
 func (s *Server) handleSaveCert(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params SaveCertParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	if params.CertPEM == "" {
-		return nil, fmt.Errorf("cert_pem is required")
+		return nil, &errs.Message{Msg: "cert_pem is required"}
 	}
 
 	// Parse PEM certificate
 	block, _ := pem.Decode([]byte(params.CertPEM))
 	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("invalid certificate PEM")
+		return nil, &errs.Message{Msg: "invalid certificate PEM"}
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse certificate", Err: err}
 	}
 
 	if err := s.keystore.SaveCert(ctx, params.KeyID, cert); err != nil {
-		return nil, fmt.Errorf("failed to save certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to save certificate", Err: err}
 	}
 
 	// Notify subscribers
@@ -912,16 +914,16 @@ func (s *Server) handleSaveCert(ctx context.Context, req *JSONRPCRequest) (inter
 func (s *Server) handleGetCert(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetCertParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	cert, err := s.keystore.GetCert(ctx, params.KeyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get certificate", Err: err}
 	}
 
 	// Encode to PEM
@@ -941,15 +943,15 @@ func (s *Server) handleGetCert(ctx context.Context, req *JSONRPCRequest) (interf
 func (s *Server) handleDeleteCert(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params DeleteCertParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	if err := s.keystore.DeleteCert(ctx, params.KeyID); err != nil {
-		return nil, fmt.Errorf("failed to delete certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to delete certificate", Err: err}
 	}
 
 	// Notify subscribers
@@ -966,7 +968,7 @@ func (s *Server) handleDeleteCert(ctx context.Context, req *JSONRPCRequest) (int
 func (s *Server) handleListCerts(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	keyIDs, err := s.keystore.ListCerts(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list certificates: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list certificates", Err: err}
 	}
 
 	// Apply pagination if params are provided
@@ -986,16 +988,16 @@ func (s *Server) handleListCerts(ctx context.Context, req *JSONRPCRequest) (inte
 func (s *Server) handleCertExists(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params CertExistsParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	exists, err := s.keystore.CertExists(ctx, params.KeyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check certificate existence: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to check certificate existence", Err: err}
 	}
 
 	return CertExistsResult{
@@ -1007,15 +1009,15 @@ func (s *Server) handleCertExists(ctx context.Context, req *JSONRPCRequest) (int
 func (s *Server) handleSaveCertChain(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params SaveCertChainParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	if len(params.ChainPEMs) == 0 {
-		return nil, fmt.Errorf("chain_pems is required")
+		return nil, &errs.Message{Msg: "chain_pems is required"}
 	}
 
 	// Parse all certificates
@@ -1023,19 +1025,19 @@ func (s *Server) handleSaveCertChain(ctx context.Context, req *JSONRPCRequest) (
 	for i, pemStr := range params.ChainPEMs {
 		block, _ := pem.Decode([]byte(pemStr))
 		if block == nil || block.Type != "CERTIFICATE" {
-			return nil, fmt.Errorf("invalid certificate PEM at index %d", i)
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid certificate PEM at index %d", i)}
 		}
 
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse certificate at index %d: %w", i, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to parse certificate at index %d", i), Err: err}
 		}
 
 		chain = append(chain, cert)
 	}
 
 	if err := s.keystore.SaveCertChain(ctx, params.KeyID, chain); err != nil {
-		return nil, fmt.Errorf("failed to save certificate chain: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to save certificate chain", Err: err}
 	}
 
 	// Notify subscribers
@@ -1053,16 +1055,16 @@ func (s *Server) handleSaveCertChain(ctx context.Context, req *JSONRPCRequest) (
 func (s *Server) handleGetCertChain(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetCertChainParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	chain, err := s.keystore.GetCertChain(ctx, params.KeyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get certificate chain: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get certificate chain", Err: err}
 	}
 
 	// Encode all certificates to PEM
@@ -1085,11 +1087,11 @@ func (s *Server) handleGetCertChain(ctx context.Context, req *JSONRPCRequest) (i
 func (s *Server) handleGetTLSCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetTLSCertificateParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	// Validate backend first if provided
@@ -1097,14 +1099,14 @@ func (s *Server) handleGetTLSCertificate(ctx context.Context, req *JSONRPCReques
 	if params.Backend != "" {
 		storeType = types.ParseStoreType(params.Backend)
 		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
 		}
 	}
 
 	// Look up the key to get full attributes
 	attrs, err := s.findKeyByCN(ctx, params.KeyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	// Apply backend override if provided
@@ -1114,7 +1116,7 @@ func (s *Server) handleGetTLSCertificate(ctx context.Context, req *JSONRPCReques
 
 	tlsCert, err := s.keystore.GetTLSCertificate(ctx, params.KeyID, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get TLS certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get TLS certificate", Err: err}
 	}
 
 	// Convert certificate to PEM
@@ -1154,11 +1156,11 @@ func (s *Server) handleGetTLSCertificate(ctx context.Context, req *JSONRPCReques
 func (s *Server) handleGetImportParameters(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetImportParametersParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	attrs := &types.KeyAttributes{
@@ -1168,7 +1170,7 @@ func (s *Server) handleGetImportParameters(ctx context.Context, req *JSONRPCRequ
 	if params.Backend != "" {
 		storeType := types.ParseStoreType(params.Backend)
 		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
 		}
 		attrs.StoreType = storeType
 	}
@@ -1176,7 +1178,7 @@ func (s *Server) handleGetImportParameters(ctx context.Context, req *JSONRPCRequ
 	// Check if backend supports import/export
 	importExportBackend, ok := s.keystore.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
-		return nil, fmt.Errorf("backend does not support import/export operations")
+		return nil, &errs.Message{Msg: "backend does not support import/export operations"}
 	}
 
 	// Parse wrapping algorithm
@@ -1185,13 +1187,13 @@ func (s *Server) handleGetImportParameters(ctx context.Context, req *JSONRPCRequ
 	// Get import parameters
 	importParams, err := importExportBackend.GetImportParameters(ctx, attrs, algorithm)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get import parameters: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get import parameters", Err: err}
 	}
 
 	// Encode public key to PEM
 	pubKeyBytes, err := x509.MarshalPKIXPublicKey(importParams.WrappingPublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal public key", Err: err}
 	}
 
 	pemBlock := &pem.Block{
@@ -1220,24 +1222,24 @@ func (s *Server) handleGetImportParameters(ctx context.Context, req *JSONRPCRequ
 func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params WrapKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	// Check if backend supports import/export
 	importExportBackend, ok := s.keystore.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
-		return nil, fmt.Errorf("backend does not support import/export operations")
+		return nil, &errs.Message{Msg: "backend does not support import/export operations"}
 	}
 
 	// Parse wrapping public key from PEM
 	block, _ := pem.Decode([]byte(params.WrappingPublicKeyPEM))
 	if block == nil {
-		return nil, fmt.Errorf("invalid wrapping public key PEM")
+		return nil, &errs.Message{Msg: "invalid wrapping public key PEM"}
 	}
 
 	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
 	// Build import parameters
@@ -1250,7 +1252,7 @@ func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interf
 	// Wrap the key material
 	wrapped, err := importExportBackend.WrapKey(ctx, params.KeyMaterial, importParams)
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to wrap key", Err: err}
 	}
 
 	return WrapKeyResult{
@@ -1265,34 +1267,34 @@ func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interf
 func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UnwrapKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if len(params.WrappedKey) == 0 {
-		return nil, fmt.Errorf("wrapped_key is required")
+		return nil, &errs.Message{Msg: "wrapped_key is required"}
 	}
 	if params.WrappingPublicKey == "" {
-		return nil, fmt.Errorf("wrapping_public_key is required")
+		return nil, &errs.Message{Msg: "wrapping_public_key is required"}
 	}
 	if params.Algorithm == "" {
-		return nil, fmt.Errorf("algorithm is required")
+		return nil, &errs.Message{Msg: "algorithm is required"}
 	}
 
 	// Check if backend supports import/export
 	importExportBackend, ok := s.keystore.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
-		return nil, fmt.Errorf("backend does not support import/export operations")
+		return nil, &errs.Message{Msg: "backend does not support import/export operations"}
 	}
 
 	// Parse wrapping public key from PEM
 	block, _ := pem.Decode([]byte(params.WrappingPublicKey))
 	if block == nil {
-		return nil, fmt.Errorf("invalid wrapping public key PEM")
+		return nil, &errs.Message{Msg: "invalid wrapping public key PEM"}
 	}
 
 	wrappingPubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse wrapping public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse wrapping public key", Err: err}
 	}
 
 	// Build wrapped key material
@@ -1312,7 +1314,7 @@ func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (inte
 
 	keyMaterial, err := importExportBackend.UnwrapKey(ctx, wrapped, importParams)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unwrap key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to unwrap key", Err: err}
 	}
 
 	return UnwrapKeyResult{
@@ -1324,11 +1326,11 @@ func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (inte
 func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params ImportKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	attrs := &types.KeyAttributes{
@@ -1338,7 +1340,7 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 	if params.Backend != "" {
 		storeType := types.ParseStoreType(params.Backend)
 		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
 		}
 		attrs.StoreType = storeType
 	}
@@ -1346,7 +1348,7 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 	// Check if backend supports import/export
 	importExportBackend, ok := s.keystore.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
-		return nil, fmt.Errorf("backend does not support import/export operations")
+		return nil, &errs.Message{Msg: "backend does not support import/export operations"}
 	}
 
 	// Build wrapped key material
@@ -1359,7 +1361,7 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 
 	// Import the key
 	if err := importExportBackend.ImportKey(ctx, attrs, wrapped); err != nil {
-		return nil, fmt.Errorf("failed to import key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to import key", Err: err}
 	}
 
 	// Notify subscribers
@@ -1377,11 +1379,11 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 func (s *Server) handleExportKeyMaterial(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params ExportKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	// Default to software backend for export operations
@@ -1393,7 +1395,7 @@ func (s *Server) handleExportKeyMaterial(ctx context.Context, req *JSONRPCReques
 	// Look up the key in the correct backend
 	attrs, err := s.findKeyInBackend(ctx, params.KeyID, backendName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	storeType := types.ParseStoreType(backendName)
@@ -1404,13 +1406,13 @@ func (s *Server) handleExportKeyMaterial(ctx context.Context, req *JSONRPCReques
 	// Get the correct keystore
 	ks, err := s.xkmsService.LookupBackend(backendName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
 	}
 
 	// Check if backend supports import/export
 	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
-		return nil, fmt.Errorf("backend does not support import/export operations")
+		return nil, &errs.Message{Msg: "backend does not support import/export operations"}
 	}
 
 	// Parse wrapping algorithm
@@ -1419,7 +1421,7 @@ func (s *Server) handleExportKeyMaterial(ctx context.Context, req *JSONRPCReques
 	// Export the key
 	wrapped, err := importExportBackend.ExportKey(ctx, attrs, algorithm)
 	if err != nil {
-		return nil, fmt.Errorf("failed to export key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to export key", Err: err}
 	}
 
 	// Notify subscribers
@@ -1440,23 +1442,23 @@ func (s *Server) handleExportKeyMaterial(ctx context.Context, req *JSONRPCReques
 func (s *Server) handleAsymmetricEncrypt(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params AsymmetricEncryptParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	// Look up the key to get full attributes
 	attrs, err := s.findKeyByCN(ctx, params.KeyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	if params.Backend != "" {
 		storeType := types.ParseStoreType(params.Backend)
 		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
 		}
 		attrs.StoreType = storeType
 	}
@@ -1464,25 +1466,25 @@ func (s *Server) handleAsymmetricEncrypt(ctx context.Context, req *JSONRPCReques
 	// Get the key
 	privKey, err := s.keystore.GetKey(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get key", Err: err}
 	}
 
 	// Extract public key for encryption
 	pubKey, err := extractPublicKey(privKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to extract public key", Err: err}
 	}
 
 	// Encrypt with RSA-OAEP
 	rsaPubKey, ok := pubKey.(*rsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("key is not an RSA key")
+		return nil, &errs.Message{Msg: "key is not an RSA key"}
 	}
 
 	hash := crypto.SHA256
 	ciphertext, err := rsa.EncryptOAEP(hash.New(), rand.Reader, rsaPubKey, params.Plaintext, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to encrypt", Err: err}
 	}
 
 	return AsymmetricEncryptResult{
@@ -1494,23 +1496,23 @@ func (s *Server) handleAsymmetricEncrypt(ctx context.Context, req *JSONRPCReques
 func (s *Server) handleAsymmetricDecrypt(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params AsymmetricDecryptParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
+		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
 	// Look up the key to get full attributes
 	attrs, err := s.findKeyByCN(ctx, params.KeyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	if params.Backend != "" {
 		storeType := types.ParseStoreType(params.Backend)
 		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
 		}
 		attrs.StoreType = storeType
 	}
@@ -1518,13 +1520,13 @@ func (s *Server) handleAsymmetricDecrypt(ctx context.Context, req *JSONRPCReques
 	// Get decrypter
 	decrypter, err := s.keystore.Decrypter(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get decrypter: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get decrypter", Err: err}
 	}
 
 	// Decrypt the ciphertext
 	plaintext, err := decrypter.Decrypt(nil, params.Ciphertext, &rsa.OAEPOptions{Hash: crypto.SHA256})
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decrypt", Err: err}
 	}
 
 	return AsymmetricDecryptResult{
@@ -1536,43 +1538,43 @@ func (s *Server) handleAsymmetricDecrypt(ctx context.Context, req *JSONRPCReques
 func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params CopyKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	// Validate required fields
 	if params.SourceBackend == "" {
-		return nil, fmt.Errorf("source_backend is required")
+		return nil, &errs.Message{Msg: "source_backend is required"}
 	}
 	if params.SourceKeyID == "" {
-		return nil, fmt.Errorf("source_key_id is required")
+		return nil, &errs.Message{Msg: "source_key_id is required"}
 	}
 	if params.DestBackend == "" {
-		return nil, fmt.Errorf("dest_backend is required")
+		return nil, &errs.Message{Msg: "dest_backend is required"}
 	}
 	if params.DestKeyID == "" {
-		return nil, fmt.Errorf("dest_key_id is required")
+		return nil, &errs.Message{Msg: "dest_key_id is required"}
 	}
 	if params.Algorithm == "" {
-		return nil, fmt.Errorf("algorithm is required")
+		return nil, &errs.Message{Msg: "algorithm is required"}
 	}
 
 	// Get source and destination backends
 	sourceKS, err := s.xkmsService.LookupBackend(params.SourceBackend)
 	if err != nil {
-		return nil, fmt.Errorf("source backend not found: %w", err)
+		return nil, &errs.Wrapped{Msg: "source backend not found", Err: err}
 	}
 	sourceBackend, ok := sourceKS.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
-		return nil, fmt.Errorf("source backend does not support import/export operations")
+		return nil, &errs.Message{Msg: "source backend does not support import/export operations"}
 	}
 
 	destKS, err := s.xkmsService.LookupBackend(params.DestBackend)
 	if err != nil {
-		return nil, fmt.Errorf("destination backend not found: %w", err)
+		return nil, &errs.Wrapped{Msg: "destination backend not found", Err: err}
 	}
 	destBackend, ok := destKS.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
-		return nil, fmt.Errorf("destination backend does not support import/export operations")
+		return nil, &errs.Message{Msg: "destination backend does not support import/export operations"}
 	}
 
 	// Build source key attributes
@@ -1582,7 +1584,7 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 	if params.SourceBackend != "" {
 		storeType := types.ParseStoreType(params.SourceBackend)
 		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid source backend: %s", params.SourceBackend)
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid source backend: %s", params.SourceBackend)}
 		}
 		sourceAttrs.StoreType = storeType
 	}
@@ -1594,7 +1596,7 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 	if params.DestBackend != "" {
 		storeType := types.ParseStoreType(params.DestBackend)
 		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid destination backend: %s", params.DestBackend)
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid destination backend: %s", params.DestBackend)}
 		}
 		destAttrs.StoreType = storeType
 	}
@@ -1605,12 +1607,12 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 	// Export from source backend
 	wrapped, err := sourceBackend.ExportKey(ctx, sourceAttrs, algorithm)
 	if err != nil {
-		return nil, fmt.Errorf("failed to export key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to export key", Err: err}
 	}
 
 	// Import to destination backend
 	if err := destBackend.ImportKey(ctx, destAttrs, wrapped); err != nil {
-		return nil, fmt.Errorf("failed to import key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to import key", Err: err}
 	}
 
 	// Notify subscribers
@@ -1632,11 +1634,11 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params SealParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if len(params.Data) == 0 {
-		return nil, fmt.Errorf("data is required")
+		return nil, &errs.Message{Msg: "data is required"}
 	}
 
 	// Build seal options
@@ -1652,13 +1654,13 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 		// Get the backend to look up the key
 		ks, err := s.xkmsService.LookupBackend(backendName)
 		if err != nil {
-			return nil, fmt.Errorf("backend not found: %w", err)
+			return nil, &errs.Wrapped{Msg: "backend not found", Err: err}
 		}
 
 		// Find the key by CN to get its full attributes
 		keyAttrs, err := ks.ListKeys(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list keys: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 		}
 
 		var targetAttr *types.KeyAttributes
@@ -1670,7 +1672,7 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 		}
 
 		if targetAttr == nil {
-			return nil, fmt.Errorf("key not found: %s", params.KeyID)
+			return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", params.KeyID)}
 		}
 
 		opts.KeyAttributes = targetAttr
@@ -1679,7 +1681,7 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 	// Call the xkms service to seal the data
 	sealed, err := s.xkmsService.SealWithBackend(ctx, backendName, params.Data, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to seal data: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to seal data", Err: err}
 	}
 
 	// Convert metadata from map[string][]byte to map[string]string for JSON serialization
@@ -1706,11 +1708,11 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UnsealParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if len(params.Ciphertext) == 0 {
-		return nil, fmt.Errorf("ciphertext is required")
+		return nil, &errs.Message{Msg: "ciphertext is required"}
 	}
 
 	// Use backend name if provided, otherwise use default
@@ -1719,7 +1721,7 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 	// Get backend to determine backend type for sealed data
 	ks, err := s.xkmsService.LookupBackend(backendName)
 	if err != nil {
-		return nil, fmt.Errorf("backend not found: %w", err)
+		return nil, &errs.Wrapped{Msg: "backend not found", Err: err}
 	}
 
 	// Build sealed data structure
@@ -1740,7 +1742,7 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 		// Find the key by CN to get its full attributes
 		keyAttrs, err := ks.ListKeys(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list keys: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 		}
 
 		var targetAttr *types.KeyAttributes
@@ -1752,7 +1754,7 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 		}
 
 		if targetAttr == nil {
-			return nil, fmt.Errorf("key not found: %s", params.KeyID)
+			return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", params.KeyID)}
 		}
 
 		opts.KeyAttributes = targetAttr
@@ -1762,7 +1764,7 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 	// Call the xkms service to unseal the data
 	plaintext, err := s.xkmsService.UnsealWithBackend(ctx, backendName, sealed, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unseal data: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to unseal data", Err: err}
 	}
 
 	return UnsealResult{
@@ -1774,7 +1776,7 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 func (s *Server) handleCanSeal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params CanSealParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	// Check sealing capability

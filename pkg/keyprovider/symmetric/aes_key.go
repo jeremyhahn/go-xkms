@@ -16,6 +16,8 @@ package symmetric
 import (
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -54,7 +56,7 @@ func (k *aesKey) Raw() ([]byte, error) {
 func NewAESKey(algorithm string, keyData []byte) (types.SymmetricKey, error) {
 	keySize := len(keyData) * 8
 	if keySize != 128 && keySize != 192 && keySize != 256 {
-		return nil, fmt.Errorf("invalid AES key size: %d bits (must be 128, 192, or 256)", keySize)
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid AES key size: %d bits (must be 128, 192, or 256)", keySize)}
 	}
 
 	// Make a copy to prevent external modification

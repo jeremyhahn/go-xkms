@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/miekg/pkcs11"
 )
 
@@ -68,7 +70,7 @@ func NewSessionPool(ctx *pkcs11.Ctx, slotID uint, pin string, size int) (*Sessio
 		if err != nil {
 			// Close any sessions we already opened
 			pool.drainAndClose()
-			return nil, fmt.Errorf("%w: %v", ErrSessionPoolOpen, err)
+			return nil, &errs.Detail{Err: ErrSessionPoolOpen, Detail: fmt.Sprintf("%v", err)}
 		}
 		pool.pool <- session
 	}
@@ -84,7 +86,7 @@ func NewSessionPool(ctx *pkcs11.Ctx, slotID uint, pin string, size int) (*Sessio
 			// or another pool already logged in on this token
 			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 				pool.drainAndClose()
-				return nil, fmt.Errorf("%w: %v", ErrSessionPoolLogin, err)
+				return nil, &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("%v", err)}
 			}
 		}
 	}
@@ -150,7 +152,7 @@ func (p *SessionPool) WithSOSession(soPin, userPin string, fn func(session pkcs1
 		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			// Restore user login before returning
 			_ = p.ctx.Login(session, pkcs11.CKU_USER, userPin)
-			return fmt.Errorf("%w: SO login: %v", ErrSessionPoolLogin, err)
+			return &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("SO login: %v", err)}
 		}
 	}
 
@@ -162,7 +164,7 @@ func (p *SessionPool) WithSOSession(soPin, userPin string, fn func(session pkcs1
 	if userPin != "" {
 		if err := p.ctx.Login(session, pkcs11.CKU_USER, userPin); err != nil {
 			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
-				return fmt.Errorf("%w: user login restore: %v (original: %v)", ErrSessionPoolLogin, err, fnErr)
+				return &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("user login restore: %v (original: %v)", err, fnErr)}
 			}
 		}
 	}

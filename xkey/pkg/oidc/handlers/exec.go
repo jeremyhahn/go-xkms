@@ -91,11 +91,11 @@ func (h *ExecHandler) Handle(ctx context.Context, data *TokenData) error {
 	if h.PassJSON {
 		jsonData, err := json.Marshal(data)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrJSONMarshalFailed, err)
+			return &SentinelCauseError{Sentinel: ErrJSONMarshalFailed, Cause: err}
 		}
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrExecCommandFailed, err)
+			return &SentinelCauseError{Sentinel: ErrExecCommandFailed, Cause: err}
 		}
 		go func() {
 			defer func() { _ = stdin.Close() }()
@@ -106,7 +106,7 @@ func (h *ExecHandler) Handle(ctx context.Context, data *TokenData) error {
 	}
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%w: %v", ErrExecCommandFailed, err)
+		return &SentinelCauseError{Sentinel: ErrExecCommandFailed, Cause: err}
 	}
 
 	return nil

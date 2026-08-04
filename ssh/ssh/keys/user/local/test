@@ -1,0 +1,1 @@
+{"v":2,"scope":"user","owner":"local","name":"test","algo":"ed25519","fp":"SHA256:B5dKn7JwQWIRFwV3ZnUX/2w8xeQ0ui8oDXeQhGLWQLM","created":"2026-06-18T18:42:54.986996074Z","pub":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHZFm49e6Ojn5RQWGD72A9UutOMGdK/1WjSmoa0eAPlz","backend_id":"software","backend_key_id":"ssh-user-local-test"}

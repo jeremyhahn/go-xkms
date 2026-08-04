@@ -28,7 +28,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -38,10 +37,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+
 	"github.com/google/go-tpm/tpm2"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
+	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -540,6 +542,7 @@ type TPMService struct {
 	trustStore            truststore.TrustStore
 	staticPWService       *StaticPasswordService
 	platformPolicyService *PlatformPolicyService
+	policyStore           atomic.Pointer[pcrpolicy.PolicyStore]
 }
 
 // NewTPMService creates a new TPMService.
@@ -621,6 +624,82 @@ func (s *TPMService) SetPlatformPolicyService(svc *PlatformPolicyService) {
 	s.platformPolicyService = svc
 }
 
+// getPolicyStore returns the currently configured canonical PCR policy
+// store, or nil if SetPolicyStore has not been called yet. When nil, PCR
+// policy CRUD methods (ListPolicies, CreatePolicy, etc.) fall back to the
+// legacy pcr_policies.json file under the data directory for backward
+// compatibility.
+func (s *TPMService) getPolicyStore() pcrpolicy.PolicyStore {
+	if p := s.policyStore.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// SetPolicyStore injects the canonical PCR policy store (xkey/pkg/pcr_policy),
+// unifying GUI policy persistence with the store used by the CLI and by
+// BarrierAutoUnsealService. This is called by the composition root once the
+// data directory is available.
+//
+// On first call, if a legacy pcr_policies.json file exists under the
+// configured data directory, its entries are imported into the store
+// exactly once; the legacy file is then renamed to
+// pcr_policies.json.migrated so the migration never runs again.
+func (s *TPMService) SetPolicyStore(store pcrpolicy.PolicyStore) {
+	s.policyStore.Store(&store)
+	if store != nil {
+		s.migrateLegacyPCRPolicies(store)
+	}
+}
+
+// migrateLegacyPCRPolicies imports policies from the legacy JSON file (if
+// present) into store, then renames the legacy file so this only ever runs
+// once. Failures are logged but non-fatal: the legacy file is left in place
+// (untouched) so the migration can be retried on the next start.
+func (s *TPMService) migrateLegacyPCRPolicies(store pcrpolicy.PolicyStore) {
+	if s.dataDir == "" {
+		return
+	}
+
+	legacyPath := filepath.Join(s.dataDir, pcrPoliciesFile)
+	data, err := os.ReadFile(legacyPath)
+	if err != nil {
+		// No legacy file to migrate — this is the common case.
+		return
+	}
+
+	var legacy []PCRPolicy
+	if jsonErr := json.Unmarshal(data, &legacy); jsonErr != nil {
+		s.log.Warn("pcr policy migration: failed to parse legacy pcr_policies.json", "error", jsonErr)
+		return
+	}
+
+	ctx := context.Background()
+	migrated := 0
+	for _, p := range legacy {
+		entity, convErr := pcrPolicyToEntity(p)
+		if convErr != nil {
+			s.log.Warn("pcr policy migration: skipping incompatible legacy policy",
+				"policy", p.Name, "error", convErr)
+			continue
+		}
+		if saveErr := store.Save(ctx, entity); saveErr != nil {
+			s.log.Warn("pcr policy migration: failed to save policy",
+				"policy", p.Name, "error", saveErr)
+			continue
+		}
+		migrated++
+	}
+
+	migratedPath := legacyPath + ".migrated"
+	if renameErr := os.Rename(legacyPath, migratedPath); renameErr != nil {
+		s.log.Warn("pcr policy migration: failed to rename legacy pcr_policies.json", "error", renameErr)
+		return
+	}
+	s.log.Info("pcr policy migration: imported legacy PCR policies into unified store",
+		"migrated", migrated, "total", len(legacy))
+}
+
 // isPlatformPolicyName returns true when the given name matches the
 // well-known platform policy name and a platform policy is currently loaded.
 func (s *TPMService) isPlatformPolicyName(name string) bool {
@@ -646,7 +725,7 @@ func (s *TPMService) GetConflictingAssignments(keyHandles []string) (retVal []Co
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetConflictingAssignments", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GetConflictingAssignments: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GetConflictingAssignments: %v", r)}
 		}
 	}()
 
@@ -1247,7 +1326,7 @@ func (s *TPMService) GetPCRs(bank string) (retVal []PCRValue, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetPCRs", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GetPCRs: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GetPCRs: %v", r)}
 		}
 	}()
 
@@ -1268,7 +1347,7 @@ func (s *TPMService) GetPCRs(bank string) (retVal []PCRValue, retErr error) {
 
 	banks, err := tpm.ReadPCRs(allPCRs)
 	if err != nil {
-		return nil, fmt.Errorf("tpm_service: read PCRs: %w", err)
+		return nil, &WrappedError{Msg: "tpm_service: read PCRs", Err: err}
 	}
 
 	// Find the matching bank by algorithm name (case-insensitive),
@@ -1308,7 +1387,7 @@ func (s *TPMService) ListKeys() (retVal []TPMKey, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ListKeys", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ListKeys: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ListKeys: %v", r)}
 		}
 	}()
 
@@ -1322,7 +1401,7 @@ func (s *TPMService) Provision(opts *ProvisionOptions) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in Provision", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in Provision: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in Provision: %v", r)}
 		}
 	}()
 
@@ -1370,7 +1449,7 @@ func (s *TPMService) Install(ownerAuth string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in Install", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in Install: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in Install: %v", r)}
 		}
 	}()
 
@@ -1411,7 +1490,7 @@ func (s *TPMService) InitializePlatformKeyStore(soPIN, userPIN string) (retErr e
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in InitializePlatformKeyStore", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in InitializePlatformKeyStore: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in InitializePlatformKeyStore: %v", r)}
 		}
 	}()
 
@@ -1423,7 +1502,7 @@ func (s *TPMService) InitializePlatformKeyStore(soPIN, userPIN string) (retErr e
 
 	pks := tpm.PlatformKeyStore()
 	if pks == nil {
-		return fmt.Errorf("tpm_service: platform key store not configured")
+		return &MessageError{Msg: "tpm_service: platform key store not configured"}
 	}
 	return pks.Initialize(soPIN, userPIN)
 }
@@ -1436,7 +1515,7 @@ func (s *TPMService) InitializePlatformKeyStoreWithDefaults() (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in InitializePlatformKeyStoreWithDefaults", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in InitializePlatformKeyStoreWithDefaults: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in InitializePlatformKeyStoreWithDefaults: %v", r)}
 		}
 	}()
 
@@ -1448,7 +1527,7 @@ func (s *TPMService) InitializePlatformKeyStoreWithDefaults() (retErr error) {
 
 	pks := tpm.PlatformKeyStore()
 	if pks == nil {
-		return fmt.Errorf("tpm_service: platform key store not configured")
+		return &MessageError{Msg: "tpm_service: platform key store not configured"}
 	}
 	return pks.InitializeWithDefaults()
 }
@@ -1459,7 +1538,7 @@ func (s *TPMService) FactoryReset(ownerAuth string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in FactoryReset", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in FactoryReset: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in FactoryReset: %v", r)}
 		}
 	}()
 
@@ -1484,7 +1563,7 @@ func (s *TPMService) ProvisionIAK(ownerAuth string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ProvisionIAK", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ProvisionIAK: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ProvisionIAK: %v", r)}
 		}
 	}()
 
@@ -1517,7 +1596,7 @@ func (s *TPMService) ProvisionIDevID(ownerAuth string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ProvisionIDevID", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ProvisionIDevID: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ProvisionIDevID: %v", r)}
 		}
 	}()
 
@@ -1554,7 +1633,7 @@ func (s *TPMService) GenerateQuote(nonce string, pcrs []int, bank string) (retVa
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GenerateQuote", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GenerateQuote: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GenerateQuote: %v", r)}
 		}
 	}()
 
@@ -1598,7 +1677,7 @@ func (s *TPMService) GenerateQuote(nonce string, pcrs []int, bank string) (retVa
 
 	q, err := tpm.Quote(pcrUints, nonceBytes)
 	if err != nil {
-		return nil, fmt.Errorf("tpm_service: quote: %w", err)
+		return nil, &WrappedError{Msg: "tpm_service: quote", Err: err}
 	}
 
 	return &Quote{
@@ -1615,7 +1694,7 @@ func (s *TPMService) GetEventLog() (retVal []EventLogEntry, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetEventLog", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GetEventLog: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GetEventLog: %v", r)}
 		}
 	}()
 
@@ -1652,7 +1731,7 @@ func (s *TPMService) GetRandomBytes(length int) (retVal string, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetRandomBytes", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GetRandomBytes: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GetRandomBytes: %v", r)}
 		}
 	}()
 
@@ -1668,7 +1747,7 @@ func (s *TPMService) GetRandomBytes(length int) (retVal string, retErr error) {
 
 	randomBytes, err := tpm.RandomBytes(length)
 	if err != nil {
-		return "", fmt.Errorf("tpm_service: random bytes: %w", err)
+		return "", &WrappedError{Msg: "tpm_service: random bytes", Err: err}
 	}
 
 	return hex.EncodeToString(randomBytes), nil
@@ -1679,7 +1758,7 @@ func (s *TPMService) GetPlatformPolicy() (retVal string, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetPlatformPolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GetPlatformPolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GetPlatformPolicy: %v", r)}
 		}
 	}()
 
@@ -1691,7 +1770,7 @@ func (s *TPMService) GetPlatformPolicy() (retVal string, retErr error) {
 
 	digest, err := tpm.PlatformPolicyDigestHash()
 	if err != nil {
-		return "", fmt.Errorf("tpm_service: platform policy: %w", err)
+		return "", &WrappedError{Msg: "tpm_service: platform policy", Err: err}
 	}
 
 	return hex.EncodeToString(digest), nil
@@ -1702,7 +1781,7 @@ func (s *TPMService) ExportEKCert(format string) (retVal string, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ExportEKCert", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ExportEKCert: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ExportEKCert: %v", r)}
 		}
 	}()
 
@@ -1725,7 +1804,7 @@ func (s *TPMService) ImportEKCert(certPEM string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ImportEKCert", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ImportEKCert: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ImportEKCert: %v", r)}
 		}
 	}()
 
@@ -1753,7 +1832,7 @@ func (s *TPMService) ExportEKECCCert(format string) (retVal string, retErr error
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ExportEKECCCert", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ExportEKECCCert: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ExportEKECCCert: %v", r)}
 		}
 	}()
 
@@ -1776,7 +1855,7 @@ func (s *TPMService) ImportEKECCCert(certPEM string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ImportEKECCCert", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ImportEKECCCert: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ImportEKECCCert: %v", r)}
 		}
 	}()
 
@@ -1804,7 +1883,7 @@ func (s *TPMService) ExportIAKCert(format string) (retVal string, retErr error) 
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ExportIAKCert", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ExportIAKCert: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ExportIAKCert: %v", r)}
 		}
 	}()
 
@@ -1827,7 +1906,7 @@ func (s *TPMService) ImportIAKCert(certPEM string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ImportIAKCert", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ImportIAKCert: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ImportIAKCert: %v", r)}
 		}
 	}()
 
@@ -1855,7 +1934,7 @@ func (s *TPMService) ExportIDevIDCert(format string) (retVal string, retErr erro
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ExportIDevIDCert", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ExportIDevIDCert: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ExportIDevIDCert: %v", r)}
 		}
 	}()
 
@@ -1878,7 +1957,7 @@ func (s *TPMService) ImportIDevIDCert(certPEM string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ImportIDevIDCert", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ImportIDevIDCert: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ImportIDevIDCert: %v", r)}
 		}
 	}()
 
@@ -1908,7 +1987,7 @@ func (s *TPMService) ListPersistentHandles() (retVal []HandleInfo, retErr error)
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ListPersistentHandles", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ListPersistentHandles: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ListPersistentHandles: %v", r)}
 		}
 	}()
 
@@ -1920,7 +1999,7 @@ func (s *TPMService) ListPersistentHandles() (retVal []HandleInfo, retErr error)
 
 	props, err := tpm.FixedProperties()
 	if err != nil {
-		return nil, fmt.Errorf("tpm_service: list persistent handles: %w", err)
+		return nil, &WrappedError{Msg: "tpm_service: list persistent handles", Err: err}
 	}
 	handles := props.PersistentHandles
 
@@ -1966,7 +2045,7 @@ func (s *TPMService) ListTransientHandles() (retVal []HandleInfo, retErr error) 
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ListTransientHandles", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ListTransientHandles: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ListTransientHandles: %v", r)}
 		}
 	}()
 
@@ -1978,7 +2057,7 @@ func (s *TPMService) ListTransientHandles() (retVal []HandleInfo, retErr error) 
 
 	props, err := tpm.FixedProperties()
 	if err != nil {
-		return nil, fmt.Errorf("tpm_service: list transient handles: %w", err)
+		return nil, &WrappedError{Msg: "tpm_service: list transient handles", Err: err}
 	}
 	handles := props.TransientHandles
 
@@ -2056,7 +2135,7 @@ func (s *TPMService) GetLockoutInfo() (retVal *LockoutInfo, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetLockoutInfo", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GetLockoutInfo: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GetLockoutInfo: %v", r)}
 		}
 	}()
 
@@ -2068,7 +2147,7 @@ func (s *TPMService) GetLockoutInfo() (retVal *LockoutInfo, retErr error) {
 
 	props, err := tpm.FixedProperties()
 	if err != nil {
-		return nil, fmt.Errorf("tpm_service: lockout info: %w", err)
+		return nil, &WrappedError{Msg: "tpm_service: lockout info", Err: err}
 	}
 
 	return &LockoutInfo{
@@ -2085,7 +2164,7 @@ func (s *TPMService) ResetLockout(lockoutAuth string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ResetLockout", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ResetLockout: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ResetLockout: %v", r)}
 		}
 	}()
 
@@ -2110,7 +2189,7 @@ func (s *TPMService) ForceResetLockout(lockoutAuth string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ForceResetLockout", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ForceResetLockout: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ForceResetLockout: %v", r)}
 		}
 	}()
 
@@ -2137,7 +2216,7 @@ func (s *TPMService) CertifyKey(keyHandleHex string) (retVal *CertifyKeyResult, 
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in CertifyKey", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in CertifyKey: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in CertifyKey: %v", r)}
 		}
 	}()
 
@@ -2151,7 +2230,7 @@ func (s *TPMService) CertifyKey(keyHandleHex string) (retVal *CertifyKeyResult, 
 	var handle uint32
 	if _, parseErr := fmt.Sscanf(keyHandleHex, "0x%x", &handle); parseErr != nil {
 		if _, parseErr2 := fmt.Sscanf(keyHandleHex, "%x", &handle); parseErr2 != nil {
-			return nil, fmt.Errorf("tpm_service: invalid key handle: %s", keyHandleHex)
+			return nil, &MessageError{Msg: fmt.Sprintf("tpm_service: invalid key handle: %s", keyHandleHex)}
 		}
 	}
 
@@ -2170,7 +2249,7 @@ func (s *TPMService) CertifyKey(keyHandleHex string) (retVal *CertifyKeyResult, 
 
 	result, certErr := tpm.CertifyKey(keyAttrs, nonceBytes, nil)
 	if certErr != nil {
-		return nil, fmt.Errorf("tpm_service: certify key: %w", certErr)
+		return nil, &WrappedError{Msg: "tpm_service: certify key", Err: certErr}
 	}
 
 	return &CertifyKeyResult{
@@ -2186,7 +2265,7 @@ func (s *TPMService) ViewKey(keyName string) (retVal *KeyViewData, retErr error)
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ViewKey", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ViewKey: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ViewKey: %v", r)}
 		}
 	}()
 
@@ -2204,7 +2283,7 @@ func (s *TPMService) ViewKey(keyName string) (retVal *KeyViewData, retErr error)
 		// is no EKECCAttributes method on the TrustedPlatformModule interface.
 		cert, cErr := tpm.EKCertificateEC()
 		if cErr != nil || cert == nil {
-			return nil, fmt.Errorf("tpm_service: EK-ECC not available: %w", cErr)
+			return nil, &WrappedError{Msg: "tpm_service: EK-ECC not available", Err: cErr}
 		}
 		data.Algorithm = certAlgorithmName(cert)
 		data.KeySize = certKeySize(cert)
@@ -2213,7 +2292,7 @@ func (s *TPMService) ViewKey(keyName string) (retVal *KeyViewData, retErr error)
 	case strings.Contains(keyName, "EK"):
 		attrs, aErr := tpm.EKAttributes()
 		if aErr != nil {
-			return nil, fmt.Errorf("tpm_service: EK not available: %w", aErr)
+			return nil, &WrappedError{Msg: "tpm_service: EK not available", Err: aErr}
 		}
 		data.Algorithm = algoDisplayName(attrs)
 		data.KeySize = keySize(attrs)
@@ -2231,7 +2310,7 @@ func (s *TPMService) ViewKey(keyName string) (retVal *KeyViewData, retErr error)
 	case strings.Contains(keyName, "IAK"):
 		attrs, aErr := tpm.IAKAttributes()
 		if aErr != nil {
-			return nil, fmt.Errorf("tpm_service: IAK not available: %w", aErr)
+			return nil, &WrappedError{Msg: "tpm_service: IAK not available", Err: aErr}
 		}
 		data.Algorithm = algoDisplayName(attrs)
 		data.KeySize = keySize(attrs)
@@ -2249,7 +2328,7 @@ func (s *TPMService) ViewKey(keyName string) (retVal *KeyViewData, retErr error)
 	case strings.Contains(keyName, "IDevID"):
 		attrs, aErr := tpm.IDevIDAttributes()
 		if aErr != nil {
-			return nil, fmt.Errorf("tpm_service: IDevID not available: %w", aErr)
+			return nil, &WrappedError{Msg: "tpm_service: IDevID not available", Err: aErr}
 		}
 		data.Algorithm = algoDisplayName(attrs)
 		data.KeySize = keySize(attrs)
@@ -2267,7 +2346,7 @@ func (s *TPMService) ViewKey(keyName string) (retVal *KeyViewData, retErr error)
 	case strings.Contains(keyName, "SRK"):
 		attrs, aErr := tpm.SSRKAttributes()
 		if aErr != nil {
-			return nil, fmt.Errorf("tpm_service: SRK not available: %w", aErr)
+			return nil, &WrappedError{Msg: "tpm_service: SRK not available", Err: aErr}
 		}
 		data.Algorithm = algoDisplayName(attrs)
 		data.KeySize = keySize(attrs)
@@ -2276,7 +2355,7 @@ func (s *TPMService) ViewKey(keyName string) (retVal *KeyViewData, retErr error)
 		}
 
 	default:
-		return nil, fmt.Errorf("tpm_service: unknown key name: %s", keyName)
+		return nil, &MessageError{Msg: fmt.Sprintf("tpm_service: unknown key name: %s", keyName)}
 	}
 
 	return data, nil
@@ -2289,7 +2368,7 @@ func (s *TPMService) GenerateIDevIDCSR() (retVal string, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GenerateIDevIDCSR", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GenerateIDevIDCSR: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GenerateIDevIDCSR: %v", r)}
 		}
 	}()
 
@@ -2301,7 +2380,7 @@ func (s *TPMService) GenerateIDevIDCSR() (retVal string, retErr error) {
 
 	ekCert, ekErr := tpm.EKCertificate()
 	if ekErr != nil {
-		return "", fmt.Errorf("tpm_service: EK certificate required for CSR: %w", ekErr)
+		return "", &WrappedError{Msg: "tpm_service: EK certificate required for CSR", Err: ekErr}
 	}
 
 	iakAttrs, iakErr := tpm.IAKAttributes()
@@ -2317,7 +2396,7 @@ func (s *TPMService) GenerateIDevIDCSR() (retVal string, retErr error) {
 			}
 		}
 		if iakErr != nil {
-			return "", fmt.Errorf("tpm_service: IAK required for CSR: %w", iakErr)
+			return "", &WrappedError{Msg: "tpm_service: IAK required for CSR", Err: iakErr}
 		}
 	}
 
@@ -2331,19 +2410,19 @@ func (s *TPMService) GenerateIDevIDCSR() (retVal string, retErr error) {
 			idevidErr = nil
 		}
 		if idevidErr != nil {
-			return "", fmt.Errorf("tpm_service: IDevID required for CSR: %w", idevidErr)
+			return "", &WrappedError{Msg: "tpm_service: IDevID required for CSR", Err: idevidErr}
 		}
 	}
 
 	csr, csrErr := tpm.CreateTCG_CSR_IDEVID(ekCert, iakAttrs, idevidAttrs)
 	if csrErr != nil {
-		return "", fmt.Errorf("tpm_service: CSR generation failed: %w", csrErr)
+		return "", &WrappedError{Msg: "tpm_service: CSR generation failed", Err: csrErr}
 	}
 
 	// Marshal the CSR to binary.
 	csrBytes, marshalErr := csr.Marshal()
 	if marshalErr != nil {
-		return "", fmt.Errorf("tpm_service: CSR marshaling failed: %w", marshalErr)
+		return "", &WrappedError{Msg: "tpm_service: CSR marshaling failed", Err: marshalErr}
 	}
 
 	return hex.EncodeToString(csrBytes), nil
@@ -2356,7 +2435,7 @@ func (s *TPMService) ChangeOwnerAuth(oldAuth, newAuth string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ChangeOwnerAuth", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ChangeOwnerAuth: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ChangeOwnerAuth: %v", r)}
 		}
 	}()
 
@@ -2368,7 +2447,7 @@ func (s *TPMService) ChangeEndorsementAuth(oldAuth, newAuth string) (retErr erro
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ChangeEndorsementAuth", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ChangeEndorsementAuth: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ChangeEndorsementAuth: %v", r)}
 		}
 	}()
 
@@ -2380,7 +2459,7 @@ func (s *TPMService) ChangeLockoutAuth(oldAuth, newAuth string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ChangeLockoutAuth", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ChangeLockoutAuth: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ChangeLockoutAuth: %v", r)}
 		}
 	}()
 
@@ -2392,7 +2471,7 @@ func (s *TPMService) changeHierarchyAuth(oldAuth, newAuth string, hierarchy tpm2
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in changeHierarchyAuth", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in changeHierarchyAuth: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in changeHierarchyAuth: %v", r)}
 		}
 	}()
 
@@ -2455,7 +2534,7 @@ func (s *TPMService) GetNVSummary() (retVal *NVSummary, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetNVSummary", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GetNVSummary: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GetNVSummary: %v", r)}
 		}
 	}()
 
@@ -2467,7 +2546,7 @@ func (s *TPMService) GetNVSummary() (retVal *NVSummary, retErr error) {
 
 	props, err := tpm.FixedProperties()
 	if err != nil {
-		return nil, fmt.Errorf("tpm_service: nv summary: %w", err)
+		return nil, &WrappedError{Msg: "tpm_service: nv summary", Err: err}
 	}
 
 	entries := make([]NVIndexEntry, len(props.NVIndexes))
@@ -2493,7 +2572,7 @@ func (s *TPMService) DefineNVOrdinary(handle uint32, size int, ownerAuth string)
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in DefineNVOrdinary", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in DefineNVOrdinary: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in DefineNVOrdinary: %v", r)}
 		}
 	}()
 
@@ -2518,7 +2597,7 @@ func (s *TPMService) DefineNVCounter(handle uint32, ownerAuth string) (retErr er
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in DefineNVCounter", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in DefineNVCounter: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in DefineNVCounter: %v", r)}
 		}
 	}()
 
@@ -2537,7 +2616,7 @@ func (s *TPMService) DefineNVExtend(handle uint32, ownerAuth string) (retErr err
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in DefineNVExtend", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in DefineNVExtend: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in DefineNVExtend: %v", r)}
 		}
 	}()
 
@@ -2557,7 +2636,7 @@ func (s *TPMService) ReadNVData(handle uint32, size int, ownerAuth string) (retV
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ReadNVData", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ReadNVData: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ReadNVData: %v", r)}
 		}
 	}()
 
@@ -2586,7 +2665,7 @@ func (s *TPMService) ReadNVData(handle uint32, size int, ownerAuth string) (retV
 	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
 	data, readErr := tpm.NVRead(keyAttrs, uint16(size))
 	if readErr != nil {
-		return "", fmt.Errorf("tpm_service: read NV data: %w", readErr)
+		return "", &WrappedError{Msg: "tpm_service: read NV data", Err: readErr}
 	}
 
 	return hex.EncodeToString(data), nil
@@ -2597,7 +2676,7 @@ func (s *TPMService) WriteNVData(handle uint32, hexData string, ownerAuth string
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in WriteNVData", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in WriteNVData: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in WriteNVData: %v", r)}
 		}
 	}()
 
@@ -2626,7 +2705,7 @@ func (s *TPMService) IncrementNVCounter(handle uint32, ownerAuth string) (retVal
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in IncrementNVCounter", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in IncrementNVCounter: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in IncrementNVCounter: %v", r)}
 		}
 	}()
 
@@ -2645,7 +2724,7 @@ func (s *TPMService) ReadNVCounter(handle uint32, ownerAuth string) (retVal uint
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ReadNVCounter", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ReadNVCounter: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ReadNVCounter: %v", r)}
 		}
 	}()
 
@@ -2664,7 +2743,7 @@ func (s *TPMService) ExtendNV(handle uint32, hexData string, ownerAuth string) (
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ExtendNV", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ExtendNV: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ExtendNV: %v", r)}
 		}
 	}()
 
@@ -2691,7 +2770,7 @@ func (s *TPMService) ReadNVExtend(handle uint32, ownerAuth string) (retVal strin
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ReadNVExtend", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ReadNVExtend: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ReadNVExtend: %v", r)}
 		}
 	}()
 
@@ -2704,7 +2783,7 @@ func (s *TPMService) ReadNVExtend(handle uint32, ownerAuth string) (retVal strin
 	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
 	data, readErr := tpm.NVReadExtend(keyAttrs)
 	if readErr != nil {
-		return "", fmt.Errorf("tpm_service: read NV extend: %w", readErr)
+		return "", &WrappedError{Msg: "tpm_service: read NV extend", Err: readErr}
 	}
 
 	return hex.EncodeToString(data), nil
@@ -2715,7 +2794,7 @@ func (s *TPMService) DeleteNVIndex(handle uint32, ownerAuth string) (retErr erro
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in DeleteNVIndex", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in DeleteNVIndex: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in DeleteNVIndex: %v", r)}
 		}
 	}()
 
@@ -2759,7 +2838,7 @@ func (s *TPMService) ImportManufacturerCA(certPEM string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ImportManufacturerCA", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ImportManufacturerCA: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ImportManufacturerCA: %v", r)}
 		}
 	}()
 
@@ -2796,7 +2875,7 @@ func (s *TPMService) VerifyTPM() (retVal *VerificationStatus, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in VerifyTPM", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in VerifyTPM: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in VerifyTPM: %v", r)}
 		}
 	}()
 
@@ -2852,7 +2931,7 @@ func (s *TPMService) GetVerificationStatus() (retVal *VerificationStatus, retErr
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetVerificationStatus", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GetVerificationStatus: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GetVerificationStatus: %v", r)}
 		}
 	}()
 
@@ -2986,7 +3065,7 @@ func (s *TPMService) ParseCertificate(certPEM string) (retVal *CertificateDetail
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ParseCertificate", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ParseCertificate: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ParseCertificate: %v", r)}
 		}
 	}()
 
@@ -3088,7 +3167,7 @@ func (s *TPMService) ListPolicies() (retVal []PCRPolicy, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ListPolicies", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ListPolicies: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ListPolicies: %v", r)}
 		}
 	}()
 
@@ -3101,7 +3180,7 @@ func (s *TPMService) CreatePolicy(policy *PCRPolicy) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in CreatePolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in CreatePolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in CreatePolicy: %v", r)}
 		}
 	}()
 
@@ -3143,7 +3222,7 @@ func (s *TPMService) GetPolicyDeletionImpact(name string) (retVal *PolicyDeletio
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetPolicyDeletionImpact", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GetPolicyDeletionImpact: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GetPolicyDeletionImpact: %v", r)}
 		}
 	}()
 
@@ -3197,7 +3276,7 @@ func (s *TPMService) DeletePolicy(name string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in DeletePolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in DeletePolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in DeletePolicy: %v", r)}
 		}
 	}()
 
@@ -3231,7 +3310,7 @@ func (s *TPMService) GetPolicy(name string) (retVal *PCRPolicy, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetPolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GetPolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GetPolicy: %v", r)}
 		}
 	}()
 
@@ -3245,8 +3324,26 @@ func (s *TPMService) GetPolicy(name string) (retVal *PCRPolicy, retErr error) {
 	return nil, ErrTPMPolicyNotFound
 }
 
-// loadPolicies reads the persisted PCR policies from disk.
+// loadPolicies reads the persisted PCR policies. When a canonical
+// pcr_policy store has been configured via SetPolicyStore, policies are
+// read from it (the unified store shared with the CLI and
+// BarrierAutoUnsealService). Otherwise, it falls back to the legacy
+// pcr_policies.json file under the data directory for backward
+// compatibility with callers that never wire a store (e.g. unit tests).
 func (s *TPMService) loadPolicies() []PCRPolicy {
+	if store := s.getPolicyStore(); store != nil {
+		entities, err := store.List(context.Background())
+		if err != nil {
+			s.log.Warn("failed to list PCR policies from store", "error", err)
+			return []PCRPolicy{}
+		}
+		policies := make([]PCRPolicy, 0, len(entities))
+		for _, e := range entities {
+			policies = append(policies, entityToPCRPolicy(e))
+		}
+		return policies
+	}
+
 	if s.dataDir == "" {
 		return []PCRPolicy{}
 	}
@@ -3266,8 +3363,17 @@ func (s *TPMService) loadPolicies() []PCRPolicy {
 	return policies
 }
 
-// savePolicies writes the PCR policies to disk.
+// savePolicies persists the full set of PCR policies, mirroring the
+// "overwrite whole file" semantics every CRUD call site (ListPolicies,
+// CreatePolicy, DeletePolicy, UpdatePolicy, ...) already relies on: load the
+// full list, mutate it, and save the full list back. When a canonical
+// pcr_policy store is configured, this is implemented as a diff-based sync
+// against the store; otherwise it falls back to the legacy JSON file.
 func (s *TPMService) savePolicies(policies []PCRPolicy) error {
+	if store := s.getPolicyStore(); store != nil {
+		return s.syncPoliciesToStore(store, policies)
+	}
+
 	if s.dataDir == "" {
 		return ErrTPMDataDirNotSet
 	}
@@ -3275,11 +3381,59 @@ func (s *TPMService) savePolicies(policies []PCRPolicy) error {
 	filePath := filepath.Join(s.dataDir, pcrPoliciesFile)
 	data, err := json.MarshalIndent(policies, "", "  ")
 	if err != nil {
-		return fmt.Errorf("tpm_service: marshal policies: %w", err)
+		return &WrappedError{Msg: "tpm_service: marshal policies", Err: err}
 	}
 
 	if writeErr := os.WriteFile(filePath, data, 0600); writeErr != nil {
-		return fmt.Errorf("tpm_service: write policies: %w", writeErr)
+		return &WrappedError{Msg: "tpm_service: write policies", Err: writeErr}
+	}
+
+	return nil
+}
+
+// syncPoliciesToStore replaces the full set of PCR policies held in store
+// with policies, preserving each policy's original CreatedAt and AutoUnseal
+// designation when it already exists under the same name. Policies no
+// longer present in the incoming slice are deleted; a policy that is
+// currently the active auto-unseal policy is left in place if the store
+// refuses to delete it (ErrDeleteAutoUnseal), since the auto-unseal
+// designation must be cleared explicitly first.
+func (s *TPMService) syncPoliciesToStore(store pcrpolicy.PolicyStore, policies []PCRPolicy) error {
+	ctx := context.Background()
+
+	existing, err := store.List(ctx)
+	if err != nil {
+		return err
+	}
+	existingByName := make(map[string]*pcrpolicy.PCRPolicyEntity, len(existing))
+	for _, e := range existing {
+		existingByName[e.Name] = e
+	}
+
+	keep := make(map[string]struct{}, len(policies))
+	for _, p := range policies {
+		keep[p.Name] = struct{}{}
+
+		entity, convErr := pcrPolicyToEntity(p)
+		if convErr != nil {
+			return convErr
+		}
+		if old, ok := existingByName[p.Name]; ok {
+			entity.CreatedAt = old.CreatedAt
+			entity.AutoUnseal = old.AutoUnseal
+		}
+		if saveErr := store.Save(ctx, entity); saveErr != nil {
+			return saveErr
+		}
+	}
+
+	for name := range existingByName {
+		if _, ok := keep[name]; ok {
+			continue
+		}
+		if delErr := store.Delete(ctx, name); delErr != nil && !errors.Is(delErr, pcrpolicy.ErrDeleteAutoUnseal) {
+			return delErr
+		}
 	}
 
 	return nil
@@ -3324,7 +3478,7 @@ func (s *TPMService) UpdatePolicy(name string, updated *PCRPolicy) (retVal *PCRP
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in UpdatePolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in UpdatePolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in UpdatePolicy: %v", r)}
 		}
 	}()
 
@@ -3378,7 +3532,7 @@ func (s *TPMService) RefreshPolicyPCRs(name string) (retVal *PCRPolicy, retErr e
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in RefreshPolicyPCRs", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in RefreshPolicyPCRs: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in RefreshPolicyPCRs: %v", r)}
 		}
 	}()
 
@@ -3416,7 +3570,7 @@ func (s *TPMService) ExportPolicy(name string) (retVal string, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ExportPolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ExportPolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ExportPolicy: %v", r)}
 		}
 	}()
 
@@ -3462,7 +3616,7 @@ func (s *TPMService) ExportCompositePolicy(name string) (retVal string, retErr e
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ExportCompositePolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ExportCompositePolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ExportCompositePolicy: %v", r)}
 		}
 	}()
 
@@ -3521,7 +3675,7 @@ func (s *TPMService) SavePolicyToFile(policyJSON string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in SavePolicyToFile", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in SavePolicyToFile: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in SavePolicyToFile: %v", r)}
 		}
 	}()
 
@@ -3599,7 +3753,7 @@ func (s *TPMService) ImportPolicyFile() (retVal string, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ImportPolicyFile", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ImportPolicyFile: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ImportPolicyFile: %v", r)}
 		}
 	}()
 
@@ -3771,7 +3925,7 @@ func (s *TPMService) AssignPolicyToKey(policyName, keyHandle string) (retErr err
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in AssignPolicyToKey", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in AssignPolicyToKey: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in AssignPolicyToKey: %v", r)}
 		}
 	}()
 
@@ -3814,7 +3968,7 @@ func (s *TPMService) ListPolicyAssignments() (retVal []PolicyAssignment, retErr 
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ListPolicyAssignments", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ListPolicyAssignments: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ListPolicyAssignments: %v", r)}
 		}
 	}()
 
@@ -3826,7 +3980,7 @@ func (s *TPMService) UnassignPolicyFromKey(keyHandle string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in UnassignPolicyFromKey", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in UnassignPolicyFromKey: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in UnassignPolicyFromKey: %v", r)}
 		}
 	}()
 
@@ -3878,7 +4032,7 @@ func (s *TPMService) saveAssignments(assignments []PolicyAssignment) error {
 	filePath := filepath.Join(s.dataDir, policyAssignmentsFile)
 	data, err := json.MarshalIndent(assignments, "", "  ")
 	if err != nil {
-		return fmt.Errorf("tpm_service: marshal assignments: %w", err)
+		return &WrappedError{Msg: "tpm_service: marshal assignments", Err: err}
 	}
 
 	return os.WriteFile(filePath, data, 0600)
@@ -3928,7 +4082,7 @@ func (s *TPMService) CreateCompositePolicy(policy *CompositePolicy) (retErr erro
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in CreateCompositePolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in CreateCompositePolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in CreateCompositePolicy: %v", r)}
 		}
 	}()
 
@@ -4002,7 +4156,7 @@ func (s *TPMService) ListCompositePolicies() (retVal []CompositePolicy, retErr e
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ListCompositePolicies", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ListCompositePolicies: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ListCompositePolicies: %v", r)}
 		}
 	}()
 
@@ -4015,7 +4169,7 @@ func (s *TPMService) ListCompositePoliciesWithDigests() (retVal []CompositePolic
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ListCompositePoliciesWithDigests", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ListCompositePoliciesWithDigests: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ListCompositePoliciesWithDigests: %v", r)}
 		}
 	}()
 
@@ -4114,7 +4268,7 @@ func (s *TPMService) GetCompositePolicy(name string) (retVal *CompositePolicy, r
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetCompositePolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in GetCompositePolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in GetCompositePolicy: %v", r)}
 		}
 	}()
 
@@ -4134,7 +4288,7 @@ func (s *TPMService) DeleteCompositePolicy(name string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in DeleteCompositePolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in DeleteCompositePolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in DeleteCompositePolicy: %v", r)}
 		}
 	}()
 
@@ -4168,7 +4322,7 @@ func (s *TPMService) RefreshCompositePolicyPCRs(name string) (retVal *CompositeP
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in RefreshCompositePolicyPCRs", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in RefreshCompositePolicyPCRs: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in RefreshCompositePolicyPCRs: %v", r)}
 		}
 	}()
 
@@ -4236,7 +4390,7 @@ func (s *TPMService) saveCompositePolicies(policies []CompositePolicy) error {
 	filePath := filepath.Join(s.dataDir, compositePoliciesFile)
 	data, err := json.MarshalIndent(policies, "", "  ")
 	if err != nil {
-		return fmt.Errorf("tpm_service: marshal composite policies: %w", err)
+		return &WrappedError{Msg: "tpm_service: marshal composite policies", Err: err}
 	}
 
 	return os.WriteFile(filePath, data, 0600)
@@ -4252,7 +4406,7 @@ func (s *TPMService) ListPoliciesWithDigests() (retVal []PCRPolicy, retErr error
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ListPoliciesWithDigests", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ListPoliciesWithDigests: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ListPoliciesWithDigests: %v", r)}
 		}
 	}()
 
@@ -4357,7 +4511,7 @@ func (s *TPMService) AssignPolicyToKeys(policyName string, keyHandles []string) 
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in AssignPolicyToKeys", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in AssignPolicyToKeys: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in AssignPolicyToKeys: %v", r)}
 		}
 	}()
 
@@ -4415,7 +4569,7 @@ func (s *TPMService) CreatePasswordPolicy(name, description, password string, sa
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in CreatePasswordPolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in CreatePasswordPolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in CreatePasswordPolicy: %v", r)}
 		}
 	}()
 
@@ -4428,7 +4582,7 @@ func (s *TPMService) CreatePasswordPolicy(name, description, password string, sa
 
 	passwordHash, err := hashPassword(password)
 	if err != nil {
-		return fmt.Errorf("tpm_service: hash password: %w", err)
+		return &WrappedError{Msg: "tpm_service: hash password", Err: err}
 	}
 
 	policy := &CompositePolicy{
@@ -4462,7 +4616,7 @@ func (s *TPMService) CreatePCROrPasswordPolicy(name, description string, pcrSele
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in CreatePCROrPasswordPolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in CreatePCROrPasswordPolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in CreatePCROrPasswordPolicy: %v", r)}
 		}
 	}()
 
@@ -4478,7 +4632,7 @@ func (s *TPMService) CreatePCROrPasswordPolicy(name, description string, pcrSele
 
 	passwordHash, err := hashPassword(password)
 	if err != nil {
-		return fmt.Errorf("tpm_service: hash password: %w", err)
+		return &WrappedError{Msg: "tpm_service: hash password", Err: err}
 	}
 
 	policy := &CompositePolicy{
@@ -4517,7 +4671,7 @@ func (s *TPMService) CreatePCRAndPasswordPolicy(name, description string, pcrSel
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in CreatePCRAndPasswordPolicy", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in CreatePCRAndPasswordPolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in CreatePCRAndPasswordPolicy: %v", r)}
 		}
 	}()
 
@@ -4533,7 +4687,7 @@ func (s *TPMService) CreatePCRAndPasswordPolicy(name, description string, pcrSel
 
 	passwordHash, err := hashPassword(password)
 	if err != nil {
-		return fmt.Errorf("tpm_service: hash password: %w", err)
+		return &WrappedError{Msg: "tpm_service: hash password", Err: err}
 	}
 
 	policy := &CompositePolicy{
@@ -4639,7 +4793,7 @@ func (s *TPMService) VerifyPolicyPassword(policyName, password string) (retVal b
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in VerifyPolicyPassword", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in VerifyPolicyPassword: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in VerifyPolicyPassword: %v", r)}
 		}
 	}()
 
@@ -4663,7 +4817,7 @@ func (s *TPMService) ComparePolicyPCRs(name string) (retVal *PolicyComparisonRes
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ComparePolicyPCRs", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ComparePolicyPCRs: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ComparePolicyPCRs: %v", r)}
 		}
 	}()
 
@@ -4756,7 +4910,7 @@ func (s *TPMService) ReplayEventLog() (retVal *EventLogReplayResult, retErr erro
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ReplayEventLog", "recover", r)
-			retErr = fmt.Errorf("tpm_service: panic in ReplayEventLog: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("tpm_service: panic in ReplayEventLog: %v", r)}
 		}
 	}()
 
@@ -4925,7 +5079,7 @@ func (s *TPMService) ClearTPM(req *TPMClearRequest) (*TPMClearResult, error) {
 	tpm, err := s.getTPM()
 	if err != nil {
 		s.log.Error("failed to open TPM for clear", "error", err)
-		return nil, fmt.Errorf("%w: %v", ErrTPMClearFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrTPMClearFailed, Cause: err}
 	}
 	defer s.tpmAccessor.Release()
 

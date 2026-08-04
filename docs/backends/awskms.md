@@ -244,8 +244,8 @@ type Config struct {
 
 **Endpoint** (optional)
 - Custom KMS endpoint URL
-- Used for testing with LocalStack or moto
-- Example: `"http://localhost:4566"` for LocalStack
+- Used for testing with the Floci emulator
+- Example: `"http://localhost:4566"` for the Floci emulator
 - Not needed for production AWS KMS
 
 **Client** (optional)
@@ -901,15 +901,15 @@ docker-compose run --rm test
 docker-compose down -v
 ```
 
-### Testing with LocalStack
+### Testing with Floci
 
-For local development, use LocalStack to emulate AWS KMS:
+For local development, use Floci to emulate AWS KMS:
 
 ```go
 func getTestBackend(t *testing.T) backend.Backend {
     config := &awskms.Config{
         Region:   "us-east-1",
-        Endpoint: "http://localhost:4566", // LocalStack
+        Endpoint: "http://localhost:4566", // Floci
     }
 
     store, err := awskms.NewBackend(config)

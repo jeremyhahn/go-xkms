@@ -104,7 +104,7 @@ type Credential struct {
 // It generates a random secret if none is provided.
 func NewCredential(name, issuer, otpType string) (*Credential, error) {
 	if name == "" {
-		return nil, fmt.Errorf("%w: name is required", ErrInvalidCredential)
+		return nil, &DetailError{Err: ErrInvalidCredential, Detail: ": name is required"}
 	}
 
 	if otpType != TypeTOTP && otpType != TypeHOTP {
@@ -136,11 +136,11 @@ func NewCredential(name, issuer, otpType string) (*Credential, error) {
 func ParseURI(uri string) (*Credential, error) {
 	u, err := url.Parse(uri)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidURI, err)
+		return nil, &SentinelCauseError{Sentinel: ErrInvalidURI, Cause: err}
 	}
 
 	if u.Scheme != "otpauth" {
-		return nil, fmt.Errorf("%w: scheme must be otpauth", ErrInvalidURI)
+		return nil, &DetailError{Err: ErrInvalidURI, Detail: ": scheme must be otpauth"}
 	}
 
 	otpType := u.Host
@@ -163,7 +163,7 @@ func ParseURI(uri string) (*Credential, error) {
 	// Secret is required
 	secret := query.Get("secret")
 	if secret == "" {
-		return nil, fmt.Errorf("%w: secret is required", ErrInvalidURI)
+		return nil, &DetailError{Err: ErrInvalidURI, Detail: ": secret is required"}
 	}
 
 	// Normalize and validate secret
@@ -214,7 +214,7 @@ func ParseURI(uri string) (*Credential, error) {
 		if qCounter := query.Get("counter"); qCounter != "" {
 			c, err := strconv.ParseUint(qCounter, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("%w: invalid counter", ErrInvalidURI)
+				return nil, &DetailError{Err: ErrInvalidURI, Detail: ": invalid counter"}
 			}
 			counter = c
 		}
@@ -286,7 +286,7 @@ func (c *Credential) ToURI() string {
 // Validate checks if the credential is valid.
 func (c *Credential) Validate() error {
 	if c.Name == "" {
-		return fmt.Errorf("%w: name is required", ErrInvalidCredential)
+		return &DetailError{Err: ErrInvalidCredential, Detail: ": name is required"}
 	}
 	if c.Secret == "" {
 		return ErrInvalidSecret
@@ -318,7 +318,7 @@ func (c *Credential) Validate() error {
 // applied (SHA1, 6 digits, 30-second period).
 func NewCredentialFromManualEntry(accountName, issuer, secret string) (*Credential, error) {
 	if accountName == "" && issuer == "" {
-		return nil, fmt.Errorf("%w: account name or issuer required", ErrInvalidCredential)
+		return nil, &DetailError{Err: ErrInvalidCredential, Detail: ": account name or issuer required"}
 	}
 	if secret == "" {
 		return nil, ErrInvalidSecret
@@ -358,7 +358,7 @@ func NewCredentialFromManualEntry(accountName, issuer, secret string) (*Credenti
 func GenerateSecret(length int) (string, error) {
 	secret := make([]byte, length)
 	if _, err := rand.Read(secret); err != nil {
-		return "", fmt.Errorf("oath: failed to generate secret: %w", err)
+		return "", &WrappedError{Msg: "oath: failed to generate secret", Err: err}
 	}
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret), nil
 }
@@ -399,12 +399,12 @@ func normalizeSecret(secret string) (string, error) {
 	secret = strings.TrimRight(secret, "=")
 
 	if secret == "" {
-		return "", fmt.Errorf("%w: empty secret", ErrInvalidSecret)
+		return "", &DetailError{Err: ErrInvalidSecret, Detail: ": empty secret"}
 	}
 
 	// Validate it's valid base32
 	if _, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secret); err != nil {
-		return "", fmt.Errorf("%w: invalid base32 secret", ErrInvalidSecret)
+		return "", &DetailError{Err: ErrInvalidSecret, Detail: ": invalid base32 secret"}
 	}
 
 	return secret, nil

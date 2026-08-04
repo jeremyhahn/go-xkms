@@ -30,7 +30,7 @@ The two interfaces have different error and iteration semantics. The adapter tra
 
 | Operation | storage.Backend | kvstore.KVStore | Adapter Behavior |
 |-----------|-----------------|-----------------|------------------|
-| Get (missing key) | returns `storage.ErrNotFound` | returns `dberrors.DragonError{Code: ErrNotFound}` | Wraps the error so `dao.IsNotFound()` works |
+| Get (missing key) | returns `storage.ErrNotFound` | returns `qrdbsdk.QRDBError{Code: ErrNotFound}` | Wraps the error so `dao.IsNotFound()` works |
 | Delete (missing key) | returns `storage.ErrNotFound` | returns `nil` (idempotent) | Swallows the not-found error |
 | Scan | returns `map[string][]byte` | callback-based `func(key, value) error` | Sorts keys, iterates in order, calls callback per entry |
 

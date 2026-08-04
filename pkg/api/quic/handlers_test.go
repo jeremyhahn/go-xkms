@@ -24,7 +24,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -33,6 +32,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -57,20 +58,20 @@ func (a *testAuthenticator) Name() string {
 func (a *testAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Identity, error) {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		return nil, fmt.Errorf("no authorization header")
+		return nil, &errs.Message{Msg: "no authorization header"}
 	}
 	if !strings.HasPrefix(authHeader, "Bearer ") {
-		return nil, fmt.Errorf("invalid authorization header format")
+		return nil, &errs.Message{Msg: "invalid authorization header format"}
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	if token != a.validToken {
-		return nil, fmt.Errorf("invalid token")
+		return nil, &errs.Message{Msg: "invalid token"}
 	}
 	return &auth.Identity{Subject: "test-user"}, nil
 }
 
 func (a *testAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD) (*auth.Identity, error) {
-	return nil, fmt.Errorf("not implemented")
+	return nil, &errs.Message{Msg: "not implemented"}
 }
 
 // Helper to create a test server with initialized xkms
@@ -178,7 +179,7 @@ func (m *MockImportExportBackend) ExportKey(ctx context.Context, attrs *types.Ke
 
 // ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
 func (m *MockImportExportBackend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
-	return nil, fmt.Errorf("not supported for asymmetric keys")
+	return nil, &errs.Message{Msg: "not supported for asymmetric keys"}
 }
 
 // Verify interface compliance

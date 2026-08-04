@@ -1081,15 +1081,30 @@ func getGCPStore() (backend.Backend, error) {
 
 ### Integration Testing
 
-The GCP KMS backend has full integration test coverage using mock/emulator testing:
+The GCP KMS backend has full integration test coverage using the Floci
+GCP emulator (real gRPC Cloud KMS with verifiable signatures) plus a mock
+client for algorithms the emulator does not implement:
 
 ```bash
 # Run GCP KMS integration tests (recommended)
 make integration-test-gcpkms
 
-# This executes tests in Docker with mocked GCP KMS service
-# Tests all supported algorithms: RSA 2048/3072/4096, ECDSA P-256/P-384/P-521
-# Part of the full integration test suite (151/151 tests passing)
+# This executes tests in Docker against the floci/floci-gcp emulator
+# (RSASSA-PKCS1, ECDSA P-256, AES-256-GCM — real cryptographic verification)
+# plus mock-client tests covering EC P-384 and RSA-PSS
+```
+
+To connect the backend to a local emulator, set `Endpoint` and `Insecure`:
+
+```go
+cfg := &gcpkms.Config{
+    ProjectID:  "test-project",
+    LocationID: "global",
+    KeyRingID:  "my-ring",
+    Endpoint:   "localhost:4588", // floci-gcp
+    Insecure:   true,             // plaintext gRPC, emulator only
+    // ...
+}
 ```
 
 ### Running Tests Manually

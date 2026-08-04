@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 )
 
@@ -41,59 +43,59 @@ func (tpm *TPM2) DictionaryAttackLockoutReset(lockoutAuth []byte) error {
 
 	// Header
 	if err := binary.Write(buf, binary.BigEndian, uint16(0x8002)); err != nil {
-		return fmt.Errorf("tpm: lockout reset: %w", err)
+		return &errs.Wrapped{Msg: "tpm: lockout reset", Err: err}
 	}
 	if err := binary.Write(buf, binary.BigEndian, uint32(totalSize)); err != nil {
-		return fmt.Errorf("tpm: lockout reset: %w", err)
+		return &errs.Wrapped{Msg: "tpm: lockout reset", Err: err}
 	}
 	if err := binary.Write(buf, binary.BigEndian, uint32(tpm2.TPMCCDictionaryAttackLockReset)); err != nil {
-		return fmt.Errorf("tpm: lockout reset: %w", err)
+		return &errs.Wrapped{Msg: "tpm: lockout reset", Err: err}
 	}
 
 	// Lockout handle
 	if err := binary.Write(buf, binary.BigEndian, uint32(tpm2.TPMRHLockout)); err != nil {
-		return fmt.Errorf("tpm: lockout reset: %w", err)
+		return &errs.Wrapped{Msg: "tpm: lockout reset", Err: err}
 	}
 
 	// Authorization area size
 	if err := binary.Write(buf, binary.BigEndian, uint32(authAreaSize)); err != nil {
-		return fmt.Errorf("tpm: lockout reset: %w", err)
+		return &errs.Wrapped{Msg: "tpm: lockout reset", Err: err}
 	}
 
 	// Session handle: TPM_RS_PW (0x40000009)
 	if err := binary.Write(buf, binary.BigEndian, uint32(0x40000009)); err != nil {
-		return fmt.Errorf("tpm: lockout reset: %w", err)
+		return &errs.Wrapped{Msg: "tpm: lockout reset", Err: err}
 	}
 
 	// Nonce size: 0 for password session
 	if err := binary.Write(buf, binary.BigEndian, uint16(0)); err != nil {
-		return fmt.Errorf("tpm: lockout reset: %w", err)
+		return &errs.Wrapped{Msg: "tpm: lockout reset", Err: err}
 	}
 
 	// Session attributes: continueSession = 1
 	if err := buf.WriteByte(0x01); err != nil {
-		return fmt.Errorf("tpm: lockout reset: %w", err)
+		return &errs.Wrapped{Msg: "tpm: lockout reset", Err: err}
 	}
 
 	// Auth value size + auth value
 	if err := binary.Write(buf, binary.BigEndian, uint16(len(lockoutAuth))); err != nil {
-		return fmt.Errorf("tpm: lockout reset: %w", err)
+		return &errs.Wrapped{Msg: "tpm: lockout reset", Err: err}
 	}
 	if len(lockoutAuth) > 0 {
 		if _, err := buf.Write(lockoutAuth); err != nil {
-			return fmt.Errorf("tpm: lockout reset: %w", err)
+			return &errs.Wrapped{Msg: "tpm: lockout reset", Err: err}
 		}
 	}
 
 	// Send command
 	rsp, err := tpm.transport.Send(buf.Bytes())
 	if err != nil {
-		return fmt.Errorf("tpm: lockout reset send: %w", err)
+		return &errs.Wrapped{Msg: "tpm: lockout reset send", Err: err}
 	}
 
 	// Parse response
 	if len(rsp) < 10 {
-		return fmt.Errorf("tpm: lockout reset: response too short: %d bytes", len(rsp))
+		return &errs.Message{Msg: fmt.Sprintf("tpm: lockout reset: response too short: %d bytes", len(rsp))}
 	}
 
 	respCode := binary.BigEndian.Uint32(rsp[6:10])

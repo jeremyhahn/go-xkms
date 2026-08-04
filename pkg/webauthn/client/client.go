@@ -17,11 +17,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 const (
@@ -134,7 +135,7 @@ func (c *Client) Register(ctx context.Context, req *RegistrationRequest) (*Regis
 	// Step 2: Create credential with the authenticator
 	attestationResponse, err := adapter.MakeCredential(creationOptions)
 	if err != nil {
-		return nil, wrapError("make credential", fmt.Errorf("%w: %w", ErrCTAPOperationFailed, err))
+		return nil, wrapError("make credential", &errs.Joined{Lead: ErrCTAPOperationFailed, Cause: err})
 	}
 
 	// Step 3: Finish registration with the server
@@ -175,7 +176,7 @@ func (c *Client) Login(ctx context.Context, req *AuthenticationRequest) (*Authen
 	// Step 2: Get assertion from the authenticator
 	assertionResponse, err := adapter.GetAssertion(assertionOptions)
 	if err != nil {
-		return nil, wrapError("get assertion", fmt.Errorf("%w: %w", ErrCTAPOperationFailed, err))
+		return nil, wrapError("get assertion", &errs.Joined{Lead: ErrCTAPOperationFailed, Cause: err})
 	}
 
 	// Step 3: Finish login with the server
@@ -230,7 +231,7 @@ func (c *Client) beginRegistration(ctx context.Context, req *RegistrationRequest
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: %w", ErrServerUnavailable, err)
+		return nil, "", &errs.Joined{Lead: ErrServerUnavailable, Cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -267,7 +268,7 @@ func (c *Client) finishRegistration(ctx context.Context, sessionID string, attes
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrServerUnavailable, err)
+		return nil, &errs.Joined{Lead: ErrServerUnavailable, Cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -277,12 +278,12 @@ func (c *Client) finishRegistration(ctx context.Context, sessionID string, attes
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: %w", ErrRegistrationFailed, parseServerError(resp.StatusCode, respBody))
+		return nil, &errs.Joined{Lead: ErrRegistrationFailed, Cause: parseServerError(resp.StatusCode, respBody)}
 	}
 
 	var authResp authResponse
 	if err := json.Unmarshal(respBody, &authResp); err != nil {
-		return nil, fmt.Errorf("%w: failed to decode response: %w", ErrInvalidServerResponse, err)
+		return nil, &errs.Joined{Lead: ErrInvalidServerResponse, Detail: "failed to decode response", Cause: err}
 	}
 
 	return &RegistrationResult{
@@ -315,7 +316,7 @@ func (c *Client) beginLogin(ctx context.Context, req *AuthenticationRequest) ([]
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("%w: %w", ErrServerUnavailable, err)
+		return nil, "", "", &errs.Joined{Lead: ErrServerUnavailable, Cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -358,7 +359,7 @@ func (c *Client) finishLogin(ctx context.Context, sessionID, userID string, asse
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrServerUnavailable, err)
+		return nil, &errs.Joined{Lead: ErrServerUnavailable, Cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -368,12 +369,12 @@ func (c *Client) finishLogin(ctx context.Context, sessionID, userID string, asse
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: %w", ErrAuthenticationFailed, parseServerError(resp.StatusCode, respBody))
+		return nil, &errs.Joined{Lead: ErrAuthenticationFailed, Cause: parseServerError(resp.StatusCode, respBody)}
 	}
 
 	var authResp authResponse
 	if err := json.Unmarshal(respBody, &authResp); err != nil {
-		return nil, fmt.Errorf("%w: failed to decode response: %w", ErrInvalidServerResponse, err)
+		return nil, &errs.Joined{Lead: ErrInvalidServerResponse, Detail: "failed to decode response", Cause: err}
 	}
 
 	return &AuthenticationResult{

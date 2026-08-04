@@ -1,0 +1,146 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+//  1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//     See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+//  2. Commercial License
+//     Contact licensing@automatethethings.com for commercial licensing options.
+
+package services
+
+import (
+	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+)
+
+func newProfileService(t *testing.T) *SSHProfileService {
+	t.Helper()
+	store, err := sshclient.NewProfileStore(storage.New())
+	if err != nil {
+		t.Fatalf("NewProfileStore: %v", err)
+	}
+	return NewSSHProfileService(store)
+}
+
+func TestSSHProfileService_CRUDAndFolders(t *testing.T) {
+	svc := newProfileService(t)
+
+	if _, err := svc.AddProfile(SSHProfileParams{
+		Name: "prod-web", FolderPath: "work/prod", Host: "web1.example.com", Port: 2222, User: "deploy",
+		KeyScope: "user", KeyOwner: "local", KeyName: "laptop",
+	}); err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	if _, err := svc.AddProfile(SSHProfileParams{Name: "home", FolderPath: "personal", Host: "nas.local", User: "pi"}); err != nil {
+		t.Fatalf("AddProfile 2: %v", err)
+	}
+
+	list, err := svc.ListProfiles()
+	if err != nil || len(list) != 2 {
+		t.Fatalf("ListProfiles = %v, %v", list, err)
+	}
+
+	got, err := svc.GetProfile("prod-web")
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if got.Host != "web1.example.com" || got.Port != 2222 || got.KeyName != "laptop" {
+		t.Fatalf("unexpected profile: %+v", got)
+	}
+
+	// Folder listing.
+	folders, err := svc.ListFolders()
+	if err != nil {
+		t.Fatalf("ListFolders: %v", err)
+	}
+	if len(folders) < 3 {
+		t.Fatalf("expected work, work/prod, personal; got %v", folders)
+	}
+	inWork, _ := svc.ListProfilesByFolder("work")
+	if len(inWork) != 1 || inWork[0].Name != "prod-web" {
+		t.Fatalf("ListProfilesByFolder(work) = %+v", inWork)
+	}
+
+	// Update.
+	got.User = "root"
+	if err := svc.UpdateProfile(SSHProfileParams{
+		ID: got.ID, Name: got.Name, FolderPath: got.FolderPath, Host: got.Host, Port: got.Port, User: "root",
+	}); err != nil {
+		t.Fatalf("UpdateProfile: %v", err)
+	}
+	reread, _ := svc.GetProfile("prod-web")
+	if reread.User != "root" {
+		t.Fatalf("update not persisted: %+v", reread)
+	}
+
+	// Move + rename + delete folder.
+	if err := svc.MoveProfile("home", "archived"); err != nil {
+		t.Fatalf("MoveProfile: %v", err)
+	}
+	if err := svc.RenameFolder("work/prod", "work/production"); err != nil {
+		t.Fatalf("RenameFolder: %v", err)
+	}
+	if err := svc.DeleteFolder("work/production"); err != nil {
+		t.Fatalf("DeleteFolder: %v", err)
+	}
+	remaining, _ := svc.ListProfilesByFolder("work/production")
+	if len(remaining) != 0 {
+		t.Fatalf("DeleteFolder left %d entries", len(remaining))
+	}
+
+	// Delete remaining.
+	if err := svc.DeleteProfile("home"); err != nil {
+		t.Fatalf("DeleteProfile: %v", err)
+	}
+}
+
+func TestSSHProfileService_StoreNotSet(t *testing.T) {
+	svc := NewSSHProfileService(nil)
+	if _, err := svc.ListProfiles(); err == nil {
+		t.Fatal("expected ErrSSHProfileStoreNotSet")
+	}
+}
+
+// TestSSHProfileService_LocalKeySourceRoundTrip verifies KeySource and
+// SSHConfigAlias survive an AddProfile/GetProfile/UpdateProfile round trip
+// through the SDK Profile mapping, so a "local" (ssh-agent/~/.ssh) profile
+// keeps its ssh_config alias across restarts.
+func TestSSHProfileService_LocalKeySourceRoundTrip(t *testing.T) {
+	svc := newProfileService(t)
+
+	if _, err := svc.AddProfile(SSHProfileParams{
+		Name: "bastion", Host: "bastion.example.com",
+		KeySource: "local", SSHConfigAlias: "bastion-alias",
+	}); err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+
+	got, err := svc.GetProfile("bastion")
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if got.KeySource != "local" || got.SSHConfigAlias != "bastion-alias" {
+		t.Fatalf("unexpected local-key fields: %+v", got)
+	}
+
+	if err := svc.UpdateProfile(SSHProfileParams{
+		ID: got.ID, Name: got.Name, FolderPath: got.FolderPath, Host: got.Host,
+		KeySource: "local", SSHConfigAlias: "renamed-alias",
+	}); err != nil {
+		t.Fatalf("UpdateProfile: %v", err)
+	}
+	reread, err := svc.GetProfile("bastion")
+	if err != nil {
+		t.Fatalf("GetProfile after update: %v", err)
+	}
+	if reread.SSHConfigAlias != "renamed-alias" {
+		t.Fatalf("update not persisted: %+v", reread)
+	}
+}

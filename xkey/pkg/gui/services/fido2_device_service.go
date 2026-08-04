@@ -240,7 +240,7 @@ func (s *FIDO2DeviceService) Start(storage authenticator.StatefulCredentialStora
 	if err != nil {
 		reason := fmt.Sprintf("failed to create virtual device: %v", err)
 		s.lastError.Store(reason)
-		return fmt.Errorf("fido2_device_service: %s", reason)
+		return &MessageError{Msg: fmt.Sprintf("fido2_device_service: %s", reason)}
 	}
 	s.device = device
 
@@ -269,7 +269,7 @@ func (s *FIDO2DeviceService) Start(storage authenticator.StatefulCredentialStora
 		}
 		reason := fmt.Sprintf("UHID not available: %v", err)
 		s.lastError.Store(reason)
-		return fmt.Errorf("%w: %v", ErrFIDO2UHIDNotAvailable, err)
+		return &SentinelCauseError{Sentinel: ErrFIDO2UHIDNotAvailable, Cause: err}
 	}
 	s.uhidDev = uhidDev
 
@@ -285,7 +285,7 @@ func (s *FIDO2DeviceService) Start(storage authenticator.StatefulCredentialStora
 		s.cleanup()
 		reason := fmt.Sprintf("failed to create UHID device: %v", err)
 		s.lastError.Store(reason)
-		return fmt.Errorf("fido2_device_service: %s", reason)
+		return &MessageError{Msg: fmt.Sprintf("fido2_device_service: %s", reason)}
 	}
 
 	s.stopCh = make(chan struct{})
@@ -415,7 +415,7 @@ func (s *FIDO2DeviceService) FixUHIDPermissions() error {
 	output, err := s.elevator.Run([]string{"uhid", "setup"}, nil)
 	if err != nil {
 		s.log.Error("UHID permission fix failed", "error", err, "output", string(output))
-		return fmt.Errorf("%w: %v", ErrFIDO2UHIDSetupFailed, err)
+		return &SentinelCauseError{Sentinel: ErrFIDO2UHIDSetupFailed, Cause: err}
 	}
 	s.log.Info("UHID permissions fixed via udev rule", "output", string(output))
 	return nil

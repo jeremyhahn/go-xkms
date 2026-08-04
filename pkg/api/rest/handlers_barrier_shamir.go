@@ -18,6 +18,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
@@ -94,7 +95,7 @@ func (h *HandlerContext) BarrierInitializeShamirHandler(w http.ResponseWriter, r
 		return
 	}
 
-	creds := seal.Credentials{Secret: req.Secret}
+	creds := seal.Credentials{Secret: []byte(req.Secret)}
 	result, err := h.Barrier.InitializeShamir(r.Context(), creds)
 	if err != nil {
 		handleBarrierError(w, err)
@@ -308,4 +309,29 @@ func (h *HandlerContext) BarrierGenerateRootTokenHandler(w http.ResponseWriter, 
 	}
 
 	writeJSON(w, token, http.StatusOK)
+}
+
+// BarrierEnableEncryptionHandler handles POST /api/v1/barrier/enable-encryption
+// requests. It migrates a previously-unencrypted barrier to a keyed strategy in
+// place. The migration runs asynchronously; the response acknowledges the start
+// and clients poll GET /api/v1/barrier/status for completion.
+func (h *HandlerContext) BarrierEnableEncryptionHandler(w http.ResponseWriter, r *http.Request) {
+	if h.xkmsService == nil {
+		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
+		return
+	}
+
+	var req transport.BarrierEnableEncryptionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+
+	resp, err := h.xkmsService.BarrierEnableEncryption(r.Context(), &req)
+	if err != nil {
+		handleBarrierError(w, err)
+		return
+	}
+
+	writeJSON(w, resp, http.StatusOK)
 }

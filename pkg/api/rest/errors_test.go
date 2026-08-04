@@ -20,9 +20,54 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
+
+// TestMapErrorToStatusCode_TenantDenials verifies that go-qrdb tenant
+// entitlement / barrier-mode / quota denials map to precise client statuses
+// (not a generic 500), including when wrapped by an upstream operation prefix.
+func TestMapErrorToStatusCode_TenantDenials(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"entitlement denied", &qrdbsdk.EntitlementError{TenantID: "t1", Feature: "barrier_mode:shamir"}, http.StatusForbidden},
+		{"entitlement denied wrapped", &errs.Wrapped{Msg: "create tenant", Err: &qrdbsdk.EntitlementError{TenantID: "t1", Mode: "raft"}}, http.StatusForbidden},
+		{"shared barrier immutable", qrdbsdk.ErrSharedBarrierImmutable, http.StatusConflict},
+		{"shared barrier immutable wrapped", &errs.Wrapped{Msg: "enable encryption", Err: qrdbsdk.ErrSharedBarrierImmutable}, http.StatusConflict},
+		{"quota exceeded", qrdbsdk.NewQuotaExceededError("keys", "ns", "t1", 10, 10, 1), http.StatusTooManyRequests},
+		{"unknown error", errors.New("boom"), http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mapErrorToStatusCode(tt.err); got != tt.want {
+				t.Errorf("mapErrorToStatusCode(%v) = %d, want %d", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHandleTenantError_DelegatesDenials verifies that handleTenantError routes
+// qrdb denials through the central mapper while still hiding unrecognized errors
+// behind a generic 500.
+func TestHandleTenantError_DelegatesDenials(t *testing.T) {
+	w := httptest.NewRecorder()
+	handleTenantError(w, &qrdbsdk.EntitlementError{TenantID: "t1", Mode: "raft"})
+	if w.Code != http.StatusForbidden {
+		t.Errorf("entitlement denial: got %d, want 403", w.Code)
+	}
+
+	w2 := httptest.NewRecorder()
+	handleTenantError(w2, errors.New("internal boom"))
+	if w2.Code != http.StatusInternalServerError {
+		t.Errorf("unknown error: got %d, want 500", w2.Code)
+	}
+}
 
 func TestWriteError(t *testing.T) {
 	w := httptest.NewRecorder()

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -131,19 +133,19 @@ func (tpm *TPM2) PlatformPolicySession(auth []byte) (tpm2.Session, func() error,
 
 	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrPlatformPolicySession, err)
+		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Compute branch digests for PolicyOR (needed for both branches)
 	pcrDigest, err := tpm.PlatformPolicyDigestHash()
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrPlatformPolicySession, err)
+		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Branch 1 trial digest: PolicyPCR
 	pcrCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrPlatformPolicySession, err)
+		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 	}
 	pcrCmd := tpm2.PolicyPCR{
 		PcrDigest: tpm2.TPM2BDigest{
@@ -157,18 +159,18 @@ func (tpm *TPM2) PlatformPolicySession(auth []byte) (tpm2.Session, func() error,
 		},
 	}
 	if err := pcrCmd.Update(pcrCalc); err != nil {
-		return nil, nil, fmt.Errorf("%w: PolicyPCR trial: %v", ErrPlatformPolicySession, err)
+		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyPCR trial: %v", err)}
 	}
 	branch1Digest := pcrCalc.Hash().Digest
 
 	// Branch 2 trial digest: PolicyAuthValue
 	authCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrPlatformPolicySession, err)
+		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 	}
 	authCmd := tpm2.PolicyAuthValue{}
 	if err := authCmd.Update(authCalc); err != nil {
-		return nil, nil, fmt.Errorf("%w: PolicyAuthValue trial: %v", ErrPlatformPolicySession, err)
+		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyAuthValue trial: %v", err)}
 	}
 	branch2Digest := authCalc.Hash().Digest
 
@@ -183,7 +185,7 @@ func (tpm *TPM2) PlatformPolicySession(auth []byte) (tpm2.Session, func() error,
 	session, closer, err := tpm2.PolicySession(
 		tpm.transport, hashAlgID, 16, sessionOpts...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrPlatformPolicySession, err)
+		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	if usePCRBranch {
@@ -205,7 +207,7 @@ func (tpm *TPM2) PlatformPolicySession(auth []byte) (tpm2.Session, func() error,
 				tpm.logger.Error("failed to close session after PolicyPCR error",
 					slog.String("error", closeErr.Error()))
 			}
-			return nil, nil, fmt.Errorf("%w: PolicyPCR execute: %v", ErrPlatformPolicySession, err)
+			return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyPCR execute: %v", err)}
 		}
 		tpm.logger.Debug("tpm: PlatformPolicySession - PCR branch executed")
 	} else {
@@ -218,7 +220,7 @@ func (tpm *TPM2) PlatformPolicySession(auth []byte) (tpm2.Session, func() error,
 				tpm.logger.Error("failed to close session after PolicyAuthValue error",
 					slog.String("error", closeErr.Error()))
 			}
-			return nil, nil, fmt.Errorf("%w: PolicyAuthValue execute: %v", ErrPlatformPolicySession, err)
+			return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyAuthValue execute: %v", err)}
 		}
 		tpm.logger.Debug("tpm: PlatformPolicySession - password branch executed")
 	}
@@ -238,7 +240,7 @@ func (tpm *TPM2) PlatformPolicySession(auth []byte) (tpm2.Session, func() error,
 			tpm.logger.Error("failed to close session after PolicyOR error",
 				slog.String("error", closeErr.Error()))
 		}
-		return nil, nil, fmt.Errorf("%w: PolicyOR execute: %v", ErrPlatformPolicySession, err)
+		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyOR execute: %v", err)}
 	}
 
 	// Get the final session policy digest for caching
@@ -458,12 +460,29 @@ func (tpm *TPM2) CreateKeySession(
 // Loads the requested TPMAlgKeyedHash encrypted public and private
 // blobs from blob storage. The returned handle must be closed when
 // finished to prevent memory leaks / exhaustion.
+//
+// When session is nil, the ParentHandle authorization session is built by
+// TPM2.CreateSession using the exact same selection logic used at key
+// creation time (see CreateSession's doc comment): a PolicyOR session when
+// the parent uses PlatformPolicy, a salted/encrypted HMAC session when
+// tpm.config.EncryptSession is enabled, or a zero-round-trip PasswordAuth
+// pseudo-session otherwise. Building an ad hoc, always-real HMAC session
+// here (independent of that selection logic, as this function used to do
+// via TPM2.HMAC) unconditionally issues a TPM2_StartAuthSession command
+// even when EncryptSession is disabled and the parent has no policy --
+// unlike key creation, which in that configuration never talks to the TPM
+// for the auth session at all. On TPM/kernel combinations where
+// TPM2_StartAuthSession is unusable through the resource manager device,
+// that asymmetry made key generation succeed while every subsequent
+// LoadKeyPair call (delete, sign, ECDH, attestation, unseal) failed.
 func (tpm *TPM2) LoadKeyPair(
 	keyAttrs *types.KeyAttributes,
 	session *tpm2.Session,
 	backend store.KeyBackend) (*tpm2.LoadResponse, error) {
 
-	var auth []byte
+	if keyAttrs.Parent == nil {
+		return nil, store.ErrInvalidParentAttributes
+	}
 
 	// Use custom backend if provided, otherwise use the
 	// default platform backend passed in during instantiation
@@ -496,15 +515,28 @@ func (tpm *TPM2) LoadKeyPair(
 	}
 	tpm.logger.Debug("tpm: LoadKeyPair - loaded public blob", slog.Int("bytes", len(pub)))
 
-	if keyAttrs.Password != nil && !keyAttrs.PlatformPolicy {
-		auth = keyAttrs.Password.Bytes()
-	}
-
-	// Create basic session if not provided
+	// Create the ParentHandle authorization session if the caller did not
+	// supply one. CreateSession authorizes the *parent* (using the
+	// parent's own PlatformPolicy/Password), which is the correct entity
+	// to authorize for TPM2_Load -- the child key's own auth value plays
+	// no role in loading it.
+	closer := func() error { return nil }
 	if session == nil {
-		hmac := tpm.HMAC(auth)
-		session = &hmac
+		sess, sessCloser, err := tpm.CreateSession(keyAttrs)
+		if err != nil {
+			return nil, err
+		}
+		session = &sess
+		if sessCloser != nil {
+			closer = sessCloser
+		}
 	}
+	defer func() {
+		if err := closer(); err != nil {
+			tpm.logger.Error("tpm: LoadKeyPair - failed to close parent session",
+				slog.String("error", err.Error()))
+		}
+	}()
 
 	parentHandle := keyAttrs.Parent.TPMAttributes.Handle
 	parentName := keyAttrs.Parent.TPMAttributes.Name
@@ -561,22 +593,36 @@ func (tpm *TPM2) LoadKeyPair(
 // data (e.g., blobs loaded from EFI partition files during boot).
 //
 // This is similar to LoadKeyPair but uses provided blobs instead of reading from storage.
+//
+// When session is nil, the ParentHandle authorization session is built by
+// TPM2.CreateSession -- see LoadKeyPair's doc comment for the rationale;
+// this function had the identical always-real-HMAC-session defect.
 func (tpm *TPM2) LoadKeyPairFromBlobs(
 	keyAttrs *types.KeyAttributes,
 	session *tpm2.Session,
 	tpmPublic, tpmPrivate []byte) (*tpm2.LoadResponse, error) {
 
-	var auth []byte
-
-	if keyAttrs.Password != nil && !keyAttrs.PlatformPolicy {
-		auth = keyAttrs.Password.Bytes()
+	if keyAttrs.Parent == nil {
+		return nil, store.ErrInvalidParentAttributes
 	}
 
-	// Create basic session if not provided
+	closer := func() error { return nil }
 	if session == nil {
-		hmac := tpm.HMAC(auth)
-		session = &hmac
+		sess, sessCloser, err := tpm.CreateSession(keyAttrs)
+		if err != nil {
+			return nil, err
+		}
+		session = &sess
+		if sessCloser != nil {
+			closer = sessCloser
+		}
 	}
+	defer func() {
+		if err := closer(); err != nil {
+			tpm.logger.Error("tpm: LoadKeyPairFromBlobs - failed to close parent session",
+				slog.String("error", err.Error()))
+		}
+	}()
 
 	parentHandle := keyAttrs.Parent.TPMAttributes.Handle
 	parentName := keyAttrs.Parent.TPMAttributes.Name

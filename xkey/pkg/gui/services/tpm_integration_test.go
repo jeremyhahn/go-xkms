@@ -19,10 +19,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"sync"
 	"testing"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 const (

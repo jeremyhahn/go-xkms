@@ -56,20 +56,22 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/factor"
-	"github.com/jeremyhahn/go-xkms/pkg/health"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
+	sshbackend "github.com/jeremyhahn/go-xkms/pkg/ssh/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	pinadapter "github.com/jeremyhahn/go-xkms/pkg/storage/pinadapter"
+	clustercapkg "github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // webAuthnSystemTenant is the qrdb tenant scope used to persist WebAuthn users
@@ -86,6 +88,12 @@ type Server struct {
 	keyProviders map[string]types.KeyProvider
 	logger       *slog.Logger
 
+	// sshClient is the shared SSH SDK client wired into every transport. It
+	// is built once, lazily, via ensureSSHClient.
+	sshClient   sdkssh.Client
+	sshHostKeys sdkssh.HostKeyStore
+	sshOnce     sync.Once
+
 	// xkmsService is the composed XKMS service injected into every transport
 	// constructor. It is resolved once from the package singleton at the
 	// composition root (New) and threaded through dependency injection from
@@ -101,6 +109,11 @@ type Server struct {
 	quicServer           *quic.Server
 	mcpServer            *mcp.Server
 	noiseBootstrapServer *noiseboot.Server
+
+	// metricsServer is the Prometheus metrics HTTP server. It is stored here so
+	// Shutdown can stop it; otherwise its ListenAndServe blocks forever and the
+	// startMetrics goroutine never releases its wg slot.
+	metricsServer *http.Server
 
 	// Authentication
 	authenticator  auth.Authenticator
@@ -121,8 +134,61 @@ type Server struct {
 	// Barrier (seal/unseal)
 	barrier *seal.Barrier
 
+	// sealStrategies holds the sealing strategies composed for the system
+	// barrier (hardware/cloud strategies from the preference order plus the
+	// software baseline). They are captured at barrier init so the barrier
+	// registry can build a hardware-backed StrategyRegistry from the same
+	// instances for per-tenant barrier sealing.
+	sealStrategies []seal.SealingStrategy
+
 	// Barrier registry (multi-tenant)
 	barrierRegistry *seal.BarrierRegistry
+
+	// nodeSealEnabled indicates the qrdb node's OWN barrier is used (the flip):
+	// Storage.Backend=="qrdb" && Barrier.Enabled && auto-unseal creds present.
+	// When true, the node encrypts its data-plane KV (encfs), auto-unseals at
+	// construction, and s.barrier/s.barrierRegistry/s.tenantService come from
+	// the node — xkms's own barrier/registry construction is skipped. When
+	// false, everything behaves exactly as before (xkms's own barrier).
+	nodeSealEnabled bool
+
+	// nodeSealStrategy is the resolved hardware SealingStrategy fed to the node
+	// barrier (nil for passphrase mode).
+	nodeSealStrategy seal.SealingStrategy
+
+	// nodeSealTPM is the single open TPM backend produced by the seal autodetect;
+	// it is reused by the general tpm2 backend to avoid a second TPM open (a
+	// swtpm emulator hangs on reopen). nil when no TPM strategy is resolved.
+	nodeSealTPM types.Sealer
+
+	// nodeSealClose releases the autodetect TPM open; deferred to node shutdown
+	// since the same open backs both the seal strategy and the tpm2 backend.
+	nodeSealClose func() error
+
+	// nodeSealPassphrase is the resolved boot-time unseal passphrase (empty for
+	// hardware/TPM mode).
+	nodeSealPassphrase []byte
+
+	// clusterCAKeyStrategy is the cluster CA key custody strategy (barrier / hsm
+	// / tpm-kek) built during cluster ACME provisioning. It is stateful (the
+	// barrier strategy retains its bootstrap key-storage handle for promotion),
+	// so the SAME instance is used for the pre-node BootstrapBackends and the
+	// post-node RuntimeBackend that initializeCA signs from. nil except when
+	// cluster ACME enrollment provisioned the cluster mTLS.
+	clusterCAKeyStrategy clustercapkg.ClusterCAKeyStrategy
+
+	// volumePool backs dedicated-isolation (barrier/volume/raft) tenants with
+	// per-tenant Pebble storage drawn from the configured pool. It is nil when
+	// no volume pools are declared, in which case dedicated-isolation tenant
+	// registration falls back to the system store. The server owns its
+	// lifecycle and closes it during Shutdown.
+	volumePool *seal.VolumePoolSubsystem
+
+	// tenantService is go-qrdb's canonical TenantService composed on top of the
+	// barrier registry with xkms hardware seal strategies injected. It owns the
+	// entitlement-gated isolation modes, system-managed auto-unseal, quotas, and
+	// volume/raft tenant lifecycle; the xkms tenant servicer delegates to it.
+	tenantService qrdbsdk.ServiceTenantServicer
 
 	// PIN backend
 	pinManager qrdbsdk.PINBackend
@@ -137,7 +203,7 @@ type Server struct {
 	policyManager *policy.Manager
 
 	// Health checker
-	healthChecker *health.Checker
+	healthChecker *qrdbsdk.HealthChecker
 
 	// Metrics
 	metricsCollector *metrics.ResourceCollector
@@ -170,6 +236,14 @@ type Server struct {
 	// during Shutdown.
 	qrdbNode *qrdbnode.Node
 
+	// raftClusterAdvertiser holds the running Noise NK bootstrap advertiser
+	// started by the first node of a clustered deployment when Raft mTLS is
+	// auto-provisioned (raft builds only), so Shutdown can stop it. It is nil
+	// when this node is not the cluster bootstrapper or when clustering/raft is
+	// off. The minimal interface avoids importing the qrdb clusterenroll package
+	// into non-raft builds.
+	raftClusterAdvertiser interface{ Stop() }
+
 	// qrdbClient is the SDK client exposing the node's services (KV, Users,
 	// Roles, factors, barrier). For embedded hosting it is node.Client(); for
 	// remote deployments it is the dialed cluster client.
@@ -190,6 +264,60 @@ type Server struct {
 	shutdownCh chan struct{}
 }
 
+// ensureSSHClient lazily builds the shared SSH SDK client used by every
+// transport (REST/gRPC/QUIC/MCP/unix). The client is embedded: SSH metadata
+// (public keys + backend references) lives in the "ssh" storage view, and key
+// generation/signing is delegated to the server's configured crypto backends
+// via a backend provider, so a remote "Backend: tpm2" request mints the key in
+// the TPM and the private key never leaves the device. Returns nil when the
+// XKMSService is unavailable (SSH routes are then not mounted).
+func (s *Server) ensureSSHClient() sdkssh.Client {
+	s.sshOnce.Do(func() {
+		if s.xkmsService == nil {
+			return
+		}
+		sshStorage, err := s.createStorage("ssh")
+		if err != nil {
+			s.logger.Error("Failed to create SSH storage", slog.Any("error", err))
+			return
+		}
+		resolver := sshbackend.ResolverFunc(func(_ context.Context, backendID string) (types.KeyProvider, error) {
+			b, lerr := s.xkmsService.LookupBackend(backendID)
+			if lerr != nil {
+				return nil, lerr
+			}
+			return b.KeyProvider(), nil
+		})
+		provider, err := sshbackend.New(resolver)
+		if err != nil {
+			s.logger.Error("Failed to build SSH backend provider", slog.Any("error", err))
+			return
+		}
+		client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: sshStorage, BackendProvider: provider})
+		if err != nil {
+			s.logger.Error("Failed to build SSH client", slog.Any("error", err))
+			return
+		}
+		s.sshClient = client
+		// Host-key pin store over the same SSH storage — used to verify hosts
+		// for the interactive console (SSHConsole stream / WS bridge).
+		if hostKeys, hkerr := sdkssh.NewHostKeyStore(sshStorage); hkerr != nil {
+			s.logger.Error("Failed to build SSH host-key store", slog.Any("error", hkerr))
+		} else {
+			s.sshHostKeys = hostKeys
+		}
+		s.logger.Info("SSH subsystem initialized")
+	})
+	return s.sshClient
+}
+
+// ensureSSHHostKeys returns the host-key pin store (built alongside the SSH
+// client). Used by the SSHConsole stream to verify hosts.
+func (s *Server) ensureSSHHostKeys() sdkssh.HostKeyStore {
+	s.ensureSSHClient()
+	return s.sshHostKeys
+}
+
 // New creates a new unified server instance
 func New(cfg *config.Config) (*Server, error) {
 	// Setup logging
@@ -206,6 +334,16 @@ func New(cfg *config.Config) (*Server, error) {
 		ctx:          ctx,
 		cancel:       cancel,
 		shutdownCh:   make(chan struct{}),
+	}
+
+	// Decide whether the qrdb node's own barrier encrypts the data plane (the
+	// flip), and resolve the auto-unseal material — BEFORE the node is built so
+	// the seal strategy can be injected as a node option and a single TPM open
+	// is shared with the tpm2 backend. A no-op unless Storage.Backend=="qrdb",
+	// the barrier is enabled, and auto-unseal credentials are available.
+	if err := s.resolveNodeSeal(); err != nil {
+		cancel()
+		return nil, &ErrServiceInit{Service: "node seal", Err: err}
 	}
 
 	// Initialize the shared qrdb storage backend (when configured). This must
@@ -392,6 +530,16 @@ func New(cfg *config.Config) (*Server, error) {
 		if s.barrierRegistry != nil {
 			svc.SetBarrierRegistry(s.barrierRegistry)
 		}
+		// Wire the embedded qrdb node as the encryption-migration provider so
+		// BarrierEnableEncryption can migrate an unencrypted barrier to a keyed
+		// strategy in place. The node satisfies xkms.EncryptionMigrator (its
+		// EnableEncryption parameter types are the qrdb SDK aliases).
+		if s.qrdbNode != nil {
+			svc.SetEncryptionMigrator(s.qrdbNode)
+		}
+		if s.tenantService != nil {
+			svc.SetTenantService(s.tenantService)
+		}
 		if s.credentialService != nil {
 			svc.SetCredentialService(s.credentialService)
 		}
@@ -509,13 +657,22 @@ func (s *Server) initializeBackends() error {
 
 		pkcs8Backend, err := pkcs8.NewBackend(&pkcs8.Config{
 			KeyStorage: keyStorage,
+			// Encryption-at-rest is provided by the storage layer (the node
+			// barrier's sealed KV), not a per-key password; permit plaintext DER
+			// exactly when the node seal is engaged or the operator runs
+			// insecure. See allowNodeLocalPlaintextKeys.
+			AllowPlaintextKeys: s.allowNodeLocalPlaintextKeys(),
 		})
 		if err != nil {
 			return &ErrBackendCreate{Backend: "PKCS8", Err: err}
 		}
 
 		s.keyProviders["pkcs8"] = pkcs8Backend
-		s.logger.Info("PKCS8 backend initialized", "backend", "pkcs8", "path", s.config.Backends.PKCS8.Path)
+		s.logger.Info("PKCS8 backend initialized",
+			"backend", "pkcs8",
+			"path", s.config.Backends.PKCS8.Path,
+			"allow_plaintext_keys", s.allowNodeLocalPlaintextKeys(),
+			"node_seal", s.nodeSealEnabled)
 	}
 
 	// Initialize other backends based on build tags
@@ -964,6 +1121,13 @@ func (c staticUserChecker) HasAnyUsers(context.Context) (bool, error) {
 // initializeBarrier creates and configures the barrier (seal/unseal) subsystem.
 // The barrier wraps storage with transparent AES-256-GCM encryption.
 func (s *Server) initializeBarrier() error {
+	if s.nodeSealEnabled {
+		// The node's own barrier was adopted at node construction
+		// (initEmbeddedQRDBNode) — s.barrier already points at it. Skip the
+		// hand-rolled construction so there is a single barrier.
+		s.logger.Info("Barrier: using the adopted qrdb node barrier")
+		return nil
+	}
 	if !s.config.Barrier.Enabled {
 		s.logger.Info("Barrier disabled")
 		return nil
@@ -984,6 +1148,10 @@ func (s *Server) initializeBarrier() error {
 	if err != nil {
 		return &ErrServiceInit{Service: "barrier", Err: err}
 	}
+	// Retain the composed strategies so the barrier registry can build a
+	// hardware-backed StrategyRegistry from the same instances for per-tenant
+	// barrier sealing (see initializeBarrierRegistry).
+	s.sealStrategies = strategies
 
 	// Determine root key path
 	rootKeyPath := s.config.Barrier.RootKeyPath
@@ -1014,22 +1182,116 @@ func (s *Server) initializeBarrier() error {
 	return nil
 }
 
-// initializeBarrierRegistry creates the barrier registry for multi-tenant isolation.
+// initializeBarrierRegistry creates the barrier registry for multi-tenant
+// isolation and composes go-qrdb's TenantService on top of it with xkms
+// hardware seal strategies injected. The registry owns the per-tenant barrier
+// lifecycle; the TenantService adds entitlement-gated isolation modes
+// (prefix/barrier/volume/raft), system-managed auto-unseal, quotas, and the
+// strategy-by-name resolution that lets a tenant barrier be sealed by a TPM,
+// PKCS#11 token, or cloud KMS.
 func (s *Server) initializeBarrierRegistry() error {
+	if s.nodeSealEnabled {
+		// The node's own barrier registry + tenant service were adopted at node
+		// construction. Nothing to build here.
+		s.logger.Info("Barrier registry: using the adopted qrdb node registry + tenant service")
+		return nil
+	}
 	if s.barrier == nil {
 		s.logger.Info("Barrier registry skipped (no barrier)")
 		return nil
 	}
 
-	registry, err := seal.NewBarrierRegistry(s.barrier)
+	// Build the volume-pool subsystem so dedicated-isolation tenants
+	// (barrier/volume/raft) can draw a durable per-tenant Pebble path. When no
+	// data directory is configured (in-memory deployments) the pool is nil and
+	// only prefix-isolated tenants are available.
+	pool, err := s.buildVolumePool()
 	if err != nil {
 		return &ErrServiceInit{Service: "barrier registry", Err: err}
 	}
 
+	var regOpts []seal.BarrierRegistryOption
+	if pool != nil {
+		s.volumePool = pool
+		regOpts = append(regOpts,
+			seal.WithVolumePool(pool.Manager, pool.StateStore, pool.DefaultPoolName),
+			seal.WithPerTenantRegistry(pool.PerTenantRegistry),
+		)
+	}
+
+	registry, err := seal.NewBarrierRegistry(s.barrier, regOpts...)
+	if err != nil {
+		return &ErrServiceInit{Service: "barrier registry", Err: err}
+	}
 	s.barrierRegistry = registry
-	s.logger.Info("Barrier registry initialized")
+
+	// Compose go-qrdb's TenantService on top of the registry. The hardware
+	// StrategyRegistry built from the system barrier's strategies lets a
+	// per-tenant barrier be initialized with an explicit hardware/cloud strategy
+	// (TenantBarrierInitWithStrategy). xkms operates its own tenants as the
+	// trust anchor, so the operator default entitlements permit every isolation
+	// mode; downstream multi-tenant billing planes (quicbaas) tighten these per
+	// plan via UpdateEntitlements.
+	tenantSvc, err := seal.NewHardwareTenantService(
+		s.barrier, registry, s.logger, s.sealStrategies,
+		qrdbsdk.WithTenantDefaultEntitlements(xkmsDefaultEntitlements()),
+	)
+	if err != nil {
+		return &ErrServiceInit{Service: "tenant service", Err: err}
+	}
+	s.tenantService = tenantSvc
+
+	// Re-register dedicated-isolation tenants from their persisted pool
+	// assignments and unseal system-managed (auto-unseal) barriers credential-
+	// free. A nil pool short-circuits inside RestoreVolumeTenants.
+	if err := registry.RestoreVolumeTenants(context.Background()); err != nil {
+		s.logger.Warn("RestoreVolumeTenants failed; some tenant barriers may be deferred",
+			"error", err.Error())
+	}
+
+	s.logger.Info("Barrier registry initialized", "volume_pool", pool != nil)
 
 	return nil
+}
+
+// buildVolumePool provisions a single default volume pool rooted under the
+// configured storage path so dedicated-isolation tenants get durable per-tenant
+// Pebble storage. It returns (nil, nil) when no storage path is configured
+// (in-memory deployments), in which case only prefix-isolated tenants are
+// available. The pool name "default" matches the name RegisterTenantPooled
+// draws from.
+func (s *Server) buildVolumePool() (*seal.VolumePoolSubsystem, error) {
+	if s.config.Storage.Path == "" {
+		return nil, nil
+	}
+	dataDir := s.config.Storage.Path
+	poolRoot := filepath.Join(dataDir, "tenant-volumes")
+	pools := []qrdbsdk.DaemonVolumePoolConfig{{
+		Name:  "default",
+		Paths: []string{poolRoot},
+	}}
+	return seal.BuildVolumePoolSubsystem(dataDir, pools, s.logger, s.config.Cluster.Enabled)
+}
+
+// xkmsDefaultEntitlements returns the operator default entitlements for xkms's
+// own tenants. xkms is the trust anchor that operates its tenants directly
+// (there is no untrusted billing plane inside xkms itself), so every isolation
+// mode and the system-managed auto-unseal key-management mode are permitted by
+// default. Consumers that expose tenants to untrusted callers tighten these per
+// plan via UpdateEntitlements.
+func xkmsDefaultEntitlements() *qrdbsdk.Entitlements {
+	return &qrdbsdk.Entitlements{
+		AllowedIsolationModes: []string{
+			string(qrdbsdk.TenantIsolationPrefix),
+			string(qrdbsdk.TenantIsolationBarrier),
+			string(qrdbsdk.TenantIsolationVolume),
+			string(qrdbsdk.TenantIsolationRaft),
+		},
+		AllowDedicatedRaft:        true,
+		AllowVolumeStorage:        true,
+		AllowSystemManagedBarrier: true,
+		AllowDedicatedWAL:         true,
+	}
 }
 
 // initializePINManager creates and configures the PIN management subsystem.
@@ -1326,14 +1588,14 @@ var base64Encoding = base64.StdEncoding
 func (s *Server) initializeHealth() error {
 	s.logger.Info("Initializing health checker...")
 
-	s.healthChecker = health.NewChecker()
+	s.healthChecker = qrdbsdk.NewHealthChecker()
 
 	// Register backend health checks
 	for name, keystore := range s.backends {
 		backendName := name // Capture for closure
 		ks := keystore      // Capture for closure
 
-		s.healthChecker.RegisterCheck(fmt.Sprintf("backend-%s", backendName), func(ctx context.Context) health.CheckResult {
+		s.healthChecker.RegisterCheck(fmt.Sprintf("backend-%s", backendName), func(ctx context.Context) qrdbsdk.HealthCheckResult {
 			start := time.Now()
 
 			// Check if backend is responsive by listing keys with a timeout
@@ -1351,24 +1613,24 @@ func (s *Server) initializeHealth() error {
 			case err := <-done:
 				latency := time.Since(start)
 				if err != nil {
-					return health.CheckResult{
+					return qrdbsdk.HealthCheckResult{
 						Name:    fmt.Sprintf("backend-%s", backendName),
-						Status:  health.StatusUnhealthy,
+						Status:  qrdbsdk.HealthCheckStatusUnhealthy,
 						Message: fmt.Sprintf("Backend %s is not responding", backendName),
 						Error:   err.Error(),
 						Latency: latency,
 					}
 				}
-				return health.CheckResult{
+				return qrdbsdk.HealthCheckResult{
 					Name:    fmt.Sprintf("backend-%s", backendName),
-					Status:  health.StatusHealthy,
+					Status:  qrdbsdk.HealthCheckStatusHealthy,
 					Message: fmt.Sprintf("Backend %s is responding", backendName),
 					Latency: latency,
 				}
 			case <-checkCtx.Done():
-				return health.CheckResult{
+				return qrdbsdk.HealthCheckResult{
 					Name:    fmt.Sprintf("backend-%s", backendName),
-					Status:  health.StatusUnhealthy,
+					Status:  qrdbsdk.HealthCheckStatusUnhealthy,
 					Message: fmt.Sprintf("Backend %s check timed out", backendName),
 					Error:   "timeout",
 					Latency: time.Since(start),
@@ -1402,9 +1664,25 @@ func (s *Server) initializeCA() error {
 		return ErrCANoIdentities
 	}
 	keystoreType := s.config.CA.Identity[0].GetStoreType()
-	backend, ok := s.backends[string(keystoreType)]
-	if !ok {
-		return &ErrBackendNotAvailable{Backend: string(keystoreType), Purpose: "CA keystore"}
+	var backend xkms.Backend
+	if s.clusterCAKeyStrategy != nil {
+		// Cluster-ACME mode: the cluster CA key custody strategy resolves this
+		// node's runtime keystore. For the barrier strategy the first node's
+		// bootstrap key is promoted into the replicated barrier-encrypted store
+		// and every node loads it, so any node can issue (IssuerForIdentity
+		// resolves the cluster intermediate signing key). hsm/tpm-kek resolve
+		// their respective durable stores.
+		clusterBackend, err := s.resolveClusterCARuntimeBackend()
+		if err != nil {
+			return &ErrCAInit{Operation: "resolve cluster CA keystore", Err: err}
+		}
+		backend = clusterBackend
+	} else {
+		b, ok := s.backends[string(keystoreType)]
+		if !ok {
+			return &ErrBackendNotAvailable{Backend: string(keystoreType), Purpose: "CA keystore"}
+		}
+		backend = b
 	}
 
 	// Create certificate storage for the CA
@@ -1437,6 +1715,35 @@ func (s *Server) initializeCA() error {
 		return &ErrServiceInit{Service: "CA revocation store", Err: err}
 	}
 
+	// Resolve credential:// password references in the CA config before the CA's
+	// internal ToKeyAttributes path reads them. The registry falls back to literal
+	// pass-through for non-URI values, so existing plaintext passwords are unchanged.
+	// Modifications are made directly on the in-memory config; the loaded YAML is
+	// never re-serialised, so resolved plaintext does not persist to disk.
+	reg := s.buildSecretRegistry()
+	for i := range s.config.CA.Identity {
+		id := &s.config.CA.Identity[i]
+		for j := range id.Keys {
+			if id.Keys[j].Password == "" {
+				continue
+			}
+			sv, resolveErr := reg.Resolve(s.ctx, id.Keys[j].Password)
+			if resolveErr != nil {
+				return &ErrCAInit{Operation: "resolve key password credential", Err: resolveErr}
+			}
+			id.Keys[j].Password = sv.String()
+			sv.Clear()
+		}
+		if id.Keystores != nil && id.Keystores.Software != nil && id.Keystores.Software.Password != "" {
+			sv, resolveErr := reg.Resolve(s.ctx, id.Keystores.Software.Password)
+			if resolveErr != nil {
+				return &ErrCAInit{Operation: "resolve software keystore password credential", Err: resolveErr}
+			}
+			id.Keystores.Software.Password = sv.String()
+			sv.Clear()
+		}
+	}
+
 	// Create the CA instance
 	trustedCA, err := ca.NewFromMultiIdentityConfig(&ca.MultiIdentityParams{
 		Config:          s.config.CA,
@@ -1447,6 +1754,14 @@ func (s *Server) initializeCA() error {
 	})
 	if err != nil {
 		return &ErrCAInit{Operation: "create CA", Err: err}
+	}
+
+	// Adopt any CA certificates pre-staged by the cluster ACME first-node
+	// provisioner (pkg/trust/clusterca) so Load finds the full hierarchy and
+	// does not re-Init (which would fork a second root). No-op when no staged
+	// material exists.
+	if err := s.adoptStagedClusterCACerts(caCertStore); err != nil {
+		return &ErrCAInit{Operation: "adopt staged cluster CA certificates", Err: err}
 	}
 
 	// Try to load existing CA state (certificates and keys from a previous run).
@@ -1699,6 +2014,8 @@ func (s *Server) startUnix() {
 			SocketPath:  socketPath,
 			Logger:      nil,
 			XKMSService: s.xkmsService,
+			SSHClient:   s.ensureSSHClient(),
+			SSHHostKeys: s.ensureSSHHostKeys(),
 		}
 
 		grpcServer, err := unix.NewGRPCServer(grpcConfig)
@@ -1707,8 +2024,15 @@ func (s *Server) startUnix() {
 			return
 		}
 
-		// Store server with lock
+		// Store the server so Shutdown can stop it. If Shutdown already began
+		// (ctx cancelled) before we got here, do not start — return so this
+		// goroutine releases its wg slot instead of blocking in Start (which
+		// Shutdown could not stop, since it copied a nil reference).
 		s.mu.Lock()
+		if s.ctx.Err() != nil {
+			s.mu.Unlock()
+			return
+		}
 		s.unixGRPCServer = grpcServer
 		s.mu.Unlock()
 
@@ -1745,6 +2069,8 @@ func (s *Server) startREST() {
 		CeremonyService:   s.ceremonyService,
 		CredentialService: s.credentialService,
 		XKMSService:       s.xkmsService,
+		SSHClient:         s.ensureSSHClient(),
+		SSHHostKeys:       s.ensureSSHHostKeys(),
 	}
 
 	// When xkms hosts/dials the qrdb engine, persist WebAuthn users and
@@ -1788,8 +2114,14 @@ func (s *Server) startREST() {
 		return
 	}
 
-	// Store server with lock
+	// Store the server so Shutdown can stop it. If Shutdown already began (ctx
+	// cancelled) before we got here, do not start — return so this goroutine
+	// releases its wg slot instead of blocking in Start.
 	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		return
+	}
 	s.restServer = restSrv
 	s.mu.Unlock()
 
@@ -1838,13 +2170,24 @@ func (s *Server) startGRPC() {
 
 	grpcSrv := grpc.NewServer(opts...)
 
-	// Store server with lock
+	// Store the server so Shutdown can stop it. If Shutdown already began (ctx
+	// cancelled) before we got here, stop the server, close the already-bound
+	// listener, and return so this goroutine releases its wg slot instead of
+	// blocking in Serve.
 	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		grpcSrv.Stop()
+		_ = lis.Close()
+		return
+	}
 	s.grpcServer = grpcSrv
 	s.mu.Unlock()
 
 	// Create and register gRPC service with the injected XKMS service
 	service := grpcinternal.NewService(s.rbacAuthorizer, s.auditLogger, s.xkmsService)
+	service.SetSSHClient(s.ensureSSHClient())
+	service.SetSSHHostKeyStore(s.ensureSSHHostKeys())
 
 	// Wire barrier and PIN manager into gRPC service
 	if s.barrier != nil {
@@ -1925,6 +2268,17 @@ func (s *Server) startMetrics() {
 		ReadHeaderTimeout: 10 * time.Second, // Prevent Slowloris attacks
 	}
 
+	// Publish the server so Shutdown can stop it. Guard against a Shutdown that
+	// already began (ctx cancelled): in that case do not start serving, so this
+	// goroutine returns promptly and releases its wg slot.
+	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		return
+	}
+	s.metricsServer = server
+	s.mu.Unlock()
+
 	s.logger.Info("Starting metrics server", "address", addr, "path", s.config.Metrics.Path)
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -1959,6 +2313,7 @@ func (s *Server) startMCP() {
 		Addr:        addr,
 		Logger:      s.logger.With("component", "mcp"),
 		XKMSService: s.xkmsService,
+		SSHClient:   s.ensureSSHClient(),
 	}
 
 	mcpSrv, err := mcp.NewServer(mcpConfig)
@@ -1968,7 +2323,14 @@ func (s *Server) startMCP() {
 	}
 
 	// Store server with lock
+	// Store the server so Shutdown can stop it. If Shutdown already began (ctx
+	// cancelled) before we got here, do not start — return so Shutdown does not
+	// leave an MCP server running that it copied a nil reference for.
 	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		return
+	}
 	s.mcpServer = mcpSrv
 	s.mu.Unlock()
 
@@ -2036,7 +2398,14 @@ func (s *Server) startNoiseBootstrap() {
 		return
 	}
 
+	// Store the server so Shutdown can stop it. If Shutdown already began (ctx
+	// cancelled) before we got here, do not start — return so this goroutine
+	// releases its wg slot instead of blocking in Start.
 	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		return
+	}
 	s.noiseBootstrapServer = server
 	s.mu.Unlock()
 
@@ -2266,6 +2635,7 @@ func (s *Server) startQUIC() {
 		Authorizer:    s.rbacAuthorizer,
 		AuditLogger:   s.auditLogger,
 		XKMSService:   s.xkmsService,
+		SSHClient:     s.ensureSSHClient(),
 	}
 
 	quicSrv, err := quic.NewServer(quicConfig)
@@ -2275,7 +2645,14 @@ func (s *Server) startQUIC() {
 	}
 
 	// Store server with lock
+	// Store the server so Shutdown can stop it. If Shutdown already began (ctx
+	// cancelled) before we got here, do not start — return so Shutdown does not
+	// leave a QUIC server running that it copied a nil reference for.
 	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		return
+	}
 	s.quicServer = quicSrv
 	s.mu.Unlock()
 
@@ -2313,7 +2690,40 @@ func (s *Server) Shutdown() error {
 	restSrv := s.restServer
 	grpcSrv := s.grpcServer
 	noiseSrv := s.noiseBootstrapServer
+	raftAdv := s.raftClusterAdvertiser
+	metricsSrv := s.metricsServer
+	quicSrv := s.quicServer
+	mcpSrv := s.mcpServer
 	s.mu.RUnlock()
+
+	// Shutdown metrics server. Without this its ListenAndServe blocks forever,
+	// so the startMetrics goroutine never calls wg.Done and the wait below can
+	// only end via the timeout branch.
+	if metricsSrv != nil {
+		s.logger.Info("Shutting down metrics server...")
+		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+			s.logger.Error("Error shutting down metrics server", slog.Any("error", err))
+		}
+	}
+
+	// Shutdown QUIC server. Its Start returns immediately after launching an
+	// internal serving goroutine, so Stop is required to close the listener and
+	// release that goroutine — otherwise it leaks across the process lifetime.
+	if quicSrv != nil {
+		s.logger.Info("Shutting down QUIC server...")
+		if err := quicSrv.Stop(); err != nil {
+			s.logger.Error("Error shutting down QUIC server", slog.Any("error", err))
+		}
+	}
+
+	// Shutdown MCP server. Like QUIC, its Start is non-blocking, so Stop is
+	// required to close its listener and release the accept goroutine.
+	if mcpSrv != nil {
+		s.logger.Info("Shutting down MCP server...")
+		if err := mcpSrv.Stop(); err != nil {
+			s.logger.Error("Error shutting down MCP server", slog.Any("error", err))
+		}
+	}
 
 	// Shutdown Unix gRPC socket server
 	if unixGRPC != nil {
@@ -2343,6 +2753,12 @@ func (s *Server) Shutdown() error {
 		if err := noiseSrv.Stop(shutdownCtx); err != nil {
 			s.logger.Error("Error shutting down Noise bootstrap server", slog.Any("error", err))
 		}
+	}
+
+	// Shutdown the Raft cluster-TLS Noise advertiser (first node only)
+	if raftAdv != nil {
+		s.logger.Info("Stopping Raft cluster-TLS advertiser...")
+		raftAdv.Stop()
 	}
 
 	// Wait for all goroutines to finish

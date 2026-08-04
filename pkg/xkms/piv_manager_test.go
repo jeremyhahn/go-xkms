@@ -30,6 +30,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1663,4 +1664,135 @@ func TestPivSlotToCAProfile(t *testing.T) {
 	// Unknown slot should not be present in the map; code defaults to "piv-authentication".
 	_, ok := pivSlotToCAProfile["ff"]
 	assert.False(t, ok, "unknown slot should not be in pivSlotToCAProfile")
+}
+
+// ========================================================================
+// SelfSignExistingPIVKey / buildAndStoreSelfSigned Tests
+// ========================================================================
+
+// setupPIVAndServiceForSelfSign initializes both the PIV manager (with a
+// certificate store registered under "software") and the xkms service (with
+// a software key-provider backend), mirroring the wiring InitPIVBackendResolver
+// would produce in production.
+func setupPIVAndServiceForSelfSign(t *testing.T) (*mockPIVCertStorage, *mockKeyStore) {
+	t.Helper()
+	ResetPIV()
+	t.Cleanup(ResetPIV)
+
+	store := newMockPIVCertStorage()
+	err := InitializePIV(&PIVManagerConfig{
+		Stores: map[string]pivcert.PIVCertificateStorage{
+			"software": store,
+		},
+	})
+	require.NoError(t, err)
+
+	software, _ := setupService(t)
+	return store, software
+}
+
+func TestSelfSignExistingPIVKey_Success(t *testing.T) {
+	store, software := setupPIVAndServiceForSelfSign(t)
+	ctx := context.Background()
+
+	slot, err := pivcert.ParseSlot("9a")
+	require.NoError(t, err)
+	cn := PivSlotCN(slot)
+
+	_, err = software.GenerateECDSA(ctx, &types.KeyAttributes{CN: cn, KeyAlgorithm: x509.ECDSA})
+	require.NoError(t, err)
+
+	certPEM, err := SelfSignExistingPIVKey(ctx, "software", "9a", "My Existing Key", 30)
+	require.NoError(t, err)
+	assert.Contains(t, certPEM, "BEGIN CERTIFICATE")
+
+	stored, ok := store.certs[slot]
+	require.True(t, ok, "expected certificate to be stored in the PIV slot")
+	assert.Equal(t, "My Existing Key", stored.Subject.CommonName)
+}
+
+func TestSelfSignExistingPIVKey_DefaultCommonNameWhenEmpty(t *testing.T) {
+	store, software := setupPIVAndServiceForSelfSign(t)
+	ctx := context.Background()
+
+	slot, err := pivcert.ParseSlot("9c")
+	require.NoError(t, err)
+	cn := PivSlotCN(slot)
+
+	_, err = software.GenerateECDSA(ctx, &types.KeyAttributes{CN: cn, KeyAlgorithm: x509.ECDSA})
+	require.NoError(t, err)
+
+	certPEM, err := SelfSignExistingPIVKey(ctx, "software", "9c", "", 0)
+	require.NoError(t, err)
+	assert.Contains(t, certPEM, "BEGIN CERTIFICATE")
+
+	stored, ok := store.certs[slot]
+	require.True(t, ok)
+	assert.Equal(t, pivcert.SlotName(slot), stored.Subject.CommonName)
+}
+
+func TestSelfSignExistingPIVKey_InvalidSlot(t *testing.T) {
+	setupPIVAndServiceForSelfSign(t)
+
+	_, err := SelfSignExistingPIVKey(context.Background(), "software", "not-a-slot", "", 30)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVInvalidSlot)
+}
+
+func TestSelfSignExistingPIVKey_ListKeysError(t *testing.T) {
+	_, software := setupPIVAndServiceForSelfSign(t)
+	software.listKeysErr = errors.New("backend unavailable")
+
+	_, err := SelfSignExistingPIVKey(context.Background(), "software", "9a", "", 30)
+	require.Error(t, err)
+	assert.EqualError(t, err, "backend unavailable")
+}
+
+func TestSelfSignExistingPIVKey_KeyNotFound(t *testing.T) {
+	setupPIVAndServiceForSelfSign(t)
+
+	// No key was ever generated with the "piv-9a" CN, so the lookup by slot
+	// CN in the backend's key list comes up empty.
+	_, err := SelfSignExistingPIVKey(context.Background(), "software", "9a", "", 30)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVNotInitialized)
+}
+
+func TestSelfSignExistingPIVKey_PIVStoreNotRegistered(t *testing.T) {
+	ResetPIV()
+	t.Cleanup(ResetPIV)
+	err := InitializePIV(&PIVManagerConfig{})
+	require.NoError(t, err)
+
+	software, _ := setupService(t)
+	ctx := context.Background()
+
+	slot, err := pivcert.ParseSlot("9d")
+	require.NoError(t, err)
+	cn := PivSlotCN(slot)
+	_, err = software.GenerateECDSA(ctx, &types.KeyAttributes{CN: cn, KeyAlgorithm: x509.ECDSA})
+	require.NoError(t, err)
+
+	// The key exists and signs fine, but no PIV certificate store is
+	// registered for "software", so buildAndStoreSelfSigned's pivStore
+	// lookup fails.
+	_, err = SelfSignExistingPIVKey(ctx, "software", "9d", "", 30)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVBackendNotFound)
+}
+
+func TestSelfSignExistingPIVKey_StoreFailure(t *testing.T) {
+	store, software := setupPIVAndServiceForSelfSign(t)
+	store.storeErr = errors.New("slot write failed")
+
+	ctx := context.Background()
+	slot, err := pivcert.ParseSlot("9e")
+	require.NoError(t, err)
+	cn := PivSlotCN(slot)
+	_, err = software.GenerateECDSA(ctx, &types.KeyAttributes{CN: cn, KeyAlgorithm: x509.ECDSA})
+	require.NoError(t, err)
+
+	_, err = SelfSignExistingPIVKey(ctx, "software", "9e", "", 30)
+	require.Error(t, err)
+	assert.EqualError(t, err, "slot write failed")
 }

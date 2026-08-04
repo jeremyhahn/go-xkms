@@ -15,11 +15,13 @@
 
 package rand
 
-import "fmt"
+import (
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+)
 
 // newPKCS11Resolver is a stub when PKCS#11 support is not compiled.
 func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
-	return nil, fmt.Errorf("PKCS#11 support not compiled")
+	return nil, &errs.Message{Msg: "PKCS#11 support not compiled"}
 }
 
 // pkcs11Available returns false when PKCS#11 is not available.

@@ -81,6 +81,12 @@ var (
 	barrierFlagSOPin   string
 	barrierFlagUserPin string
 	barrierRecoveryShs []string
+
+	// enable-encryption (barrier migration) flags
+	barrierEncTenantID     string
+	barrierEncStrategy     string
+	barrierEncMechanism    string
+	barrierEncAvailability string
 )
 
 // =============================================================================
@@ -234,6 +240,15 @@ type BarrierRecoverySharesRequiredError struct{}
 // Error returns a human-readable description.
 func (e *BarrierRecoverySharesRequiredError) Error() string {
 	return "barrier recovery recover: --share is required (at least one)"
+}
+
+// BarrierEnableEncryptionStrategyRequiredError is returned when `barrier
+// enable-encryption` is invoked without a --strategy flag.
+type BarrierEnableEncryptionStrategyRequiredError struct{}
+
+// Error returns a human-readable description.
+func (e *BarrierEnableEncryptionStrategyRequiredError) Error() string {
+	return "barrier enable-encryption: --strategy is required (e.g. passphrase or shamir)"
 }
 
 // BarrierSealConfirmationError is returned when interactive confirmation
@@ -446,6 +461,76 @@ Example:
 	RunE: runBarrierRecoveryRecoverCmd,
 }
 
+// barrierEnableEncryptionCmd migrates an unencrypted barrier to a keyed strategy.
+var barrierEnableEncryptionCmd = &cobra.Command{
+	Use:   "enable-encryption",
+	Short: "Enable at-rest encryption on an unencrypted barrier",
+	Long: `Migrate a previously-unencrypted (none-strategy) barrier to a keyed
+strategy in place. The migration runs asynchronously on the server; poll
+'barrier status' until the reported strategy changes to the keyed target.
+
+An empty --tenant-id targets the system barrier; otherwise the named tenant's
+dedicated barrier is migrated. --strategy is required (e.g. passphrase or
+shamir). --mechanism defaults to swap; --availability defaults to quiesced.
+
+Examples:
+  xkmsctl barrier enable-encryption --strategy passphrase --passphrase hunter2
+  xkmsctl barrier enable-encryption --strategy shamir --threshold 3 --total 5
+  xkmsctl barrier enable-encryption --tenant-id acme --strategy passphrase --passphrase s3cret`,
+	RunE: runBarrierEnableEncryptionCmd,
+}
+
+// runBarrierEnableEncryptionCmd starts an enable-encryption migration.
+func runBarrierEnableEncryptionCmd(cmd *cobra.Command, _ []string) error {
+	if barrierEncStrategy == "" {
+		return &BarrierEnableEncryptionStrategyRequiredError{}
+	}
+
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
+	cl, cleanup, err := createBarrierClient(cfg)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	ctx := context.Background()
+	resp, err := cl.BarrierEnableEncryption(ctx, &transport.BarrierEnableEncryptionRequest{
+		TenantID:        barrierEncTenantID,
+		Strategy:        barrierEncStrategy,
+		Mechanism:       barrierEncMechanism,
+		Availability:    barrierEncAvailability,
+		Passphrase:      barrierSecret,
+		ShamirThreshold: barrierThreshold,
+		ShamirTotal:     barrierTotal,
+	})
+	if err != nil {
+		return &WrappedError{Sentinel: ErrEnableEncryptionFailed, Err: err}
+	}
+	return printBarrierEnableEncryption(printer, resp)
+}
+
+// printBarrierEnableEncryption renders the enable-encryption acknowledgement.
+func printBarrierEnableEncryption(printer *Printer, resp *transport.BarrierEnableEncryptionResponse) error {
+	switch printer.format {
+	case OutputFormatJSON:
+		return printer.PrintJSON(map[string]interface{}{
+			"status": resp.Status,
+			"scope":  resp.Scope,
+		})
+	case OutputFormatTable, OutputFormatText:
+		_, _ = fmt.Fprintf(printer.writer, "Encryption Migration Started\n")
+		_, _ = fmt.Fprintf(printer.writer, "  Status: %s\n", resp.Status)
+		_, _ = fmt.Fprintf(printer.writer, "  Scope:  %s\n", resp.Scope)
+		_, _ = fmt.Fprintf(printer.writer, "\nThe migration runs asynchronously. Poll 'barrier status' until the\n")
+		_, _ = fmt.Fprintf(printer.writer, "reported strategy changes from 'none' to the keyed target.\n")
+		return nil
+	default:
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(printer.format)}
+	}
+}
+
 // =============================================================================
 // Client helper
 // =============================================================================
@@ -455,13 +540,13 @@ Example:
 func createBarrierClient(cfg *Config) (client.Client, func(), error) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create client: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrCreateClientFailed, Err: err}
 	}
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
 		_ = cl.Close()
-		return nil, nil, fmt.Errorf("failed to connect: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
 
 	cleanup := func() { _ = cl.Close() }
@@ -496,13 +581,13 @@ func applyInitialPINPair(ctx context.Context, cl client.Client, soPin, userPin s
 		CurrentSOPIN: "",
 		NewSOPIN:     soPin,
 	}); err != nil {
-		return fmt.Errorf("failed to set SO PIN: %w", err)
+		return &WrappedError{Sentinel: ErrSetSOPINFailed, Err: err}
 	}
 	if err := cl.SetUserPIN(ctx, &transport.SetUserPINRequest{
 		SOPIN:      soPin,
 		NewUserPIN: userPin,
 	}); err != nil {
-		return fmt.Errorf("failed to set user PIN: %w", err)
+		return &WrappedError{Sentinel: ErrSetUserPINFailed, Err: err}
 	}
 	return nil
 }
@@ -524,7 +609,7 @@ func runBarrierStatusCmd(cmd *cobra.Command, _ []string) error {
 
 	resp, err := cl.BarrierStatus(context.Background())
 	if err != nil {
-		return fmt.Errorf("failed to get barrier status: %w", err)
+		return &WrappedError{Sentinel: ErrGetBarrierStatusFailed, Err: err}
 	}
 	return printBarrierStatus(printer, resp)
 }
@@ -591,7 +676,7 @@ func runBarrierInitCmd(cmd *cobra.Command, _ []string) error {
 	if err := cl.BarrierInitialize(ctx, &transport.BarrierInitializeRequest{
 		Secret: barrierSecret,
 	}); err != nil {
-		return fmt.Errorf("failed to initialize barrier: %w", err)
+		return &WrappedError{Sentinel: ErrInitializeBarrierFailed, Err: err}
 	}
 
 	if err := applyInitialPINPair(ctx, cl, barrierFlagSOPin, barrierFlagUserPin); err != nil {
@@ -645,7 +730,7 @@ func runBarrierInitShamirCmd(cmd *cobra.Command, _ []string) error {
 		TotalShares: barrierTotal,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to initialize Shamir barrier: %w", err)
+		return &WrappedError{Sentinel: ErrInitializeShamirBarrierFailed, Err: err}
 	}
 
 	if err := applyInitialPINPair(ctx, cl, barrierFlagSOPin, barrierFlagUserPin); err != nil {
@@ -677,7 +762,7 @@ func runBarrierUnsealCmd(cmd *cobra.Command, _ []string) error {
 	if err := cl.BarrierUnseal(context.Background(), &transport.BarrierUnsealRequest{
 		Secret: barrierSecret,
 	}); err != nil {
-		return fmt.Errorf("failed to unseal barrier: %w", err)
+		return &WrappedError{Sentinel: ErrUnsealBarrierFailed, Err: err}
 	}
 
 	return printer.PrintSuccess("Barrier unsealed successfully")
@@ -764,7 +849,7 @@ func runBarrierUnsealSharesCmd(cmd *cobra.Command, _ []string) error {
 	if err := cl.BarrierUnsealWithShares(context.Background(), &transport.BarrierUnsealSharesRequest{
 		Shares: shares,
 	}); err != nil {
-		return fmt.Errorf("failed to unseal barrier with shares: %w", err)
+		return &WrappedError{Sentinel: ErrUnsealBarrierSharesFailed, Err: err}
 	}
 
 	return printer.PrintSuccess("Barrier unsealed successfully")
@@ -813,11 +898,11 @@ func runBarrierSealCmd(cmd *cobra.Command, _ []string) error {
 
 	ctx := context.Background()
 	if err := verifySOPINIfSupplied(ctx, cl, barrierFlagSOPin); err != nil {
-		return fmt.Errorf("failed to verify SO PIN: %w", err)
+		return &WrappedError{Sentinel: ErrVerifySOPINFailed, Err: err}
 	}
 
 	if err := cl.BarrierSeal(ctx); err != nil {
-		return fmt.Errorf("failed to seal barrier: %w", err)
+		return &WrappedError{Sentinel: ErrSealBarrierFailed, Err: err}
 	}
 
 	return printer.PrintSuccess("Barrier sealed successfully")
@@ -867,7 +952,7 @@ func runBarrierRekeyCmd(cmd *cobra.Command, _ []string) error {
 
 	ctx := context.Background()
 	if err := verifySOPINIfSupplied(ctx, cl, barrierFlagSOPin); err != nil {
-		return fmt.Errorf("failed to verify SO PIN: %w", err)
+		return &WrappedError{Sentinel: ErrVerifySOPINFailed, Err: err}
 	}
 
 	resp, err := cl.BarrierRekey(ctx, &transport.BarrierRekeyRequest{
@@ -875,7 +960,7 @@ func runBarrierRekeyCmd(cmd *cobra.Command, _ []string) error {
 		Total:     barrierTotal,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to rekey barrier: %w", err)
+		return &WrappedError{Sentinel: ErrRekeyBarrierFailed, Err: err}
 	}
 	return printBarrierRekeyResult(printer, resp)
 }
@@ -918,7 +1003,7 @@ func runBarrierRecoveryGenerateCmd(cmd *cobra.Command, _ []string) error {
 
 	ctx := context.Background()
 	if err := verifySOPINIfSupplied(ctx, cl, barrierFlagSOPin); err != nil {
-		return fmt.Errorf("failed to verify SO PIN: %w", err)
+		return &WrappedError{Sentinel: ErrVerifySOPINFailed, Err: err}
 	}
 
 	resp, err := cl.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{
@@ -926,7 +1011,7 @@ func runBarrierRecoveryGenerateCmd(cmd *cobra.Command, _ []string) error {
 		Total:     barrierTotal,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to generate recovery keys: %w", err)
+		return &WrappedError{Sentinel: ErrGenerateRecoveryKeysFailed, Err: err}
 	}
 	return printBarrierRecoveryKeys(printer, resp)
 }
@@ -953,7 +1038,7 @@ func runBarrierRecoveryRecoverCmd(cmd *cobra.Command, _ []string) error {
 	if err := cl.BarrierRecoverWithKeys(context.Background(), &transport.BarrierRecoverWithKeysRequest{
 		Keys: barrierRecoveryShs,
 	}); err != nil {
-		return fmt.Errorf("failed to recover barrier: %w", err)
+		return &WrappedError{Sentinel: ErrRecoverBarrierFailed, Err: err}
 	}
 	return printer.PrintSuccess("Barrier recovered successfully")
 }
@@ -989,7 +1074,7 @@ func printBarrierStatus(printer *Printer, resp *transport.BarrierStatusResponse)
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", printer.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(printer.format)}
 	}
 }
 
@@ -1013,7 +1098,7 @@ func printBarrierShamirResult(printer *Printer, resp *transport.BarrierInitializ
 		_, _ = fmt.Fprintf(printer.writer, "displayed. Each officer must claim their share individually.\n")
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", printer.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(printer.format)}
 	}
 }
 
@@ -1036,7 +1121,7 @@ func printBarrierRekeyResult(printer *Printer, resp *transport.BarrierRekeyRespo
 		_, _ = fmt.Fprintf(printer.writer, "displayed. Each officer must claim their new share individually.\n")
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", printer.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(printer.format)}
 	}
 }
 
@@ -1060,7 +1145,7 @@ func printBarrierRecoveryKeys(printer *Printer, resp *transport.BarrierRecoveryK
 		_, _ = fmt.Fprintf(printer.writer, "never displayed. Each officer must claim their share individually.\n")
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", printer.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(printer.format)}
 	}
 }
 
@@ -1128,6 +1213,22 @@ func init() {
 	barrierRecoveryRecoverCmd.Flags().StringSliceVar(&barrierRecoveryShs, "share", nil,
 		"Recovery key (repeatable: --share a --share b ...)")
 
+	// enable-encryption flags
+	barrierEnableEncryptionCmd.Flags().StringVar(&barrierEncTenantID, "tenant-id", "",
+		"Tenant whose barrier to migrate (empty = system barrier)")
+	barrierEnableEncryptionCmd.Flags().StringVar(&barrierEncStrategy, "strategy", "",
+		"Keyed target strategy (e.g. passphrase, shamir) (required)")
+	barrierEnableEncryptionCmd.Flags().StringVar(&barrierEncMechanism, "mechanism", "",
+		"Re-encryption mechanism: swap (default) or in-place")
+	barrierEnableEncryptionCmd.Flags().StringVar(&barrierEncAvailability, "availability", "",
+		"Write availability during migration: quiesced (default) or online")
+	barrierEnableEncryptionCmd.Flags().StringVar(&barrierSecret, "passphrase", "",
+		"Passphrase for a passphrase-target migration")
+	barrierEnableEncryptionCmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
+		"Shamir threshold (M) for a shamir-target migration")
+	barrierEnableEncryptionCmd.Flags().IntVar(&barrierTotal, "total", 0,
+		"Shamir total shares (N) for a shamir-target migration")
+
 	// Build subcommand tree
 	barrierRecoveryCmd.AddCommand(barrierRecoveryGenerateCmd)
 	barrierRecoveryCmd.AddCommand(barrierRecoveryRecoverCmd)
@@ -1140,6 +1241,7 @@ func init() {
 	barrierCmd.AddCommand(barrierSealCmd)
 	barrierCmd.AddCommand(barrierRekeyCmd)
 	barrierCmd.AddCommand(barrierRecoveryCmd)
+	barrierCmd.AddCommand(barrierEnableEncryptionCmd)
 
 	// Quiet the unused import linter on errors.Is wrappers we expose
 	// through Unwrap() but do not call directly within this file.

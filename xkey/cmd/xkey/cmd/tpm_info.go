@@ -86,14 +86,14 @@ func runTPMInfo(cmd *cobra.Command, args []string) error {
 	// Try to open TPM - don't require it to be initialized
 	tpm, err := openTPMForProvisioning()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTPMDeviceNotFound, err)
+		return &SentinelCauseError{Sentinel: ErrTPMDeviceNotFound, Cause: err}
 	}
 	defer func() { _ = tpm.Close() }()
 
 	// Get fixed properties
 	props, err := tpm.FixedProperties()
 	if err != nil {
-		return fmt.Errorf("%w: failed to get TPM properties: %v", ErrTPMOperationFailed, err)
+		return &DetailError{Err: ErrTPMOperationFailed, Detail: fmt.Sprintf(": failed to get TPM properties: %v", err)}
 	}
 
 	info := buildTPMInfo(tpm, props)

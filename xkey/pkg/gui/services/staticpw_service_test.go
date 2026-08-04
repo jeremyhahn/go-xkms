@@ -16,11 +16,12 @@ package services
 import (
 	"context"
 	"errors"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"

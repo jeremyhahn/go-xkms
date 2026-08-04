@@ -17,6 +17,8 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // Character class constants used by GeneratePassword.
@@ -143,7 +145,7 @@ func generateUniform(length int, charset string) (string, error) {
 	for i := range buf {
 		idx, err := rand.Int(rand.Reader, charsetLen)
 		if err != nil {
-			return "", fmt.Errorf("%w: %v", ErrGenerateFailed, err)
+			return "", &errs.Detail{Err: ErrGenerateFailed, Detail: fmt.Sprintf("%v", err)}
 		}
 		buf[i] = charset[idx.Int64()]
 	}
@@ -159,7 +161,7 @@ func randChars(charset string, n int) ([]byte, error) {
 	for i := range buf {
 		idx, err := rand.Int(rand.Reader, charsetLen)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrGenerateFailed, err)
+			return nil, &errs.Detail{Err: ErrGenerateFailed, Detail: fmt.Sprintf("%v", err)}
 		}
 		buf[i] = charset[idx.Int64()]
 	}
@@ -172,7 +174,7 @@ func shuffle(buf []byte) error {
 	for i := len(buf) - 1; i > 0; i-- {
 		j, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrGenerateFailed, err)
+			return &errs.Detail{Err: ErrGenerateFailed, Detail: fmt.Sprintf("%v", err)}
 		}
 		buf[i], buf[j.Int64()] = buf[j.Int64()], buf[i]
 	}

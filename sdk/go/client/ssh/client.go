@@ -36,9 +36,30 @@ type Client interface {
 	// Session returns the session-dial sub-client.
 	Session() SessionClient
 
+	// Console opens an interactive PTY console to a host, authenticated by the
+	// named key (software or hardware). It is the SDK's transport-agnostic SSH
+	// console surface: embedded runs the PTY in-process; gRPC/unix stream it
+	// over the bidi RPC; REST/QUIC are served by the WebSocket bridge handler
+	// (use NewConsoleWSHandler server-side and an HTTP/WS client, or sdk/ts in
+	// the browser); MCP returns *ConsoleUnsupportedError.
+	Console(ctx context.Context, req ConsoleConnectRequest, cfg ConsoleConfig) (ConsoleSession, error)
+
 	// Close releases any resources held by the Client (e.g., storage
 	// handles for the embedded transport). Idempotent.
 	Close() error
+}
+
+// ConsoleConnectRequest identifies the key and target for Client.Console.
+type ConsoleConnectRequest struct {
+	// KeyScope / KeyOwner / KeyName select the authentication key.
+	KeyScope string
+	KeyOwner string
+	KeyName  string
+
+	// Host / Port / User describe the target.
+	Host string
+	Port int
+	User string
 }
 
 // KeysClient manages SSH keys. Import accepts a PassphraseProvider so

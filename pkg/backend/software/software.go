@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
@@ -149,16 +151,22 @@ type SoftwareBackendWithKeyAgreement interface {
 //	aesKey, err := backend.GenerateSymmetricKey(aesAttrs)
 func NewBackend(config *Config) (types.SymmetricKeyProvider, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid config", Err: err}
 	}
 
-	// Create PKCS8 backend for asymmetric operations
+	// Create PKCS8 backend for asymmetric operations.
+	// SoftwareBackend is a general-purpose backend used for TLS keys, ACME
+	// keys, and other non-CA material that may not carry individual
+	// passwords. CA signing keys that require at-rest encryption should use
+	// a raw pkcs8.Backend (via xkms.RegisterPKCS8Backend) with a per-key
+	// password wired through KeyConfig.Password → KeyAttributesFromConfig.
 	pkcs8Config := &pkcs8.Config{
-		KeyStorage: config.KeyStorage,
+		KeyStorage:         config.KeyStorage,
+		AllowPlaintextKeys: true,
 	}
 	pkcs8Backend, err := pkcs8.NewBackend(pkcs8Config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create PKCS8 backend: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create PKCS8 backend", Err: err}
 	}
 
 	// Create AEAD tracker for symmetric operations
@@ -175,13 +183,13 @@ func NewBackend(config *Config) (types.SymmetricKeyProvider, error) {
 	}
 	symmetricBackend, err := symmetric.NewBackend(symmetricConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create symmetric backend: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create symmetric backend", Err: err}
 	}
 
 	// Create quantum backend for post-quantum operations (ML-DSA, ML-KEM)
 	quantumBackend, err := quantum.New(config.KeyStorage)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create quantum backend: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create quantum backend", Err: err}
 	}
 
 	return &SoftwareBackend{
@@ -294,17 +302,17 @@ func (b *SoftwareBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes,
 	// Get keys from all three backends
 	pkcs8Keys, err := b.pkcs8Backend.ListKeys(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list PKCS8 keys: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list PKCS8 keys", Err: err}
 	}
 
 	symmetricKeys, err := b.symmetricBackend.ListKeys(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list symmetric keys: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list symmetric keys", Err: err}
 	}
 
 	quantumKeys, err := b.quantumBackend.ListKeys(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list quantum keys: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list quantum keys", Err: err}
 	}
 
 	// Combine the results
@@ -392,17 +400,17 @@ func (b *SoftwareBackend) Close() error {
 	// Note: Both backends share the same storage, so we only need to close
 	// one of them to close the storage. The second Close() will be a no-op.
 	if err := b.pkcs8Backend.Close(); err != nil {
-		return fmt.Errorf("failed to close PKCS8 backend: %w", err)
+		return &errs.Wrapped{Msg: "failed to close PKCS8 backend", Err: err}
 	}
 
 	// The storage is already closed by pkcs8Backend.Close(), so this will
 	// return immediately without error.
 	if err := b.symmetricBackend.Close(); err != nil {
-		return fmt.Errorf("failed to close symmetric backend: %w", err)
+		return &errs.Wrapped{Msg: "failed to close symmetric backend", Err: err}
 	}
 
 	if err := b.quantumBackend.Close(); err != nil {
-		return fmt.Errorf("failed to close quantum backend: %w", err)
+		return &errs.Wrapped{Msg: "failed to close quantum backend", Err: err}
 	}
 
 	return nil
@@ -468,13 +476,13 @@ func (b *SoftwareBackend) GetImportParameters(ctx context.Context, attrs *types.
 
 	// Validate algorithm
 	if !isValidWrappingAlgorithm(algorithm) {
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", algorithm)}
 	}
 
 	// Generate a 2048-bit RSA key pair for wrapping.
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate wrapping key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate wrapping key", Err: err}
 	}
 
 	// Marshal the private key into PKCS#8 DER and seal it. We wipe the
@@ -482,7 +490,7 @@ func (b *SoftwareBackend) GetImportParameters(ctx context.Context, attrs *types.
 	// also wipes its input.
 	der, marshalErr := x509.MarshalPKCS8PrivateKey(privateKey)
 	if marshalErr != nil {
-		return nil, fmt.Errorf("failed to marshal wrapping key: %w", marshalErr)
+		return nil, &errs.Wrapped{Msg: "failed to marshal wrapping key", Err: marshalErr}
 	}
 	publicKey := &privateKey.PublicKey
 	// Best-effort: zero out the live *rsa.PrivateKey fields so it
@@ -495,7 +503,7 @@ func (b *SoftwareBackend) GetImportParameters(ctx context.Context, attrs *types.
 	_ = privateKey
 	sealed, sealErr := secure.NewSecret(der)
 	if sealErr != nil {
-		return nil, fmt.Errorf("failed to seal wrapping key: %w", sealErr)
+		return nil, &errs.Wrapped{Msg: "failed to seal wrapping key", Err: sealErr}
 	}
 	// NewSecret wipes `der` on entry; this is defense in depth.
 	secure.Wipe(der)
@@ -532,16 +540,16 @@ func (b *SoftwareBackend) GetImportParameters(ctx context.Context, attrs *types.
 // This uses the pkg/crypto/wrapping functions to wrap the key.
 func (b *SoftwareBackend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if len(keyMaterial) == 0 {
-		return nil, fmt.Errorf("%w: key material cannot be nil or empty", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "key material cannot be nil or empty"}
 	}
 	if params == nil {
-		return nil, fmt.Errorf("%w: import parameters cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import parameters cannot be nil"}
 	}
 
 	// Extract the RSA public key
 	publicKey, ok := params.WrappingPublicKey.(*rsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("%w: wrapping public key must be an RSA public key", backend.ErrInvalidKeyType)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "wrapping public key must be an RSA public key"}
 	}
 
 	var wrappedKey []byte
@@ -554,11 +562,11 @@ func (b *SoftwareBackend) WrapKey(ctx context.Context, keyMaterial []byte, param
 	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		wrappedKey, err = wrapping.WrapRSAAES(keyMaterial, publicKey, params.Algorithm)
 	default:
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, params.Algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", params.Algorithm)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to wrap key", Err: err}
 	}
 
 	return &backend.WrappedKeyMaterial{
@@ -579,10 +587,10 @@ func (b *SoftwareBackend) WrapKey(ctx context.Context, keyMaterial []byte, param
 // referenced inside this function's stack frame.
 func (b *SoftwareBackend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if wrapped == nil {
-		return nil, fmt.Errorf("%w: wrapped key material cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "wrapped key material cannot be nil"}
 	}
 	if params == nil {
-		return nil, fmt.Errorf("%w: import parameters cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import parameters cannot be nil"}
 	}
 
 	b.importMu.RLock()
@@ -595,41 +603,40 @@ func (b *SoftwareBackend) UnwrapKey(ctx context.Context, wrapped *backend.Wrappe
 	// Get the import token UUID
 	tokenUUID := string(wrapped.ImportToken)
 	if tokenUUID == "" {
-		return nil, fmt.Errorf("%w: import token cannot be empty", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import token cannot be empty"}
 	}
 
 	// Look up the stored private key
 	tokenData, ok := b.importTokens[tokenUUID]
 	if !ok {
-		return nil, fmt.Errorf("%w: invalid import token", backend.ErrKeyNotFound)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "invalid import token"}
 	}
 
 	// Check expiration
 	if time.Now().After(tokenData.expiresAt) {
-		return nil, fmt.Errorf("%w: import token has expired", backend.ErrKeyNotFound)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "import token has expired"}
 	}
 
 	// Verify algorithm matches
 	if wrapped.Algorithm != tokenData.algorithm {
-		return nil, fmt.Errorf("%w: wrapped with %s but token expects %s",
-			backend.ErrInvalidAlgorithm, wrapped.Algorithm, tokenData.algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("wrapped with %s but token expects %s", wrapped.Algorithm, tokenData.algorithm)}
 	}
 
 	// Open the enclaved wrapping private key into a Buffer, parse the
 	// DER, run the unwrap, destroy the Buffer.
 	privBuf, openErr := tokenData.privateKey.Open()
 	if openErr != nil {
-		return nil, fmt.Errorf("failed to open wrapping key enclave: %w", openErr)
+		return nil, &errs.Wrapped{Msg: "failed to open wrapping key enclave", Err: openErr}
 	}
 	defer privBuf.Destroy()
 
 	parsed, parseErr := x509.ParsePKCS8PrivateKey(privBuf.Bytes())
 	if parseErr != nil {
-		return nil, fmt.Errorf("failed to parse wrapping key: %w", parseErr)
+		return nil, &errs.Wrapped{Msg: "failed to parse wrapping key", Err: parseErr}
 	}
 	privateKey, rsaOK := parsed.(*rsa.PrivateKey)
 	if !rsaOK {
-		return nil, fmt.Errorf("%w: wrapping key is not RSA", backend.ErrInvalidKeyType)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "wrapping key is not RSA"}
 	}
 
 	var unwrapped []byte
@@ -642,11 +649,11 @@ func (b *SoftwareBackend) UnwrapKey(ctx context.Context, wrapped *backend.Wrappe
 	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		unwrapped, err = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
 	default:
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, wrapped.Algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to unwrap key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to unwrap key", Err: err}
 	}
 
 	return unwrapped, nil
@@ -656,10 +663,10 @@ func (b *SoftwareBackend) UnwrapKey(ctx context.Context, wrapped *backend.Wrappe
 // The key material is unwrapped and then stored based on the key type.
 func (b *SoftwareBackend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	if attrs == nil {
-		return fmt.Errorf("%w: key attributes cannot be nil", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "key attributes cannot be nil"}
 	}
 	if wrapped == nil {
-		return fmt.Errorf("%w: wrapped key material cannot be nil", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "wrapped key material cannot be nil"}
 	}
 
 	b.mu.Lock()
@@ -672,7 +679,7 @@ func (b *SoftwareBackend) ImportKey(ctx context.Context, attrs *types.KeyAttribu
 	// Get the import parameters to unwrap the key
 	tokenUUID := string(wrapped.ImportToken)
 	if tokenUUID == "" {
-		return fmt.Errorf("%w: import token cannot be empty", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import token cannot be empty"}
 	}
 
 	// Look up the stored token metadata (with read lock). The private
@@ -683,12 +690,12 @@ func (b *SoftwareBackend) ImportKey(ctx context.Context, attrs *types.KeyAttribu
 	b.importMu.RUnlock()
 
 	if !ok {
-		return fmt.Errorf("%w: invalid import token", backend.ErrKeyNotFound)
+		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "invalid import token"}
 	}
 
 	// Check expiration
 	if time.Now().After(tokenData.expiresAt) {
-		return fmt.Errorf("%w: import token has expired", backend.ErrKeyNotFound)
+		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "import token has expired"}
 	}
 
 	// Create import parameters for unwrapping. The public key is
@@ -704,7 +711,7 @@ func (b *SoftwareBackend) ImportKey(ctx context.Context, attrs *types.KeyAttribu
 	// Unwrap the key material
 	keyMaterial, err := b.UnwrapKey(ctx, wrapped, params)
 	if err != nil {
-		return fmt.Errorf("failed to unwrap key material: %w", err)
+		return &errs.Wrapped{Msg: "failed to unwrap key material", Err: err}
 	}
 
 	// Parse and store the key based on type
@@ -742,7 +749,7 @@ func (b *SoftwareBackend) ExportKey(ctx context.Context, attrs *types.KeyAttribu
 
 	// Validate algorithm
 	if !isValidWrappingAlgorithm(algorithm) {
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", algorithm)}
 	}
 
 	// Get the key material
@@ -753,34 +760,34 @@ func (b *SoftwareBackend) ExportKey(ctx context.Context, attrs *types.KeyAttribu
 		// Get symmetric key
 		key, err := b.symmetricBackend.GetSymmetricKey(ctx, attrs)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get symmetric key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to get symmetric key", Err: err}
 		}
 		keyMaterial, err = key.Raw()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get raw key material: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to get raw key material", Err: err}
 		}
 	} else {
 		// Get asymmetric key and marshal to PKCS8
 		privateKey, err := b.pkcs8Backend.GetKey(ctx, attrs)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get private key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to get private key", Err: err}
 		}
 		keyMaterial, err = x509.MarshalPKCS8PrivateKey(privateKey)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal private key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to marshal private key", Err: err}
 		}
 	}
 
 	// Generate import parameters for wrapping
 	params, err := b.GetImportParameters(ctx, attrs, algorithm)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate import parameters: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate import parameters", Err: err}
 	}
 
 	// Wrap the key material
 	wrapped, err := b.WrapKey(ctx, keyMaterial, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to wrap key", Err: err}
 	}
 
 	return wrapped, nil
@@ -822,13 +829,13 @@ func (b *SoftwareBackend) ExportKeyMaterial(ctx context.Context, attrs *types.Ke
 	// Get the symmetric key
 	key, err := b.symmetricBackend.GetSymmetricKey(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get symmetric key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get symmetric key", Err: err}
 	}
 
 	// Extract the raw key material
 	keyMaterial, err := key.Raw()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get raw key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get raw key material", Err: err}
 	}
 
 	return keyMaterial, nil
@@ -839,13 +846,13 @@ func (b *SoftwareBackend) importSymmetricKey(ctx context.Context, attrs *types.K
 	// Validate key size
 	expectedSize := attrs.SymmetricAlgorithm.KeySize() / 8
 	if len(keyMaterial) != expectedSize {
-		return fmt.Errorf("%w: invalid key material size expected %d bytes, got %d", backend.ErrInvalidAttributes, expectedSize, len(keyMaterial))
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("invalid key material size expected %d bytes, got %d", expectedSize, len(keyMaterial))}
 	}
 
 	// Store the raw key material directly (symmetric backend stores raw bytes)
 	keyID := attrs.ID()
 	if err := storage.SaveKey(ctx, b.storage, keyID, keyMaterial); err != nil {
-		return fmt.Errorf("failed to store symmetric key: %w", err)
+		return &errs.Wrapped{Msg: "failed to store symmetric key", Err: err}
 	}
 
 	return nil
@@ -856,18 +863,18 @@ func (b *SoftwareBackend) importAsymmetricKey(ctx context.Context, attrs *types.
 	// Parse the PKCS8 private key
 	privateKey, err := x509.ParsePKCS8PrivateKey(keyMaterial)
 	if err != nil {
-		return fmt.Errorf("failed to parse PKCS8 private key: %w", err)
+		return &errs.Wrapped{Msg: "failed to parse PKCS8 private key", Err: err}
 	}
 
 	// Validate the key type matches the attributes
 	if err := validateKeyType(privateKey, attrs); err != nil {
-		return fmt.Errorf("key type validation failed: %w", err)
+		return &errs.Wrapped{Msg: "key type validation failed", Err: err}
 	}
 
 	// Store the PKCS8-encoded key material directly
 	keyID := attrs.ID()
 	if err := storage.SaveKey(ctx, b.storage, keyID, keyMaterial); err != nil {
-		return fmt.Errorf("failed to store asymmetric key: %w", err)
+		return &errs.Wrapped{Msg: "failed to store asymmetric key", Err: err}
 	}
 
 	return nil
@@ -931,14 +938,13 @@ func validateKeyType(privateKey crypto.PrivateKey, attrs *types.KeyAttributes) e
 	switch key := privateKey.(type) {
 	case *rsa.PrivateKey:
 		if attrs.KeyAlgorithm != x509.RSA {
-			return fmt.Errorf("%w: expected RSA key but attributes specify %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
+			return &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("expected RSA key but attributes specify %s", attrs.KeyAlgorithm)}
 		}
 		if attrs.RSAAttributes != nil && key.N.BitLen() != attrs.RSAAttributes.KeySize {
-			return fmt.Errorf("%w: RSA key size mismatch key is %d bits but attributes specify %d",
-				backend.ErrInvalidAttributes, key.N.BitLen(), attrs.RSAAttributes.KeySize)
+			return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("RSA key size mismatch key is %d bits but attributes specify %d", key.N.BitLen(), attrs.RSAAttributes.KeySize)}
 		}
 	case *rsa.PublicKey:
-		return fmt.Errorf("%w: expected private key but got public key", backend.ErrInvalidKeyType)
+		return &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "expected private key but got public key"}
 	default:
 		// For other key types (ECDSA, Ed25519), basic validation is sufficient
 		// More detailed validation can be added if needed
@@ -1015,7 +1021,7 @@ func (b *SoftwareBackend) Seal(ctx context.Context, data []byte, opts *types.Sea
 // since Software backend delegates sealing to PKCS8 internally.
 func (b *SoftwareBackend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
-		return nil, fmt.Errorf("sealed data is required")
+		return nil, &errs.Message{Msg: "sealed data is required"}
 	}
 
 	b.mu.RLock()
@@ -1027,7 +1033,7 @@ func (b *SoftwareBackend) Unseal(ctx context.Context, sealed *types.SealedData, 
 
 	// Verify this is a software backend sealed data
 	if sealed.Backend != types.BackendTypeSoftware {
-		return nil, fmt.Errorf("sealed data was not created by software backend (got %s)", sealed.Backend)
+		return nil, &errs.Message{Msg: fmt.Sprintf("sealed data was not created by software backend (got %s)", sealed.Backend)}
 	}
 
 	return b.pkcs8Backend.Unseal(ctx, sealed, opts)

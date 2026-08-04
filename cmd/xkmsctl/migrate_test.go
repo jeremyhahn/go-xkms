@@ -589,7 +589,7 @@ func TestMigratePlanCmd_SourceBackendCreationError(t *testing.T) {
 	globalConfig.OutputFormat = "text"
 	globalConfig.Backend = "software"
 	globalConfig.BackendFactory = func(cfg *Config) (types.KeyProvider, error) {
-		return nil, fmt.Errorf("backend creation failed")
+		return nil, errTestBackendCreation
 	}
 
 	_ = migratePlanCmd.Flags().Set("from", "software")
@@ -621,7 +621,7 @@ func TestMigratePlanCmd_DestBackendCreationError(t *testing.T) {
 		if callCount == 1 {
 			return sourceMock, nil
 		}
-		return nil, fmt.Errorf("dest backend creation failed")
+		return nil, errTestDestBackendCreation
 	}
 
 	_ = migratePlanCmd.Flags().Set("from", "software")
@@ -742,7 +742,7 @@ func TestMigrateExecuteCmd_SourceBackendError(t *testing.T) {
 
 	globalConfig.OutputFormat = "text"
 	globalConfig.BackendFactory = func(cfg *Config) (types.KeyProvider, error) {
-		return nil, fmt.Errorf("source backend creation failed")
+		return nil, errTestSourceBackendCreation
 	}
 
 	_ = migrateExecuteCmd.Flags().Set("from", "software")
@@ -773,7 +773,7 @@ func TestMigrateExecuteCmd_DestBackendError(t *testing.T) {
 		if callCount == 1 {
 			return sourceMock, nil
 		}
-		return nil, fmt.Errorf("dest backend creation failed")
+		return nil, errTestDestBackendCreation
 	}
 
 	_ = migrateExecuteCmd.Flags().Set("from", "software")
@@ -1000,7 +1000,7 @@ func TestMigrateValidateCmd_SourceBackendError(t *testing.T) {
 
 	globalConfig.OutputFormat = "text"
 	globalConfig.BackendFactory = func(cfg *Config) (types.KeyProvider, error) {
-		return nil, fmt.Errorf("backend creation failed")
+		return nil, errTestBackendCreation
 	}
 
 	_ = migrateValidateCmd.Flags().Set("key-id", "test-key")
@@ -1033,7 +1033,7 @@ func TestMigrateValidateCmd_DestBackendError(t *testing.T) {
 		if callCount == 1 {
 			return sourceMock, nil
 		}
-		return nil, fmt.Errorf("dest backend creation failed")
+		return nil, errTestDestBackendCreation
 	}
 
 	_ = migrateValidateCmd.Flags().Set("key-id", "test-key")
@@ -1181,7 +1181,7 @@ func TestMigratePlanCmd_ListKeysError(t *testing.T) {
 
 	sourceMock := mocks.NewExtendedMockBackend()
 	sourceMock.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
-		return nil, fmt.Errorf("list keys failed")
+		return nil, errTestListKeys
 	}
 	destMock := mocks.NewExtendedMockBackend()
 
@@ -1221,7 +1221,7 @@ func TestMigrateExecuteCmd_MigrationError(t *testing.T) {
 	ecKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	sourceMock.StoreKey("fail-key", ecKey)
 	sourceMock.ExportKeyFunc = func(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
-		return nil, fmt.Errorf("export failed")
+		return nil, errTestExport
 	}
 
 	callCount := 0
@@ -1267,7 +1267,7 @@ func TestMigrateExecuteCmd_StopOnError(t *testing.T) {
 	}
 
 	sourceMock.ExportKeyFunc = func(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
-		return nil, fmt.Errorf("export failed")
+		return nil, errTestExport
 	}
 
 	callCount := 0

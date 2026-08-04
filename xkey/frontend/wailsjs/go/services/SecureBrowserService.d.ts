@@ -7,6 +7,8 @@ export function DetectBrowsers():Promise<Array<services.BrowserInfo>>;
 
 export function LaunchBrowser(arg1:string,arg2:string):Promise<services.LaunchResult>;
 
+export function LaunchBrowserWithOptions(arg1:string,arg2:string,arg3:services.LaunchOptions):Promise<services.LaunchResult>;
+
 export function Rebuild():Promise<void>;
 
 export function SetContext(arg1:context.Context):Promise<void>;

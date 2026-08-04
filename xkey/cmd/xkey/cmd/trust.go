@@ -348,13 +348,13 @@ func openTrustStore() (*truststore.FileStore, error) {
 	if storePath == "" {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrTrustStoreOpen, err)
+			return nil, &SentinelCauseError{Sentinel: ErrTrustStoreOpen, Cause: err}
 		}
 		storePath = filepath.Join(homeDir, ".xkey", "data", "trust")
 	}
 	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: storePath})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTrustStoreOpen, err)
+		return nil, &SentinelCauseError{Sentinel: ErrTrustStoreOpen, Cause: err}
 	}
 	return store, nil
 }
@@ -369,7 +369,7 @@ func runTrustList(cmd *cobra.Command, args []string) error {
 
 	certs, err := store.Certificates()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustListFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustListFailed, Cause: err}
 	}
 
 	if len(certs) == 0 {
@@ -417,7 +417,7 @@ func runTrustAdd(cmd *cobra.Command, args []string) error {
 
 	pemData, err := os.ReadFile(pemFile)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustPEMReadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustPEMReadFailed, Cause: err}
 	}
 
 	store, err := openTrustStore()
@@ -437,7 +437,7 @@ func runTrustAdd(cmd *cobra.Command, args []string) error {
 			var parseErr error
 			purpose, parseErr = truststore.ParsePurpose(purposeStr)
 			if parseErr != nil {
-				return fmt.Errorf("%w: %v", ErrTrustAddFailed, parseErr)
+				return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: parseErr}
 			}
 		}
 
@@ -452,7 +452,7 @@ func runTrustAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustAddFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: err}
 	}
 
 	fmt.Fprintf(os.Stderr, "Importing certificates from %s\n", pemFile)
@@ -480,7 +480,7 @@ func addPEMWithOptions(store *truststore.FileStore, pemData []byte, opts *trusts
 
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return added, fmt.Errorf("%w: %v", ErrTrustAddFailed, err)
+			return added, &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: err}
 		}
 
 		err = store.AddCertificateWithOptions(cert, opts)
@@ -508,9 +508,9 @@ func runTrustRemove(cmd *cobra.Command, args []string) error {
 
 	if err := store.RemoveCertificate(fingerprint); err != nil {
 		if errors.Is(err, truststore.ErrCertificateNotFound) {
-			return fmt.Errorf("%w: %s", ErrTrustCertificateNotFound, fingerprint)
+			return &DetailError{Err: ErrTrustCertificateNotFound, Detail: fmt.Sprintf(": %s", fingerprint)}
 		}
-		return fmt.Errorf("%w: %v", ErrTrustRemoveFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustRemoveFailed, Cause: err}
 	}
 
 	fmt.Printf("Certificate removed: %s\n", fingerprint)
@@ -529,7 +529,7 @@ func runTrustShow(cmd *cobra.Command, args []string) error {
 
 	certs, err := store.Certificates()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustListFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustListFailed, Cause: err}
 	}
 
 	var cert *x509.Certificate
@@ -541,7 +541,7 @@ func runTrustShow(cmd *cobra.Command, args []string) error {
 	}
 
 	if cert == nil {
-		return fmt.Errorf("%w: %s", ErrTrustCertificateNotFound, fingerprint)
+		return &DetailError{Err: ErrTrustCertificateNotFound, Detail: fmt.Sprintf(": %s", fingerprint)}
 	}
 
 	fmt.Printf("Trusted Certificate Details\n")
@@ -612,12 +612,12 @@ func runTrustClassify(cmd *cobra.Command, args []string) error {
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
 	purposeStr, _ := cmd.Flags().GetString("purpose")
 	if purposeStr == "" {
-		return fmt.Errorf("%w: --purpose flag is required", ErrTrustClassifyFailed)
+		return &DetailError{Err: ErrTrustClassifyFailed, Detail: ": --purpose flag is required"}
 	}
 
 	purpose, err := truststore.ParsePurpose(purposeStr)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustClassifyFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustClassifyFailed, Cause: err}
 	}
 
 	store, err := openTrustStore()
@@ -627,7 +627,7 @@ func runTrustClassify(cmd *cobra.Command, args []string) error {
 	defer func() { _ = store.Close() }()
 
 	if err := store.SetPurpose(fingerprint, purpose); err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustClassifyFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustClassifyFailed, Cause: err}
 	}
 
 	fmt.Printf("Certificate %s classified as %s\n", fingerprint, purpose)
@@ -647,7 +647,7 @@ func runTrustInstall(cmd *cobra.Command, args []string) error {
 	// Find the certificate in the trust store.
 	certs, err := store.Certificates()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustInstallFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustInstallFailed, Cause: err}
 	}
 
 	var cert *x509.Certificate
@@ -658,25 +658,25 @@ func runTrustInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if cert == nil {
-		return fmt.Errorf("%w: %s", ErrTrustCertificateNotFound, fingerprint)
+		return &DetailError{Err: ErrTrustCertificateNotFound, Detail: fmt.Sprintf(": %s", fingerprint)}
 	}
 
 	// Create the OS cert store.
 	osCertStore, err := truststore.NewOSCertStore()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustInstallFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustInstallFailed, Cause: err}
 	}
 
 	// Use truncated fingerprint as label for the OS file.
 	label := "xkey-" + fingerprint[:16]
 
 	if err := osCertStore.Install(cert, label); err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustInstallFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustInstallFailed, Cause: err}
 	}
 
 	// Track the installation status in the trust store metadata.
 	if err := store.SetSystemInstalled(fingerprint, true); err != nil {
-		return fmt.Errorf("%w: failed to update metadata: %v", ErrTrustInstallFailed, err)
+		return &DetailError{Err: ErrTrustInstallFailed, Detail: fmt.Sprintf(": failed to update metadata: %v", err)}
 	}
 
 	fmt.Printf("Certificate %s installed to OS trust store as %s\n", fingerprint, label)
@@ -696,27 +696,27 @@ func runTrustUninstall(cmd *cobra.Command, args []string) error {
 	// Verify the certificate exists in the trust store.
 	exists, err := store.Contains(fingerprint)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustUninstallFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustUninstallFailed, Cause: err}
 	}
 	if !exists {
-		return fmt.Errorf("%w: %s", ErrTrustCertificateNotFound, fingerprint)
+		return &DetailError{Err: ErrTrustCertificateNotFound, Detail: fmt.Sprintf(": %s", fingerprint)}
 	}
 
 	// Create the OS cert store.
 	osCertStore, err := truststore.NewOSCertStore()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustUninstallFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustUninstallFailed, Cause: err}
 	}
 
 	label := "xkey-" + fingerprint[:16]
 
 	if err := osCertStore.Remove(label); err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustUninstallFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustUninstallFailed, Cause: err}
 	}
 
 	// Update the installation status in the trust store metadata.
 	if err := store.SetSystemInstalled(fingerprint, false); err != nil {
-		return fmt.Errorf("%w: failed to update metadata: %v", ErrTrustUninstallFailed, err)
+		return &DetailError{Err: ErrTrustUninstallFailed, Detail: fmt.Sprintf(": failed to update metadata: %v", err)}
 	}
 
 	fmt.Printf("Certificate %s removed from OS trust store\n", fingerprint)
@@ -735,14 +735,14 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) error {
 
 	autoCfg, err := buildBootstrapConfig(cmd)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustBootstrapFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustBootstrapFailed, Cause: err}
 	}
 
 	fmt.Fprintf(os.Stderr, "Bootstrapping trust store...\n")
 
 	resp, err := truststrap.AutoFetch(ctx, autoCfg)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustBootstrapFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustBootstrapFailed, Cause: err}
 	}
 
 	if len(resp.BundlePEM) == 0 {
@@ -758,7 +758,7 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) error {
 
 	added, err := store.AddPEM(resp.BundlePEM)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustAddFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: err}
 	}
 
 	fmt.Printf("Certificates imported: %d\n", added)
@@ -844,7 +844,7 @@ func parseMethodOrder(names []string) ([]truststrap.Method, error) {
 	for _, name := range names {
 		m, ok := methodParser[strings.ToLower(strings.TrimSpace(name))]
 		if !ok {
-			return nil, fmt.Errorf("%w: %q", ErrTrustInvalidMethod, name)
+			return nil, &DetailError{Err: ErrTrustInvalidMethod, Detail: fmt.Sprintf(": %q", name)}
 		}
 		methods = append(methods, m)
 	}

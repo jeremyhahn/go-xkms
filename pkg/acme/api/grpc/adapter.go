@@ -3,9 +3,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -13,7 +13,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package grpc provides gRPC protocol adapter for go-trusted-ca services.
+// Package grpc provides gRPC protocol adapter for go-xkms services.
 // Build with -tags=grpc after running 'make proto' to generate protobuf code.
 package grpc
 
@@ -595,49 +595,49 @@ func (a *Adapter) GetStats(ctx context.Context) (*admin.CAStats, error) {
 
 // ListOrders lists orders with optional filtering.
 func (a *Adapter) ListOrders(_ context.Context, _ *admin.ListOrdersRequest) ([]*admin.OrderInfo, *admin.Pagination, error) {
-	return nil, nil, admin.ErrNotImplemented
+	return nil, nil, admin.ErrRESTOnly
 }
 
 // GetOrder retrieves an order by ID.
 func (a *Adapter) GetOrder(_ context.Context, _ uint64, _ uint64) (*admin.OrderInfo, error) {
-	return nil, admin.ErrNotImplemented
+	return nil, admin.ErrRESTOnly
 }
 
 // Tenant CA Operations
 
 // UpdateTenantStatus updates a tenant's status.
 func (a *Adapter) UpdateTenantStatus(_ context.Context, _ string, _ string) error {
-	return admin.ErrNotImplemented
+	return admin.ErrRESTOnly
 }
 
 // CreateTenantRootCA creates a root CA for a tenant.
 func (a *Adapter) CreateTenantRootCA(_ context.Context, _ string, _ *admin.CreateTenantRootCARequest) (*admin.TenantRootCAInfo, error) {
-	return nil, admin.ErrNotImplemented
+	return nil, admin.ErrRESTOnly
 }
 
 // GetTenantCAStatus retrieves the CA status for a tenant.
 func (a *Adapter) GetTenantCAStatus(_ context.Context, _ string) (*admin.TenantCAStatusInfo, error) {
-	return nil, admin.ErrNotImplemented
+	return nil, admin.ErrRESTOnly
 }
 
 // CreateTenantIntermediateCA creates an intermediate CA for a tenant.
 func (a *Adapter) CreateTenantIntermediateCA(_ context.Context, _ string, _ *admin.CreateTenantIntermediateCARequest) (*admin.TenantIntCAInfo, error) {
-	return nil, admin.ErrNotImplemented
+	return nil, admin.ErrRESTOnly
 }
 
 // ListTenantIntermediateCAs lists all intermediate CAs for a tenant.
 func (a *Adapter) ListTenantIntermediateCAs(_ context.Context, _ string) ([]*admin.TenantIntCAInfo, error) {
-	return nil, admin.ErrNotImplemented
+	return nil, admin.ErrRESTOnly
 }
 
 // GetTenantIntermediateCA retrieves a specific intermediate CA.
 func (a *Adapter) GetTenantIntermediateCA(_ context.Context, _ string, _ string) (*admin.TenantIntCAInfo, error) {
-	return nil, admin.ErrNotImplemented
+	return nil, admin.ErrRESTOnly
 }
 
 // UpdateTenantIntermediateCAStatus updates an intermediate CA's status.
 func (a *Adapter) UpdateTenantIntermediateCAStatus(_ context.Context, _ string, _ string, _ string) error {
-	return admin.ErrNotImplemented
+	return admin.ErrRESTOnly
 }
 
 // Verify interface compliance.

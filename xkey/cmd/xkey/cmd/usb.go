@@ -363,7 +363,7 @@ func readUSBPassphraseFromStdin() (string, error) {
 		return "", &USBCmdError{Operation: "read_passphrase", Err: err}
 	}
 	if _, err := fmt.Scanln(&pass2); err != nil {
-		if !errors.Is(err, fmt.Errorf("")) {
+		if !errors.Is(err, &MessageError{Msg: ""}) {
 			return "", &USBCmdError{Operation: "read_passphrase", Err: err}
 		}
 	}

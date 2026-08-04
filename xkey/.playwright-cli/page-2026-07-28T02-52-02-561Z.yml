@@ -1,0 +1,172 @@
+- generic [ref=e3]:
+  - navigation "Main navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e9]: xKey
+      - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+        - img [ref=e11]
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: OVERVIEW
+        - button "Dashboard" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - generic [ref=e19]: Dashboard
+        - button "Pairing" [ref=e20] [cursor=pointer]:
+          - img [ref=e21]
+          - generic [ref=e23]: Pairing
+        - button "TPM 2.0" [ref=e234] [cursor=pointer]:
+          - img [ref=e235]
+          - generic [ref=e237]: TPM 2.0
+      - generic [ref=e24]:
+        - generic [ref=e25]: STORE
+        - button "Keys" [ref=e26] [cursor=pointer]:
+          - img [ref=e27]
+          - generic [ref=e29]: Keys
+        - button "Trust Store" [ref=e30] [cursor=pointer]:
+          - img [ref=e31]
+          - generic [ref=e33]: Trust Store
+        - button "Certificates" [ref=e34] [cursor=pointer]:
+          - img [ref=e35]
+          - generic [ref=e37]: Certificates
+      - generic [ref=e38]:
+        - generic [ref=e39]: APPLICATIONS
+        - button "SSH" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+          - generic [ref=e43]: SSH
+        - button "FIDO2" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: FIDO2
+        - button "OATH" [ref=e48] [cursor=pointer]:
+          - img [ref=e49]
+          - generic [ref=e51]: OATH
+        - button "PIV" [active] [ref=e52] [cursor=pointer]:
+          - img [ref=e53]
+          - generic [ref=e55]: PIV
+        - button "Passwords" [ref=e56] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: Passwords
+        - button "Sealed Data" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e63]: Sealed Data
+        - button "Browser" [ref=e64] [cursor=pointer]:
+          - img [ref=e65]
+          - generic [ref=e67]: Browser
+      - generic [ref=e68]:
+        - generic [ref=e69]: MANAGEMENT
+        - button "Audit Log" [ref=e70] [cursor=pointer]:
+          - img [ref=e71]
+          - generic [ref=e73]: Audit Log
+        - button "Admin" [ref=e74] [cursor=pointer]:
+          - img [ref=e75]
+          - generic [ref=e77]: Admin
+      - generic [ref=e78]:
+        - generic [ref=e79]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e80] [cursor=pointer]:
+          - img [ref=e81]
+          - generic [ref=e83]: OIDC
+        - button "API Explorer" [ref=e84] [cursor=pointer]:
+          - img [ref=e85]
+          - generic [ref=e87]: API Explorer
+    - generic [ref=e88]:
+      - generic "Standalone mode" [ref=e89]:
+        - generic [ref=e91]: Standalone
+      - button "Theme" [ref=e92] [cursor=pointer]:
+        - img [ref=e93]
+        - generic [ref=e95]: Theme
+      - button "Settings" [ref=e96] [cursor=pointer]:
+        - img [ref=e97]
+        - generic [ref=e99]: Settings
+  - main [ref=e100]:
+    - generic [ref=e102]:
+      - button "Lock app" [ref=e103] [cursor=pointer]:
+        - img [ref=e104]
+        - generic [ref=e106]: Lock
+      - button "No touch pending" [disabled] [ref=e107]:
+        - img [ref=e109]
+    - generic [ref=e314]:
+      - generic [ref=e317]:
+        - heading "PIV Smart Card" [level=1] [ref=e318]
+        - paragraph [ref=e319]: NIST SP 800-73 certificate slots
+      - generic [ref=e321]:
+        - img [ref=e322]
+        - button "Local software" [ref=e324] [cursor=pointer]:
+          - img [ref=e325]
+          - text: Local software
+        - button "TPM 2.0" [ref=e327] [cursor=pointer]:
+          - img [ref=e328]
+          - text: TPM 2.0
+      - generic [ref=e331]:
+        - button "More actions 9A PIV Authentication Card and cardholder authentication ECDSA Local software CN=chrometest-piv-9a Connected Valid — 3649 days remaining" [ref=e332] [cursor=pointer]:
+          - generic [ref=e333]:
+            - button "More actions" [ref=e335]:
+              - img [ref=e336]
+            - generic [ref=e338]:
+              - generic [ref=e340]: 9A
+              - generic [ref=e341]:
+                - heading "PIV Authentication" [level=3] [ref=e342]
+                - generic [ref=e343]: Card and cardholder authentication
+            - generic [ref=e344]:
+              - generic [ref=e345]:
+                - img [ref=e346]
+                - generic [ref=e348]: ECDSA
+                - generic [ref=e349]: Local software
+              - generic [ref=e350]:
+                - img [ref=e351]
+                - generic [ref=e353]: CN=chrometest-piv-9a
+              - generic [ref=e354]:
+                - status "Connected" [ref=e355]:
+                  - generic [ref=e357]: Connected
+                - generic [ref=e358]: Valid — 3649 days remaining
+        - button "9C Digital Signature Document signing and non-repudiation Local software Empty slot Generate Key" [ref=e359] [cursor=pointer]:
+          - generic [ref=e360]:
+            - generic [ref=e361]:
+              - generic [ref=e363]: 9C
+              - generic [ref=e364]:
+                - heading "Digital Signature" [level=3] [ref=e365]
+                - generic [ref=e366]: Document signing and non-repudiation
+                - generic [ref=e367]: Local software
+            - generic [ref=e368]:
+              - generic [ref=e369]: Empty slot
+              - button "Generate Key" [ref=e370]:
+                - img [ref=e371]
+                - generic [ref=e373]: Generate Key
+        - button "9D Key Management Key establishment and transport Local software Empty slot Generate Key" [ref=e374] [cursor=pointer]:
+          - generic [ref=e375]:
+            - generic [ref=e376]:
+              - generic [ref=e378]: 9D
+              - generic [ref=e379]:
+                - heading "Key Management" [level=3] [ref=e380]
+                - generic [ref=e381]: Key establishment and transport
+                - generic [ref=e382]: Local software
+            - generic [ref=e383]:
+              - generic [ref=e384]: Empty slot
+              - button "Generate Key" [ref=e385]:
+                - img [ref=e386]
+                - generic [ref=e388]: Generate Key
+        - button "9E Card Authentication Card authentication without interaction Local software Empty slot Generate Key" [ref=e389] [cursor=pointer]:
+          - generic [ref=e390]:
+            - generic [ref=e391]:
+              - generic [ref=e393]: 9E
+              - generic [ref=e394]:
+                - heading "Card Authentication" [level=3] [ref=e395]
+                - generic [ref=e396]: Card authentication without interaction
+                - generic [ref=e397]: Local software
+            - generic [ref=e398]:
+              - generic [ref=e399]: Empty slot
+              - button "Generate Key" [ref=e400]:
+                - img [ref=e401]
+                - generic [ref=e403]: Generate Key
+        - button "F9 Attestation Device attestation certificate Local software Empty slot Import Certificate" [ref=e404] [cursor=pointer]:
+          - generic [ref=e405]:
+            - generic [ref=e406]:
+              - generic [ref=e408]: F9
+              - generic [ref=e409]:
+                - heading "Attestation" [level=3] [ref=e410]
+                - generic [ref=e411]: Device attestation certificate
+                - generic [ref=e412]: Local software
+            - generic [ref=e413]:
+              - generic [ref=e414]: Empty slot
+              - button "Import Certificate" [ref=e415]:
+                - img [ref=e416]
+                - generic [ref=e418]: Import Certificate

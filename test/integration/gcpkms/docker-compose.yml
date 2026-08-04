@@ -1,10 +1,27 @@
 services:
+  floci-gcp:
+    image: floci/floci-gcp:latest
+    environment:
+      - FLOCI_GCP_DEFAULT_PROJECT_ID=test-project
+      - FLOCI_GCP_STORAGE_MODE=memory
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4588/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "4588:4588"
+
   test:
     build:
       context: ../../..
       dockerfile: test/integration/gcpkms/Dockerfile
+    depends_on:
+      floci-gcp:
+        condition: service_healthy
     environment:
       - GOOGLE_CLOUD_PROJECT=test-project
+      - GCPKMS_EMULATOR_ENDPOINT=floci-gcp:4588
     volumes:
       - ../../..:/app
       # Sibling module mounts (for go.mod replace directives)

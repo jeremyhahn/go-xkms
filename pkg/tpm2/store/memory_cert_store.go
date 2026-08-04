@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -79,7 +81,7 @@ func (m *MemoryCertStore) Save(attrs *types.KeyAttributes, cert *x509.Certificat
 		return ErrInvalidKeyAttributes
 	}
 	if cert == nil {
-		return fmt.Errorf("certificate is nil")
+		return &errs.Message{Msg: "certificate is nil"}
 	}
 
 	m.mu.Lock()
@@ -125,12 +127,12 @@ func (m *MemoryCertStore) ImportCertificate(attrs *types.KeyAttributes, certPEM 
 
 	block, _ := pem.Decode(certPEM)
 	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM block")
+		return nil, &errs.Message{Msg: "failed to decode PEM block"}
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse certificate", Err: err}
 	}
 
 	if err := m.Save(attrs, cert); err != nil {

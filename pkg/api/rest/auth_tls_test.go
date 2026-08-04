@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -184,14 +186,14 @@ func (a *testBearerAuthenticator) Name() string {
 func (a *testBearerAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Identity, error) {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		return nil, fmt.Errorf("no authorization header")
+		return nil, &errs.Message{Msg: "no authorization header"}
 	}
 	if !strings.HasPrefix(authHeader, "Bearer ") {
-		return nil, fmt.Errorf("invalid authorization header format")
+		return nil, &errs.Message{Msg: "invalid authorization header format"}
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	if token != a.validToken {
-		return nil, fmt.Errorf("invalid token")
+		return nil, &errs.Message{Msg: "invalid token"}
 	}
 	return &auth.Identity{
 		Subject: "test-user",
@@ -203,7 +205,7 @@ func (a *testBearerAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Ident
 }
 
 func (a *testBearerAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD) (*auth.Identity, error) {
-	return nil, fmt.Errorf("not implemented")
+	return nil, &errs.Message{Msg: "not implemented"}
 }
 
 func TestRESTServer_BearerTokenAuthenticator_HTTP(t *testing.T) {

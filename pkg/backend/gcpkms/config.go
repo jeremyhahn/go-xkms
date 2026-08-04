@@ -20,6 +20,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -50,9 +52,15 @@ type Config struct {
 	CredentialsJSON []byte `yaml:"credentials_json,omitempty" json:"credentials_json,omitempty" mapstructure:"credentials_json"`
 
 	// Endpoint is a custom KMS API endpoint.
-	// Optional. Useful for testing with KMS emulator.
-	// Example: "localhost:8080" for local emulator
+	// Optional. Useful for testing with a KMS emulator such as floci-gcp.
+	// Example: "localhost:4588" for local emulator
 	Endpoint string `yaml:"endpoint,omitempty" json:"endpoint,omitempty" mapstructure:"endpoint"`
+
+	// Insecure disables TLS and authentication on the KMS connection.
+	// Optional. Only valid together with a custom Endpoint; used for
+	// plaintext gRPC connections to a local emulator. Never enable this
+	// against the real GCP Cloud KMS service.
+	Insecure bool `yaml:"insecure,omitempty" json:"insecure,omitempty" mapstructure:"insecure"`
 
 	// Debug enables debug logging for KMS operations.
 	Debug bool `yaml:"debug" json:"debug" mapstructure:"debug"`
@@ -83,32 +91,37 @@ func (c *Config) Validate() error {
 
 	// Project ID is required
 	if c.ProjectID == "" {
-		return fmt.Errorf("%w: project ID is required", ErrInvalidProjectID)
+		return &errs.Detail{Err: ErrInvalidProjectID, Detail: "project ID is required"}
 	}
 
 	// Location ID is required
 	if c.LocationID == "" {
-		return fmt.Errorf("%w: location ID is required", ErrInvalidLocationID)
+		return &errs.Detail{Err: ErrInvalidLocationID, Detail: "location ID is required"}
 	}
 
 	// Key ring ID is required
 	if c.KeyRingID == "" {
-		return fmt.Errorf("%w: key ring ID is required", ErrInvalidKeyRingID)
+		return &errs.Detail{Err: ErrInvalidKeyRingID, Detail: "key ring ID is required"}
+	}
+
+	// Insecure connections are only permitted against a custom endpoint
+	if c.Insecure && c.Endpoint == "" {
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "insecure requires a custom endpoint"}
 	}
 
 	// If credentials file is specified, verify it exists
 	if c.CredentialsFile != "" && len(c.CredentialsJSON) == 0 {
 		if _, err := os.Stat(c.CredentialsFile); os.IsNotExist(err) {
-			return fmt.Errorf("%w: credentials file not found: %s", ErrInvalidCredentials, c.CredentialsFile)
+			return &errs.Detail{Err: ErrInvalidCredentials, Detail: fmt.Sprintf("credentials file not found: %s", c.CredentialsFile)}
 		}
 	}
 
 	// Storage providers are required
 	if c.KeyStorage == nil {
-		return fmt.Errorf("%w: key storage is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "key storage is required"}
 	}
 	if c.CertStorage == nil {
-		return fmt.Errorf("%w: cert storage is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "cert storage is required"}
 	}
 
 	return nil
@@ -135,8 +148,8 @@ func (c *Config) String() string {
 		endpoint = "<default>"
 	}
 
-	return fmt.Sprintf("GCP KMS Config{Project: %s, Location: %s, KeyRing: %s, Credentials: %s, Endpoint: %s, Debug: %t}",
-		c.ProjectID, c.LocationID, c.KeyRingID, credsMask, endpoint, c.Debug)
+	return fmt.Sprintf("GCP KMS Config{Project: %s, Location: %s, KeyRing: %s, Credentials: %s, Endpoint: %s, Insecure: %t, Debug: %t}",
+		c.ProjectID, c.LocationID, c.KeyRingID, credsMask, endpoint, c.Insecure, c.Debug)
 }
 
 // maskPath masks the middle portion of a file path for security.

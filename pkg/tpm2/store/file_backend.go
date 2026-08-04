@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -45,7 +47,7 @@ func (fb *FileBackend) Get(attrs *types.KeyAttributes, ext types.FSExtension) ([
 	key := attrs.CN + string(ext)
 	data, err := fb.storage.Get(context.Background(), key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read key %s: %w", key, err)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to read key %s", key), Err: err}
 	}
 	return data, nil
 }
@@ -58,16 +60,16 @@ func (fb *FileBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.F
 	if !overwrite {
 		exists, err := fb.storage.Exists(context.Background(), key)
 		if err != nil {
-			return fmt.Errorf("failed to check key existence %s: %w", key, err)
+			return &errs.Wrapped{Msg: fmt.Sprintf("failed to check key existence %s", key), Err: err}
 		}
 		if exists {
-			return fmt.Errorf("key already exists: %s", key)
+			return &errs.Message{Msg: fmt.Sprintf("key already exists: %s", key)}
 		}
 	}
 
 	// Write to storage
 	if err := fb.storage.Put(context.Background(), key, data); err != nil {
-		return fmt.Errorf("failed to write key %s: %w", key, err)
+		return &errs.Wrapped{Msg: fmt.Sprintf("failed to write key %s", key), Err: err}
 	}
 
 	return nil

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -48,7 +50,7 @@ func (tpm *TPM2) ForceClear() error {
 	ppiPath := fmt.Sprintf("/sys/class/tpm/%s/ppi/request", deviceName)
 
 	if err := os.WriteFile(ppiPath, []byte("5"), 0644); err != nil {
-		return fmt.Errorf("%w: %v", ErrForceClear, err)
+		return &errs.Detail{Err: ErrForceClear, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	tpm.logger.Info("TPM clear scheduled via UEFI Physical Presence Interface",
@@ -188,7 +190,7 @@ func (tpm *TPM2) factoryResetInternal(ownerAuth []byte, attemptClear bool) error
 					slog.String("handle", fmt.Sprintf("0x%08X", handle)),
 					slog.String("error", err.Error()))
 				if firstErr == nil {
-					firstErr = fmt.Errorf("%w: evict handle 0x%08X: %v", ErrFactoryReset, handle, err)
+					firstErr = &errs.Detail{Err: ErrFactoryReset, Detail: fmt.Sprintf("evict handle 0x%08X: %v", handle, err)}
 				}
 			} else {
 				tpm.logger.Info("Evicted persistent handle",
@@ -236,7 +238,7 @@ func (tpm *TPM2) factoryResetInternal(ownerAuth []byte, attemptClear bool) error
 				slog.String("index", fmt.Sprintf("0x%08X", nvIndex)),
 				slog.String("error", err.Error()))
 			if firstErr == nil {
-				firstErr = fmt.Errorf("%w: undefine NV 0x%08X: %v", ErrFactoryReset, nvIndex, err)
+				firstErr = &errs.Detail{Err: ErrFactoryReset, Detail: fmt.Sprintf("undefine NV 0x%08X: %v", nvIndex, err)}
 			}
 		} else {
 			tpm.logger.Info("Undefined NV index",
@@ -294,6 +296,10 @@ func MinimalInstallOptions() *InstallOptions {
 // on both fresh TPMs and already-provisioned TPMs.
 // When opts is nil, DefaultInstallOptions() is used, provisioning everything.
 func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
+
+	if tpm.transport == nil {
+		return ErrInstallTransportNotInitialized
+	}
 
 	if opts == nil {
 		opts = DefaultInstallOptions()
@@ -426,7 +432,20 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 					// Get EK certificate for IDevID CSR (optional, may not exist)
 					ekCert, _ := tpm.EKCertificate()
 					if _, _, err := tpm.CreateIDevID(iakAttrs, ekCert, nil); err != nil {
-						return err
+						// IDevID creation is optional (unlike EK/SRK/IAK):
+						// CreateIDevID requires a non-nil EK certificate to
+						// populate the TCG-CSR-IDEVID structure (see
+						// createIDevIDContent/ErrInvalidEKCert), but many
+						// platforms - software simulators, or hardware whose
+						// manufacturer cert hasn't been provisioned into NV
+						// RAM or downloaded yet - have no EK cert available
+						// at install time. Failing to mint an IDevID must
+						// not abort provisioning of the rest of the
+						// platform; log and continue, consistent with the
+						// "Ignore other errors" handling below for a
+						// pre-existing IDevID lookup failure.
+						tpm.logger.Warn("failed to create IDevID (continuing without it)",
+							slog.String("error", err.Error()))
 					}
 				}
 				// Ignore other errors - IDevID creation is optional
@@ -700,7 +719,7 @@ func (tpm *TPM2) WriteEKCert(ekCert []byte) error {
 func (tpm *TPM2) ParseEKCertificate(ekCert []byte) (*x509.Certificate, error) {
 	cert, err := x509.ParseCertificate(ekCert)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse EK certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse EK certificate", Err: err}
 	}
 	return cert, nil
 }
@@ -722,7 +741,7 @@ func (tpm *TPM2) GoldenMeasurements() ([]byte, error) {
 	hash, err := ParsePCRBankCryptoHash(tpm.config.PlatformPCRBank)
 	if err != nil {
 		tpm.logger.Error("failed to parse PCR bank crypto hash", slog.String("error", err.Error()))
-		return nil, fmt.Errorf("%w: %v", ErrGoldenMeasurements, err)
+		return nil, &errs.Detail{Err: ErrGoldenMeasurements, Detail: fmt.Sprintf("%v", err)}
 	}
 	digest := hash.New()
 	digest.Reset()
@@ -730,7 +749,7 @@ func (tpm *TPM2) GoldenMeasurements() ([]byte, error) {
 	banks, err := tpm.ReadPCRs(tpm.config.GoldenPCRs)
 	if err != nil {
 		tpm.logger.Error("failed to read PCRs", slog.String("error", err.Error()))
-		return nil, fmt.Errorf("%w: %v", ErrGoldenMeasurements, err)
+		return nil, &errs.Detail{Err: ErrGoldenMeasurements, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Create golden PCR that stores the final sum of

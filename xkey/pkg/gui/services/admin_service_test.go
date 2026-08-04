@@ -17,11 +17,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"runtime"
 	"strings"
 	"testing"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/stretchr/testify/assert"
@@ -1242,11 +1244,22 @@ func TestAdminService_GetSystemDefaultBackend_WithSealService(t *testing.T) {
 
 func TestAdminService_GetSystemDefaultBackend_SealServiceEmpty(t *testing.T) {
 	svc := NewAdminService()
-	sealSvc := NewSealService(t.TempDir())
+	// An empty (unconfigured) default now auto-selects the best AVAILABLE
+	// sealer. Pin availability with a mock client so the test stays hermetic:
+	// only the software sealer reports CanSeal=true.
+	mc := &sealMockClient{
+		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
+			if backend == string(xkms.BackendTypeSoftware) {
+				return &transport.CanSealResponse{CanSeal: true, Backend: backend}, nil
+			}
+			return &transport.CanSealResponse{CanSeal: false, Backend: backend}, nil
+		},
+	}
+	sealSvc := newSealServiceWithMockClient(t, mc)
 	sealSvc.SetDefaultBackend("")
 	svc.SetSealService(sealSvc)
 
-	// Empty seal service default falls through to registry/software.
+	// Empty seal service default auto-selects the available software sealer.
 	result := svc.GetSystemDefaultBackend()
 	assert.Equal(t, "software", result)
 }
@@ -1277,14 +1290,15 @@ func TestAdminService_GetSystemDefaultBackend_SealServiceOverridesRegistry(t *te
 	registry.setDefault("tpm2")
 	svc.SetBackendRegistry(registry)
 
-	// Seal service says pkcs11.
+	// Seal service says software ("pkcs11" is not a valid seal-namespace ID;
+	// SetDefaultBackend only stores known sealer IDs verbatim).
 	sealSvc := NewSealService(t.TempDir())
-	sealSvc.SetDefaultBackend("pkcs11")
+	sealSvc.SetDefaultBackend("software")
 	svc.SetSealService(sealSvc)
 
-	// Seal service takes priority.
+	// Seal service takes priority over the registry default.
 	result := svc.GetSystemDefaultBackend()
-	assert.Equal(t, "pkcs11", result)
+	assert.Equal(t, "software", result)
 }
 
 func TestAdminService_NewErrorSentinels(t *testing.T) {
@@ -1889,4 +1903,104 @@ func TestAdminService_ListBackends_DisplayNameAlwaysSet(t *testing.T) {
 		assert.NotEmpty(t, b.DisplayName,
 			"backend %s must have a non-empty display_name", b.ID)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// BackendKeyLister — key count population (Bug B regression)
+// ---------------------------------------------------------------------------
+
+// mockBackendKeyLister implements BackendKeyLister for testing.
+type mockBackendKeyLister struct {
+	counts map[string]int
+}
+
+func (m *mockBackendKeyLister) KeyCountForBackend(backendID string) int {
+	return m.counts[backendID]
+}
+
+// TestAdminService_SetBackendKeyLister_FallbackPath verifies that when a
+// BackendKeyLister is wired, fallbackBackends populates KeyCount for the
+// software backend from the lister rather than hard-coding zero.
+func TestAdminService_SetBackendKeyLister_FallbackPath(t *testing.T) {
+	svc := NewAdminService()
+	lister := &mockBackendKeyLister{counts: map[string]int{"software": 3}}
+	svc.SetBackendKeyLister(lister)
+
+	backends := svc.fallbackBackends()
+	sw := findBackendByID(backends, "software")
+	require.NotNil(t, sw)
+	assert.Equal(t, 3, sw.KeyCount, "KeyCount must reflect lister result, not hard-coded 0")
+}
+
+// TestAdminService_SetBackendKeyLister_RegistryPath verifies that when a
+// BackendKeyLister is wired and a registry backend exists, convertRegisteredBackend
+// populates KeyCount from the lister.
+func TestAdminService_SetBackendKeyLister_RegistryPath(t *testing.T) {
+	svc := NewAdminService()
+	registry := newMockBackendRegistryWithSoftware()
+	svc.SetBackendRegistry(registry)
+	lister := &mockBackendKeyLister{counts: map[string]int{"software": 7}}
+	svc.SetBackendKeyLister(lister)
+
+	backends, err := svc.ListBackends()
+	require.NoError(t, err)
+	sw := findBackendByID(backends, "software")
+	require.NotNil(t, sw)
+	assert.Equal(t, 7, sw.KeyCount, "KeyCount must reflect lister result, not hard-coded 0")
+}
+
+// TestAdminService_KeyCount_ZeroWhenListerNotSet verifies the zero default when
+// no BackendKeyLister has been wired — a regression guard against accidental
+// nil-pointer dereferences.
+func TestAdminService_KeyCount_ZeroWhenListerNotSet(t *testing.T) {
+	svc := NewAdminService()
+	registry := newMockBackendRegistryWithSoftware()
+	svc.SetBackendRegistry(registry)
+	// No lister wired.
+
+	backends, err := svc.ListBackends()
+	require.NoError(t, err)
+	sw := findBackendByID(backends, "software")
+	require.NotNil(t, sw)
+	assert.Equal(t, 0, sw.KeyCount, "KeyCount must be 0 when no lister is configured")
+}
+
+// TestAdminService_AutoDetectedTPM_KeyCountFromLister is the regression test for
+// the reported bug: a TPM-backed key (e.g. a TPM PIV key) existed but the Admin
+// "TPM 2.0" backend card showed 0 keys. The TPM backend is auto-detected (not in
+// the registry), so it bypasses convertRegisteredBackend's keyLister path; the
+// auto-detect branch in dynamicBackends used to hard-code KeyCount: 0. This test
+// drives the real dynamicBackends path with a TPM present and a lister reporting
+// keys, and asserts the count is surfaced.
+func TestAdminService_AutoDetectedTPM_KeyCountFromLister(t *testing.T) {
+	svc := NewAdminService()
+	// TPM present but NOT in the registry → exercises the auto-detect branch.
+	svc.tpmProvider = &mockTPMProvider{
+		status: &TPMStatus{Available: true, DeviceExists: true, DevicePath: "/dev/tpmrm0"},
+	}
+	lister := &mockBackendKeyLister{counts: map[string]int{"tpm2": 2}}
+	svc.SetBackendKeyLister(lister)
+
+	backends, err := svc.ListBackends()
+	require.NoError(t, err)
+	tpm := findBackendByID(backends, "tpm2")
+	require.NotNil(t, tpm, "auto-detected TPM backend must be present")
+	assert.Equal(t, 2, tpm.KeyCount,
+		"auto-detected TPM KeyCount must reflect the lister (TPM PIV keys), not hard-coded 0")
+}
+
+// TestAdminService_FallbackTPM_KeyCountFromLister covers the same fix in the
+// fallbackBackends path (used when no registry is wired).
+func TestAdminService_FallbackTPM_KeyCountFromLister(t *testing.T) {
+	svc := NewAdminService()
+	svc.tpmProvider = &mockTPMProvider{
+		status: &TPMStatus{Available: true, DeviceExists: true, DevicePath: "/dev/tpmrm0"},
+	}
+	lister := &mockBackendKeyLister{counts: map[string]int{"tpm2": 4}}
+	svc.SetBackendKeyLister(lister)
+
+	backends := svc.fallbackBackends()
+	tpm := findBackendByID(backends, "tpm2")
+	require.NotNil(t, tpm)
+	assert.Equal(t, 4, tpm.KeyCount, "fallback TPM KeyCount must reflect the lister, not hard-coded 0")
 }

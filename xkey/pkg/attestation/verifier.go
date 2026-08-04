@@ -113,7 +113,7 @@ func (v *Verifier) VerifyTPMAttestation(ekCert *x509.Certificate) (*Verification
 			Issuer:      ekCert.Issuer.String(),
 			ChainLength: 1,
 			Message:     fmt.Sprintf("chain verification failed: %v", err),
-		}, fmt.Errorf("%w: %v", ErrChainVerification, err)
+		}, &SentinelCauseError{Sentinel: ErrChainVerification, Cause: err}
 	}
 
 	return &VerificationResult{
@@ -174,7 +174,7 @@ func (v *Verifier) VerifyAndroidAttestation(chain []*x509.Certificate, nonce []b
 			Issuer:      leaf.Issuer.String(),
 			ChainLength: len(chain),
 			Message:     fmt.Sprintf("chain verification failed: %v", err),
-		}, fmt.Errorf("%w: %v", ErrChainVerification, err)
+		}, &SentinelCauseError{Sentinel: ErrChainVerification, Cause: err}
 	}
 
 	return &VerificationResult{
@@ -209,7 +209,7 @@ func (v *Verifier) VerifyIDevID(cert *x509.Certificate) (*VerificationResult, er
 			Issuer:      cert.Issuer.String(),
 			ChainLength: 1,
 			Message:     fmt.Sprintf("chain verification failed: %v", err),
-		}, fmt.Errorf("%w: %v", ErrChainVerification, err)
+		}, &SentinelCauseError{Sentinel: ErrChainVerification, Cause: err}
 	}
 
 	return &VerificationResult{
@@ -256,7 +256,7 @@ func (v *Verifier) VerifyChain(chain []*x509.Certificate, purpose truststore.Cer
 			Issuer:      leaf.Issuer.String(),
 			ChainLength: len(chain),
 			Message:     fmt.Sprintf("chain verification failed: %v", err),
-		}, fmt.Errorf("%w: %v", ErrChainVerification, err)
+		}, &SentinelCauseError{Sentinel: ErrChainVerification, Cause: err}
 	}
 
 	trustLevel, ok := purposeTrustLevels[purpose]
@@ -296,7 +296,7 @@ func (v *Verifier) buildTrustPool(purpose truststore.CertPurpose) (*x509.CertPoo
 	// Load purpose-scoped certificates from the trust store.
 	storeCerts, err := v.store.CertificatesByPurpose(purpose)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTrustStoreQuery, err)
+		return nil, &SentinelCauseError{Sentinel: ErrTrustStoreQuery, Cause: err}
 	}
 	for _, cert := range storeCerts {
 		pool.AddCert(cert)

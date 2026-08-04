@@ -14,6 +14,7 @@
 package keys
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -21,10 +22,12 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/pem"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -166,4 +169,76 @@ func keyFromCryptoPrivate(priv crypto.PrivateKey, algo Algorithm, comment string
 		CreatedAt:   time.Now().UTC(),
 		Comment:     comment,
 	}, nil
+}
+
+// GenerateOnBackend creates a backend-backed SSH key: the private half is
+// generated and held by the crypto backend identified by backendID (via p),
+// and only the public key plus a backend reference are returned. The
+// resulting Key carries nil Material — signing is delegated through
+// (*Key).BackendSigner. This is the hardware-backed counterpart to Generate:
+// for tpm2/pkcs11/cloud backends the private key never leaves the device.
+//
+// Returns:
+//   - *NilInputError if p is nil or backendID is empty.
+//   - *UnsupportedAlgorithmError if opts.Algorithm is empty or unrecognized.
+//   - *InvalidKeySizeError if RSABits is non-zero and below the minimum.
+//   - *KeyMaterialError if the backend or public-key derivation fails.
+func GenerateOnBackend(ctx context.Context, p BackendProvider, backendID string, opts GenerateOptions, sc scope.Scope, owner, name string) (*Key, error) {
+	if p == nil {
+		return nil, &NilInputError{Field: "provider"}
+	}
+	if backendID == "" {
+		return nil, &NilInputError{Field: "backendID"}
+	}
+	if opts.Algorithm == "" {
+		return nil, &UnsupportedAlgorithmError{Algorithm: "<empty>"}
+	}
+	if !opts.Algorithm.supported() {
+		return nil, &UnsupportedAlgorithmError{Algorithm: string(opts.Algorithm)}
+	}
+	if opts.Algorithm == AlgorithmRSA && opts.RSABits != 0 && opts.RSABits < minRSABits {
+		return nil, &InvalidKeySizeError{Algorithm: "rsa", Size: opts.RSABits}
+	}
+
+	keyID, err := backendKeyID(sc, owner, name)
+	if err != nil {
+		return nil, err
+	}
+
+	signer, err := p.GenerateKey(ctx, backendID, keyID, opts.Algorithm, opts.RSABits)
+	if err != nil {
+		return nil, &KeyMaterialError{Op: "backend GenerateKey", Err: err}
+	}
+	if signer == nil {
+		return nil, &KeyMaterialError{Op: "backend GenerateKey", Err: &NilInputError{Field: "backend signer"}}
+	}
+	pub, err := ssh.NewPublicKey(signer.Public())
+	if err != nil {
+		return nil, &KeyMaterialError{Op: "ssh.NewPublicKey", Err: err}
+	}
+
+	return &Key{
+		PublicKey:    pub,
+		Algorithm:    opts.Algorithm,
+		Fingerprint:  Fingerprint(pub),
+		Scope:        sc,
+		Owner:        owner,
+		Name:         name,
+		CreatedAt:    time.Now().UTC(),
+		Comment:      opts.Comment,
+		BackendID:    backendID,
+		BackendKeyID: keyID,
+	}, nil
+}
+
+// backendKeyID derives a stable, backend-safe CN for a backend-backed SSH
+// key from its (scope, owner, name) identity. The unified xkms key ID
+// format reserves ':' as the backend separator, so the CN is kept
+// colon-free; the scope separator '/' is flattened to '-'.
+func backendKeyID(sc scope.Scope, owner, name string) (string, error) {
+	id, err := scope.BuildKeyID(sc, owner, name)
+	if err != nil {
+		return "", err
+	}
+	return "ssh-" + strings.ReplaceAll(id, "/", "-"), nil
 }

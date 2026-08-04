@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
@@ -57,7 +59,7 @@ var _ storage.Backend = (*FileStorage)(nil)
 // Relative paths are converted to absolute paths using the current working directory.
 func New(rootDir string) (storage.Backend, error) {
 	if rootDir == "" {
-		return nil, fmt.Errorf("file storage: root directory cannot be empty")
+		return nil, &errs.Message{Msg: "file storage: root directory cannot be empty"}
 	}
 
 	// Convert relative paths to absolute paths
@@ -66,18 +68,18 @@ func New(rootDir string) (storage.Backend, error) {
 		var err error
 		absRootDir, err = filepath.Abs(rootDir)
 		if err != nil {
-			return nil, fmt.Errorf("file storage: failed to get absolute path: %w", err)
+			return nil, &errs.Wrapped{Msg: "file storage: failed to get absolute path", Err: err}
 		}
 	}
 
 	// Create root directory if it doesn't exist
 	if err := os.MkdirAll(absRootDir, defaultDirPerms); err != nil {
-		return nil, fmt.Errorf("file storage: failed to create root directory: %w", err)
+		return nil, &errs.Wrapped{Msg: "file storage: failed to create root directory", Err: err}
 	}
 
 	backend, err := storage.OpenEngine(storage.EngineConfig{Kind: storage.EngineFile, Path: absRootDir})
 	if err != nil {
-		return nil, fmt.Errorf("file storage: failed to open file engine: %w", err)
+		return nil, &errs.Wrapped{Msg: "file storage: failed to open file engine", Err: err}
 	}
 
 	return &FileStorage{backend: backend, rootDir: absRootDir}, nil
@@ -87,7 +89,7 @@ func New(rootDir string) (storage.Backend, error) {
 // Returns storage.ErrNotFound if the key does not exist.
 func (f *FileStorage) Get(ctx context.Context, key string) ([]byte, error) {
 	if err := validateStorageKey(key); err != nil {
-		return nil, fmt.Errorf("file storage: invalid key %q: %w", key, err)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("file storage: invalid key %q", key), Err: err}
 	}
 	return f.backend.Get(ctx, key)
 }
@@ -99,7 +101,7 @@ func (f *FileStorage) Get(ctx context.Context, key string) ([]byte, error) {
 //   - default = 0600 (owner rw only)
 func (f *FileStorage) Put(ctx context.Context, key string, value []byte) error {
 	if err := validateStorageKey(key); err != nil {
-		return fmt.Errorf("file storage: invalid key %q: %w", key, err)
+		return &errs.Wrapped{Msg: fmt.Sprintf("file storage: invalid key %q", key), Err: err}
 	}
 	if err := f.backend.Put(ctx, key, value); err != nil {
 		return err
@@ -108,7 +110,7 @@ func (f *FileStorage) Put(ctx context.Context, key string, value []byte) error {
 	if perm := filePermissionsForKey(key); perm != defaultPerms {
 		path := filepath.Join(f.rootDir, filepath.FromSlash(key))
 		if err := os.Chmod(path, perm); err != nil {
-			return fmt.Errorf("file storage: failed to set permissions for key %q: %w", key, err)
+			return &errs.Wrapped{Msg: fmt.Sprintf("file storage: failed to set permissions for key %q", key), Err: err}
 		}
 	}
 	return nil
@@ -118,7 +120,7 @@ func (f *FileStorage) Put(ctx context.Context, key string, value []byte) error {
 // Returns storage.ErrNotFound if the key does not exist.
 func (f *FileStorage) Delete(ctx context.Context, key string) error {
 	if err := validateStorageKey(key); err != nil {
-		return fmt.Errorf("file storage: invalid key %q: %w", key, err)
+		return &errs.Wrapped{Msg: fmt.Sprintf("file storage: invalid key %q", key), Err: err}
 	}
 	return f.backend.Delete(ctx, key)
 }
@@ -139,7 +141,7 @@ func (f *FileStorage) Scan(ctx context.Context, prefix string, fn func(key strin
 // Exists checks if a key exists in storage.
 func (f *FileStorage) Exists(ctx context.Context, key string) (bool, error) {
 	if err := validateStorageKey(key); err != nil {
-		return false, fmt.Errorf("file storage: invalid key %q: %w", key, err)
+		return false, &errs.Wrapped{Msg: fmt.Sprintf("file storage: invalid key %q", key), Err: err}
 	}
 	return f.backend.Exists(ctx, key)
 }
@@ -153,28 +155,28 @@ func (f *FileStorage) Close() error {
 // Storage is internal - allows path separators for organization but blocks traversal.
 func validateStorageKey(key string) error {
 	if key == "" {
-		return fmt.Errorf("key cannot be empty")
+		return &errs.Message{Msg: "key cannot be empty"}
 	}
 
 	// Check for null bytes
 	if strings.Contains(key, "\x00") {
-		return fmt.Errorf("key contains null byte")
+		return &errs.Message{Msg: "key contains null byte"}
 	}
 
 	// Check for absolute paths
 	if filepath.IsAbs(key) {
-		return fmt.Errorf("key cannot be an absolute path")
+		return &errs.Message{Msg: "key cannot be an absolute path"}
 	}
 
 	// Check for path traversal - the key is that we don't allow starting with .. or containing /..
 	cleaned := filepath.Clean(key)
 	if strings.HasPrefix(cleaned, "..") {
-		return fmt.Errorf("key contains path traversal attempt")
+		return &errs.Message{Msg: "key contains path traversal attempt"}
 	}
 	// Check for /../ pattern (directory traversal in middle of path)
 	if strings.Contains(cleaned, string(filepath.Separator)+".."+string(filepath.Separator)) ||
 		strings.HasSuffix(cleaned, string(filepath.Separator)+"..") {
-		return fmt.Errorf("key contains path traversal attempt")
+		return &errs.Message{Msg: "key contains path traversal attempt"}
 	}
 
 	return nil

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 )
@@ -1801,12 +1803,12 @@ func persistentHandles(t transport.TPM) ([]tpm2.TPMHandle, error) {
 		PropertyCount: 255,
 	}.Execute(t)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrListPersistentHandles, err)
+		return nil, &errs.Joined{Lead: ErrListPersistentHandles, Cause: err}
 	}
 
 	handles, err := response.CapabilityData.Data.Handles()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrListPersistentHandles, err)
+		return nil, &errs.Joined{Lead: ErrListPersistentHandles, Cause: err}
 	}
 
 	return handles.Handle, nil
@@ -1822,12 +1824,12 @@ func transientHandles(t transport.TPM) ([]tpm2.TPMHandle, error) {
 		PropertyCount: 255,
 	}.Execute(t)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrListTransientHandles, err)
+		return nil, &errs.Joined{Lead: ErrListTransientHandles, Cause: err}
 	}
 
 	handles, err := response.CapabilityData.Data.Handles()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrListTransientHandles, err)
+		return nil, &errs.Joined{Lead: ErrListTransientHandles, Cause: err}
 	}
 
 	return handles.Handle, nil
@@ -1843,12 +1845,12 @@ func nvIndexes(t transport.TPM, logger *slog.Logger) ([]NVIndexInfo, error) {
 		PropertyCount: 255,
 	}.Execute(t)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrListNVIndexes, err)
+		return nil, &errs.Joined{Lead: ErrListNVIndexes, Cause: err}
 	}
 
 	handles, err := response.CapabilityData.Data.Handles()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrListNVIndexes, err)
+		return nil, &errs.Joined{Lead: ErrListNVIndexes, Cause: err}
 	}
 
 	var indexes []NVIndexInfo

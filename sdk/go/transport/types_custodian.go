@@ -45,3 +45,29 @@ type GetTenantResponse = pkgtransport.GetTenantResponse
 type ListTenantsResponse = pkgtransport.ListTenantsResponse
 type TenantBarrierInitRequest = pkgtransport.TenantBarrierInitRequest
 type TenantBarrierUnsealRequest = pkgtransport.TenantBarrierUnsealRequest
+
+// TenantIsolationType identifies a tenant's isolation mode (prefix / barrier /
+// volume / raft).
+type TenantIsolationType = pkgtransport.TenantIsolationType
+
+// TenantQuotas describes a tenant's resource quotas.
+type TenantQuotas = pkgtransport.TenantQuotas
+
+// TenantEntitlements describes which isolation tiers and dedicated-storage
+// features a tenant's plan permits.
+type TenantEntitlements = pkgtransport.TenantEntitlements
+
+// TenantBarrierStatusResponse reports the current state of a per-tenant barrier.
+type TenantBarrierStatusResponse = pkgtransport.TenantBarrierStatusResponse
+
+// UpdateTenantEntitlementsRequest updates a tenant's feature entitlements.
+type UpdateTenantEntitlementsRequest = pkgtransport.UpdateTenantEntitlementsRequest
+
+// UpdateTenantEntitlementsResponse contains the updated tenant.
+type UpdateTenantEntitlementsResponse = pkgtransport.UpdateTenantEntitlementsResponse
+
+// UpdateTenantQuotasRequest updates a tenant's resource quotas.
+type UpdateTenantQuotasRequest = pkgtransport.UpdateTenantQuotasRequest
+
+// UpdateTenantQuotasResponse contains the updated tenant.
+type UpdateTenantQuotasResponse = pkgtransport.UpdateTenantQuotasResponse

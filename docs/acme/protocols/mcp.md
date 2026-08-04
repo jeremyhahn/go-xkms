@@ -174,7 +174,7 @@ import (
     "context"
     "log"
 
-    "github.com/jeremyhahn/go-trusted-ca/pkg/api/mcp"
+    "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 )
 
 func main() {

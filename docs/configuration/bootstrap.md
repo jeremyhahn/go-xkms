@@ -653,7 +653,7 @@ docker run -e XKMS_DANE_ENABLED=true \
 ## See Also
 
 - [CA Bundle Bootstrap](../ca/bootstrap.md) -- Protocol details, security properties, and SDK API
-- [Integration Guide](../ca/bootstrap-integration.md) -- Project-specific usage for go-xkms, xkey, go-trusted-ca, and go-trusted-platform
+- [Integration Guide](../ca/bootstrap-integration.md) -- Project-specific usage for go-xkms, xkey, and go-trusted-platform
 - [DANE/TLSA Concepts](../ca/dane.md) -- RFC 6698 details, DNSSEC trust chain, and record format
 - [Bootstrap CLI Commands](../usage/cli/bootstrap.md) -- CLI reference for DANE and other bootstrap commands
 - [Noise CLI Commands](../usage/cli/noise.md) -- Key generation and SPKI pin tools (legacy path)

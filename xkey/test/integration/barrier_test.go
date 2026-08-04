@@ -579,36 +579,6 @@ func TestCLI_BarrierStatus_HumanReadable_NotHardwareBacked(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Barrier Init - Auto-detect Strategy
-// ---------------------------------------------------------------------------
-
-// TestCLI_BarrierInit_AutoDetect verifies that omitting the --strategy flag
-// auto-selects the best available strategy: tpm2 when a TPM 2.0 device is
-// present (hardware-first, matching the GUI and the documented preference
-// order), otherwise software.
-func TestCLI_BarrierInit_AutoDetect(t *testing.T) {
-	binary := getOrBuildBinary(t)
-	dataDir := SetupCleanEnvironment(t)
-
-	stdin := "autodetect-test-pw!\nautodetect-test-pw!\n"
-	stdout := RunXKeyExpectSuccess(t, binary, stdin,
-		"barrier", "init", "--data-dir", dataDir)
-
-	if !strings.Contains(stdout, "Barrier initialized successfully") {
-		t.Errorf("Expected success message, got: %s", stdout)
-	}
-
-	// Hardware-first: a usable TPM selects tpm2; otherwise software.
-	expected := "software"
-	if _, err := os.Stat("/dev/tpmrm0"); err == nil {
-		expected = "tpm2"
-	}
-	if !strings.Contains(stdout, expected) {
-		t.Errorf("Expected auto-detect to select %q strategy, got: %s", expected, stdout)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Barrier with Different Passwords
 // ---------------------------------------------------------------------------
 

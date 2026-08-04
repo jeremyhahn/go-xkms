@@ -15,10 +15,26 @@ package xkms
 
 import (
 	"context"
+	"log/slog"
+	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
+
+// migrationStartGrace is the delay before an asynchronous enable-encryption
+// migration begins, giving the transport handler time to flush its
+// acknowledgement response before a system-scope migration tears down and
+// reopens the barrier the request was served on.
+const migrationStartGrace = 750 * time.Millisecond
+
+// EncryptionMigrator enables at-rest encryption on a previously-unencrypted
+// barrier by migrating it to a keyed strategy in place. It is the canonical
+// go-qrdb SDK interface (satisfied by the embedded *node.Node); aliased here so
+// the xkms servicer keeps a local name for its field/setter without redeclaring
+// the contract.
+type EncryptionMigrator = qrdbsdk.EncryptionMigrator
 
 // BarrierServicer defines operations for managing the encryption barrier
 // that protects sensitive data at rest.
@@ -36,6 +52,7 @@ type BarrierServicer interface {
 	BarrierDeleteRecoveryKeys(ctx context.Context) error
 	BarrierHasRecoveryKeys(ctx context.Context) (*transport.BarrierHasRecoveryKeysResponse, error)
 	BarrierGenerateRootToken(ctx context.Context, req *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error)
+	BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error)
 }
 
 // BarrierInitialize initializes the encryption barrier with a secret.
@@ -46,7 +63,7 @@ func (s *XKMSService) BarrierInitialize(ctx context.Context, req *transport.Barr
 	if req == nil {
 		return ErrNilRequest
 	}
-	return s.barrier.Initialize(ctx, seal.Credentials{Secret: req.Secret})
+	return s.barrier.Initialize(ctx, seal.Credentials{Secret: []byte(req.Secret)})
 }
 
 // BarrierUnseal unseals the encryption barrier using a secret.
@@ -57,7 +74,7 @@ func (s *XKMSService) BarrierUnseal(ctx context.Context, req *transport.BarrierU
 	if req == nil {
 		return ErrNilRequest
 	}
-	return s.barrier.Unseal(ctx, seal.Credentials{Secret: req.Secret})
+	return s.barrier.Unseal(ctx, seal.Credentials{Secret: []byte(req.Secret)})
 }
 
 // BarrierSeal seals the encryption barrier, re-encrypting all data at rest.
@@ -101,7 +118,7 @@ func (s *XKMSService) BarrierInitializeShamir(ctx context.Context, req *transpor
 		Threshold:   req.Threshold,
 		TotalShares: req.TotalShares,
 	})
-	result, err := s.barrier.InitializeShamir(ctx, seal.Credentials{Secret: req.Secret})
+	result, err := s.barrier.InitializeShamir(ctx, seal.Credentials{Secret: []byte(req.Secret)})
 	if err != nil {
 		return nil, err
 	}
@@ -244,4 +261,88 @@ func (s *XKMSService) BarrierGenerateRootToken(ctx context.Context, req *transpo
 		Token:     token.Token,
 		CreatedAt: token.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}, nil
+}
+
+// BarrierEnableEncryption enables at-rest encryption on a previously-unencrypted
+// (none-strategy) barrier by migrating its data to a keyed strategy in place. An
+// empty TenantID targets the system barrier (admin authority); a non-empty
+// TenantID targets that tenant's dedicated barrier.
+//
+// The migration runs asynchronously: a system-scope migration tears down and
+// reopens the barrier this request is served on, so the request is validated
+// synchronously (bad input is surfaced to the caller immediately) and the
+// migration itself is launched in the background after a short grace period.
+// Clients poll BarrierStatus and observe completion when the reported strategy
+// changes from "none" to the keyed target.
+func (s *XKMSService) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	if s.encMigrator == nil {
+		return nil, ErrNotConfigured
+	}
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+
+	scope := qrdbsdk.BarrierScope{Kind: qrdbsdk.ScopeSystem}
+	if req.TenantID != "" {
+		scope = qrdbsdk.BarrierScope{Kind: qrdbsdk.ScopeTenant, TenantID: req.TenantID}
+	}
+
+	opts := qrdbsdk.MigrationOptions{
+		TargetStrategy:  seal.StrategyID(req.Strategy),
+		Mechanism:       migrationMechanism(req.Mechanism),
+		Availability:    migrationAvailability(req.Availability),
+		Credentials:     seal.Credentials{Secret: []byte(req.Passphrase)},
+		ShamirThreshold: req.ShamirThreshold,
+		ShamirTotal:     req.ShamirTotal,
+	}
+	// Validate synchronously so the caller gets immediate feedback on bad input;
+	// the async path can no longer surface a structured error to this client.
+	if err := opts.Validate(); err != nil {
+		return nil, err
+	}
+
+	// Single-flight per scope: a second migration on the same barrier while one
+	// is already running would race on the swap/in-place rewrite and corrupt it.
+	scopeKey := string(scope.Kind) + "\x00" + scope.TenantID
+	if _, inFlight := s.migrationsInFlight.LoadOrStore(scopeKey, struct{}{}); inFlight {
+		return nil, ErrMigrationInProgress
+	}
+
+	migrator := s.encMigrator
+	go func() {
+		defer s.migrationsInFlight.Delete(scopeKey)
+		time.Sleep(migrationStartGrace)
+		if err := migrator.EnableEncryption(context.Background(), scope, opts); err != nil {
+			slog.Error("enable-encryption migration failed",
+				slog.String("scope", string(scope.Kind)),
+				slog.String("tenant", scope.TenantID),
+				slog.String("strategy", string(opts.TargetStrategy)),
+				slog.Any("error", err))
+		}
+	}()
+
+	return &transport.BarrierEnableEncryptionResponse{
+		Status: "migration_started",
+		Scope:  string(scope.Kind),
+	}, nil
+}
+
+// migrationMechanism maps a request mechanism string to the typed mechanism,
+// defaulting to swap (the crash-safe copy-and-swap approach) when unset or
+// unrecognized.
+func migrationMechanism(s string) qrdbsdk.MigrationMechanism {
+	if s == string(qrdbsdk.MechanismInPlace) {
+		return qrdbsdk.MechanismInPlace
+	}
+	return qrdbsdk.MechanismSwap
+}
+
+// migrationAvailability maps a request availability string to the typed value,
+// defaulting to quiesced (block writes during migration) when unset or
+// unrecognized.
+func migrationAvailability(s string) qrdbsdk.MigrationAvailability {
+	if s == string(qrdbsdk.AvailabilityOnline) {
+		return qrdbsdk.AvailabilityOnline
+	}
+	return qrdbsdk.AvailabilityQuiesced
 }

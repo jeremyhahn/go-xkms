@@ -243,10 +243,10 @@ func TestImportLocalAttestation_WithEventLog_B4(t *testing.T) {
 	attrs := &types.KeyAttributes{CN: "ak-eventlog-b4"}
 
 	quote := &tpm2.Quote{
-		Quoted:   []byte("quoted-bytes-2"),
+		Quoted:    []byte("quoted-bytes-2"),
 		Signature: []byte("sig2"),
-		PCRs:     []byte("pcr-snapshot-2"),
-		EventLog: []byte("event-log-data"),
+		PCRs:      []byte("pcr-snapshot-2"),
+		EventLog:  []byte("event-log-data"),
 	}
 
 	err := ca.ImportLocalAttestation(context.Background(), attrs, quote)

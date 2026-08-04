@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -19,7 +19,7 @@ import (
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
-// Service defines the interface for QRDB integration within go-trusted-ca.
+// Service defines the interface for QRDB integration within go-xkms.
 // It provides typed accessors for all QRDB subsystems including key-value
 // storage, cluster administration, watches, leases, batch operations,
 // transactions, and secondary indexes.

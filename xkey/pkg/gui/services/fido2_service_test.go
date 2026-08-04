@@ -500,7 +500,11 @@ func TestFIDO2Service_SetAuditLogger_Nil(t *testing.T) {
 	assert.Nil(t, svc.auditLogger)
 }
 
-func TestFIDO2Service_ListCredentials_WithAuditLogger(t *testing.T) {
+// TestFIDO2Service_ListCredentials_NoAuditAccessed verifies that
+// ListCredentials does NOT emit fido2_credential_accessed events. Listing is
+// not an access of any individual credential; audit-logging every dashboard
+// poll would produce false security events (confirmed regression).
+func TestFIDO2Service_ListCredentials_NoAuditAccessed(t *testing.T) {
 	cred := testCredential([]byte{0x01}, "example.com", "Example", "alice", -7)
 	storage := newTestStorage(t, cred)
 
@@ -511,9 +515,25 @@ func TestFIDO2Service_ListCredentials_WithAuditLogger(t *testing.T) {
 	_, err := svc.ListCredentials()
 	require.NoError(t, err)
 
-	// Audit logger should have been called.
-	require.Len(t, logger.entries, 1)
-	assert.Equal(t, audit.OpFIDO2CredentialAccessed, logger.entries[0].Operation)
+	// List must not emit any fido2_credential_accessed events.
+	for _, e := range logger.entries {
+		assert.NotEqual(t, audit.OpFIDO2CredentialAccessed, e.Operation,
+			"ListCredentials must not emit fido2_credential_accessed (audit pollution)")
+	}
+}
+
+// TestFIDO2Service_ListCredentials_EmptyNoAudit verifies that listing an
+// empty store also emits no audit events.
+func TestFIDO2Service_ListCredentials_EmptyNoAudit(t *testing.T) {
+	storage := authenticator.NewMemoryStorage()
+	logger := &testFIDO2AuditLogger{}
+	svc := NewFIDO2Service(storage)
+	svc.SetAuditLogger(logger)
+
+	creds, err := svc.ListCredentials()
+	require.NoError(t, err)
+	assert.Empty(t, creds)
+	assert.Empty(t, logger.entries, "empty-storage list must emit no audit events")
 }
 
 func TestFIDO2Service_GetCredential_WithAuditLogger(t *testing.T) {

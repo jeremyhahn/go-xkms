@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -289,6 +290,11 @@ func (m *mockCAClient) BarrierHasRecoveryKeys(_ context.Context) (*transport.Bar
 
 // BarrierGenerateRootToken generates a root token.
 func (m *mockCAClient) BarrierGenerateRootToken(_ context.Context, _ *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
+	return nil, nil
+}
+
+// BarrierEnableEncryption migrates a barrier to a keyed strategy.
+func (m *mockCAClient) BarrierEnableEncryption(_ context.Context, _ *pkgtransport.BarrierEnableEncryptionRequest) (*pkgtransport.BarrierEnableEncryptionResponse, error) {
 	return nil, nil
 }
 
@@ -1030,6 +1036,15 @@ func (m *mockCAClient) TenantBarrierInit(_ context.Context, _ *transport.TenantB
 }
 func (m *mockCAClient) TenantBarrierUnseal(_ context.Context, _ *transport.TenantBarrierUnsealRequest) error {
 	return nil
+}
+func (m *mockCAClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
+	return &transport.TenantBarrierStatusResponse{}, nil
+}
+func (m *mockCAClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	return nil, nil
+}
+func (m *mockCAClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return nil, nil
 }
 
 // InitCeremonyService stub implementations

@@ -47,6 +47,10 @@ type Params struct {
     KeyStoreFactory    KeyStoreFactory
     CertStoreFactory   CertStoreFactory
     ObjectStoreFactory ObjectStoreFactory
+    // BackendForStore, when set, enables per-key keystore routing.
+    // The CA calls it once per unique StoreType found in the CA identity's
+    // Keys slice and caches the result. See BackendForStoreFunc for details.
+    BackendForStore    BackendForStoreFunc
     // Legacy fields
     KeyStore    xkms.Backend
     CertStore   certstore.CertStore
@@ -798,6 +802,47 @@ type ObjectStoreFactory interface {
 ```
 
 Creates object stores for each CA identity.
+
+### BackendForStoreFunc
+
+```go
+type BackendForStoreFunc func(cn string, storeType types.StoreType) (xkms.Backend, error)
+```
+
+Resolves an `xkms.Backend` for a given CA common name and `StoreType`.
+Set `Params.BackendForStore` (or `MultiIdentityParams.BackendForStore`) to
+enable per-key keystore routing.
+
+**Behavior:**
+
+- Called **once per unique `StoreType`** found in the CA identity's `Keys`
+  slice, not once per key.
+- Must return a usable, non-nil `Backend`, or an error. Returning `(nil, nil)`
+  is not permitted.
+- The CA caches returned backends in a per-instance `keystoreMap`; the func
+  is invoked at most once per `(cn, storeType)` pair.
+- When nil, every key falls back to `Params.KeyStore` — legacy single-keystore
+  behavior, zero behavior change.
+
+**Example:**
+
+```go
+backendForStore := func(cn string, storeType types.StoreType) (xkms.Backend, error) {
+    switch storeType {
+    case types.StoreSoftware:
+        return newSoftwareBackend(cn)
+    case types.StoreTPM2:
+        return newTPM2Backend(cn)
+    default:
+        return nil, fmt.Errorf("unsupported store type: %v", storeType)
+    }
+}
+
+authority, err := ca.NewWithParams(ca.Params{
+    Config:          config,
+    BackendForStore: backendForStore,
+})
+```
 
 ---
 

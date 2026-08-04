@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -19,7 +19,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -29,11 +28,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/acme"
 
-	"github.com/jeremyhahn/go-xkms/internal/acmetestutil"
+	testutil "github.com/jeremyhahn/go-xkms/internal/acmetestutil"
 )
 
 // deactivateStorageMockServer creates a mock ACME server for testing
@@ -177,7 +178,7 @@ func TestDeactivateAccount_WithStorage_SaveError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Configure mock storage to fail on Save
-	mockStore.saveError = fmt.Errorf("simulated storage failure")
+	mockStore.saveError = &errs.Message{Msg: "simulated storage failure"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

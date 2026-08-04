@@ -72,7 +72,7 @@ func runDeviceScan(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, phone.ErrBLEUnavailable) {
 			return ErrDeviceBLEUnavailable
 		}
-		return fmt.Errorf("failed to initialize Bluetooth: %w", err)
+		return &WrappedError{Msg: "failed to initialize Bluetooth", Err: err}
 	}
 	defer transport.Close()
 
@@ -85,7 +85,7 @@ func runDeviceScan(cmd *cobra.Command, args []string) error {
 	// Use ScanAll to find all devices during the timeout period
 	devices, err := transport.ScanAll(ctx)
 	if err != nil {
-		return fmt.Errorf("scan failed: %w", err)
+		return &WrappedError{Msg: "scan failed", Err: err}
 	}
 
 	if len(devices) == 0 {

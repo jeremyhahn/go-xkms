@@ -14,7 +14,15 @@
 //go:build integration && linux && tpm_simulator
 
 // Package xkey provides integration tests for the xkey CLI barrier commands
-// using the TPM2 sealing strategy. These tests require a TPM simulator.
+// using the TPM2 sealing strategy. These tests require an ephemeral swtpm
+// instance (started and provisioned once per test binary by
+// swtpmDevicePath, see swtpm_test_helpers.go) exposed as a unix-socket
+// device via --tpm-device. swtpm is used instead of --tpm-simulator because
+// swtpm is a persistent external TPM emulator whose state is shared by every
+// "xkey" CLI subprocess that connects to it -- exactly like real hardware --
+// whereas the in-process go-tpm-tools simulator behind --tpm-simulator
+// starts a brand-new blank virtual TPM in every process and so cannot
+// support a multi-step (init -> unseal -> seal) CLI workflow.
 package xkey
 
 import (
@@ -28,15 +36,16 @@ import (
 // ---------------------------------------------------------------------------
 
 // TestCLI_BarrierInit_TPM2_Success verifies that initializing the barrier
-// with the tpm2 strategy succeeds when a TPM simulator is available.
+// with the tpm2 strategy succeeds against the shared swtpm instance.
 func TestCLI_BarrierInit_TPM2_Success(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 
 	// TPM2 strategy still requires a password for the sealed root key blob.
 	stdin := "tpm2-test-password!\ntpm2-test-password!\n"
 	stdout := RunXKeyExpectSuccess(t, binary, stdin,
-		"barrier", "init", "--strategy", "tpm2", "--data-dir", dataDir)
+		"barrier", "init", "--strategy", "tpm2", "--tpm-device", device, "--data-dir", dataDir)
 
 	if !strings.Contains(stdout, "Barrier initialized successfully") {
 		t.Errorf("Expected 'Barrier initialized successfully', got: %s", stdout)
@@ -51,11 +60,12 @@ func TestCLI_BarrierInit_TPM2_Success(t *testing.T) {
 func TestCLI_BarrierInit_TPM2_StatusShowsTPM2(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 
 	// Initialize with TPM2.
 	stdin := "tpm2-test-password!\ntpm2-test-password!\n"
 	RunXKeyExpectSuccess(t, binary, stdin,
-		"barrier", "init", "--strategy", "tpm2", "--data-dir", dataDir)
+		"barrier", "init", "--strategy", "tpm2", "--tpm-device", device, "--data-dir", dataDir)
 
 	// Check human-readable status.
 	stdout := RunXKeyExpectSuccess(t, binary, "",
@@ -74,11 +84,12 @@ func TestCLI_BarrierInit_TPM2_StatusShowsTPM2(t *testing.T) {
 func TestCLI_BarrierInit_TPM2_StatusShowsHardwareBacked(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 
 	// Initialize with TPM2.
 	stdin := "tpm2-test-password!\ntpm2-test-password!\n"
 	RunXKeyExpectSuccess(t, binary, stdin,
-		"barrier", "init", "--strategy", "tpm2", "--data-dir", dataDir)
+		"barrier", "init", "--strategy", "tpm2", "--tpm-device", device, "--data-dir", dataDir)
 
 	// Get JSON status.
 	stdout := RunXKeyExpectSuccess(t, binary, "",
@@ -107,6 +118,32 @@ func TestCLI_BarrierInit_TPM2_StatusShowsHardwareBacked(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Barrier Init - Auto-detect Strategy (Hardware-first, swtpm-backed)
+// ---------------------------------------------------------------------------
+
+// TestCLI_BarrierInit_AutoDetect verifies that omitting the --strategy flag
+// auto-selects the best available strategy: tpm2 when a TPM 2.0 device is
+// available (hardware-first, matching the GUI and the documented preference
+// order), otherwise software. --tpm-device points at the shared swtpm
+// instance so this test never depends on, or touches, host TPM hardware.
+func TestCLI_BarrierInit_AutoDetect(t *testing.T) {
+	binary := getOrBuildBinary(t)
+	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
+
+	stdin := "autodetect-test-pw!\nautodetect-test-pw!\n"
+	stdout := RunXKeyExpectSuccess(t, binary, stdin,
+		"barrier", "init", "--tpm-device", device, "--data-dir", dataDir)
+
+	if !strings.Contains(stdout, "Barrier initialized successfully") {
+		t.Errorf("Expected success message, got: %s", stdout)
+	}
+	if !strings.Contains(stdout, "tpm2") {
+		t.Errorf("Expected auto-detect to select the tpm2 strategy, got: %s", stdout)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Barrier Unseal - TPM2 Strategy
 // ---------------------------------------------------------------------------
 
@@ -115,16 +152,17 @@ func TestCLI_BarrierInit_TPM2_StatusShowsHardwareBacked(t *testing.T) {
 func TestCLI_BarrierUnseal_TPM2_Success(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 
 	password := "tpm2-unseal-test!"
 
 	// Initialize with TPM2.
 	RunXKeyExpectSuccess(t, binary, password+"\n"+password+"\n",
-		"barrier", "init", "--strategy", "tpm2", "--data-dir", dataDir)
+		"barrier", "init", "--strategy", "tpm2", "--tpm-device", device, "--data-dir", dataDir)
 
 	// Unseal.
 	stdout := RunXKeyExpectSuccess(t, binary, password+"\n",
-		"barrier", "unseal", "--data-dir", dataDir)
+		"barrier", "unseal", "--tpm-device", device, "--data-dir", dataDir)
 
 	if !strings.Contains(stdout, "unsealed successfully") {
 		t.Errorf("Expected 'unsealed successfully', got: %s", stdout)
@@ -136,14 +174,15 @@ func TestCLI_BarrierUnseal_TPM2_Success(t *testing.T) {
 func TestCLI_BarrierUnseal_TPM2_WrongPassword(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 
 	// Initialize with TPM2.
 	RunXKeyExpectSuccess(t, binary, "correct-tpm2-pw\ncorrect-tpm2-pw\n",
-		"barrier", "init", "--strategy", "tpm2", "--data-dir", dataDir)
+		"barrier", "init", "--strategy", "tpm2", "--tpm-device", device, "--data-dir", dataDir)
 
 	// Attempt unseal with wrong password.
 	errOutput := RunXKeyExpectFailure(t, binary, "wrong-tpm2-pw\n",
-		"barrier", "unseal", "--data-dir", dataDir)
+		"barrier", "unseal", "--tpm-device", device, "--data-dir", dataDir)
 
 	if !strings.Contains(errOutput, "unseal") && !strings.Contains(errOutput, "decrypt") &&
 		!strings.Contains(errOutput, "failed") {
@@ -160,12 +199,13 @@ func TestCLI_BarrierUnseal_TPM2_WrongPassword(t *testing.T) {
 func TestCLI_BarrierFullLifecycle_TPM2(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 
 	password := "tpm2-lifecycle-pw-42!"
 
 	// Step 1: Initialize.
 	initOut := RunXKeyExpectSuccess(t, binary, password+"\n"+password+"\n",
-		"barrier", "init", "--strategy", "tpm2", "--data-dir", dataDir)
+		"barrier", "init", "--strategy", "tpm2", "--tpm-device", device, "--data-dir", dataDir)
 	if !strings.Contains(initOut, "Barrier initialized successfully") {
 		t.Fatalf("Init failed, output: %s", initOut)
 	}
@@ -189,21 +229,21 @@ func TestCLI_BarrierFullLifecycle_TPM2(t *testing.T) {
 
 	// Step 3: Unseal.
 	unsealOut := RunXKeyExpectSuccess(t, binary, password+"\n",
-		"barrier", "unseal", "--data-dir", dataDir)
+		"barrier", "unseal", "--tpm-device", device, "--data-dir", dataDir)
 	if !strings.Contains(unsealOut, "unsealed") {
 		t.Fatalf("Unseal failed, output: %s", unsealOut)
 	}
 
 	// Step 4: Seal.
 	sealOut := RunXKeyExpectSuccess(t, binary, "",
-		"barrier", "seal", "--data-dir", dataDir)
+		"barrier", "seal", "--tpm-device", device, "--data-dir", dataDir)
 	if !strings.Contains(sealOut, "sealed") {
 		t.Fatalf("Seal failed, output: %s", sealOut)
 	}
 
 	// Step 5: Re-unseal to verify the barrier can be unlocked again.
 	reUnsealOut := RunXKeyExpectSuccess(t, binary, password+"\n",
-		"barrier", "unseal", "--data-dir", dataDir)
+		"barrier", "unseal", "--tpm-device", device, "--data-dir", dataDir)
 	if !strings.Contains(reUnsealOut, "unsealed") {
 		t.Errorf("Re-unseal failed, output: %s", reUnsealOut)
 	}

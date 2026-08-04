@@ -29,9 +29,13 @@ import (
 
 	"github.com/gorilla/mux"
 
+	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	dns01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01"
 	http01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	acmesdk "github.com/jeremyhahn/go-xkms/sdk/go/acme"
+	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
+
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	nativeca "github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -166,6 +170,14 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	// Build the challenge verifier map based on configured challenge types.
 	challengeMap := buildChallengeMap(acmeCfg.Challenges)
 
+	// When cluster ACME enrollment is active, register the pre-sign hook that
+	// stamps the SPIFFE node identity (spiffe://<trust-domain>/node/<raft-addr>)
+	// as a URI SAN on enrolling nodes' transport certificates, keyed off the
+	// TCG permanent-identifier the joiner presents. The hook is a no-op for
+	// ordinary ACME orders (no permanent identifier), so registering it never
+	// affects non-cluster issuance.
+	preSignHooks := buildClusterPreSignHooks(cfg)
+
 	// Normalize directory path. The ACME routes are mounted under this prefix.
 	directoryPath := acmeCfg.DirectoryPath
 	if directoryPath == "" {
@@ -182,10 +194,12 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		CA:                      tcgCA,
 		CAAIdentities:           acmeCfg.CAAIdentities,
 		ChallengeMap:            challengeMap,
+		ClusterCACN:             clusterACMEIssuerCN(cfg),
 		EndorseEABRequired:      acmeCfg.EndorseEABRequired,
 		EndorseDeviceIDMetaKey:  acmeCfg.EndorseDeviceIDMetaKey,
 		ExternalAccountRequired: acmeCfg.ExternalAccountRequired,
 		Logger:                  logger,
+		OrderPreSignHooks:       preSignHooks,
 		StorageFactory:          storageFactory,
 		TermsOfService:          acmeCfg.TermsOfService,
 	})
@@ -195,6 +209,17 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 
 	// Build the HTTP router and mount the ACME routes.
 	router := buildACMERouter(service, directoryPath)
+
+	// When the cluster CA key strategy delivers post-enrollment material (the
+	// tpm-kek cluster seed), mount its secret-delivery endpoint on the same
+	// HTTPS server the joiner already reaches for enrollment. A no-op for
+	// barrier/hsm (which deliver nothing).
+	if delivery := srv.ClusterSecretDeliveryService(); delivery != nil {
+		if muxRouter, ok := router.(*mux.Router); ok {
+			muxRouter.HandleFunc(clustercasdk.SecretDeliveryPath, delivery.Handler()).Methods(http.MethodPost)
+			logger.Info("Cluster CA secret-delivery endpoint mounted", slog.String("path", clustercasdk.SecretDeliveryPath))
+		}
+	}
 
 	// Build the TLS configuration. Currently only dedicated TLS material is
 	// supported; reusing the xkmsd TLS config is deferred to a follow-up.
@@ -286,8 +311,52 @@ func buildChallengeMap(cfg config.ACMEChallengesConfig) map[string]common.Challe
 			return dns01.Verify(resolver, nil, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		}
 	}
+	// The TPM attestation challenges (enroll-01/endorse-01) use the shared SDK
+	// wiring so every ACME server in the stack (xkmsd, quicbaas) enables them
+	// identically. The verifiers encapsulate the CA type-assertion + Verify.
+	for challengeType, verifier := range acmesdk.ACMEAttestationVerifiers(cfg.Enroll01, cfg.Endorse01) {
+		m[challengeType] = verifier
+	}
 	return m
 }
+
+// buildClusterPreSignHooks returns the pre-sign hook registry for the ACME
+// server. When cluster ACME enrollment is enabled it registers the SPIFFE
+// node-identity URI-SAN hook so enrolling nodes' transport certificates carry
+// spiffe://<trust-domain>/node/<raft-address>, derived from the TCG permanent
+// identifier the joiner presents (the canonical clusterenroll.NodeURI is the
+// single source of truth for the format). It returns nil when cluster ACME
+// enrollment is off, leaving ordinary ACME issuance untouched.
+func buildClusterPreSignHooks(cfg *config.Config) *handlers.OrderPreSignHookRegistry {
+	if !cfg.Cluster.Enabled || !cfg.Cluster.RaftEnrollment.ACME.Enabled {
+		return nil
+	}
+	trustDomain := cfg.Cluster.RaftEnrollment.TrustDomain
+	if trustDomain == "" {
+		trustDomain = defaultClusterTrustDomain
+	}
+	registry := handlers.NewOrderPreSignHookRegistry()
+	registry.Register(handlers.NewPermanentIdentifierURISANHook(func(permanentID string) string {
+		return clusterenroll.NodeURI(trustDomain, permanentID)
+	}))
+	return registry
+}
+
+// clusterACMEIssuerCN returns the dedicated cluster intermediate CN that
+// enroll-01 (TCG-CSR-IDEVID) issuance should chain to, or "" to keep default
+// issuance. It is only active when cluster ACME enrollment is enabled and the
+// operator configured a cluster_ca_cn.
+func clusterACMEIssuerCN(cfg *config.Config) string {
+	if !cfg.Cluster.Enabled || !cfg.Cluster.RaftEnrollment.ACME.Enabled {
+		return ""
+	}
+	return cfg.Cluster.RaftEnrollment.ClusterCACN
+}
+
+// defaultClusterTrustDomain mirrors pkg/server's defaultRaftTrustDomain so the
+// ACME server stamps the same SPIFFE trust domain the node provisioner uses
+// when the operator leaves cluster.raft_enrollment.trust_domain unset.
+const defaultClusterTrustDomain = "xkms.cluster"
 
 // buildACMERouter mounts the ACME REST handlers on a gorilla/mux router
 // under the given directory path prefix. The route layout follows

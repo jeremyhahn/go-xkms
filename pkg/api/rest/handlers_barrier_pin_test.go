@@ -136,7 +136,7 @@ func TestBarrierInitializeHandler_MissingSecret(t *testing.T) {
 func TestBarrierInitializeHandler_AlreadyInitialized(t *testing.T) {
 	h, barrier := newTestBarrierHandler(t)
 
-	creds := seal.Credentials{Secret: "first"}
+	creds := seal.Credentials{Secret: []byte("first")}
 	require.NoError(t, barrier.Initialize(context.Background(), creds))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/initialize",
@@ -153,7 +153,7 @@ func TestBarrierInitializeHandler_AlreadyInitialized(t *testing.T) {
 func TestBarrierUnsealHandler_Success(t *testing.T) {
 	h, barrier := newTestBarrierHandler(t)
 
-	creds := seal.Credentials{Secret: "my-secret"}
+	creds := seal.Credentials{Secret: []byte("my-secret")}
 	require.NoError(t, barrier.Initialize(context.Background(), creds))
 	require.NoError(t, barrier.Seal())
 
@@ -208,7 +208,7 @@ func TestBarrierUnsealHandler_MissingSecret(t *testing.T) {
 func TestBarrierUnsealHandler_InvalidCredentials(t *testing.T) {
 	h, barrier := newTestBarrierHandler(t)
 
-	creds := seal.Credentials{Secret: "correct"}
+	creds := seal.Credentials{Secret: []byte("correct")}
 	require.NoError(t, barrier.Initialize(context.Background(), creds))
 	require.NoError(t, barrier.Seal())
 
@@ -226,7 +226,7 @@ func TestBarrierUnsealHandler_InvalidCredentials(t *testing.T) {
 func TestBarrierSealHandler_Success(t *testing.T) {
 	h, barrier := newTestBarrierHandler(t)
 
-	creds := seal.Credentials{Secret: "secret"}
+	creds := seal.Credentials{Secret: []byte("secret")}
 	require.NoError(t, barrier.Initialize(context.Background(), creds))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/seal", nil)
@@ -256,7 +256,7 @@ func TestBarrierSealHandler_NilBarrier(t *testing.T) {
 func TestBarrierStatusHandler_Success(t *testing.T) {
 	h, barrier := newTestBarrierHandler(t)
 
-	creds := seal.Credentials{Secret: "secret"}
+	creds := seal.Credentials{Secret: []byte("secret")}
 	require.NoError(t, barrier.Initialize(context.Background(), creds))
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/barrier/status", nil)

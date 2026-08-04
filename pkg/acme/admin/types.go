@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -60,7 +62,12 @@ var (
 	ErrAccountNotFound        = errors.New("admin: account not found")
 	ErrOrderNotFound          = errors.New("admin: order not found")
 	ErrRevocationFailed       = errors.New("admin: certificate revocation failed")
-	ErrNotImplemented         = errors.New("admin: operation not yet implemented")
+	// ErrRESTOnly marks ACME admin operations that are intentionally exposed
+	// over REST only. ACME is an HTTP protocol (RFC 8555), so order management
+	// and tenant-CA administration are served exclusively over the REST surface;
+	// the gRPC / QUIC / MCP adapters return this error by design rather than
+	// duplicating the ACME admin surface onto non-HTTP transports.
+	ErrRESTOnly = errors.New("admin: operation is available over REST only (ACME is HTTP-based per RFC 8555)")
 )
 
 // IsNotFoundError returns true if the error is a "not found" type error.
@@ -261,7 +268,7 @@ func (f *FlexUint64) UnmarshalJSON(data []byte) error {
 		*f = FlexUint64(n)
 		return nil
 	}
-	return fmt.Errorf("cannot unmarshal %s into FlexUint64", string(data))
+	return &errs.Message{Msg: fmt.Sprintf("cannot unmarshal %s into FlexUint64", string(data))}
 }
 
 // MarshalJSON outputs as a regular number.

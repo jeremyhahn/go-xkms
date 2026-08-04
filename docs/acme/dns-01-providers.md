@@ -46,7 +46,7 @@ type ProviderTimeout interface {
 ### Using Factory (Recommended)
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/dns-01/providers"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers"
 
 // Create provider from environment variables
 provider, err := providers.NewProviderFromEnv(ctx, providers.ProviderCloudflare)
@@ -77,7 +77,7 @@ defer provider.CleanUp(ctx, "example.com", "_acme-challenge.example.com.", "toke
 ### Configuration
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/dns-01/providers/cloudflare"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers/cloudflare"
 
 provider, err := cloudflare.New(ctx, cloudflare.Config{
     APIToken:           "your-api-token",
@@ -133,7 +133,7 @@ provider, err := cloudflare.NewFromEnv(ctx)
 ### Configuration
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/dns-01/providers/route53"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers/route53"
 
 provider, err := route53.New(ctx, route53.Config{
     AccessKeyID:        "AKIAIOSFODNN7EXAMPLE",
@@ -202,7 +202,7 @@ provider, err := route53.New(ctx, route53.Config{
 ### Configuration
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/dns-01/providers/azure"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers/azure"
 
 provider, err := azure.New(ctx, azure.Config{
     ClientID:          "your-client-id",
@@ -274,7 +274,7 @@ provider, err := azure.New(ctx, azure.Config{
 ### Configuration
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/dns-01/providers/clouddns"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers/clouddns"
 
 provider, err := clouddns.New(ctx, clouddns.Config{
     Project:            "my-gcp-project",

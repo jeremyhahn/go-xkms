@@ -1,6 +1,6 @@
 # Monitoring and Observability
 
-Set up comprehensive monitoring for go-trusted-ca using Prometheus, Grafana, and alerting.
+Set up comprehensive monitoring for go-xkms using Prometheus, Grafana, and alerting.
 
 ## Prometheus Metrics
 
@@ -198,7 +198,7 @@ Clone and modify:
 
 ```bash
 # Export current dashboard
-curl -s "http://grafana:3000/api/dashboards/uid/go-trusted-ca-acme" \
+curl -s "http://grafana:3000/api/dashboards/uid/go-xkms-acme" \
   -H "Authorization: Bearer ${GRAFANA_API_KEY}" | jq .dashboard > my-dashboard.json
 
 # Edit and re-import

@@ -23,6 +23,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -157,7 +159,7 @@ func (sm *SigningMethodSigner) Verify(signingString string, signature []byte, ke
 		return nil
 
 	default:
-		return fmt.Errorf("unsupported public key type: %T", publicKey)
+		return &errs.Message{Msg: fmt.Sprintf("unsupported public key type: %T", publicKey)}
 	}
 }
 

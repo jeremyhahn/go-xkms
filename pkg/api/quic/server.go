@@ -17,11 +17,12 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
@@ -33,6 +34,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/quic-go/quic-go/http3"
+
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 var (
@@ -61,11 +64,15 @@ type Server struct {
 	pinManager      qrdbsdk.PINBackend
 	passwordStore   staticpw.Store
 	passwordManager *staticpw.TenantPasswordStoreManager
-	server          *http3.Server
-	handler         http.Handler
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
+	sshClient       sdkssh.Client
+	// mu guards server across the Start goroutine and Stop (called from the
+	// embedding server's Shutdown on a different goroutine).
+	mu      sync.Mutex
+	server  *http3.Server
+	handler http.Handler
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 }
 
 // Config holds the QUIC server configuration
@@ -84,6 +91,9 @@ type Config struct {
 	PasswordManager *staticpw.TenantPasswordStoreManager
 	// XKMSService is the injected XKMS service; replaces the package singleton lookup.
 	XKMSService *xkms.XKMSService
+	// SSHClient is the SSH SDK client used to service SSH key, known-hosts,
+	// and authorized-keys requests. When nil the SSH routes are not registered.
+	SSHClient sdkssh.Client
 }
 
 // NewServer creates a new QUIC/HTTP3 server.
@@ -91,7 +101,7 @@ type Config struct {
 // package-level singleton.
 func NewServer(config *Config) (*Server, error) {
 	if config.XKMSService == nil {
-		return nil, fmt.Errorf("xkms service must be initialized before creating QUIC server")
+		return nil, &errs.Message{Msg: "xkms service must be initialized before creating QUIC server"}
 	}
 
 	if config.Addr == "" {
@@ -150,6 +160,7 @@ func NewServer(config *Config) (*Server, error) {
 		pinManager:      config.PINManager,
 		passwordStore:   config.PasswordStore,
 		passwordManager: config.PasswordManager,
+		sshClient:       config.SSHClient,
 		ctx:             ctx,
 		cancel:          cancel,
 	}
@@ -158,7 +169,7 @@ func NewServer(config *Config) (*Server, error) {
 	keystore, err := config.XKMSService.LookupDefaultBackend()
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("failed to get default keystore: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get default keystore", Err: err}
 	}
 	s.keystore = keystore
 
@@ -286,6 +297,11 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 
 	// Password management endpoints
 	s.setupPasswordRoutes(mux)
+
+	// SSH key, known-hosts, and authorized-keys endpoints (optional).
+	if s.sshClient != nil {
+		s.setupSSHRoutes(mux)
+	}
 }
 
 // SetBarrier sets the barrier on the server. This allows the barrier to be
@@ -314,11 +330,14 @@ func (s *Server) SetPasswordManager(manager *staticpw.TenantPasswordStoreManager
 
 // Start starts the QUIC server
 func (s *Server) Start() error {
-	s.server = &http3.Server{
+	srv := &http3.Server{
 		Addr:      s.addr,
 		Handler:   s.handler,
 		TLSConfig: s.tlsConfig,
 	}
+	s.mu.Lock()
+	s.server = srv
+	s.mu.Unlock()
 
 	s.logger.Info("Starting QUIC/HTTP3 server",
 		slog.String("addr", s.addr),
@@ -327,7 +346,7 @@ func (s *Server) Start() error {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.logger.Error("QUIC server error", slog.String("error", err.Error()))
 		}
 	}()
@@ -340,8 +359,11 @@ func (s *Server) Stop() error {
 	s.logger.Info("Stopping QUIC server")
 	s.cancel()
 
-	if s.server != nil {
-		if err := s.server.Close(); err != nil {
+	s.mu.Lock()
+	srv := s.server
+	s.mu.Unlock()
+	if srv != nil {
+		if err := srv.Close(); err != nil {
 			s.logger.Error("Failed to close server", slog.String("error", err.Error()))
 			return err
 		}

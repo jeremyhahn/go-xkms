@@ -25,7 +25,6 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"math/big"
 	"net"
 	"net/url"
@@ -33,6 +32,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/stretchr/testify/assert"

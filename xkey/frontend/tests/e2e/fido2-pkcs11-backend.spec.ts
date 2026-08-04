@@ -6,6 +6,7 @@ import {
   isWailsMode,
   navigateToFIDO2,
   waitForLoadingComplete,
+  waitForBackendReady,
 } from './helpers';
 
 /**
@@ -145,9 +146,17 @@ test.describe('FIDO2 PKCS#11 Backend Selection', () => {
   });
 
   test('PKCS#11 backend chip shows FIDO2 capability', async ({ page }) => {
+    // 180 s budget: under 4-worker parallel load AdminService.ListBackends can
+    // take up to 6× its isolated baseline (9–14 s → 60–90 s).
+    test.setTimeout(180_000);
     const wails = await isWailsMode(page).catch(() => false);
     test.skip(!wails, 'Requires Wails backend');
 
+    // waitForBackendReady MUST run before navigateToFIDO2. BackendSelector
+    // calls AdminService.ListBackends immediately on mount via callBackend().
+    // If the WebSocket is not yet connected, callBackend() returns null
+    // silently (no retry) and only the "All Backends" chip renders.
+    await waitForBackendReady(page);
     await navigateToFIDO2(page);
     await waitForLoadingComplete(page);
 
@@ -156,8 +165,12 @@ test.describe('FIDO2 PKCS#11 Backend Selection', () => {
     const selector = page.locator('[data-testid="fido2-backend-selector"]');
     await expect(selector).toBeVisible({ timeout: 5000 });
 
-    // Count all filter chips (including "All Backends").
+    // Wait for per-backend chips to load before counting. chips.count() is
+    // instant and returns 1 (only "All Backends") before the async
+    // ListBackends call populates the remaining chips.
+    // 120 s: under 4-worker parallel load ListBackends can take 60–90 s.
     const chips = selector.locator('.filter-chip');
+    await expect(chips.nth(1)).toBeVisible({ timeout: 120_000 });
     const chipCount = await chips.count();
 
     // Should have at least 2 chips: "All Backends" + "Software".

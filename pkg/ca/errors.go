@@ -100,6 +100,12 @@ var (
 
 	// ErrNoKeysConfigured indicates no keys are configured for an identity.
 	ErrNoKeysConfigured = errors.New("ca: no keys configured for identity")
+
+	// ErrKeyPasswordRequired is returned when a CA key would be generated without
+	// a password but RequireKeyPassword is true on the configuration. Set a
+	// password on the KeyConfig (or the identity-level Keystores.Software.Password)
+	// or set RequireKeyPassword to false to permit plaintext key storage.
+	ErrKeyPasswordRequired = errors.New("ca: key password required (RequireKeyPassword=true)")
 )
 
 // Storage errors indicate issues with key and certificate storage.
@@ -188,6 +194,35 @@ func (e *ErrWeakSignatureAlgorithmDetail) Error() string {
 // Unwrap returns ErrWeakSignatureAlgorithm so that errors.Is works.
 func (e *ErrWeakSignatureAlgorithmDetail) Unwrap() error {
 	return ErrWeakSignatureAlgorithm
+}
+
+// ErrIdentityNotFound indicates no configured CA identity matches the
+// requested common name.
+type ErrIdentityNotFound struct {
+	// CommonName is the identity common name that was requested.
+	CommonName string
+}
+
+// Error implements the error interface.
+func (e *ErrIdentityNotFound) Error() string {
+	return "ca: no configured identity with common name " + e.CommonName
+}
+
+// ErrUnknownParentCA indicates an intermediate identity references a
+// ParentCA common name that is not the root and not an earlier intermediate
+// in the Identity list.
+type ErrUnknownParentCA struct {
+	// Identity is the common name of the identity with the bad reference.
+	Identity string
+
+	// ParentCA is the unresolvable parent common name it referenced.
+	ParentCA string
+}
+
+// Error implements the error interface.
+func (e *ErrUnknownParentCA) Error() string {
+	return "ca: identity " + e.Identity + " references unknown parent CA " + e.ParentCA +
+		" (parent-ca must name the root or an earlier identity in the list)"
 }
 
 // Validation errors indicate issues with request validation.

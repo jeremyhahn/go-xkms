@@ -16,8 +16,10 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
@@ -79,14 +81,14 @@ func (s *Server) handleBarrierInitialize(ctx context.Context, req *JSONRPCReques
 
 	var params BarrierInitializeParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.Secret == "" {
 		return nil, ErrBarrierSecretRequired
 	}
 
-	creds := seal.Credentials{Secret: params.Secret}
+	creds := seal.Credentials{Secret: []byte(params.Secret)}
 	if err := s.barrier.Initialize(ctx, creds); err != nil {
 		return nil, err
 	}
@@ -109,10 +111,10 @@ func (s *Server) handleBarrierInitializeShamir(ctx context.Context, req *JSONRPC
 
 	var params BarrierInitializeShamirParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
-	creds := seal.Credentials{Secret: params.Secret}
+	creds := seal.Credentials{Secret: []byte(params.Secret)}
 	result, err := s.barrier.InitializeShamir(ctx, creds)
 	if err != nil {
 		return nil, err
@@ -135,14 +137,14 @@ func (s *Server) handleBarrierUnseal(ctx context.Context, req *JSONRPCRequest) (
 
 	var params BarrierUnsealParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.Secret == "" {
 		return nil, ErrBarrierSecretRequired
 	}
 
-	creds := seal.Credentials{Secret: params.Secret}
+	creds := seal.Credentials{Secret: []byte(params.Secret)}
 	if err := s.barrier.Unseal(ctx, creds); err != nil {
 		return nil, err
 	}
@@ -162,7 +164,7 @@ func (s *Server) handleBarrierUnsealShare(ctx context.Context, req *JSONRPCReque
 
 	var params BarrierUnsealShareParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.Share == "" {
@@ -190,7 +192,7 @@ func (s *Server) handleBarrierUnsealShares(ctx context.Context, req *JSONRPCRequ
 
 	var params BarrierUnsealSharesParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if len(params.Shares) == 0 {
@@ -248,7 +250,7 @@ func (s *Server) handleBarrierRekey(ctx context.Context, req *JSONRPCRequest) (i
 
 	var params BarrierRekeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.Threshold < 2 {
@@ -281,7 +283,7 @@ func (s *Server) handleBarrierGenerateRecoveryKeys(ctx context.Context, req *JSO
 
 	var params BarrierGenerateRecoveryKeysParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if params.Threshold < 2 {
@@ -305,6 +307,28 @@ func (s *Server) handleBarrierGenerateRecoveryKeys(ctx context.Context, req *JSO
 	}, nil
 }
 
+// handleBarrierEnableEncryption handles the barrier.enableEncryption method. It
+// migrates a previously-unencrypted barrier to a keyed strategy in place. The
+// migration runs asynchronously; the response acknowledges the start and
+// clients poll barrier.status for completion.
+func (s *Server) handleBarrierEnableEncryption(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	if s.xkmsService == nil {
+		return nil, ErrBarrierNotConfigured
+	}
+
+	var params transport.BarrierEnableEncryptionRequest
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	}
+
+	resp, err := s.xkmsService.BarrierEnableEncryption(ctx, &params)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
 // handleBarrierRecoverWithKeys handles the barrier.recoverWithKeys method.
 // It recovers the barrier using recovery key shares.
 func (s *Server) handleBarrierRecoverWithKeys(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
@@ -314,7 +338,7 @@ func (s *Server) handleBarrierRecoverWithKeys(ctx context.Context, req *JSONRPCR
 
 	var params BarrierRecoverWithKeysParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if len(params.Keys) == 0 {
@@ -348,6 +372,25 @@ func (s *Server) handleBarrierDeleteRecoveryKeys(ctx context.Context, req *JSONR
 	}, nil
 }
 
+// handleBarrierHasRecoveryKeys handles the barrier.hasRecoveryKeys method. It
+// reports whether recovery keys have been provisioned for the barrier, matching
+// the gRPC/unix transport's BarrierHasRecoveryKeys RPC so MCP clients reach the
+// same capability.
+func (s *Server) handleBarrierHasRecoveryKeys(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	if s.barrier == nil {
+		return nil, ErrBarrierNotConfigured
+	}
+
+	hasKeys, err := s.barrier.HasRecoveryKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"has_keys": hasKeys,
+	}, nil
+}
+
 // handleBarrierGenerateRootToken handles the barrier.generateRootToken method.
 // It generates a one-time root token by proving knowledge of the master key
 // through Shamir share reconstruction.
@@ -358,7 +401,7 @@ func (s *Server) handleBarrierGenerateRootToken(ctx context.Context, req *JSONRP
 
 	var params BarrierGenerateRootTokenParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
 	if len(params.Shares) == 0 {

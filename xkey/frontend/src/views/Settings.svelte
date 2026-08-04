@@ -20,8 +20,14 @@
     mdiBellOutline, mdiTestTube, mdiChip, mdiShieldLockOutline,
     mdiFormTextboxPassword, mdiLockAlert, mdiCheck, mdiClose, mdiLockReset,
     mdiWeb, mdiRefresh, mdiShieldCheck, mdiCertificate, mdiConsoleLine,
-    mdiAccount
+    mdiAccount, mdiSsh
   } from '$lib/utils/icons';
+  import { SSHConnectService, SSHConsoleService } from '$lib/api/backend';
+  import {
+    sshDefaultConsoleMode,
+    sshHostKeyChecking as sshHostKeyCheckingStore,
+    sshKnownHostsPolicy as sshKnownHostsPolicyStore,
+  } from '$lib/stores/ssh';
   import SettingsIdentity from './SettingsIdentity.svelte';
   import { formatBytes } from '$lib/utils/format';
   import { theme, setTheme } from '$lib/stores/theme';
@@ -34,7 +40,7 @@
   import { extensionPairingChanged } from '$lib/stores/events';
   import { setDevToolsEnabled, devToolsEnabled as devToolsStore } from '$lib/stores/app';
 
-  type SettingsCategory = 'general' | 'appearance' | 'server' | 'phone' | 'security' | 'pin' | 'storage' | 'notifications' | 'browser' | 'api-explorer' | 'advanced' | 'identity';
+  type SettingsCategory = 'general' | 'appearance' | 'server' | 'phone' | 'security' | 'pin' | 'storage' | 'notifications' | 'browser' | 'api-explorer' | 'advanced' | 'identity' | 'ssh';
 
   /** Response shape from StorageService.GetStatus */
   interface StorageStatus {
@@ -60,10 +66,71 @@
     { id: 'pin' as SettingsCategory, label: 'PIN Management', icon: mdiFormTextboxPassword },
     { id: 'storage' as SettingsCategory, label: 'Storage', icon: mdiHarddisk },
     { id: 'notifications' as SettingsCategory, label: 'Notifications', icon: mdiAlert },
+    { id: 'ssh' as SettingsCategory, label: 'SSH', icon: mdiSsh },
     { id: 'advanced' as SettingsCategory, label: 'Advanced', icon: mdiWrenchOutline },
   ];
 
   let activeCategory: SettingsCategory = 'general';
+
+  // SSH settings state — the policies are persisted stores (localStorage)
+  // that App.svelte re-applies to the backend at startup, so what this page
+  // shows is always what the backend enforces.
+  let sshKnownHostsPolicy = $sshKnownHostsPolicyStore;
+  let sshHostKeyChecking = $sshHostKeyCheckingStore;
+  let sshTerminalCommand = '';
+
+  async function handleSSHKnownHostsPolicy(policy: string): Promise<void> {
+    sshKnownHostsPolicy = policy;
+    sshKnownHostsPolicyStore.set(policy);
+    // Fires against both the system-terminal path (SSHConnectService) and the
+    // embedded console path (SSHConsoleService) so the known-hosts store stays
+    // consistent no matter which console mode a connection uses.
+    const [connectOk, consoleOk] = await Promise.all([
+      SSHConnectService.setKnownHostsPolicy(policy),
+      SSHConsoleService.setKnownHostsPolicy(policy),
+    ]);
+    if (connectOk && consoleOk) {
+      addNotification('success', `Known-hosts store set to "${policy}"`);
+    } else {
+      addNotification('error', 'Failed to update known-hosts policy');
+    }
+  }
+
+  async function handleSSHHostKeyChecking(checking: string): Promise<void> {
+    sshHostKeyChecking = checking;
+    sshHostKeyCheckingStore.set(checking);
+    // Fires against both the system-terminal path (SSHConnectService) and the
+    // embedded console path (SSHConsoleService) so host-key checking behaves
+    // the same whether a connection opens an external terminal or the
+    // in-app console.
+    const [connectOk, consoleOk] = await Promise.all([
+      SSHConnectService.setStrictHostKeyChecking(checking),
+      SSHConsoleService.setHostKeyPolicy(checking),
+    ]);
+    if (connectOk && consoleOk) {
+      addNotification('success', `Host-key checking set to "${checking}"`);
+    } else {
+      addNotification('error', 'Failed to update host-key checking policy');
+    }
+  }
+
+  // The cast lives here (not in markup): Svelte's markup expression parser is
+  // JS-only and rejects TypeScript `as` casts with "Unexpected token".
+  function handleDefaultConsoleMode(value: string): void {
+    sshDefaultConsoleMode.set(value as 'system' | 'embedded' | '');
+  }
+
+  let sshTerminalSaving = false;
+  async function handleSSHTerminalCommand(): Promise<void> {
+    sshTerminalSaving = true;
+    const ok = await SSHConnectService.setTerminalCommand(sshTerminalCommand);
+    sshTerminalSaving = false;
+    if (ok) {
+      addNotification('success', 'Terminal command updated');
+    } else {
+      addNotification('error', 'Failed to update terminal command');
+    }
+  }
 
   // Settings state
   let startWithSystem = false;
@@ -259,6 +326,11 @@
   // Barrier auto-unseal state
   let barrierAutoUnsealStatus: BarrierAutoUnsealStatus | null = null;
   let barrierAutoUnsealLoading = false;
+  // Latches once loadBarrierAutoUnsealStatus has been attempted (success or
+  // failure) so the reactive auto-fetch below cannot refire indefinitely if
+  // the backend call fails. Explicit user actions (Retry button, Set/Clear
+  // handlers) call loadBarrierAutoUnsealStatus directly and bypass this latch.
+  let barrierAutoUnsealAttempted = false;
   let barrierAutoUnsealPolicies: PCRPolicy[] = [];
   let barrierAutoUnsealSelectedPolicy = '';
   let barrierAutoUnsealSetting = false;
@@ -297,8 +369,10 @@
     loadAutoUnsealStatus();
   }
 
-  // Load barrier auto-unseal status when the storage category is selected
-  $: if (activeCategory === 'storage' && isWailsAvailable() && !barrierAutoUnsealStatus && !barrierAutoUnsealLoading) {
+  // Load barrier auto-unseal status when the storage category is selected.
+  // barrierAutoUnsealAttempted prevents this from refiring forever if the
+  // backend call fails (see loadBarrierAutoUnsealStatus).
+  $: if (activeCategory === 'storage' && isWailsAvailable() && !barrierAutoUnsealStatus && !barrierAutoUnsealLoading && !barrierAutoUnsealAttempted) {
     loadBarrierAutoUnsealStatus();
   }
 
@@ -503,6 +577,7 @@
 
   async function loadBarrierAutoUnsealStatus(): Promise<void> {
     barrierAutoUnsealLoading = true;
+    barrierAutoUnsealAttempted = true;
     const [status, policies] = await Promise.all([
       callBackend<BarrierAutoUnsealStatus>('BarrierAutoUnsealService', 'GetAutoUnsealStatus'),
       callBackend<PCRPolicy[]>('TPMService', 'ListPolicies'),
@@ -563,9 +638,16 @@
   async function loadLockoutStatus(): Promise<void> {
     lockoutLoading = true;
     const status = await callBackend<LockoutStatus>('PINService', 'GetLockoutStatus');
-    if (status) {
-      lockoutStatusData = status;
-    }
+    // When the backend has no native lockout (software backend returns nil),
+    // use a zero-value default so the panel renders and the reactive reload
+    // loop in the $: block above terminates.
+    lockoutStatusData = status ?? {
+      failed_attempts: 0,
+      max_attempts: 0,
+      is_locked: false,
+      lockout_until: '',
+      recovery_seconds: 0,
+    };
     lockoutLoading = false;
   }
 
@@ -584,7 +666,8 @@
 
   async function handleResetLockout(): Promise<void> {
     if (!resetLockoutSOPIN) {
-      addNotification('error', 'SO PIN is required to reset lockout');
+      const label = pinStatus && !pinStatus.so_pin_supported ? 'TPM Lockout password' : 'SO PIN';
+      addNotification('error', `${label} is required to reset lockout`);
       return;
     }
     resettingLockout = true;
@@ -1292,7 +1375,20 @@
         </Card>
 
         <!-- SO PIN Card -->
-        {#if pinStatus}
+        {#if pinStatus && !pinStatus.so_pin_supported}
+          <Card variant="outlined">
+            <div class="settings-section">
+              <h2 class="text-title-medium section-heading">Security Officer PIN</h2>
+              <div class="auto-unseal-info" role="status">
+                <Icon path={mdiShieldLockOutline} size={20} color="var(--color-on-surface-variant)" />
+                <span class="text-body-small">
+                  The {formatPINStrategy(pinStatus.strategy)} PIN backend binds authorization to the platform
+                  hardware directly; a separate Security Officer PIN is not used.
+                </span>
+              </div>
+            </div>
+          </Card>
+        {:else if pinStatus}
           <Card variant="outlined">
             <div class="settings-section">
               <h2 class="text-title-medium section-heading">Security Officer PIN</h2>
@@ -1338,8 +1434,10 @@
               </div>
             </div>
           </Card>
+        {/if}
 
-          <!-- User PIN Card -->
+        <!-- User PIN Card -->
+        {#if pinStatus}
           <Card variant="outlined">
             <div class="settings-section">
               <h2 class="text-title-medium section-heading">User PIN</h2>
@@ -1386,12 +1484,12 @@
                       <span class="text-title-small">Set User PIN</span>
                       <span class="text-body-small setting-desc">
                         Configure the User PIN for cryptographic operations
-                        {#if !pinStatus.so_pin_set}
+                        {#if pinStatus.so_pin_supported && !pinStatus.so_pin_set}
                           (requires SO PIN to be set first)
                         {/if}
                       </span>
                     </div>
-                    <Button variant="primary" icon={mdiFormTextboxPassword} on:click={() => openPINDialog('set-user')} disabled={!pinStatus.so_pin_set}>
+                    <Button variant="primary" icon={mdiFormTextboxPassword} on:click={() => openPINDialog('set-user')} disabled={pinStatus.so_pin_supported && !pinStatus.so_pin_set}>
                       Set User PIN
                     </Button>
                   </div>
@@ -1443,7 +1541,11 @@
                       PIN entry is locked due to too many failed attempts.
                       {#if lockoutStatusData.recovery_seconds > 0}
                         Recovery in {Math.ceil(lockoutStatusData.recovery_seconds / 60)} minutes,
-                        or use the SO PIN to reset immediately.
+                        {#if pinStatus.so_pin_supported}
+                          or use the SO PIN to reset immediately.
+                        {:else}
+                          or use the TPM Lockout hierarchy password to reset immediately.
+                        {/if}
                       {/if}
                     </span>
                   </div>
@@ -1486,7 +1588,11 @@
                     <div class="setting-info">
                       <span class="text-title-small">Reset Lockout</span>
                       <span class="text-body-small setting-desc">
-                        Reset the failed attempts counter using the SO PIN
+                        {#if pinStatus.so_pin_supported}
+                          Reset the failed attempts counter using the SO PIN
+                        {:else}
+                          Reset the failed attempts counter using the TPM Lockout hierarchy password
+                        {/if}
                       </span>
                     </div>
                     <Button
@@ -1741,6 +1847,13 @@
               <div class="storage-loading">
                 <LoadingSpinner size={32} />
                 <span class="text-body-medium">Loading barrier auto-unseal status...</span>
+              </div>
+            {:else if barrierAutoUnsealStatus && !barrierAutoUnsealStatus.available}
+              <div class="auto-unseal-info" role="status">
+                <Icon path={mdiShieldLockOutline} size={20} color="var(--color-on-surface-variant)" />
+                <span class="text-body-small">
+                  Barrier auto-unseal is unavailable{barrierAutoUnsealStatus.reason ? `: ${barrierAutoUnsealStatus.reason}` : '.'}
+                </span>
               </div>
             {:else if barrierAutoUnsealStatus}
               <div class="setting-row">
@@ -2257,6 +2370,98 @@
           </Card>
         </div>
 
+      {:else if activeCategory === 'ssh'}
+        <Card variant="elevated">
+          <div class="settings-section">
+            <h2 class="text-title-medium section-heading">SSH</h2>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="text-title-small">Known-hosts store</span>
+                <span class="text-body-small setting-desc">
+                  Where to store and verify SSH host keys, for both the embedded
+                  console and the system terminal.
+                  Barrier encrypts the known-hosts file using the xkey barrier;
+                  System uses the standard <code>~/.ssh/known_hosts</code>;
+                  Both writes to both stores.
+                </span>
+              </div>
+              <select
+                class="form-select"
+                value={sshKnownHostsPolicy}
+                on:change={(e) => handleSSHKnownHostsPolicy(e.currentTarget.value)}
+              >
+                <option value="barrier">Barrier (default)</option>
+                <option value="system">System (~/.ssh/known_hosts)</option>
+                <option value="both">Both</option>
+              </select>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="text-title-small">Host-key checking</span>
+                <span class="text-body-small setting-desc">
+                  Controls how SSH handles unknown or changed host keys, for both
+                  the embedded console and the system terminal.
+                  <em>Ask</em> prompts on new hosts — inline in the embedded
+                  console, or on the terminal for system connections;
+                  <em>Accept-new</em> auto-accepts unknown hosts but rejects changed keys;
+                  <em>Strict</em> rejects any unrecognised key.
+                </span>
+              </div>
+              <select
+                class="form-select"
+                value={sshHostKeyChecking}
+                on:change={(e) => handleSSHHostKeyChecking(e.currentTarget.value)}
+              >
+                <option value="ask">Ask (default)</option>
+                <option value="accept-new">Accept-new</option>
+                <option value="yes">Strict</option>
+              </select>
+            </div>
+          </div>
+        </Card>
+
+        <Card variant="outlined">
+          <div class="settings-section">
+            <h2 class="text-title-medium section-heading">Terminal</h2>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="text-title-small">Default console mode</span>
+                <span class="text-body-small setting-desc">
+                  How connections open by default. Profiles can override this per-connection.
+                  <em>System terminal</em> launches an external terminal emulator;
+                  <em>Embedded console</em> opens an in-app terminal panel.
+                </span>
+              </div>
+              <select
+                class="form-select"
+                value={$sshDefaultConsoleMode}
+                on:change={(e) => handleDefaultConsoleMode(e.currentTarget.value)}
+                data-testid="ssh-default-console-mode"
+              >
+                <option value="system">System terminal</option>
+                <option value="embedded">Embedded console</option>
+              </select>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="text-title-small">Terminal command override</span>
+                <span class="text-body-small setting-desc">
+                  Command used to launch SSH connections. Leave blank to use the system default.
+                  Use <code>%s</code> as a placeholder for the full <code>ssh</code> command.
+                </span>
+              </div>
+              <div class="compact-input">
+                <Input
+                  placeholder="e.g. gnome-terminal -- %s"
+                  bind:value={sshTerminalCommand}
+                  monospace
+                  on:blur={handleSSHTerminalCommand}
+                />
+              </div>
+            </div>
+          </div>
+        </Card>
+
       {:else if activeCategory === 'advanced'}
         <Card variant="elevated">
           <div class="settings-section">
@@ -2473,14 +2678,25 @@
 
   <Modal bind:open={showResetLockoutConfirm} title="Reset Lockout" maxWidth="400px">
     <div class="unlock-form">
-      <p class="text-body-medium">Enter the Security Officer PIN to reset the lockout counter.</p>
-      <Input
-        label="SO PIN"
-        type="password"
-        placeholder="Enter SO PIN"
-        bind:value={resetLockoutSOPIN}
-        disabled={resettingLockout}
-      />
+      {#if pinStatus && !pinStatus.so_pin_supported}
+        <p class="text-body-medium">Enter the TPM Lockout hierarchy password to reset the lockout counter.</p>
+        <Input
+          label="TPM Lockout Password"
+          type="password"
+          placeholder="Enter TPM Lockout password"
+          bind:value={resetLockoutSOPIN}
+          disabled={resettingLockout}
+        />
+      {:else}
+        <p class="text-body-medium">Enter the Security Officer PIN to reset the lockout counter.</p>
+        <Input
+          label="SO PIN"
+          type="password"
+          placeholder="Enter SO PIN"
+          bind:value={resetLockoutSOPIN}
+          disabled={resettingLockout}
+        />
+      {/if}
     </div>
     <svelte:fragment slot="actions">
       <Button variant="text" on:click={() => { showResetLockoutConfirm = false; resetLockoutSOPIN = ''; }} disabled={resettingLockout}>

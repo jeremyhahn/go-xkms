@@ -180,13 +180,13 @@ func (s *SecureBrowserService) resolveSourceProfile(override string) (string, er
 	if source == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("%w: %w", ErrSecureBrowserHomeDir, err)
+			return "", &SentinelCauseError{Sentinel: ErrSecureBrowserHomeDir, Cause: err}
 		}
 		source = filepath.Join(home, ".config", "google-chrome", "Default")
 	}
 	info, err := os.Stat(source)
 	if err != nil || !info.IsDir() {
-		return "", fmt.Errorf("%w: %s", ErrSecureBrowserSourceProfile, source)
+		return "", &DetailError{Err: ErrSecureBrowserSourceProfile, Detail: fmt.Sprintf(": %s", source)}
 	}
 	return source, nil
 }
@@ -202,7 +202,7 @@ func (s *SecureBrowserService) selectExtensionIDs(srcExtDir string, idFilter []s
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return nil, &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 
 	present := make(map[string]struct{}, len(entries))
@@ -241,7 +241,7 @@ func (s *SecureBrowserService) copyExtensionVersionDir(srcExtDir, profileDir, id
 	srcIDDir := filepath.Join(srcExtDir, id)
 	versions, err := os.ReadDir(srcIDDir)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 
 	dstIDDir := filepath.Join(profileDir, "Default", chromeExtensionsSubdir, id)
@@ -252,7 +252,7 @@ func (s *SecureBrowserService) copyExtensionVersionDir(srcExtDir, profileDir, id
 		src := filepath.Join(srcIDDir, v.Name())
 		dst := filepath.Join(dstIDDir, v.Name())
 		if err := copyTree(src, dst); err != nil {
-			return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+			return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 		}
 	}
 	return nil
@@ -267,7 +267,7 @@ func (s *SecureBrowserService) copyExtensionState(source, profileDir, id string)
 	if dirExists(srcLocal) {
 		dstLocal := filepath.Join(profileDir, "Default", chromeLocalExtSettingsSubdir, id)
 		if err := copyTree(srcLocal, dstLocal); err != nil {
-			return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+			return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 		}
 	}
 
@@ -277,7 +277,7 @@ func (s *SecureBrowserService) copyExtensionState(source, profileDir, id string)
 	if dirExists(srcIDB) {
 		dstIDB := filepath.Join(profileDir, "Default", chromeIndexedDBSubdir, idbName)
 		if err := copyTree(srcIDB, dstIDB); err != nil {
-			return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+			return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 		}
 	}
 	return nil
@@ -306,7 +306,7 @@ func (s *SecureBrowserService) copyExtensionState(source, profileDir, id string)
 func (s *SecureBrowserService) mirrorNativeMessagingHosts(profileDir string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserHomeDir, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserHomeDir, Cause: err}
 	}
 
 	srcDir := filepath.Join(home, chromeSourceNMHRelDir)
@@ -315,7 +315,7 @@ func (s *SecureBrowserService) mirrorNativeMessagingHosts(profileDir string) err
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 
 	manifestDir := filepath.Join(profileDir, chromeProfileNMHSubdir)
@@ -342,20 +342,20 @@ func (s *SecureBrowserService) generateNativeMessagingHost(
 ) error {
 	data, err := os.ReadFile(srcManifest)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 
 	// Preserve every manifest field; rewrite only "path". An ordered decode is
 	// not needed — Chrome reads the manifest as a JSON object.
 	var manifest map[string]json.RawMessage
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return fmt.Errorf("%w: corrupt native messaging host manifest %s", ErrSecureBrowserExtImport, srcManifest)
+		return &DetailError{Err: ErrSecureBrowserExtImport, Detail: fmt.Sprintf(": corrupt native messaging host manifest %s", srcManifest)}
 	}
 
 	var hostPath string
 	if raw, ok := manifest["path"]; ok {
 		if err := json.Unmarshal(raw, &hostPath); err != nil {
-			return fmt.Errorf("%w: corrupt path in native messaging host manifest %s", ErrSecureBrowserExtImport, srcManifest)
+			return &DetailError{Err: ErrSecureBrowserExtImport, Detail: fmt.Sprintf(": corrupt path in native messaging host manifest %s", srcManifest)}
 		}
 	}
 	if hostPath == "" {
@@ -370,35 +370,35 @@ func (s *SecureBrowserService) generateNativeMessagingHost(
 	wrapperPath := filepath.Join(wrapperDir, wrapperName)
 
 	if err := os.MkdirAll(wrapperDir, 0o700); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 	wrapper := buildNMHWrapperScript(realHome, hostPath)
 	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 	// WriteFile honors the mode only when creating; on idempotent re-import the
 	// file already exists, so force the executable mode explicitly.
 	if err := os.Chmod(wrapperPath, 0o700); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 
 	rewrittenPath, err := json.Marshal(wrapperPath)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 	manifest["path"] = rewrittenPath
 
 	out, err := json.Marshal(manifest)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 
 	if err := os.MkdirAll(manifestDir, 0o700); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 	dstManifest := filepath.Join(manifestDir, fileName)
 	if err := os.WriteFile(dstManifest, out, 0o600); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 	return nil
 }
@@ -466,21 +466,21 @@ func mergeExtensionSettings(path string, entries map[string]json.RawMessage) err
 	if data, err := os.ReadFile(path); err == nil {
 		if json.Unmarshal(data, &root) != nil {
 			// Refuse to clobber an unparseable existing profile file.
-			return fmt.Errorf("%w: corrupt preferences file %s", ErrSecureBrowserExtImport, path)
+			return &DetailError{Err: ErrSecureBrowserExtImport, Detail: fmt.Sprintf(": corrupt preferences file %s", path)}
 		}
 	}
 
 	ext := map[string]json.RawMessage{}
 	if raw, ok := root["extensions"]; ok {
 		if json.Unmarshal(raw, &ext) != nil {
-			return fmt.Errorf("%w: corrupt extensions block in %s", ErrSecureBrowserExtImport, path)
+			return &DetailError{Err: ErrSecureBrowserExtImport, Detail: fmt.Sprintf(": corrupt extensions block in %s", path)}
 		}
 	}
 
 	settings := map[string]json.RawMessage{}
 	if raw, ok := ext["settings"]; ok {
 		if json.Unmarshal(raw, &settings) != nil {
-			return fmt.Errorf("%w: corrupt extensions.settings in %s", ErrSecureBrowserExtImport, path)
+			return &DetailError{Err: ErrSecureBrowserExtImport, Detail: fmt.Sprintf(": corrupt extensions.settings in %s", path)}
 		}
 	}
 
@@ -490,26 +490,26 @@ func mergeExtensionSettings(path string, entries map[string]json.RawMessage) err
 
 	settingsRaw, err := json.Marshal(settings)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 	ext["settings"] = settingsRaw
 
 	extRaw, err := json.Marshal(ext)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 	root["extensions"] = extRaw
 
 	out, err := json.Marshal(root)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 	if err := os.WriteFile(path, out, 0o600); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserExtImport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 	return nil
 }

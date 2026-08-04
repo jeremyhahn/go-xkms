@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	acmesdk "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 )
 
 // TestStartACMEServer_Disabled verifies that startACMEServer is a no-op when
@@ -118,6 +119,25 @@ func TestBuildChallengeMap_Selection(t *testing.T) {
 	}
 	if _, ok := m[common.ChallengeTypeDNS01]; !ok {
 		t.Fatalf("expected dns-01 verifier to be registered")
+	}
+
+	// enroll-01 / endorse-01 TPM attestation challenges.
+	m = buildChallengeMap(config.ACMEChallengesConfig{Enroll01: true, Endorse01: true})
+	if _, ok := m[common.ChallengeTypeEnroll01]; !ok {
+		t.Fatalf("expected enroll-01 verifier to be registered")
+	}
+	if _, ok := m[common.ChallengeTypeEndorse01]; !ok {
+		t.Fatalf("expected endorse-01 verifier to be registered")
+	}
+	if _, ok := m[common.ChallengeTypeHTTP01]; ok {
+		t.Fatalf("expected http-01 verifier to be absent when only attestation enabled")
+	}
+
+	// The enroll-01 verifier rejects a CA that does not implement the TCG
+	// verification surface (a nil/placeholder CA fails the type assertion).
+	verify := m[common.ChallengeTypeEnroll01]
+	if err := verify(nil, nil, "device", "8080", "tok", "ka"); !errors.Is(err, acmesdk.ErrACMEEnrollCAUnsupported) {
+		t.Fatalf("enroll-01 with unsupported CA = %v, want ErrACMEEnrollCAUnsupported", err)
 	}
 }
 
@@ -292,5 +312,38 @@ func TestBuildACMETLSConfig_RejectsReuse(t *testing.T) {
 	_, err := buildACMETLSConfig(&config.ACMEConfig{ReuseTLS: true})
 	if err == nil {
 		t.Fatalf("expected error when reuse_tls is set")
+	}
+}
+
+// TestBuildClusterPreSignHooks_GatedOff verifies that the SPIFFE URI-SAN hook
+// registry is nil when cluster ACME enrollment is not enabled, so ordinary ACME
+// issuance registers no cluster-specific pre-sign extensions.
+func TestBuildClusterPreSignHooks_GatedOff(t *testing.T) {
+	// Cluster disabled entirely.
+	if got := buildClusterPreSignHooks(&config.Config{}); got != nil {
+		t.Errorf("cluster disabled: got %v, want nil", got)
+	}
+	// Cluster enabled but ACME enrollment off.
+	cfg := &config.Config{Cluster: config.ClusterConfig{Enabled: true}}
+	if got := buildClusterPreSignHooks(cfg); got != nil {
+		t.Errorf("ACME enrollment off: got %v, want nil", got)
+	}
+}
+
+// TestBuildClusterPreSignHooks_Enabled verifies that enabling cluster ACME
+// enrollment registers exactly one pre-sign hook (the SPIFFE URI-SAN hook).
+func TestBuildClusterPreSignHooks_Enabled(t *testing.T) {
+	cfg := &config.Config{Cluster: config.ClusterConfig{
+		Enabled: true,
+		RaftEnrollment: config.RaftEnrollmentConfig{
+			ACME: config.RaftACMEEnrollmentConfig{Enabled: true},
+		},
+	}}
+	registry := buildClusterPreSignHooks(cfg)
+	if registry == nil {
+		t.Fatal("expected a non-nil pre-sign hook registry")
+	}
+	if got := registry.Count(); got != 1 {
+		t.Errorf("registry.Count() = %d, want 1", got)
 	}
 }

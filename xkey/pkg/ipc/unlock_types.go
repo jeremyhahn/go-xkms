@@ -13,8 +13,6 @@
 
 package ipc
 
-import "fmt"
-
 // UnlockPayload carries unlock-specific request data in an IPC Message.
 type UnlockPayload struct {
 	PIN string `json:"pin"` // user PIN for app unlock
@@ -29,7 +27,7 @@ type UnlockResult struct {
 // Validate checks the UnlockPayload for correctness.
 func (p *UnlockPayload) Validate() error {
 	if p.PIN == "" {
-		return fmt.Errorf("%w: pin is required for unlock", ErrInvalidMessage)
+		return &DetailError{Err: ErrInvalidMessage, Detail: ": pin is required for unlock"}
 	}
 	return nil
 }

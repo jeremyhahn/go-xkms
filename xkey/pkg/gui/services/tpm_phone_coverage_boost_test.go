@@ -17,11 +17,12 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/json"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"

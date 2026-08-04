@@ -95,6 +95,8 @@ type BarrierRecoverWithKeysRequest = pkgtransport.BarrierRecoverWithKeysRequest
 type BarrierHasRecoveryKeysResponse = pkgtransport.BarrierHasRecoveryKeysResponse
 type BarrierGenerateRootTokenRequest = pkgtransport.BarrierGenerateRootTokenRequest
 type BarrierRootTokenResponse = pkgtransport.BarrierRootTokenResponse
+type BarrierEnableEncryptionRequest = pkgtransport.BarrierEnableEncryptionRequest
+type BarrierEnableEncryptionResponse = pkgtransport.BarrierEnableEncryptionResponse
 
 // Certificate types.
 type GetCertificateResponse = pkgtransport.GetCertificateResponse

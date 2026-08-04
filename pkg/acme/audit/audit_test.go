@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -404,14 +405,18 @@ func TestFileAuditLogger_Log(t *testing.T) {
 	err = logger.Log(ctx, event)
 	require.NoError(t, err)
 
-	// Flush to ensure event is written
+	// Flush to ensure event is written. Flush is documented best-effort against
+	// the async writer, so poll for the event to become visible (robust under
+	// heavy CI load / -race scheduling) rather than reading once.
 	err = logger.Flush()
 	require.NoError(t, err)
 
-	// Verify the log file was created and contains the event
-	data, err := os.ReadFile(logPath)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "CERTIFICATE_ISSUED")
+	var data []byte
+	require.Eventually(t, func() bool {
+		data, err = os.ReadFile(logPath)
+		return err == nil && strings.Contains(string(data), "CERTIFICATE_ISSUED")
+	}, 5*time.Second, 20*time.Millisecond, "audit event must be written to the log file")
+
 	assert.Contains(t, string(data), "account:123")
 	assert.Contains(t, string(data), "example.com")
 

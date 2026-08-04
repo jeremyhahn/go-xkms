@@ -18,6 +18,9 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/google/go-tpm/tpm2"
 )
@@ -34,11 +37,101 @@ var (
 	// ErrAuthChangeRecreate is returned when the primary key cannot be
 	// recreated with the new auth value during a ChangeAuth operation.
 	ErrAuthChangeRecreate = errors.New("tpm2: failed to recreate primary key with new auth")
+
+	// ErrAuthProbeRejected is returned when the TPM rejects the auth-probe
+	// Create command for a reason other than an authorization failure (for
+	// example TPM_RC_ATTRIBUTES from a malformed child template). This is a
+	// programming/spec error in the probe itself, never a wrong-PIN signal,
+	// and must NOT be collapsed into ErrAuthFailed by callers.
+	ErrAuthProbeRejected = errors.New("tpm2: auth probe rejected by TPM (not an auth failure)")
+
+	// ErrAuthSessionFlushFailed is returned (joined into a logged error, never
+	// swallowed) when the auth-probe HMAC session could not be flushed from
+	// the TPM after exhausting all retry attempts. This indicates a leaked
+	// TPM2_StartAuthSession handle: it permanently occupies one of the TPM's
+	// limited session-context slots (TCG TPM 2.0 Part 1, Section 19) until
+	// the resource manager's client connection is closed. Repeated
+	// occurrences are the precursor to TPM_RC_SESSION_MEMORY, which then
+	// fails every subsequent auth-verifying operation regardless of whether
+	// the presented auth value is correct.
+	ErrAuthSessionFlushFailed = errors.New("tpm2: failed to flush auth-probe session")
 )
+
+const (
+	// flushRetryAttempts bounds the number of TPM2_FlushContext attempts made
+	// to reclaim a single auth-probe session before giving up. This absorbs
+	// transient resource-manager contention on the shared TPM device (for
+	// example a concurrent command returning EBUSY on /dev/tpmrm0) without
+	// retrying indefinitely against a genuinely unresponsive TPM.
+	flushRetryAttempts = 3
+
+	// flushRetryDelay is the pause between successive flush retries.
+	flushRetryDelay = 20 * time.Millisecond
+)
+
+// authProbeTemplate builds the child object template used by VerifyAuth to
+// exercise the parent key's authorization. The TPM evaluates parent auth on
+// TPM2_Create before it creates the child, so any valid child template forces
+// the auth check. The template MUST be spec-consistent: a keyed-hash object
+// with Scheme=Null and FixedTPM|FixedParent|UserWithAuth (the previous value)
+// is rejected with TPM_RC_ATTRIBUTES before auth is ever evaluated, which
+// masks both correct and incorrect PINs. A keyed-hash HMAC(SHA256) object with
+// SensitiveDataOrigin set (TPM generates the key material, so no caller
+// sensitive data is required) is valid and lets the TPM reach the auth check.
+func authProbeTemplate() tpm2.TPM2BPublic {
+	return tpm2.New2B(tpm2.TPMTPublic{
+		Type:    tpm2.TPMAlgKeyedHash,
+		NameAlg: tpm2.TPMAlgSHA256,
+		ObjectAttributes: tpm2.TPMAObject{
+			FixedTPM:            true,
+			FixedParent:         true,
+			SensitiveDataOrigin: true,
+			UserWithAuth:        true,
+			SignEncrypt:         true,
+		},
+		Parameters: tpm2.NewTPMUPublicParms(
+			tpm2.TPMAlgKeyedHash,
+			&tpm2.TPMSKeyedHashParms{
+				Scheme: tpm2.TPMTKeyedHashScheme{
+					Scheme: tpm2.TPMAlgHMAC,
+					Details: tpm2.NewTPMUSchemeKeyedHash(
+						tpm2.TPMAlgHMAC,
+						&tpm2.TPMSSchemeHMAC{
+							HashAlg: tpm2.TPMAlgSHA256,
+						},
+					),
+				},
+			},
+		),
+	})
+}
 
 // VerifyAuth verifies the auth value on a persistent key at the given handle.
 // The TPM validates the auth by executing a Create command with the key as
 // parent. If the auth value is incorrect, the TPM returns an auth failure.
+//
+// A correct auth value returns nil. An incorrect auth value returns
+// ErrAuthFailed (the TPM reported TPM_RC_BAD_AUTH / TPM_RC_AUTH_FAIL). Any
+// other TPM rejection is wrapped in ErrAuthProbeRejected so callers can tell a
+// genuine wrong-PIN apart from a probe/transport fault.
+//
+// Session lifecycle: the auth-probe session is a real, caller-owned HMAC
+// session (started via TPM2_StartAuthSession up front, see TPM2.HMACSession)
+// rather than the one-shot, just-in-time session TPM2.HMAC builds. This is a
+// deliberate choice, not a style preference: go-tpm's one-shot session is
+// only flushed on the TPM's own initiative on success (when the command's
+// session attributes carry ContinueSession=false, TCG TPM 2.0 Part 1 Section
+// 19.7.1) or by go-tpm's CleanupFailure on the specific path where the TPM
+// itself returns a response header error (tpm2/reflect.go, execute()). Every
+// other failure between session start and that point -- a marshalling error,
+// or a transport fault such as "write /dev/tpmrm0: device or resource busy"
+// -- returns before CleanupFailure ever runs, permanently leaking the
+// already-started session handle. Repeated leaks exhaust the TPM's session
+// slots (TPM_RC_SESSION_MEMORY), after which every future VerifyAuth call
+// fails regardless of whether the presented PIN is correct -- a permanent,
+// process-lifetime PIN-verification outage. Owning the session explicitly
+// here means its flush is unconditional and lives entirely in our own defer,
+// independent of which path the probe command takes to return.
 func (tpm *TPM2) VerifyAuth(handle tpm2.TPMHandle, authValue []byte) error {
 	if tpm.transport == nil {
 		return ErrTransportNotInitialized
@@ -50,35 +143,35 @@ func (tpm *TPM2) VerifyAuth(handle tpm2.TPMHandle, authValue []byte) error {
 		return errors.Join(ErrAuthChangeKeyNotFound, err)
 	}
 
-	// Create an HMAC session with the provided auth value.
-	session := tpm.HMAC(authValue)
+	// Start a real HMAC session bound to the provided auth value. Unlike
+	// TPM2.HMAC's one-shot session, this issues TPM2_StartAuthSession
+	// immediately, so the session handle is known to us -- and therefore
+	// flushable by us -- before the probe command ever executes.
+	session, closeSession, err := tpm.HMACSession(authValue)
+	if err != nil {
+		return errors.Join(ErrAuthProbeRejected, &errs.Wrapped{Msg: "start auth-probe session", Err: err})
+	}
+	defer func() {
+		if flushErr := flushSessionWithRetry(closeSession); flushErr != nil {
+			tpm.logger.Error("tpm: VerifyAuth - failed to flush auth-probe session",
+				slog.String("handle", fmt.Sprintf("0x%x", handle)),
+				slog.String("error", flushErr.Error()))
+		}
+	}()
 
 	// Create a minimal keyed-hash child under this handle. The TPM requires
-	// correct parent auth for the Create command. If the auth is wrong,
-	// the TPM immediately returns TPM_RC_BAD_AUTH or TPM_RC_AUTH_FAIL.
+	// correct parent auth for the Create command. If the auth is wrong, the
+	// TPM returns TPM_RC_BAD_AUTH or TPM_RC_AUTH_FAIL. Whatever this command
+	// does -- succeed, fail on auth, or fail for any other reason including a
+	// transport-level fault -- the deferred flush above always runs and owns
+	// reclaiming the session; it does not depend on this call's outcome.
 	_, err = tpm2.Create{
 		ParentHandle: tpm2.AuthHandle{
 			Handle: handle,
 			Name:   name,
 			Auth:   session,
 		},
-		InPublic: tpm2.New2B(tpm2.TPMTPublic{
-			Type:    tpm2.TPMAlgKeyedHash,
-			NameAlg: tpm2.TPMAlgSHA256,
-			ObjectAttributes: tpm2.TPMAObject{
-				FixedTPM:     true,
-				FixedParent:  true,
-				UserWithAuth: true,
-			},
-			Parameters: tpm2.NewTPMUPublicParms(
-				tpm2.TPMAlgKeyedHash,
-				&tpm2.TPMSKeyedHashParms{
-					Scheme: tpm2.TPMTKeyedHashScheme{
-						Scheme: tpm2.TPMAlgNull,
-					},
-				},
-			),
-		}),
+		InPublic: authProbeTemplate(),
 		InSensitive: tpm2.TPM2BSensitiveCreate{
 			Sensitive: &tpm2.TPMSSensitiveCreate{},
 		},
@@ -87,12 +180,39 @@ func (tpm *TPM2) VerifyAuth(handle tpm2.TPMHandle, authValue []byte) error {
 		if isTPMAuthError(err) {
 			return ErrAuthFailed
 		}
-		return err
+		// Not an auth failure: a malformed probe, transport fault, or other
+		// TPM rejection. Surface it distinctly so it is never mistaken for a
+		// wrong PIN.
+		return errors.Join(ErrAuthProbeRejected, err)
 	}
 
 	// Auth verified successfully. The ephemeral child is not persisted
 	// and will be garbage collected by the TPM.
 	return nil
+}
+
+// flushSessionWithRetry invokes close (a TPM2_FlushContext issued against the
+// auth-probe session) up to flushRetryAttempts times, pausing flushRetryDelay
+// between attempts. The retry absorbs the same transient resource-manager
+// contention that can cause the probe command itself to fail (for example
+// "device or resource busy" on a shared /dev/tpmrm0), so a session is never
+// abandoned solely because a single flush attempt lost a race for the
+// device. All attempts failing returns ErrAuthSessionFlushFailed joined with
+// the last underlying error; callers must log this rather than discard it,
+// since it identifies a leaked TPM session slot.
+func flushSessionWithRetry(close func() error) error {
+	var lastErr error
+	for attempt := 0; attempt < flushRetryAttempts; attempt++ {
+		err := close()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if attempt < flushRetryAttempts-1 {
+			time.Sleep(flushRetryDelay)
+		}
+	}
+	return errors.Join(ErrAuthSessionFlushFailed, lastErr)
 }
 
 // ChangeAuth changes the auth value on a persistent primary key. For primary
@@ -136,7 +256,7 @@ func (tpm *TPM2) ChangeAuth(handle tpm2.TPMHandle, currentAuth, newAuth []byte) 
 		PersistentHandle: handle,
 	}.Execute(tpm.transport)
 	if err != nil {
-		return errors.Join(ErrAuthChangeRecreate, fmt.Errorf("evict old handle 0x%x: %w", handle, err))
+		return errors.Join(ErrAuthChangeRecreate, &errs.Wrapped{Msg: fmt.Sprintf("evict old handle 0x%x", handle), Err: err})
 	}
 
 	// Recreate the primary with the same template but new auth.
@@ -157,7 +277,7 @@ func (tpm *TPM2) ChangeAuth(handle tpm2.TPMHandle, currentAuth, newAuth []byte) 
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		return errors.Join(ErrAuthChangeRecreate, fmt.Errorf("recreate primary: %w", err))
+		return errors.Join(ErrAuthChangeRecreate, &errs.Wrapped{Msg: "recreate primary", Err: err})
 	}
 	defer tpm.Flush(primaryKey.ObjectHandle)
 
@@ -174,7 +294,7 @@ func (tpm *TPM2) ChangeAuth(handle tpm2.TPMHandle, currentAuth, newAuth []byte) 
 		PersistentHandle: handle,
 	}.Execute(tpm.transport)
 	if err != nil {
-		return errors.Join(ErrAuthChangeRecreate, fmt.Errorf("persist new key at 0x%x: %w", handle, err))
+		return errors.Join(ErrAuthChangeRecreate, &errs.Wrapped{Msg: fmt.Sprintf("persist new key at 0x%x", handle), Err: err})
 	}
 
 	tpm.logger.Info("auth changed for persistent handle",

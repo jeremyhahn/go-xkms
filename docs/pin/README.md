@@ -106,12 +106,45 @@ incoming FIDO2 PIN hashes without ever holding the raw PIN.
 
 ### How it works
 
-- **VerifyUserPIN**: Calls `platformStore.VerifyAuth(pin)`, which executes `tpm.VerifyAuth(srkHandle, pin)`. The TPM accepts or rejects the auth value.
+- **VerifyUserPIN**: Calls `platformStore.VerifyAuth(pin)`, which executes `tpm.VerifyAuth(srkHandle, pin)`. A correct PIN returns `nil`; an incorrect PIN returns `ErrAuthFailed`; a probe or transport fault (invalid template, missing handle) returns `ErrAuthProbeRejected` and is never misreported as an invalid PIN — see [TPM 2.0 backend](../backends/tpm2.md) for the auth-probe details.
 - **ChangeUserPIN**: Calls `platformStore.ChangeAuth(currentPIN, newPIN)`, which recreates the PlatformSRK with the new auth value.
 - **SetUserPIN**: Verifies the PIN matches the PlatformSRK's existing auth, then caches the FIDO2 hash. The `soPIN` parameter is ignored (exists to satisfy the interface).
 - **Lockout**: Real TPM dictionary attack counters are queried via `GetLockoutInfo()`. Auth failures return `ErrPINInvalidWithStatus` (with remaining attempts) or `ErrTPMLocked` when the DA counter is exhausted.
 - **SO PIN**: Not stored or supported. `SetSOPIN`, `ChangeSOPIN`, and `VerifySOPIN` all return `ErrPINNotSet`.
 - **Initialization**: `IsInitialized()` returns `platformStore.IsProvisioned()`. If the platform is provisioned at construction time, `UserPINSet()` is optimistically set to `true`.
+
+### First-Boot SRK Enrollment
+
+`PlatformKeyStore.EnrollPlatformSRK(userPIN string) error` is the entry point
+for binding a PIN to the Platform SRK on first boot. It must complete
+successfully before the TPM2 PIN backend is usable end-to-end.
+
+- **Idempotent**: returns `ErrPlatformSRKAlreadyEnrolled` when `IsAuthReady()`
+  is already `true`. A daemon can call it unconditionally on every boot and
+  treat that sentinel as a no-op.
+- **Empty PIN rejected**: an empty `userPIN` returns
+  `ErrPlatformSRKEnrollEmptyPIN`. First-boot enrollment must bind a real PIN.
+- Reuses the existing `Initialize`/`ensureSRKAuth` machinery; no new TPM
+  primitives are introduced.
+
+**`IsInitialized` vs `IsAuthReady`** — these are distinct predicates:
+
+| Predicate | Meaning |
+|-----------|---------|
+| `IsInitialized()` | The SRK object exists in the TPM. May be `true` when the SRK was created by a prior TPM owner with unknown auth. Using this alone to activate the TPM2 PIN backend is insufficient. |
+| `IsAuthReady()` | The SRK's auth value is known-good — set by this application or confirmed via `VerifyAuth`. This is the correct predicate for selecting the TPM2 PIN backend. |
+
+`SetAuthReady(bool)` lets the daemon restore a previously confirmed auth-ready
+state from persisted config (e.g. when `PINStrategy == "tpm2"` is loaded at
+startup) without re-running enrollment.
+
+Boot lifecycle:
+
+1. **First boot** — call `EnrollPlatformSRK(userPIN)`. The SRK is created
+   with `userPIN` as its authorization value and `authReady` is marked.
+2. **Subsequent boots** — `EnrollPlatformSRK` returns
+   `ErrPlatformSRKAlreadyEnrolled` (when `authReady`), or the daemon restores
+   `authReady` from persisted `PINStrategy` via `SetAuthReady(true)`.
 
 ### PlatformAuthProvider interface
 
@@ -286,6 +319,8 @@ svc = pin.NewService(swBackend, slog.Default())
 | `ErrUnsupportedHashAlgorithm` | Unknown hash algorithm in HashConfig or PINRecord |
 | `ErrStateCorrupted` | Legacy state file contains invalid data |
 | `ErrStrategyNotSet` | No PIN strategy has been configured |
+| `ErrPlatformSRKAlreadyEnrolled` | `EnrollPlatformSRK` called when `IsAuthReady()` is already `true`; treat as a no-op on subsequent boots |
+| `ErrPlatformSRKEnrollEmptyPIN` | `EnrollPlatformSRK` called with an empty `userPIN`; first-boot enrollment must bind a real PIN |
 
 ### Typed errors
 
@@ -296,10 +331,11 @@ svc = pin.NewService(swBackend, slog.Default())
 | `*ErrStoragePersistFailed` | Failed to write PIN record to `storage.Backend`; wraps cause |
 | `*ErrStorageLoadFailed` | Failed to read PIN record from `storage.Backend`; wraps cause |
 | `*ErrUnsupportedPBKDF2Hash` | Unsupported hash function specified for PBKDF2 (valid: SHA-256, SHA-384, SHA-512) |
+| `*ErrAuthProbeRejected` | TPM rejected the auth-probe `TPM2_Create` for a reason other than an authorization failure (template fault, transport error); never a wrong-PIN signal and must not be collapsed into `ErrAuthFailed` |
 
 ## Security Properties
 
-- **TPM2 backend**: PIN verification is hardware-enforced. The TPM's dictionary attack protection provides rate limiting with configurable lockout thresholds and recovery intervals. PIN values never leave the TPM boundary for verification.
+- **TPM2 backend**: PIN verification is hardware-enforced. PIN values never leave the TPM boundary for verification. Dictionary-attack throttling is effective only when the Platform SRK (at `0x81000002`) has its `NoDA` attribute cleared — a standard SRK template sets `NoDA = true`, which leaves PIN brute-forcing unthrottled despite the TPM DA counter plumbing being present. The Platform SRK used for PIN verification is provisioned with `NoDA = false` so each wrong PIN increments the hardware DA counter toward lockout, while a correct PIN authorizes normally.
 - **Software backend**: PINs are protected by memory-hard (Argon2id) or iteration-hard (PBKDF2) key derivation. Each PIN record includes a unique random salt. Verification uses `subtle.ConstantTimeCompare` to prevent timing side channels.
 - **FIDO2 hash**: Stored in `mlock`'d, guard-paged memory (`mem.GuardedBuffer`) to prevent swapping to disk. Intermediate values are zeroed after use.
 - **Lock-free concurrency**: All mutable state uses `atomic.Bool` and `atomic.Pointer` with no mutexes. The `fido2Guard` pointer is swapped atomically, and the old buffer is freed after replacement.

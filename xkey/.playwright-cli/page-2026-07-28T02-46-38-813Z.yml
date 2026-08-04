@@ -1,0 +1,283 @@
+- generic [ref=e3]:
+  - navigation "Main navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e9]: xKey
+      - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+        - img [ref=e11]
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: OVERVIEW
+        - button "Dashboard" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - generic [ref=e19]: Dashboard
+        - button "Pairing" [ref=e20] [cursor=pointer]:
+          - img [ref=e21]
+          - generic [ref=e23]: Pairing
+        - button "TPM 2.0" [ref=e24] [cursor=pointer]:
+          - img [ref=e25]
+          - generic [ref=e27]: TPM 2.0
+      - generic [ref=e28]:
+        - generic [ref=e29]: STORE
+        - button "Keys" [ref=e30] [cursor=pointer]:
+          - img [ref=e31]
+          - generic [ref=e33]: Keys
+        - button "Trust Store" [ref=e34] [cursor=pointer]:
+          - img [ref=e35]
+          - generic [ref=e37]: Trust Store
+        - button "Certificates" [ref=e38] [cursor=pointer]:
+          - img [ref=e39]
+          - generic [ref=e41]: Certificates
+      - generic [ref=e42]:
+        - generic [ref=e43]: APPLICATIONS
+        - button "SSH" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: SSH
+        - button "FIDO2" [ref=e48] [cursor=pointer]:
+          - img [ref=e49]
+          - generic [ref=e51]: FIDO2
+        - button "OATH" [ref=e52] [cursor=pointer]:
+          - img [ref=e53]
+          - generic [ref=e55]: OATH
+        - button "PIV" [ref=e56] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: PIV
+        - button "Passwords" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e63]: Passwords
+        - button "Sealed Data" [ref=e64] [cursor=pointer]:
+          - img [ref=e65]
+          - generic [ref=e67]: Sealed Data
+        - button "Browser" [ref=e68] [cursor=pointer]:
+          - img [ref=e69]
+          - generic [ref=e71]: Browser
+      - generic [ref=e72]:
+        - generic [ref=e73]: MANAGEMENT
+        - button "Audit Log" [active] [ref=e74] [cursor=pointer]:
+          - img [ref=e75]
+          - generic [ref=e77]: Audit Log
+        - button "Admin" [ref=e78] [cursor=pointer]:
+          - img [ref=e79]
+          - generic [ref=e81]: Admin
+      - generic [ref=e82]:
+        - generic [ref=e83]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e84] [cursor=pointer]:
+          - img [ref=e85]
+          - generic [ref=e87]: OIDC
+        - button "API Explorer" [ref=e88] [cursor=pointer]:
+          - img [ref=e89]
+          - generic [ref=e91]: API Explorer
+    - generic [ref=e92]:
+      - generic "Standalone mode" [ref=e93]:
+        - generic [ref=e95]: Standalone
+      - button "Theme" [ref=e96] [cursor=pointer]:
+        - img [ref=e97]
+        - generic [ref=e99]: Theme
+      - button "Settings" [ref=e100] [cursor=pointer]:
+        - img [ref=e101]
+        - generic [ref=e103]: Settings
+  - main [ref=e104]:
+    - generic [ref=e106]:
+      - button "Lock app" [ref=e107] [cursor=pointer]:
+        - img [ref=e108]
+        - generic [ref=e110]: Lock
+      - button "No touch pending" [disabled] [ref=e111]:
+        - img [ref=e113]
+    - generic [ref=e1422]:
+      - generic [ref=e1425]:
+        - heading "Audit Log" [level=1] [ref=e1426]
+        - paragraph [ref=e1427]: Security event history
+      - generic [ref=e1428]:
+        - generic [ref=e1429]:
+          - img [ref=e1431]
+          - textbox "Search events..." [ref=e1433]
+        - generic [ref=e1434]:
+          - combobox [ref=e1435] [cursor=pointer]:
+            - option "All operations" [selected]
+            - option "Unseal_data"
+            - option "Seal_data"
+            - option "Key_created"
+            - option "Oath_code_generated"
+            - option "Oath_credential_created"
+            - option "Pin_verified"
+            - option "Config_updated"
+            - option "Pin_changed"
+            - option "So_pin_failed"
+            - option "Service_started"
+            - option "Barrier_initialized"
+            - option "Tpm_auth_failed"
+          - combobox [ref=e1436] [cursor=pointer]:
+            - option "All devices" [selected]
+          - combobox [ref=e1437] [cursor=pointer]:
+            - option "All statuses" [selected]
+            - option "Success"
+            - option "Failure"
+        - button "Export" [ref=e1438] [cursor=pointer]:
+          - img [ref=e1439]
+          - generic [ref=e1441]: Export
+      - generic [ref=e1442]:
+        - generic [ref=e1444]: 18 event(s) found
+        - generic [ref=e1445]:
+          - generic [ref=e1446]:
+            - img [ref=e1448]
+            - generic [ref=e1450]:
+              - generic [ref=e1451]:
+                - generic [ref=e1452]: unseal_data
+                - img [ref=e1454]
+              - paragraph [ref=e1456]: unseal_data operation
+            - generic [ref=e1457]: 17 seconds ago
+          - generic [ref=e1458]:
+            - img [ref=e1460]
+            - generic [ref=e1462]:
+              - generic [ref=e1463]:
+                - generic [ref=e1464]: seal_data
+                - img [ref=e1466]
+              - paragraph [ref=e1468]: seal_data operation
+            - generic [ref=e1469]: 24 seconds ago
+          - generic [ref=e1470]:
+            - img [ref=e1472]
+            - generic [ref=e1474]:
+              - generic [ref=e1475]:
+                - generic [ref=e1476]: key_created
+                - img [ref=e1478]
+              - paragraph [ref=e1480]: key_created operation
+              - generic [ref=e1481]:
+                - generic [ref=e1482]: "Backend: tpm2"
+                - generic [ref=e1483]: "Key: chrometest-s..."
+            - generic [ref=e1484]: 2 minutes ago
+          - generic [ref=e1485]:
+            - img [ref=e1487]
+            - generic [ref=e1489]:
+              - generic [ref=e1490]:
+                - generic [ref=e1491]: key_created
+                - img [ref=e1493]
+              - paragraph [ref=e1495]: "ssh/keys: backend GenerateKey: ssh/backend: generate key \"ssh-user-local-chrometest-ssh-tpm\" on \"tpm2\": tpm2: unsupported key algorithm: Ed25519"
+              - generic [ref=e1496]:
+                - generic [ref=e1497]: "Backend: tpm2"
+                - generic [ref=e1498]: "Key: chrometest-s..."
+            - generic [ref=e1499]: 2 minutes ago
+          - generic [ref=e1500]:
+            - img [ref=e1502]
+            - generic [ref=e1504]:
+              - generic [ref=e1505]:
+                - generic [ref=e1506]: key_created
+                - img [ref=e1508]
+              - paragraph [ref=e1510]: "ssh/keys: backend GenerateKey: ssh/backend: generate key \"ssh-user-local-chrometest-ssh-tpm\" on \"tpm2\": tpm2: unsupported key algorithm: Ed25519"
+              - generic [ref=e1511]:
+                - generic [ref=e1512]: "Backend: tpm2"
+                - generic [ref=e1513]: "Key: chrometest-s..."
+            - generic [ref=e1514]: 3 minutes ago
+          - generic [ref=e1515]:
+            - img [ref=e1517]
+            - generic [ref=e1519]:
+              - generic [ref=e1520]:
+                - generic [ref=e1521]: key_created
+                - img [ref=e1523]
+              - paragraph [ref=e1525]: key_created operation
+              - generic [ref=e1526]:
+                - generic [ref=e1527]: "Backend: software"
+                - generic [ref=e1528]: "Key: chrometest-s..."
+            - generic [ref=e1529]: 3 minutes ago
+          - generic [ref=e1530]:
+            - img [ref=e1532]
+            - generic [ref=e1534]:
+              - generic [ref=e1535]:
+                - generic [ref=e1536]: oath_code_generated
+                - img [ref=e1538]
+              - paragraph [ref=e1540]: oath_code_generated operation
+            - generic [ref=e1541]: 4 minutes ago
+          - generic [ref=e1542]:
+            - img [ref=e1544]
+            - generic [ref=e1546]:
+              - generic [ref=e1547]:
+                - generic [ref=e1548]: oath_code_generated
+                - img [ref=e1550]
+              - paragraph [ref=e1552]: oath_code_generated operation
+            - generic [ref=e1553]: 4 minutes ago
+          - generic [ref=e1554]:
+            - img [ref=e1556]
+            - generic [ref=e1558]:
+              - generic [ref=e1559]:
+                - generic [ref=e1560]: oath_credential_created
+                - img [ref=e1562]
+              - paragraph [ref=e1564]: oath_credential_created operation
+            - generic [ref=e1565]: 4 minutes ago
+          - generic [ref=e1566]:
+            - img [ref=e1568]
+            - generic [ref=e1570]:
+              - generic [ref=e1571]:
+                - generic [ref=e1572]: pin_verified
+                - img [ref=e1574]
+              - paragraph [ref=e1576]: pin_verified operation
+              - generic [ref=e1578]: "Backend: tpm2"
+            - generic [ref=e1579]: 10 minutes ago
+          - generic [ref=e1580]:
+            - img [ref=e1582]
+            - generic [ref=e1584]:
+              - generic [ref=e1585]:
+                - generic [ref=e1586]: config_updated
+                - img [ref=e1588]
+              - paragraph [ref=e1590]: config_updated operation
+            - generic [ref=e1591]: 10 minutes ago
+          - generic [ref=e1592]:
+            - img [ref=e1594]
+            - generic [ref=e1596]:
+              - generic [ref=e1597]:
+                - generic [ref=e1598]: pin_changed
+                - img [ref=e1600]
+              - paragraph [ref=e1602]: pin_changed operation
+              - generic [ref=e1604]: "Backend: tpm2"
+            - generic [ref=e1605]: 10 minutes ago
+          - generic [ref=e1606]:
+            - img [ref=e1608]
+            - generic [ref=e1610]:
+              - generic [ref=e1611]:
+                - generic [ref=e1612]: so_pin_failed
+                - img [ref=e1614]
+              - paragraph [ref=e1616]: "pin: PIN not set"
+              - generic [ref=e1618]: "Backend: tpm2"
+            - generic [ref=e1619]: 10 minutes ago
+          - generic [ref=e1620]:
+            - img [ref=e1622]
+            - generic [ref=e1624]:
+              - generic [ref=e1625]:
+                - generic [ref=e1626]: so_pin_failed
+                - img [ref=e1628]
+              - paragraph [ref=e1630]: "pin: PIN not set"
+              - generic [ref=e1632]: "Backend: tpm2"
+            - generic [ref=e1633]: 10 minutes ago
+          - generic [ref=e1634]:
+            - img [ref=e1636]
+            - generic [ref=e1638]:
+              - generic [ref=e1639]:
+                - generic [ref=e1640]: so_pin_failed
+                - img [ref=e1642]
+              - paragraph [ref=e1644]: "pin: PIN not set"
+              - generic [ref=e1646]: "Backend: tpm2"
+            - generic [ref=e1647]: 10 minutes ago
+          - generic [ref=e1648]:
+            - img [ref=e1650]
+            - generic [ref=e1652]:
+              - generic [ref=e1653]:
+                - generic [ref=e1654]: service_started
+                - img [ref=e1656]
+              - paragraph [ref=e1658]: service_started operation
+            - generic [ref=e1659]: 10 minutes ago
+          - generic [ref=e1660]:
+            - img [ref=e1662]
+            - generic [ref=e1664]:
+              - generic [ref=e1665]:
+                - generic [ref=e1666]: barrier_initialized
+                - img [ref=e1668]
+              - paragraph [ref=e1670]: barrier_initialized operation
+            - generic [ref=e1671]: 10 minutes ago
+          - generic [ref=e1672]:
+            - img [ref=e1674]
+            - generic [ref=e1676]:
+              - generic [ref=e1677]:
+                - generic [ref=e1678]: tpm_auth_failed
+                - img [ref=e1680]
+              - paragraph [ref=e1682]: "TPM_RC_BAD_AUTH (session 1): authorization failure without DA implications"
+              - generic [ref=e1684]: "Backend: tpm2"
+            - generic [ref=e1685]: 10 minutes ago

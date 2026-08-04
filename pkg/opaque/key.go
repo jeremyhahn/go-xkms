@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -205,10 +207,10 @@ func (o *Opaque) Digest(data []byte) ([]byte, error) {
 	hasher := hash.New()
 	n, err := hasher.Write(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to write data to hasher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to write data to hasher", Err: err}
 	}
 	if n != len(data) {
-		return nil, fmt.Errorf("incomplete write to hasher: wrote %d of %d bytes", n, len(data))
+		return nil, &errs.Message{Msg: fmt.Sprintf("incomplete write to hasher: wrote %d of %d bytes", n, len(data))}
 	}
 	return hasher.Sum(nil), nil
 }

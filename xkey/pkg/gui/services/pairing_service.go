@@ -205,7 +205,7 @@ func (s *PairingService) RequestPairing(identityKeyBase64, origin string) (strin
 
 	identityKey, err := base64.StdEncoding.DecodeString(identityKeyBase64)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrPairingInvalidIdentityKey, err)
+		return "", &SentinelCauseError{Sentinel: ErrPairingInvalidIdentityKey, Cause: err}
 	}
 
 	s.mu.Lock()
@@ -222,7 +222,7 @@ func (s *PairingService) RequestPairing(identityKeyBase64, origin string) (strin
 			"error", err,
 		)
 		s.logPairingEvent(audit.OpPairingStarted, false, err, map[string]any{"origin": origin})
-		return "", fmt.Errorf("%w: %w", ErrPairingFailed, err)
+		return "", &SentinelCauseError{Sentinel: ErrPairingFailed, Cause: err}
 	}
 
 	s.log.Info("pairing ceremony started",
@@ -254,7 +254,7 @@ func (s *PairingService) VerifyPairingCode(identityKeyBase64, origin, code strin
 
 	identityKey, err := base64.StdEncoding.DecodeString(identityKeyBase64)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrPairingInvalidIdentityKey, err)
+		return &SentinelCauseError{Sentinel: ErrPairingInvalidIdentityKey, Cause: err}
 	}
 
 	s.mu.Lock()
@@ -270,7 +270,7 @@ func (s *PairingService) VerifyPairingCode(identityKeyBase64, origin, code strin
 			"error", err,
 		)
 		s.logPairingEvent(audit.OpPairingFailed, false, err, map[string]any{"origin": origin})
-		return fmt.Errorf("%w: %w", ErrPairingFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPairingFailed, Cause: err}
 	}
 
 	s.log.Info("extension paired successfully",
@@ -309,7 +309,7 @@ func (s *PairingService) Unpair(origin string) error {
 			"error", err,
 		)
 		s.logPairingEvent(audit.OpPairingUnpaired, false, err, map[string]any{"origin": origin})
-		return fmt.Errorf("%w: %w", ErrPairingFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPairingFailed, Cause: err}
 	}
 
 	s.log.Info("extension unpaired", "origin", origin)
@@ -375,7 +375,7 @@ func parseBrowser(browser string) (nativemsg.Browser, error) {
 	case "firefox":
 		return nativemsg.BrowserFirefox, nil
 	default:
-		return "", fmt.Errorf("%w: %q", ErrManifestInvalidBrowser, browser)
+		return "", &DetailError{Err: ErrManifestInvalidBrowser, Detail: fmt.Sprintf(": %q", browser)}
 	}
 }
 
@@ -388,7 +388,7 @@ func parseBrowser(browser string) (nativemsg.Browser, error) {
 func (s *PairingService) InstallManifest(browser string) error {
 	binaryPath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("%w: cannot resolve binary path: %v", ErrManifestInstallFailed, err)
+		return &DetailError{Err: ErrManifestInstallFailed, Detail: fmt.Sprintf(": cannot resolve binary path: %v", err)}
 	}
 
 	normalized := strings.ToLower(strings.TrimSpace(browser))
@@ -398,7 +398,7 @@ func (s *PairingService) InstallManifest(browser string) error {
 		for _, b := range []nativemsg.Browser{nativemsg.BrowserChrome, nativemsg.BrowserFirefox} {
 			if err := nativemsg.InstallManifest(b, binaryPath); err != nil {
 				s.log.Error("manifest install failed", "browser", b, "error", err)
-				installErr = fmt.Errorf("%w: %v", ErrManifestInstallFailed, err)
+				installErr = &SentinelCauseError{Sentinel: ErrManifestInstallFailed, Cause: err}
 			} else {
 				s.log.Info("manifest installed", "browser", b)
 			}
@@ -414,7 +414,7 @@ func (s *PairingService) InstallManifest(browser string) error {
 	if err := nativemsg.InstallManifest(b, binaryPath); err != nil {
 		s.log.Error("manifest install failed", "browser", b, "error", err)
 		s.logPairingEvent(audit.OpPairingManifest, false, err, map[string]any{"browser": browser, "action": "install"})
-		return fmt.Errorf("%w: %v", ErrManifestInstallFailed, err)
+		return &SentinelCauseError{Sentinel: ErrManifestInstallFailed, Cause: err}
 	}
 
 	s.log.Info("manifest installed", "browser", b)
@@ -436,7 +436,7 @@ func (s *PairingService) UninstallManifest(browser string) error {
 			if err := nativemsg.UninstallManifest(b); err != nil {
 				if !errors.Is(err, nativemsg.ErrManifestNotFound) {
 					s.log.Error("manifest uninstall failed", "browser", b, "error", err)
-					uninstallErr = fmt.Errorf("%w: %v", ErrManifestUninstallFailed, err)
+					uninstallErr = &SentinelCauseError{Sentinel: ErrManifestUninstallFailed, Cause: err}
 				}
 			} else {
 				s.log.Info("manifest uninstalled", "browser", b)
@@ -453,7 +453,7 @@ func (s *PairingService) UninstallManifest(browser string) error {
 	if err := nativemsg.UninstallManifest(b); err != nil {
 		s.log.Error("manifest uninstall failed", "browser", b, "error", err)
 		s.logPairingEvent(audit.OpPairingManifest, false, err, map[string]any{"browser": browser, "action": "uninstall"})
-		return fmt.Errorf("%w: %v", ErrManifestUninstallFailed, err)
+		return &SentinelCauseError{Sentinel: ErrManifestUninstallFailed, Cause: err}
 	}
 
 	s.log.Info("manifest uninstalled", "browser", b)

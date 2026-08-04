@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -40,7 +42,7 @@ func NewGRPCClient(addr string) (*GRPCClient, error) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to connect", Err: err}
 	}
 
 	return &GRPCClient{

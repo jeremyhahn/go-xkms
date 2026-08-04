@@ -20,13 +20,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -172,7 +173,7 @@ func (s *PlatformPolicyService) GetStatus() (retStatus *PlatformPolicyStatus, re
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetStatus", "recover", r)
 			retStatus = nil
-			retErr = fmt.Errorf("platform_policy_service: panic in GetStatus: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("platform_policy_service: panic in GetStatus: %v", r)}
 		}
 	}()
 
@@ -200,7 +201,7 @@ func (s *PlatformPolicyService) CreatePolicy(pcrs []int, bank string) (retStatus
 		if r := recover(); r != nil {
 			s.log.Error("panic in CreatePolicy", "recover", r)
 			retStatus = nil
-			retErr = fmt.Errorf("platform_policy_service: panic in CreatePolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("platform_policy_service: panic in CreatePolicy: %v", r)}
 		}
 	}()
 
@@ -248,7 +249,7 @@ func (s *PlatformPolicyService) UpdatePolicy(pcrs []int, bank string) (retStatus
 		if r := recover(); r != nil {
 			s.log.Error("panic in UpdatePolicy", "recover", r)
 			retStatus = nil
-			retErr = fmt.Errorf("platform_policy_service: panic in UpdatePolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("platform_policy_service: panic in UpdatePolicy: %v", r)}
 		}
 	}()
 
@@ -316,7 +317,7 @@ func (s *PlatformPolicyService) VerifyPolicy() (retValid bool, retErr error) {
 		if r := recover(); r != nil {
 			s.log.Error("panic in VerifyPolicy", "recover", r)
 			retValid = false
-			retErr = fmt.Errorf("platform_policy_service: panic in VerifyPolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("platform_policy_service: panic in VerifyPolicy: %v", r)}
 		}
 	}()
 
@@ -345,7 +346,7 @@ func (s *PlatformPolicyService) ExportPolicy() (retVal string, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ExportPolicy", "recover", r)
-			retErr = fmt.Errorf("platform_policy_service: panic in ExportPolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("platform_policy_service: panic in ExportPolicy: %v", r)}
 		}
 	}()
 
@@ -391,7 +392,7 @@ func (s *PlatformPolicyService) GetPlatformPolicyAsPCRPolicy() (retPolicy *PCRPo
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetPlatformPolicyAsPCRPolicy", "recover", r)
 			retPolicy = nil
-			retErr = fmt.Errorf("platform_policy_service: panic in GetPlatformPolicyAsPCRPolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("platform_policy_service: panic in GetPlatformPolicyAsPCRPolicy: %v", r)}
 		}
 	}()
 
@@ -416,7 +417,7 @@ func (s *PlatformPolicyService) RefreshPlatformPolicyPCRs() (retPolicy *PCRPolic
 		if r := recover(); r != nil {
 			s.log.Error("panic in RefreshPlatformPolicyPCRs", "recover", r)
 			retPolicy = nil
-			retErr = fmt.Errorf("platform_policy_service: panic in RefreshPlatformPolicyPCRs: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("platform_policy_service: panic in RefreshPlatformPolicyPCRs: %v", r)}
 		}
 	}()
 
@@ -565,7 +566,7 @@ func (s *PlatformPolicyService) readPCRDigests(pcrs []int, bank string) (retDige
 		if r := recover(); r != nil {
 			s.log.Error("panic in readPCRDigests", "recover", r)
 			retDigests = nil
-			retErr = fmt.Errorf("platform_policy_service: panic in readPCRDigests: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("platform_policy_service: panic in readPCRDigests: %v", r)}
 		}
 	}()
 
@@ -615,7 +616,7 @@ func (s *PlatformPolicyService) verifyDigests(def *PlatformPolicyDefinition) (re
 		if r := recover(); r != nil {
 			s.log.Error("panic in verifyDigests", "recover", r)
 			retValid = false
-			retErr = fmt.Errorf("platform_policy_service: panic in verifyDigests: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("platform_policy_service: panic in verifyDigests: %v", r)}
 		}
 	}()
 

@@ -85,7 +85,7 @@ func CreateImage(cfg ImageConfig) error {
 	if cfg.Passphrase == "" {
 		return &USBError{
 			Operation: "validate_config",
-			Err:       fmt.Errorf("%w: passphrase is required", ErrInvalidSize),
+			Err:       &DetailError{Err: ErrInvalidSize, Detail: ": passphrase is required"},
 		}
 	}
 
@@ -107,7 +107,7 @@ func createOnImageFile(cfg ImageConfig) error {
 		return &USBError{
 			Operation: "validate_size",
 			Path:      cfg.Path,
-			Err:       fmt.Errorf("%w: minimum size is %s, got %s", ErrInvalidSize, FormatSize(MinImageSize), FormatSize(cfg.SizeBytes)),
+			Err:       &DetailError{Err: ErrInvalidSize, Detail: fmt.Sprintf(": minimum size is %s, got %s", FormatSize(MinImageSize), FormatSize(cfg.SizeBytes))},
 		}
 	}
 
@@ -211,7 +211,7 @@ func createPartitionTable(device string) error {
 		return &USBError{
 			Operation: "zap_partitions",
 			Path:      device,
-			Err:       fmt.Errorf("%w: %v", ErrPartitionFailed, err),
+			Err:       &SentinelCauseError{Sentinel: ErrPartitionFailed, Cause: err},
 		}
 	}
 
@@ -228,7 +228,7 @@ func createPartitionTable(device string) error {
 		return &USBError{
 			Operation: "create_partition_1",
 			Path:      device,
-			Err:       fmt.Errorf("%w: %v", ErrPartitionFailed, err),
+			Err:       &SentinelCauseError{Sentinel: ErrPartitionFailed, Cause: err},
 		}
 	}
 
@@ -242,7 +242,7 @@ func createPartitionTable(device string) error {
 		return &USBError{
 			Operation: "create_partition_2",
 			Path:      device,
-			Err:       fmt.Errorf("%w: %v", ErrPartitionFailed, err),
+			Err:       &SentinelCauseError{Sentinel: ErrPartitionFailed, Cause: err},
 		}
 	}
 
@@ -255,7 +255,7 @@ func formatFAT32(partition string) error {
 		return &USBError{
 			Operation: "format_fat32",
 			Path:      partition,
-			Err:       fmt.Errorf("%w: %v", ErrFormatFailed, err),
+			Err:       &SentinelCauseError{Sentinel: ErrFormatFailed, Cause: err},
 		}
 	}
 	return nil
@@ -271,7 +271,7 @@ func formatLUKS(partition, passphrase string) error {
 		return &USBError{
 			Operation: "format_luks",
 			Path:      partition,
-			Err:       fmt.Errorf("%w: %v", ErrFormatFailed, err),
+			Err:       &SentinelCauseError{Sentinel: ErrFormatFailed, Cause: err},
 		}
 	}
 
@@ -289,7 +289,7 @@ func formatLUKS(partition, passphrase string) error {
 		return &USBError{
 			Operation: "create_ext4",
 			Path:      partition,
-			Err:       fmt.Errorf("%w: %v", ErrFormatFailed, err),
+			Err:       &SentinelCauseError{Sentinel: ErrFormatFailed, Cause: err},
 		}
 	}
 
@@ -318,7 +318,7 @@ func populateFAT32(partition string, binaries []string) error {
 		return &USBError{
 			Operation: "mount_fat32",
 			Path:      partition,
-			Err:       fmt.Errorf("%w: %v", ErrMountFailed, err),
+			Err:       &SentinelCauseError{Sentinel: ErrMountFailed, Cause: err},
 		}
 	}
 	defer func() {
@@ -363,14 +363,14 @@ func copyBinary(srcPath, dstDir string) error {
 		return &USBError{
 			Operation: "stat_binary",
 			Path:      srcPath,
-			Err:       fmt.Errorf("%w: %v", ErrBinaryNotFound, err),
+			Err:       &SentinelCauseError{Sentinel: ErrBinaryNotFound, Cause: err},
 		}
 	}
 	if info.IsDir() {
 		return &USBError{
 			Operation: "validate_binary",
 			Path:      srcPath,
-			Err:       fmt.Errorf("%w: path is a directory", ErrBinaryNotFound),
+			Err:       &DetailError{Err: ErrBinaryNotFound, Detail: ": path is a directory"},
 		}
 	}
 
@@ -391,7 +391,7 @@ func copyBinary(srcPath, dstDir string) error {
 		return &USBError{
 			Operation: "copy_binary",
 			Path:      srcPath,
-			Err:       fmt.Errorf("%w: %v", ErrCopyFailed, err),
+			Err:       &SentinelCauseError{Sentinel: ErrCopyFailed, Cause: err},
 		}
 	}
 
@@ -485,7 +485,7 @@ func UpdateBinaries(path string, binaries []string) error {
 		return &USBError{
 			Operation: "mount_fat32",
 			Path:      part1,
-			Err:       fmt.Errorf("%w: %v", ErrMountFailed, err),
+			Err:       &SentinelCauseError{Sentinel: ErrMountFailed, Cause: err},
 		}
 	}
 	defer func() {

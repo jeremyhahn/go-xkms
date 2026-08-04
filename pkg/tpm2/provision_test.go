@@ -787,6 +787,28 @@ func TestFactoryReset_Success(t *testing.T) {
 	tpmImpl, ok := tpm.(*TPM2)
 	require.True(t, ok)
 
+	// createSim provisions the simulator via Provision(nil), which leaves
+	// the Lockout/Endorsement/Owner hierarchy auths empty (no SO PIN was
+	// applied). Reflect that real state in the config so Install's
+	// "config's HierarchyAuth is the current auth" assumption (see
+	// Install's doc comment) matches reality instead of the static
+	// DEFAULT_PASSWORD template value createSim seeds EKConfig with for
+	// unrelated tests that never change the hierarchy auth.
+	tpmImpl.config.EK.HierarchyAuth = ""
+
+	// createSim's shared IAK config (used by ~20 other tests) hardcodes
+	// Handle 0x81010002, which is the TCG-reserved ECC EK persistent
+	// handle (TCG TPM 2.0 Provisioning Guidance, Section 7.8, Table 2).
+	// factoryResetInternal's EK-preservation allowlist keys off that
+	// exact TCG-standard handle number, so an IAK provisioned there is
+	// indistinguishable from an EK and gets preserved instead of evicted.
+	// Retarget this test's IAK to the package's canonical IAK handle
+	// (iakKey, 0x81020001 - outside the EK-reserved 0x8101xxxx range) so
+	// factory reset can be exercised without colliding with the EK
+	// preservation logic and without touching the widely shared
+	// createSim() config used by other tests.
+	tpmImpl.config.IAK.Handle = uint32(iakKey)
+
 	// Install provisions EK, SRK, IAK, and IDevID
 	soPIN := store.NewPassword([]byte(store.DEFAULT_PASSWORD))
 	err := tpmImpl.Install(soPIN, nil)

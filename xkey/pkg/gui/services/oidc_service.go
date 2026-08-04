@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"net"
 	"net/http"
@@ -32,6 +31,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	"github.com/pkg/browser"
@@ -243,7 +244,7 @@ func (s *OIDCService) SetBackend(backend xkms.StorageBackend, prefix string) err
 	// Create token store backed by the barrier.
 	tokenStore, err := oidc.NewBackendTokenStore(backend, prefix+"tokens/")
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOIDCTokenStoreUnavailable, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreUnavailable, Cause: err}
 	}
 	s.tokenStore = tokenStore
 
@@ -387,7 +388,7 @@ func (s *OIDCService) AddProvider(entry *OIDCProviderEntry) error {
 func (s *OIDCService) applyTemplate(entry *OIDCProviderEntry) error {
 	tmpl, err := oidc.GetTemplate(entry.Template)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrOIDCTemplateNotFound, entry.Template)
+		return &DetailError{Err: ErrOIDCTemplateNotFound, Detail: fmt.Sprintf(": %s", entry.Template)}
 	}
 
 	// Set provider type based on template.
@@ -486,7 +487,7 @@ func (s *OIDCService) DiscoverProvider(issuer string) (*oidc.Provider, error) {
 
 	provider, err := oidc.NewProvider(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOIDCDiscoveryFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrOIDCDiscoveryFailed, Cause: err}
 	}
 
 	return provider, nil
@@ -592,7 +593,7 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 		if errParam := query.Get("error"); errParam != "" {
 			w.Header().Set("Content-Type", "text/html")
 			_, _ = w.Write([]byte("<html><body><h1>Authentication Failed</h1></body></html>"))
-			errChan <- fmt.Errorf("%s: %s", errParam, query.Get("error_description"))
+			errChan <- &MessageError{Msg: fmt.Sprintf("%s: %s", errParam, query.Get("error_description"))}
 			return
 		}
 
@@ -725,7 +726,7 @@ func (s *OIDCService) GetTokenInfo(providerName string) (*OIDCTokenInfo, error) 
 
 	tokenResp, err := s.tokenStore.Load(entry.Issuer)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOIDCTokenNotFound, err)
+		return nil, &SentinelCauseError{Sentinel: ErrOIDCTokenNotFound, Cause: err}
 	}
 
 	return s.tokenResponseToInfo(providerName, entry, tokenResp), nil
@@ -746,7 +747,7 @@ func (s *OIDCService) GetRawTokenResponse(providerName string) (string, error) {
 
 	tokenResp, err := s.tokenStore.Load(entry.Issuer)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrOIDCTokenNotFound, err)
+		return "", &SentinelCauseError{Sentinel: ErrOIDCTokenNotFound, Cause: err}
 	}
 
 	data, err := json.MarshalIndent(tokenResp, "", "  ")
@@ -772,7 +773,7 @@ func (s *OIDCService) GetAccessToken(providerName string) (string, error) {
 
 	tokenResp, err := s.tokenStore.Load(entry.Issuer)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrOIDCTokenNotFound, err)
+		return "", &SentinelCauseError{Sentinel: ErrOIDCTokenNotFound, Cause: err}
 	}
 
 	accessToken := tokenResp.AccessToken
@@ -807,7 +808,7 @@ func (s *OIDCService) RefreshToken(providerName string) (*OIDCTokenInfo, error) 
 
 	tokenResp, err := s.tokenStore.Load(entry.Issuer)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOIDCTokenNotFound, err)
+		return nil, &SentinelCauseError{Sentinel: ErrOIDCTokenNotFound, Cause: err}
 	}
 
 	if tokenResp.RefreshToken == "" {
@@ -834,7 +835,7 @@ func (s *OIDCService) RefreshToken(providerName string) (*OIDCTokenInfo, error) 
 
 	oidcProvider, err := oidc.NewProvider(ctx, provCfg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOIDCRefreshFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrOIDCRefreshFailed, Cause: err}
 	}
 
 	client := oidc.NewClient(oidcProvider, provCfg)
@@ -853,9 +854,9 @@ func (s *OIDCService) RefreshToken(providerName string) (*OIDCTokenInfo, error) 
 	if err != nil {
 		var tokenErr *oidc.TokenRequestError
 		if errors.As(err, &tokenErr) && tokenErr.Description != "" {
-			return nil, fmt.Errorf("%w: %s", ErrOIDCRefreshFailed, tokenErr.Description)
+			return nil, &DetailError{Err: ErrOIDCRefreshFailed, Detail: fmt.Sprintf(": %s", tokenErr.Description)}
 		}
-		return nil, fmt.Errorf("%w: %v", ErrOIDCRefreshFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrOIDCRefreshFailed, Cause: err}
 	}
 
 	// Preserve refresh token if not rotated.
@@ -893,7 +894,7 @@ func (s *OIDCService) Logout(providerName string) error {
 		if err == oidc.ErrTokenNotFound {
 			return nil
 		}
-		return fmt.Errorf("%w: %v", ErrOIDCLogoutFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCLogoutFailed, Cause: err}
 	}
 	return nil
 }
@@ -1045,7 +1046,7 @@ func (s *OIDCService) ExecuteScript(providerName string, script string) (*OIDCEx
 	payload := s.buildExecPayload(providerName, entry, tokenResp)
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
-		return &OIDCExecResult{Success: false, Error: "failed to marshal payload"}, fmt.Errorf("%w: %v", ErrOIDCExecFailed, err)
+		return &OIDCExecResult{Success: false, Error: "failed to marshal payload"}, &SentinelCauseError{Sentinel: ErrOIDCExecFailed, Cause: err}
 	}
 
 	cmd := exec.Command("sh", "-c", script)
@@ -1083,7 +1084,7 @@ func (s *OIDCService) ExecuteScript(providerName string, script string) (*OIDCEx
 				Stdout:   stdout.String(),
 				Stderr:   stderr.String(),
 				Error:    runErr.Error(),
-			}, fmt.Errorf("%w: %v", ErrOIDCExecFailed, runErr)
+			}, &SentinelCauseError{Sentinel: ErrOIDCExecFailed, Cause: runErr}
 		}
 	}
 
@@ -1116,7 +1117,7 @@ func (s *OIDCService) ExecuteProgram(providerName string, programPath string) (*
 	payload := s.buildExecPayload(providerName, entry, tokenResp)
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
-		return &OIDCExecResult{Success: false, Error: "failed to marshal payload"}, fmt.Errorf("%w: %v", ErrOIDCExecFailed, err)
+		return &OIDCExecResult{Success: false, Error: "failed to marshal payload"}, &SentinelCauseError{Sentinel: ErrOIDCExecFailed, Cause: err}
 	}
 
 	cmd := exec.Command(programPath)
@@ -1154,7 +1155,7 @@ func (s *OIDCService) ExecuteProgram(providerName string, programPath string) (*
 				Stdout:   stdout.String(),
 				Stderr:   stderr.String(),
 				Error:    runErr.Error(),
-			}, fmt.Errorf("%w: %v", ErrOIDCExecFailed, runErr)
+			}, &SentinelCauseError{Sentinel: ErrOIDCExecFailed, Cause: runErr}
 		}
 	}
 
@@ -1187,7 +1188,7 @@ func (s *OIDCService) SaveScript(name string, content string) (*OIDCSavedScript,
 	path := filepath.Join(dir, fileName)
 
 	if err := os.WriteFile(path, []byte(content), 0700); err != nil {
-		return nil, fmt.Errorf("oidc_service: failed to save script: %w", err)
+		return nil, &WrappedError{Msg: "oidc_service: failed to save script", Err: err}
 	}
 
 	s.log.Info("OIDC script saved", "name", name, "path", path)
@@ -1203,7 +1204,7 @@ func (s *OIDCService) ListScripts() ([]*OIDCSavedScript, error) {
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("oidc_service: failed to list scripts: %w", err)
+		return nil, &WrappedError{Msg: "oidc_service: failed to list scripts", Err: err}
 	}
 
 	scripts := make([]*OIDCSavedScript, 0, len(entries))
@@ -1241,7 +1242,7 @@ func (s *OIDCService) GetScriptContent(fileName string) (string, error) {
 		if os.IsNotExist(err) {
 			return "", ErrOIDCScriptNotFound
 		}
-		return "", fmt.Errorf("oidc_service: failed to read script: %w", err)
+		return "", &WrappedError{Msg: "oidc_service: failed to read script", Err: err}
 	}
 
 	return string(data), nil
@@ -1263,7 +1264,7 @@ func (s *OIDCService) DeleteScript(fileName string) error {
 		if os.IsNotExist(err) {
 			return ErrOIDCScriptNotFound
 		}
-		return fmt.Errorf("oidc_service: failed to delete script: %w", err)
+		return &WrappedError{Msg: "oidc_service: failed to delete script", Err: err}
 	}
 
 	s.log.Info("OIDC script deleted", "fileName", fileName)
@@ -1283,7 +1284,7 @@ func (s *OIDCService) ExecuteScriptFile(providerName string, filePath string) (*
 			Success:  false,
 			ExitCode: -1,
 			Error:    fmt.Sprintf("failed to read script: %v", err),
-		}, fmt.Errorf("oidc_service: failed to read script file: %w", err)
+		}, &WrappedError{Msg: "oidc_service: failed to read script file", Err: err}
 	}
 
 	return s.ExecuteScript(providerName, string(data))
@@ -1300,7 +1301,7 @@ func (s *OIDCService) BrowseScriptFile() (string, error) {
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("oidc_service: file dialog error: %w", err)
+		return "", &WrappedError{Msg: "oidc_service: file dialog error", Err: err}
 	}
 	return filePath, nil
 }
@@ -1321,7 +1322,7 @@ func (s *OIDCService) GetSavedScriptPath(fileName string) (string, error) {
 		if os.IsNotExist(err) {
 			return "", ErrOIDCScriptNotFound
 		}
-		return "", fmt.Errorf("oidc_service: failed to stat script: %w", err)
+		return "", &WrappedError{Msg: "oidc_service: failed to stat script", Err: err}
 	}
 
 	return path, nil
@@ -1334,7 +1335,7 @@ func (s *OIDCService) scriptsDir() (string, error) {
 	}
 	dir := filepath.Join(s.dataDir, oidcScriptsDir)
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", fmt.Errorf("oidc_service: failed to create scripts dir: %w", err)
+		return "", &WrappedError{Msg: "oidc_service: failed to create scripts dir", Err: err}
 	}
 	return dir, nil
 }

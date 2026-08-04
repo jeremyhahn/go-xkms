@@ -53,7 +53,7 @@ var migratePlanCmd = &cobra.Command{
 		destBackend, _ := cmd.Flags().GetString("to")
 
 		if sourceBackend == "" || destBackend == "" {
-			handleError(fmt.Errorf("both --from and --to flags are required"))
+			handleError(ErrFromToFlagsRequired)
 			return
 		}
 
@@ -65,7 +65,7 @@ var migratePlanCmd = &cobra.Command{
 
 		sourceBe, err := cfg.CreateBackend()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create source backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateSourceBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = sourceBe.Close() }()
@@ -77,7 +77,7 @@ var migratePlanCmd = &cobra.Command{
 		if err != nil {
 			// Restore original backend
 			cfg.Backend = originalBackend
-			handleError(fmt.Errorf("failed to create destination backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateDestinationBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = destBe.Close() }()
@@ -87,7 +87,7 @@ var migratePlanCmd = &cobra.Command{
 		if err != nil {
 			// Restore original backend
 			cfg.Backend = originalBackend
-			handleError(fmt.Errorf("failed to create migrator: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateMigratorFailed, Err: err})
 			return
 		}
 		defer func() { _ = migrator.Close() }()
@@ -99,7 +99,7 @@ var migratePlanCmd = &cobra.Command{
 		plan, err := migrator.MigrationPlan(cmd.Context(), filter)
 		if err != nil {
 			cfg.Backend = originalBackend
-			handleError(fmt.Errorf("failed to create migration plan: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateMigrationPlanFailed, Err: err})
 			return
 		}
 
@@ -133,7 +133,7 @@ var migrateExecuteCmd = &cobra.Command{
 		stopOnError, _ := cmd.Flags().GetBool("stop-on-error")
 
 		if sourceBackend == "" || destBackend == "" {
-			handleError(fmt.Errorf("both --from and --to flags are required"))
+			handleError(ErrFromToFlagsRequired)
 			return
 		}
 
@@ -145,7 +145,7 @@ var migrateExecuteCmd = &cobra.Command{
 
 		sourceBe, err := cfg.CreateBackend()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create source backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateSourceBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = sourceBe.Close() }()
@@ -156,7 +156,7 @@ var migrateExecuteCmd = &cobra.Command{
 		destBe, err := cfg.CreateBackend()
 		if err != nil {
 			cfg.Backend = originalBackend
-			handleError(fmt.Errorf("failed to create destination backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateDestinationBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = destBe.Close() }()
@@ -165,7 +165,7 @@ var migrateExecuteCmd = &cobra.Command{
 		migrator, err := migration.NewMigrator(sourceBe, destBe)
 		if err != nil {
 			cfg.Backend = originalBackend
-			handleError(fmt.Errorf("failed to create migrator: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateMigratorFailed, Err: err})
 			return
 		}
 		defer func() { _ = migrator.Close() }()
@@ -189,7 +189,7 @@ var migrateExecuteCmd = &cobra.Command{
 		plan, err := migrator.MigrationPlan(cmd.Context(), filter)
 		if err != nil {
 			cfg.Backend = originalBackend
-			handleError(fmt.Errorf("failed to create migration plan: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateMigrationPlanFailed, Err: err})
 			return
 		}
 
@@ -232,7 +232,7 @@ var migrateExecuteCmd = &cobra.Command{
 		result, err := migrator.MigrateAll(cmd.Context(), filter, opts)
 		if err != nil {
 			cfg.Backend = originalBackend
-			handleError(fmt.Errorf("migration failed: %w", err))
+			handleError(&WrappedError{Sentinel: ErrMigrationFailed, Err: err})
 			return
 		}
 
@@ -263,7 +263,7 @@ var migrateValidateCmd = &cobra.Command{
 		destBackend, _ := cmd.Flags().GetString("to")
 
 		if keyID == "" || sourceBackend == "" || destBackend == "" {
-			handleError(fmt.Errorf("--key-id, --from, and --to flags are required"))
+			handleError(ErrKeyIDFromToFlagsRequired)
 			return
 		}
 
@@ -275,7 +275,7 @@ var migrateValidateCmd = &cobra.Command{
 
 		sourceBe, err := cfg.CreateBackend()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create source backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateSourceBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = sourceBe.Close() }()
@@ -286,7 +286,7 @@ var migrateValidateCmd = &cobra.Command{
 		destBe, err := cfg.CreateBackend()
 		if err != nil {
 			cfg.Backend = originalBackend
-			handleError(fmt.Errorf("failed to create destination backend: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateDestinationBackendFailed, Err: err})
 			return
 		}
 		defer func() { _ = destBe.Close() }()
@@ -295,7 +295,7 @@ var migrateValidateCmd = &cobra.Command{
 		migrator, err := migration.NewMigrator(sourceBe, destBe)
 		if err != nil {
 			cfg.Backend = originalBackend
-			handleError(fmt.Errorf("failed to create migrator: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateMigratorFailed, Err: err})
 			return
 		}
 		defer func() { _ = migrator.Close() }()
@@ -309,7 +309,7 @@ var migrateValidateCmd = &cobra.Command{
 		result, err := migrator.ValidateMigration(cmd.Context(), attrs)
 		if err != nil {
 			cfg.Backend = originalBackend
-			handleError(fmt.Errorf("validation failed: %w", err))
+			handleError(&WrappedError{Sentinel: ErrValidationFailed, Err: err})
 			return
 		}
 
@@ -326,7 +326,7 @@ var migrateValidateCmd = &cobra.Command{
 					handleError(err)
 				}
 			} else {
-				if err := printer.PrintError(fmt.Errorf("%s", result.Message)); err != nil {
+				if err := printer.PrintError(&MigrationResultError{Message: result.Message}); err != nil {
 					handleError(err)
 				}
 			}

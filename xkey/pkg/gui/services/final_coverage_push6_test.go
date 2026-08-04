@@ -18,7 +18,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +27,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

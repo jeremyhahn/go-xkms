@@ -285,7 +285,7 @@ func (s *Service) CreateBackup(key []byte) (*EncryptedBackup, error) {
 	archive.Manifest.Checksum = ""
 	payload, err := json.Marshal(archive)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCollectFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCollectFailed, Cause: err}
 	}
 
 	hash := sha256.Sum256(payload)
@@ -294,7 +294,7 @@ func (s *Service) CreateBackup(key []byte) (*EncryptedBackup, error) {
 	// Re-serialize with checksum set.
 	plaintext, err := json.Marshal(archive)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCollectFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCollectFailed, Cause: err}
 	}
 
 	ciphertext, nonce, err := encrypt(plaintext, key)
@@ -324,7 +324,7 @@ func (s *Service) DecryptBackup(eb *EncryptedBackup, key []byte) (*Archive, erro
 
 	var archive Archive
 	if err := json.Unmarshal(plaintext, &archive); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidBackup, err)
+		return nil, &SentinelCauseError{Sentinel: ErrInvalidBackup, Cause: err}
 	}
 
 	// Verify checksum: re-compute hash with checksum field cleared.
@@ -332,7 +332,7 @@ func (s *Service) DecryptBackup(eb *EncryptedBackup, key []byte) (*Archive, erro
 	archive.Manifest.Checksum = ""
 	raw, err := json.Marshal(&archive)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCorruptedBackup, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCorruptedBackup, Cause: err}
 	}
 
 	hash := sha256.Sum256(raw)
@@ -361,7 +361,7 @@ func (s *Service) GetManifest(eb *EncryptedBackup, key []byte) (*Manifest, error
 // RestoreTrustStore restores trust store certificates from the archive.
 func (s *Service) RestoreTrustStore(archive *Archive, writer TrustStoreWriter) (*RestoreResult, error) {
 	if archive == nil {
-		return nil, fmt.Errorf("%w: nil archive", ErrRestoreFailed)
+		return nil, &DetailError{Err: ErrRestoreFailed, Detail: ": nil archive"}
 	}
 	result := &RestoreResult{ItemType: ItemTrustStore}
 
@@ -385,7 +385,7 @@ func (s *Service) RestoreTrustStore(archive *Archive, writer TrustStoreWriter) (
 // RestoreOATH restores OATH credentials from the archive.
 func (s *Service) RestoreOATH(archive *Archive, writer OATHWriter) (*RestoreResult, error) {
 	if archive == nil {
-		return nil, fmt.Errorf("%w: nil archive", ErrRestoreFailed)
+		return nil, &DetailError{Err: ErrRestoreFailed, Detail: ": nil archive"}
 	}
 	result := &RestoreResult{ItemType: ItemOATH}
 
@@ -416,7 +416,7 @@ func (s *Service) RestoreOATH(archive *Archive, writer OATHWriter) (*RestoreResu
 // RestorePasswords restores static passwords from the archive.
 func (s *Service) RestorePasswords(archive *Archive, writer PasswordWriter) (*RestoreResult, error) {
 	if archive == nil {
-		return nil, fmt.Errorf("%w: nil archive", ErrRestoreFailed)
+		return nil, &DetailError{Err: ErrRestoreFailed, Detail: ": nil archive"}
 	}
 	result := &RestoreResult{ItemType: ItemPasswords}
 
@@ -496,7 +496,7 @@ func (s *Service) collectTrustStore(a *Archive) (bool, error) {
 	}
 	certs, err := s.trustStore.Certificates()
 	if err != nil {
-		return false, fmt.Errorf("%w: trust store: %v", ErrCollectFailed, err)
+		return false, &DetailError{Err: ErrCollectFailed, Detail: fmt.Sprintf(": trust store: %v", err)}
 	}
 	if len(certs) == 0 {
 		return false, nil
@@ -535,7 +535,7 @@ func (s *Service) collectCA(a *Archive) (bool, error) {
 	}
 	certPEM, err := s.caReader.GetCACertificatePEM()
 	if err != nil {
-		return false, fmt.Errorf("%w: ca cert: %v", ErrCollectFailed, err)
+		return false, &DetailError{Err: ErrCollectFailed, Detail: fmt.Sprintf(": ca cert: %v", err)}
 	}
 	if len(certPEM) == 0 {
 		return false, nil
@@ -564,7 +564,7 @@ func (s *Service) collectOATH(a *Archive) (bool, error) {
 	}
 	creds, err := s.oathReader.List()
 	if err != nil {
-		return false, fmt.Errorf("%w: oath: %v", ErrCollectFailed, err)
+		return false, &DetailError{Err: ErrCollectFailed, Detail: fmt.Sprintf(": oath: %v", err)}
 	}
 	if len(creds) == 0 {
 		return false, nil
@@ -600,7 +600,7 @@ func (s *Service) collectPasswords(a *Archive) (bool, error) {
 	}
 	passwords, err := s.passwordReader.List()
 	if err != nil {
-		return false, fmt.Errorf("%w: passwords: %v", ErrCollectFailed, err)
+		return false, &DetailError{Err: ErrCollectFailed, Detail: fmt.Sprintf(": passwords: %v", err)}
 	}
 	if len(passwords) == 0 {
 		return false, nil
@@ -636,12 +636,12 @@ func (s *Service) collectPasswords(a *Archive) (bool, error) {
 func encrypt(plaintext, key []byte) (ciphertext, nonce []byte, err error) {
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrEncryptionFailed, err)
+		return nil, nil, &SentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
 	}
 
 	nonce = make([]byte, aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
-		return nil, nil, fmt.Errorf("%w: nonce generation: %v", ErrEncryptionFailed, err)
+		return nil, nil, &DetailError{Err: ErrEncryptionFailed, Detail: fmt.Sprintf(": nonce generation: %v", err)}
 	}
 
 	ciphertext = aead.Seal(nil, nonce, plaintext, nil)
@@ -652,12 +652,12 @@ func encrypt(plaintext, key []byte) (ciphertext, nonce []byte, err error) {
 func decrypt(ciphertext, nonce, key []byte) ([]byte, error) {
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
 	}
 
 	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
 	}
 
 	return plaintext, nil

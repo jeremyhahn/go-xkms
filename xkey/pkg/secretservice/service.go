@@ -15,7 +15,6 @@ package secretservice
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -184,7 +183,7 @@ func (d *Daemon) IsRunning() bool {
 func (d *Daemon) exportObjects() error {
 	// Export the main service object
 	if err := d.conn.Export(d, ServicePath, ServiceInterface); err != nil {
-		return fmt.Errorf("failed to export Service: %w", err)
+		return &WrappedError{Msg: "failed to export Service", Err: err}
 	}
 
 	// Export introspection
@@ -289,7 +288,7 @@ func (d *Daemon) exportObjects() error {
 
 	if err := d.conn.Export(introspect.NewIntrospectable(introNode), ServicePath,
 		"org.freedesktop.DBus.Introspectable"); err != nil {
-		return fmt.Errorf("failed to export introspection: %w", err)
+		return &WrappedError{Msg: "failed to export introspection", Err: err}
 	}
 
 	return nil

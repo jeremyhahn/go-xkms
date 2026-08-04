@@ -84,14 +84,14 @@ func validateSecurityLevel(level string, policy *AttestationPolicy) error {
 	}
 	actualLevel, ok := levelOrder[level]
 	if !ok {
-		return fmt.Errorf("%w: unknown level %s", ErrSecurityLevelInsufficient, level)
+		return &DetailError{Err: ErrSecurityLevelInsufficient, Detail: fmt.Sprintf(": unknown level %s", level)}
 	}
 	minLevel, ok := levelOrder[policy.MinSecurityLevel]
 	if !ok {
 		return nil // Invalid policy, skip check
 	}
 	if actualLevel < minLevel {
-		return fmt.Errorf("%w: got %s, require %s", ErrSecurityLevelInsufficient, level, policy.MinSecurityLevel)
+		return &DetailError{Err: ErrSecurityLevelInsufficient, Detail: fmt.Sprintf(": got %s, require %s", level, policy.MinSecurityLevel)}
 	}
 	return nil
 }

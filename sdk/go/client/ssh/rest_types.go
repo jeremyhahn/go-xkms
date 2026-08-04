@@ -13,8 +13,6 @@
 
 package ssh
 
-import "net"
-
 // restImportRequest is the wire form of ImportRequest with a
 // passphrase field included. The client populates PassphraseB64 via
 // base64-encoding a secure.Buffer; the server decodes with a custom
@@ -76,16 +74,4 @@ type restPinList struct {
 // restAuthorizedList is the envelope returned by GET /authorized-keys.
 type restAuthorizedList struct {
 	Items []*AuthorizedEntry `json:"items"`
-}
-
-// stripCallbackPort removes the trailing ":port" from the hostname
-// x/crypto/ssh passes to a HostKeyCallback so pins persist per-host.
-// Identical semantics to pkg/ssh/known_hosts.stripPort; duplicated here
-// to avoid depending on that unexported symbol.
-func stripCallbackPort(hostname string) string {
-	host, _, err := net.SplitHostPort(hostname)
-	if err != nil {
-		return hostname
-	}
-	return host
 }

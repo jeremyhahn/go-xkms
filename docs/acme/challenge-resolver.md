@@ -32,8 +32,8 @@ The Challenge Resolver Framework provides a flexible system for solving ACME cha
 
 ```go
 import (
-    "github.com/jeremyhahn/go-trusted-ca/pkg/acme/client"
-    "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/dns-01/providers/cloudflare"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/client"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers/cloudflare"
 )
 
 // Create DNS provider

@@ -23,6 +23,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
@@ -191,11 +193,11 @@ func (h *HandlerContext) FrostGenerateKeyHandler(w http.ResponseWriter, r *http.
 	}
 
 	if req.Threshold < 2 {
-		writeError(w, fmt.Errorf("threshold must be at least 2"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "threshold must be at least 2"}, http.StatusBadRequest)
 		return
 	}
 	if req.Total < req.Threshold {
-		writeError(w, fmt.Errorf("total must be >= threshold"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "total must be >= threshold"}, http.StatusBadRequest)
 		return
 	}
 
@@ -227,7 +229,7 @@ func (h *HandlerContext) FrostGenerateKeyHandler(w http.ResponseWriter, r *http.
 
 		packages, pubPkg, err := td.Generate(frostConfig)
 		if err != nil {
-			writeError(w, fmt.Errorf("failed to generate FROST packages: %w", err), http.StatusInternalServerError)
+			writeError(w, &errs.Wrapped{Msg: "failed to generate FROST packages", Err: err}, http.StatusInternalServerError)
 			return
 		}
 
@@ -272,7 +274,7 @@ func (h *HandlerContext) FrostGenerateKeyHandler(w http.ResponseWriter, r *http.
 
 	// Participant mode
 	if req.ParticipantID == 0 {
-		writeError(w, fmt.Errorf("participant_id is required in participant mode"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "participant_id is required in participant mode"}, http.StatusBadRequest)
 		return
 	}
 
@@ -291,7 +293,7 @@ func (h *HandlerContext) FrostGenerateKeyHandler(w http.ResponseWriter, r *http.
 
 	key, err := be.GenerateKey(r.Context(), attrs)
 	if err != nil {
-		writeError(w, fmt.Errorf("failed to generate FROST key: %w", err), http.StatusInternalServerError)
+		writeError(w, &errs.Wrapped{Msg: "failed to generate FROST key", Err: err}, http.StatusInternalServerError)
 		return
 	}
 
@@ -319,7 +321,7 @@ func (h *HandlerContext) FrostImportKeyHandler(w http.ResponseWriter, r *http.Re
 
 	pkg := req.Package
 	if pkg.KeyID == "" {
-		writeError(w, fmt.Errorf("package.key_id is required"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "package.key_id is required"}, http.StatusBadRequest)
 		return
 	}
 
@@ -332,13 +334,13 @@ func (h *HandlerContext) FrostImportKeyHandler(w http.ResponseWriter, r *http.Re
 	// Decode hex values
 	secretShare, err := hexDecode(pkg.SecretShare)
 	if err != nil {
-		writeError(w, fmt.Errorf("invalid secret_share hex: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid secret_share hex", Err: err}, http.StatusBadRequest)
 		return
 	}
 
 	groupPubKey, err := hexDecode(pkg.GroupPublicKey)
 	if err != nil {
-		writeError(w, fmt.Errorf("invalid group_public_key hex: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid group_public_key hex", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -346,7 +348,7 @@ func (h *HandlerContext) FrostImportKeyHandler(w http.ResponseWriter, r *http.Re
 	for id, vsHex := range pkg.VerificationShares {
 		vs, err := hexDecode(vsHex)
 		if err != nil {
-			writeError(w, fmt.Errorf("invalid verification_share hex for participant %d: %w", id, err), http.StatusBadRequest)
+			writeError(w, &errs.Wrapped{Msg: fmt.Sprintf("invalid verification_share hex for participant %d", id), Err: err}, http.StatusBadRequest)
 			return
 		}
 		vsMap[id] = vs
@@ -376,7 +378,7 @@ func (h *HandlerContext) FrostImportKeyHandler(w http.ResponseWriter, r *http.Re
 
 	ks := be.KeyStore()
 	if err := ks.StoreKeyPackage(r.Context(), pkg.KeyID, keyPackage, metadata); err != nil {
-		writeError(w, fmt.Errorf("failed to store key package: %w", err), http.StatusInternalServerError)
+		writeError(w, &errs.Wrapped{Msg: "failed to store key package", Err: err}, http.StatusInternalServerError)
 		return
 	}
 
@@ -400,7 +402,7 @@ func (h *HandlerContext) FrostListKeysHandler(w http.ResponseWriter, r *http.Req
 
 	keys, err := be.ListKeys(r.Context())
 	if err != nil {
-		writeError(w, fmt.Errorf("failed to list keys: %w", err), http.StatusInternalServerError)
+		writeError(w, &errs.Wrapped{Msg: "failed to list keys", Err: err}, http.StatusInternalServerError)
 		return
 	}
 
@@ -461,7 +463,7 @@ func (h *HandlerContext) FrostGetKeyHandler(w http.ResponseWriter, r *http.Reque
 
 	key, err := be.GetKey(r.Context(), attrs)
 	if err != nil {
-		writeError(w, fmt.Errorf("key not found: %w", err), http.StatusNotFound)
+		writeError(w, &errs.Wrapped{Msg: "key not found", Err: err}, http.StatusNotFound)
 		return
 	}
 
@@ -520,7 +522,7 @@ func (h *HandlerContext) FrostDeleteKeyHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := be.DeleteKey(r.Context(), attrs); err != nil {
-		writeError(w, fmt.Errorf("failed to delete key: %w", err), http.StatusInternalServerError)
+		writeError(w, &errs.Wrapped{Msg: "failed to delete key", Err: err}, http.StatusInternalServerError)
 		return
 	}
 
@@ -547,7 +549,7 @@ func (h *HandlerContext) FrostGenerateNoncesHandler(w http.ResponseWriter, r *ht
 
 	noncePackage, err := be.GenerateNonces(keyID)
 	if err != nil {
-		writeError(w, fmt.Errorf("failed to generate nonces: %w", err), http.StatusInternalServerError)
+		writeError(w, &errs.Wrapped{Msg: "failed to generate nonces", Err: err}, http.StatusInternalServerError)
 		return
 	}
 
@@ -585,31 +587,31 @@ func (h *HandlerContext) FrostSignRoundHandler(w http.ResponseWriter, r *http.Re
 	// Decode hex values
 	message, err := hexDecode(req.Message)
 	if err != nil {
-		writeError(w, fmt.Errorf("invalid message hex: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid message hex", Err: err}, http.StatusBadRequest)
 		return
 	}
 
 	hidingNonce, err := hexDecode(req.HidingNonce)
 	if err != nil {
-		writeError(w, fmt.Errorf("invalid hiding_nonce hex: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid hiding_nonce hex", Err: err}, http.StatusBadRequest)
 		return
 	}
 
 	bindingNonce, err := hexDecode(req.BindingNonce)
 	if err != nil {
-		writeError(w, fmt.Errorf("invalid binding_nonce hex: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid binding_nonce hex", Err: err}, http.StatusBadRequest)
 		return
 	}
 
 	hidingCommitment, err := hexDecode(req.HidingCommitment)
 	if err != nil {
-		writeError(w, fmt.Errorf("invalid hiding_commitment hex: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid hiding_commitment hex", Err: err}, http.StatusBadRequest)
 		return
 	}
 
 	bindingCommitment, err := hexDecode(req.BindingCommitment)
 	if err != nil {
-		writeError(w, fmt.Errorf("invalid binding_commitment hex: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid binding_commitment hex", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -621,7 +623,7 @@ func (h *HandlerContext) FrostSignRoundHandler(w http.ResponseWriter, r *http.Re
 	}
 	key, err := be.GetKey(r.Context(), attrs)
 	if err != nil {
-		writeError(w, fmt.Errorf("key not found: %w", err), http.StatusNotFound)
+		writeError(w, &errs.Wrapped{Msg: "key not found", Err: err}, http.StatusNotFound)
 		return
 	}
 	handle := key.(*frost.FrostKeyHandle)
@@ -646,12 +648,12 @@ func (h *HandlerContext) FrostSignRoundHandler(w http.ResponseWriter, r *http.Re
 	for i, c := range req.Commitments {
 		hc, err := hexDecode(c.HidingCommitment)
 		if err != nil {
-			writeError(w, fmt.Errorf("invalid hiding_commitment hex: %w", err), http.StatusBadRequest)
+			writeError(w, &errs.Wrapped{Msg: "invalid hiding_commitment hex", Err: err}, http.StatusBadRequest)
 			return
 		}
 		bc, err := hexDecode(c.BindingCommitment)
 		if err != nil {
-			writeError(w, fmt.Errorf("invalid binding_commitment hex: %w", err), http.StatusBadRequest)
+			writeError(w, &errs.Wrapped{Msg: "invalid binding_commitment hex", Err: err}, http.StatusBadRequest)
 			return
 		}
 		commitments[i] = &frost.Commitment{
@@ -666,7 +668,7 @@ func (h *HandlerContext) FrostSignRoundHandler(w http.ResponseWriter, r *http.Re
 
 	share, err := be.SignRound(keyID, message, noncePackage, commitments)
 	if err != nil {
-		writeError(w, fmt.Errorf("failed to generate signature share: %w", err), http.StatusInternalServerError)
+		writeError(w, &errs.Wrapped{Msg: "failed to generate signature share", Err: err}, http.StatusInternalServerError)
 		return
 	}
 
@@ -687,7 +689,7 @@ func (h *HandlerContext) FrostAggregateHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	if req.KeyID == "" {
-		writeError(w, fmt.Errorf("key_id is required"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "key_id is required"}, http.StatusBadRequest)
 		return
 	}
 
@@ -700,7 +702,7 @@ func (h *HandlerContext) FrostAggregateHandler(w http.ResponseWriter, r *http.Re
 	// Decode message
 	message, err := hexDecode(req.Message)
 	if err != nil {
-		writeError(w, fmt.Errorf("invalid message hex: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid message hex", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -709,12 +711,12 @@ func (h *HandlerContext) FrostAggregateHandler(w http.ResponseWriter, r *http.Re
 	for i, c := range req.Commitments {
 		hc, err := hexDecode(c.HidingCommitment)
 		if err != nil {
-			writeError(w, fmt.Errorf("invalid hiding_commitment hex: %w", err), http.StatusBadRequest)
+			writeError(w, &errs.Wrapped{Msg: "invalid hiding_commitment hex", Err: err}, http.StatusBadRequest)
 			return
 		}
 		bc, err := hexDecode(c.BindingCommitment)
 		if err != nil {
-			writeError(w, fmt.Errorf("invalid binding_commitment hex: %w", err), http.StatusBadRequest)
+			writeError(w, &errs.Wrapped{Msg: "invalid binding_commitment hex", Err: err}, http.StatusBadRequest)
 			return
 		}
 		commitments[i] = &frost.Commitment{
@@ -732,7 +734,7 @@ func (h *HandlerContext) FrostAggregateHandler(w http.ResponseWriter, r *http.Re
 	for i, s := range req.Shares {
 		share, err := hexDecode(s.Share)
 		if err != nil {
-			writeError(w, fmt.Errorf("invalid share hex: %w", err), http.StatusBadRequest)
+			writeError(w, &errs.Wrapped{Msg: "invalid share hex", Err: err}, http.StatusBadRequest)
 			return
 		}
 		shares[i] = &frost.SignatureShare{
@@ -744,7 +746,7 @@ func (h *HandlerContext) FrostAggregateHandler(w http.ResponseWriter, r *http.Re
 
 	signature, err := be.Aggregate(req.KeyID, message, commitments, shares)
 	if err != nil {
-		writeError(w, fmt.Errorf("failed to aggregate signatures: %w", err), http.StatusInternalServerError)
+		writeError(w, &errs.Wrapped{Msg: "failed to aggregate signatures", Err: err}, http.StatusInternalServerError)
 		return
 	}
 
@@ -772,7 +774,7 @@ func (h *HandlerContext) FrostVerifyHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if req.KeyID == "" {
-		writeError(w, fmt.Errorf("key_id is required"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "key_id is required"}, http.StatusBadRequest)
 		return
 	}
 
@@ -784,13 +786,13 @@ func (h *HandlerContext) FrostVerifyHandler(w http.ResponseWriter, r *http.Reque
 
 	message, err := hexDecode(req.Message)
 	if err != nil {
-		writeError(w, fmt.Errorf("invalid message hex: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid message hex", Err: err}, http.StatusBadRequest)
 		return
 	}
 
 	signature, err := hexDecode(req.Signature)
 	if err != nil {
-		writeError(w, fmt.Errorf("invalid signature hex: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid signature hex", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -825,7 +827,7 @@ func (h *HandlerContext) getFrostBackend() (*frost.FrostBackend, error) {
 			}
 		}
 	}
-	return nil, fmt.Errorf("no FROST backend configured")
+	return nil, &errs.Message{Msg: "no FROST backend configured"}
 }
 
 // hexEncode encodes bytes to hex string

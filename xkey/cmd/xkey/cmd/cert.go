@@ -441,10 +441,10 @@ func runCertExport(cmd *cobra.Command, args []string) error {
 func parsePEMCertificate(certPEM []byte) (*x509.Certificate, error) {
 	block, _ := pem.Decode(bytes.TrimSpace(certPEM))
 	if block == nil {
-		return nil, fmt.Errorf("%w: no PEM block found", ErrCertParseFailed)
+		return nil, &DetailError{Err: ErrCertParseFailed, Detail: ": no PEM block found"}
 	}
 	if block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("%w: unexpected PEM type %q", ErrCertParseFailed, block.Type)
+		return nil, &DetailError{Err: ErrCertParseFailed, Detail: fmt.Sprintf(": unexpected PEM type %q", block.Type)}
 	}
 	return x509.ParseCertificate(block.Bytes)
 }

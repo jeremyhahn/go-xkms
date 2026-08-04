@@ -27,7 +27,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"io"
 	"math/big"
 	"os"
@@ -35,6 +34,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
@@ -309,7 +310,7 @@ func (m *mockTPM) KeyAttributes(handle tpm2.TPMHandle) (*xkms.KeyAttributes, err
 			return attrs, nil
 		}
 	}
-	return nil, fmt.Errorf("handle 0x%08X not found", handle)
+	return nil, &MessageError{Msg: fmt.Sprintf("handle 0x%08X not found", handle)}
 }
 func (m *mockTPM) LoadKeyPair(_ *xkms.KeyAttributes, _ *tpm2.Session, _ xkms.TPMKeyBackend) (*tpm2.LoadResponse, error) {
 	panic("mockTPM: LoadKeyPair not expected")
@@ -522,6 +523,7 @@ type mockPlatformKeyStorer struct {
 func (m *mockPlatformKeyStorer) SRKAttributes() *xkms.KeyAttributes { return m.srkAttrs }
 func (m *mockPlatformKeyStorer) Backend() xkms.TPMKeyBackend        { return nil }
 func (m *mockPlatformKeyStorer) Initialize(_, _ string) error       { return nil }
+func (m *mockPlatformKeyStorer) EnrollPlatformSRK(_ string) error   { return nil }
 func (m *mockPlatformKeyStorer) InitializeWithDefaults() error      { return nil }
 func (m *mockPlatformKeyStorer) IsInitialized() bool                { return m.initialized }
 func (m *mockPlatformKeyStorer) PlatformPolicyEnabled() bool        { return m.policyEnabled }
@@ -4364,7 +4366,7 @@ func TestTPMService_FactoryReset_Error(t *testing.T) {
 
 func TestTPMService_FactoryReset_AuthError(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.factoryResetErr = fmt.Errorf("auth_fail: bad password")
+	mock.factoryResetErr = &MessageError{Msg: "auth_fail: bad password"}
 	svc := newServiceWithMock(mock)
 	err := svc.FactoryReset("wrong")
 	assert.ErrorIs(t, err, ErrTPMAuthRequired)
@@ -4407,7 +4409,7 @@ func TestTPMService_ProvisionIAK_CreateIAKError(t *testing.T) {
 
 func TestTPMService_ProvisionIAK_AuthError(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.createIAKErr = fmt.Errorf("auth_fail: wrong password")
+	mock.createIAKErr = &MessageError{Msg: "auth_fail: wrong password"}
 	svc := newServiceWithMock(mock)
 	err := svc.ProvisionIAK("wrong")
 	assert.ErrorIs(t, err, ErrTPMAuthRequired)
@@ -4450,7 +4452,7 @@ func TestTPMService_ProvisionIDevID_CreateIDevIDError(t *testing.T) {
 
 func TestTPMService_ProvisionIDevID_AuthError(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.createIDevIDErr = fmt.Errorf("auth_fail: wrong password")
+	mock.createIDevIDErr = &MessageError{Msg: "auth_fail: wrong password"}
 	svc := newServiceWithMock(mock)
 	err := svc.ProvisionIDevID("wrong")
 	assert.ErrorIs(t, err, ErrTPMAuthRequired)
@@ -5695,7 +5697,7 @@ func TestTPMService_Provision_InvalidMode(t *testing.T) {
 
 func TestTPMService_Provision_AuthError(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.provisionErr = fmt.Errorf("auth_fail: wrong password")
+	mock.provisionErr = &MessageError{Msg: "auth_fail: wrong password"}
 	svc := newServiceWithMock(mock)
 	err := svc.Provision(&ProvisionOptions{OwnerAuth: "wrong"})
 	assert.ErrorIs(t, err, ErrTPMAuthRequired)
@@ -5707,7 +5709,7 @@ func TestTPMService_Provision_AuthError(t *testing.T) {
 
 func TestTPMService_Install_AuthError(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.installErr = fmt.Errorf("auth_fail: wrong password")
+	mock.installErr = &MessageError{Msg: "auth_fail: wrong password"}
 	svc := newServiceWithMock(mock)
 	err := svc.Install("wrong")
 	assert.ErrorIs(t, err, ErrTPMAuthRequired)
@@ -5981,4 +5983,61 @@ func TestTPMService_Provision_EmptyModeDefaultsToProvision(t *testing.T) {
 	svc := newServiceWithMock(mock)
 	err := svc.Provision(&ProvisionOptions{Mode: "", OwnerAuth: "test"})
 	assert.NoError(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// NVSummary JSON field name regression (Bug A)
+// ---------------------------------------------------------------------------
+
+// TestTPMService_GetNVSummary_JSONFieldNames is a regression test that ensures
+// NVSummary marshals to the exact field names the Svelte frontend expects:
+// "indexes_defined" and "indexes_max". A mismatch between Go JSON tags and the
+// TypeScript interface causes the NV Storage header to render "undefined /
+// undefined indexes defined". This test catches any future rename.
+func TestTPMService_GetNVSummary_JSONFieldNames(t *testing.T) {
+	mock := defaultMockTPM()
+	mock.nvIndexes = []xkms.NVIndexInfo{
+		{Handle: 0x01800001, Type: "ordinary", Size: 32, AuthRead: true},
+	}
+	svc := newServiceWithMock(mock)
+
+	summary, err := svc.GetNVSummary()
+	require.NoError(t, err)
+
+	data, err := json.Marshal(summary)
+	require.NoError(t, err)
+
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(data, &m))
+
+	_, hasIndexesDefined := m["indexes_defined"]
+	_, hasIndexesMax := m["indexes_max"]
+	_, hasDefined := m["defined"]
+	_, hasMax := m["max"]
+
+	assert.True(t, hasIndexesDefined, "JSON must contain 'indexes_defined' field")
+	assert.True(t, hasIndexesMax, "JSON must contain 'indexes_max' field")
+	assert.False(t, hasDefined, "JSON must NOT contain 'defined' — frontend accesses 'indexes_defined'")
+	assert.False(t, hasMax, "JSON must NOT contain 'max' — frontend accesses 'indexes_max'")
+
+	// Also assert the values are correct so this test validates the Go-side
+	// population path (NVIndexesDefined=4, NVIndexesMax=32 from fixedProps mock).
+	assert.Equal(t, float64(4), m["indexes_defined"])
+	assert.Equal(t, float64(32), m["indexes_max"])
+}
+
+// TestTPMService_GetNVSummary_FieldsPopulated verifies that both IndexesDefined
+// and IndexesMax carry non-zero values when the TPM reports them. This is the
+// unit-level companion to the Playwright regression: it proves the Go service
+// actually populates the fields before they reach the frontend.
+func TestTPMService_GetNVSummary_FieldsPopulated(t *testing.T) {
+	mock := defaultMockTPM()
+	svc := newServiceWithMock(mock)
+
+	summary, err := svc.GetNVSummary()
+	require.NoError(t, err)
+
+	// Both fields must be non-zero — the fixedProps mock returns 4 and 32.
+	assert.Equal(t, 4, summary.IndexesDefined, "IndexesDefined must be populated from TPM FixedProperties")
+	assert.Equal(t, 32, summary.IndexesMax, "IndexesMax must be populated from TPM FixedProperties")
 }

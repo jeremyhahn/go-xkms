@@ -24,13 +24,14 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/google/go-tpm/tpm2"
 

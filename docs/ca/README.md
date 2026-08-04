@@ -71,7 +71,7 @@ The CA uses three storage abstractions from the go-xkms and go-objstore ecosyste
 
 ### QRDB Object Storage
 
-The CA can use QRDB as a backend for blob storage via the objstore adapter (`pkg/qrdb/objstore/adapter.go`). This adapter implements the go-objstore `Storage` interface, providing:
+The CA can use QRDB as a backend for blob storage via the objstore package (`pkg/acme/storage/objstore`). This adapter implements the go-objstore `Storage` interface, providing:
 
 - **Attestation storage**: TPM quotes, endorsement credentials, device manifests
 - **Signature storage**: Detached signatures, signing metadata
@@ -80,8 +80,8 @@ The CA can use QRDB as a backend for blob storage via the objstore adapter (`pkg
 
 ```go
 import (
-    "github.com/jeremyhahn/go-trusted-ca/pkg/qrdb"
-    "github.com/jeremyhahn/go-trusted-ca/pkg/qrdb/objstore"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 )
 
 // Create QRDB-backed object store
@@ -204,7 +204,7 @@ See [Multi-Tenancy Documentation](../multi-tenancy.md) for complete details.
 ```go
 import (
     xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-    "github.com/jeremyhahn/go-trusted-ca/pkg/ca"
+    "github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 // Initialize xkms backends (see go-xkms documentation)
@@ -238,15 +238,15 @@ bundle, err := authority.CABundle(types.StoreTypeSoftware, x509.ECDSA)
 
 ```go
 import (
-    "github.com/jeremyhahn/go-trusted-ca/pkg/qrdb"
-    "github.com/jeremyhahn/go-trusted-ca/pkg/qrdb/objstore"
-    "github.com/jeremyhahn/go-trusted-ca/pkg/ca"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+    "github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 // Initialize QRDB
 dbConfig := &qrdb.Config{
     Mode:    qrdb.ModeStandalone,
-    DataDir: "/var/lib/trusted-ca/data",
+    DataDir: "/var/lib/xkms/data",
 }
 db, err := qrdb.New(dbConfig)
 if err != nil {

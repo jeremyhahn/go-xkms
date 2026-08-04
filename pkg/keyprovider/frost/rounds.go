@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	gofrost "github.com/jeremyhahn/go-frost/pkg/frost"
 	"github.com/jeremyhahn/go-frost/pkg/frost/signing"
 )
@@ -71,13 +73,13 @@ func (b *FrostBackend) GenerateNonces(keyID string) (*NoncePackage, error) {
 	grp := cs.Group()
 	secretShare, err := grp.DeserializeScalar(pkg.SecretShare.Value)
 	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize secret share: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to deserialize secret share", Err: err}
 	}
 
 	// Reconstruct group public key
 	groupPublicKey, err := grp.DeserializeElement(pkg.GroupPublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize group public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to deserialize group public key", Err: err}
 	}
 
 	// Build verification shares
@@ -85,7 +87,7 @@ func (b *FrostBackend) GenerateNonces(keyID string) (*NoncePackage, error) {
 	for id, vsBytes := range pkg.VerificationShares {
 		vs, err := grp.DeserializeElement(vsBytes)
 		if err != nil {
-			return nil, fmt.Errorf("failed to deserialize verification share for participant %d: %w", id, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to deserialize verification share for participant %d", id), Err: err}
 		}
 		verificationShares = append(verificationShares, gofrost.VerificationShare{
 			Identifier:      gofrost.Identifier(id),
@@ -107,7 +109,7 @@ func (b *FrostBackend) GenerateNonces(keyID string) (*NoncePackage, error) {
 	participant := signing.NewParticipant(gofrostPkg, cs)
 	signingNonces, signingCommitments, err := participant.RoundOne()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate nonces: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate nonces", Err: err}
 	}
 
 	// Serialize nonces and commitments
@@ -119,7 +121,7 @@ func (b *FrostBackend) GenerateNonces(keyID string) (*NoncePackage, error) {
 	// Generate session ID
 	sessionIDBytes := make([]byte, 16)
 	if _, err := rand.Read(sessionIDBytes); err != nil {
-		return nil, fmt.Errorf("failed to generate session ID: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate session ID", Err: err}
 	}
 	sessionID := hex.EncodeToString(sessionIDBytes)
 
@@ -210,7 +212,7 @@ func (b *FrostBackend) SignRound(
 	grp := cs.Group()
 	secretShare, err := grp.DeserializeScalar(pkg.SecretShare.Value)
 	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize secret share: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to deserialize secret share", Err: err}
 	}
 	defer func() {
 		// Zeroize secret share after use
@@ -220,7 +222,7 @@ func (b *FrostBackend) SignRound(
 	// Reconstruct group public key
 	groupPublicKey, err := grp.DeserializeElement(pkg.GroupPublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize group public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to deserialize group public key", Err: err}
 	}
 
 	// Build verification shares
@@ -228,7 +230,7 @@ func (b *FrostBackend) SignRound(
 	for id, vsBytes := range pkg.VerificationShares {
 		vs, err := grp.DeserializeElement(vsBytes)
 		if err != nil {
-			return nil, fmt.Errorf("failed to deserialize verification share for participant %d: %w", id, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to deserialize verification share for participant %d", id), Err: err}
 		}
 		verificationShares = append(verificationShares, gofrost.VerificationShare{
 			Identifier:      gofrost.Identifier(id),
@@ -249,23 +251,23 @@ func (b *FrostBackend) SignRound(
 	// Reconstruct nonces
 	hidingNonce, err := grp.DeserializeScalar(nonces.Nonces.HidingNonce)
 	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize hiding nonce: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to deserialize hiding nonce", Err: err}
 	}
 
 	bindingNonce, err := grp.DeserializeScalar(nonces.Nonces.BindingNonce)
 	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize binding nonce: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to deserialize binding nonce", Err: err}
 	}
 
 	// Reconstruct hiding/binding commitments
 	hidingCommitment, err := grp.DeserializeElement(nonces.Commitments.HidingCommitment)
 	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize hiding commitment: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to deserialize hiding commitment", Err: err}
 	}
 
 	bindingCommitment, err := grp.DeserializeElement(nonces.Commitments.BindingCommitment)
 	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize binding commitment: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to deserialize binding commitment", Err: err}
 	}
 
 	signingNonces := gofrost.SigningNonces{
@@ -283,12 +285,12 @@ func (b *FrostBackend) SignRound(
 	for _, c := range commitments {
 		hc, err := grp.DeserializeElement(c.Commitments.HidingCommitment)
 		if err != nil {
-			return nil, fmt.Errorf("failed to deserialize hiding commitment: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to deserialize hiding commitment", Err: err}
 		}
 
 		bc, err := grp.DeserializeElement(c.Commitments.BindingCommitment)
 		if err != nil {
-			return nil, fmt.Errorf("failed to deserialize binding commitment: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to deserialize binding commitment", Err: err}
 		}
 
 		commitmentList = append(commitmentList, gofrost.SigningCommitments{
@@ -302,7 +304,7 @@ func (b *FrostBackend) SignRound(
 	participant := signing.NewParticipant(gofrostPkg, cs)
 	signatureShare, err := participant.RoundTwo(signingNonces, message, commitmentList)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate signature share: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate signature share", Err: err}
 	}
 
 	// Serialize signature share
@@ -354,7 +356,7 @@ func (b *FrostBackend) Aggregate(
 	grp := cs.Group()
 	groupPublicKey, err := grp.DeserializeElement(pubPkg.GroupPublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize group public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to deserialize group public key", Err: err}
 	}
 
 	// Reconstruct commitments
@@ -362,12 +364,12 @@ func (b *FrostBackend) Aggregate(
 	for _, c := range commitments {
 		hc, err := grp.DeserializeElement(c.Commitments.HidingCommitment)
 		if err != nil {
-			return nil, fmt.Errorf("failed to deserialize hiding commitment: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to deserialize hiding commitment", Err: err}
 		}
 
 		bc, err := grp.DeserializeElement(c.Commitments.BindingCommitment)
 		if err != nil {
-			return nil, fmt.Errorf("failed to deserialize binding commitment: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to deserialize binding commitment", Err: err}
 		}
 
 		commitmentList = append(commitmentList, gofrost.SigningCommitments{
@@ -382,8 +384,7 @@ func (b *FrostBackend) Aggregate(
 	for _, share := range shares {
 		s, err := grp.DeserializeScalar(share.Share)
 		if err != nil {
-			return nil, fmt.Errorf("failed to deserialize signature share from participant %d: %w",
-				share.ParticipantID, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to deserialize signature share from participant %d", share.ParticipantID), Err: err}
 		}
 
 		frostShares = append(frostShares, gofrost.SignatureShare{
@@ -438,7 +439,7 @@ func (b *FrostBackend) Verify(keyID string, message, signature []byte) error {
 	grp := cs.Group()
 	groupPublicKey, err := grp.DeserializeElement(pubPkg.GroupPublicKey)
 	if err != nil {
-		return fmt.Errorf("failed to deserialize group public key: %w", err)
+		return &errs.Wrapped{Msg: "failed to deserialize group public key", Err: err}
 	}
 
 	// Deserialize signature
@@ -446,7 +447,7 @@ func (b *FrostBackend) Verify(keyID string, message, signature []byte) error {
 	pubKeySize := GetPublicKeySize(pubPkg.Algorithm)
 	expectedSize := pubKeySize + scalarSize
 	if len(signature) != expectedSize {
-		return fmt.Errorf("invalid signature size: got %d, expected %d", len(signature), expectedSize)
+		return &errs.Message{Msg: fmt.Sprintf("invalid signature size: got %d, expected %d", len(signature), expectedSize)}
 	}
 
 	// Split signature into R and z
@@ -455,12 +456,12 @@ func (b *FrostBackend) Verify(keyID string, message, signature []byte) error {
 
 	r, err := grp.DeserializeElement(rBytes)
 	if err != nil {
-		return fmt.Errorf("failed to deserialize signature R: %w", err)
+		return &errs.Wrapped{Msg: "failed to deserialize signature R", Err: err}
 	}
 
 	z, err := grp.DeserializeScalar(zBytes)
 	if err != nil {
-		return fmt.Errorf("failed to deserialize signature z: %w", err)
+		return &errs.Wrapped{Msg: "failed to deserialize signature z", Err: err}
 	}
 
 	// Create signature and verify

@@ -1,0 +1,163 @@
+- generic [ref=e3]:
+  - navigation "Main navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e9]: xKey
+      - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+        - img [ref=e11]
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: OVERVIEW
+        - button "Dashboard" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - generic [ref=e19]: Dashboard
+        - button "Pairing" [ref=e20] [cursor=pointer]:
+          - img [ref=e21]
+          - generic [ref=e23]: Pairing
+        - button "TPM 2.0" [ref=e24] [cursor=pointer]:
+          - img [ref=e25]
+          - generic [ref=e27]: TPM 2.0
+      - generic [ref=e28]:
+        - generic [ref=e29]: STORE
+        - button "Keys" [ref=e30] [cursor=pointer]:
+          - img [ref=e31]
+          - generic [ref=e33]: Keys
+        - button "Trust Store" [ref=e34] [cursor=pointer]:
+          - img [ref=e35]
+          - generic [ref=e37]: Trust Store
+        - button "Certificates" [ref=e38] [cursor=pointer]:
+          - img [ref=e39]
+          - generic [ref=e41]: Certificates
+      - generic [ref=e42]:
+        - generic [ref=e43]: APPLICATIONS
+        - button "SSH" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: SSH
+        - button "FIDO2" [ref=e48] [cursor=pointer]:
+          - img [ref=e49]
+          - generic [ref=e51]: FIDO2
+        - button "OATH" [ref=e52] [cursor=pointer]:
+          - img [ref=e53]
+          - generic [ref=e55]: OATH
+        - button "PIV" [ref=e56] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: PIV
+        - button "Passwords" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e63]: Passwords
+        - button "Sealed Data" [ref=e64] [cursor=pointer]:
+          - img [ref=e65]
+          - generic [ref=e67]: Sealed Data
+        - button "Browser" [ref=e68] [cursor=pointer]:
+          - img [ref=e69]
+          - generic [ref=e71]: Browser
+      - generic [ref=e72]:
+        - generic [ref=e73]: MANAGEMENT
+        - button "Audit Log" [ref=e74] [cursor=pointer]:
+          - img [ref=e75]
+          - generic [ref=e77]: Audit Log
+        - button "Admin" [ref=e78] [cursor=pointer]:
+          - img [ref=e79]
+          - generic [ref=e81]: Admin
+      - generic [ref=e82]:
+        - generic [ref=e83]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e84] [cursor=pointer]:
+          - img [ref=e85]
+          - generic [ref=e87]: OIDC
+        - button "API Explorer" [ref=e88] [cursor=pointer]:
+          - img [ref=e89]
+          - generic [ref=e91]: API Explorer
+    - generic [ref=e92]:
+      - generic "Standalone mode" [ref=e93]:
+        - generic [ref=e95]: Standalone
+      - button "Theme" [ref=e96] [cursor=pointer]:
+        - img [ref=e97]
+        - generic [ref=e99]: Theme
+      - button "Settings" [active] [ref=e100] [cursor=pointer]:
+        - img [ref=e101]
+        - generic [ref=e103]: Settings
+  - main [ref=e104]:
+    - generic [ref=e106]:
+      - button "Lock app" [ref=e107] [cursor=pointer]:
+        - img [ref=e108]
+        - generic [ref=e110]: Lock
+      - button "No touch pending" [disabled] [ref=e111]:
+        - img [ref=e113]
+    - generic [ref=e1762]:
+      - generic [ref=e1765]:
+        - heading "Settings" [level=1] [ref=e1766]
+        - paragraph [ref=e1767]: Application configuration
+      - generic [ref=e1768]:
+        - navigation [ref=e1769]:
+          - button "General" [ref=e1770] [cursor=pointer]:
+            - img [ref=e1771]
+            - generic [ref=e1773]: General
+          - button "Identity" [ref=e1774] [cursor=pointer]:
+            - img [ref=e1775]
+            - generic [ref=e1777]: Identity
+          - button "Appearance" [ref=e1778] [cursor=pointer]:
+            - img [ref=e1779]
+            - generic [ref=e1781]: Appearance
+          - button "Browser" [ref=e1782] [cursor=pointer]:
+            - img [ref=e1783]
+            - generic [ref=e1785]: Browser
+          - button "API Explorer" [ref=e1786] [cursor=pointer]:
+            - img [ref=e1787]
+            - generic [ref=e1789]: API Explorer
+          - button "Server" [ref=e1790] [cursor=pointer]:
+            - img [ref=e1791]
+            - generic [ref=e1793]: Server
+          - button "Phone" [ref=e1794] [cursor=pointer]:
+            - img [ref=e1795]
+            - generic [ref=e1797]: Phone
+          - button "Security" [ref=e1798] [cursor=pointer]:
+            - img [ref=e1799]
+            - generic [ref=e1801]: Security
+          - button "PIN Management" [ref=e1802] [cursor=pointer]:
+            - img [ref=e1803]
+            - generic [ref=e1805]: PIN Management
+          - button "Storage" [ref=e1806] [cursor=pointer]:
+            - img [ref=e1807]
+            - generic [ref=e1809]: Storage
+          - button "Notifications" [ref=e1810] [cursor=pointer]:
+            - img [ref=e1811]
+            - generic [ref=e1813]: Notifications
+          - button "SSH" [ref=e1814] [cursor=pointer]:
+            - img [ref=e1815]
+            - generic [ref=e1817]: SSH
+          - button "Advanced" [ref=e1818] [cursor=pointer]:
+            - img [ref=e1819]
+            - generic [ref=e1821]: Advanced
+        - generic [ref=e1824]:
+          - heading "General" [level=2] [ref=e1825]
+          - generic [ref=e1826]:
+            - generic [ref=e1827]:
+              - generic [ref=e1828]: Start with system
+              - generic [ref=e1829]: Launch xKey automatically when you log in
+            - switch [checked] [ref=e1831] [cursor=pointer]
+          - generic [ref=e1833]:
+            - generic [ref=e1834]:
+              - generic [ref=e1835]: Start minimized
+              - generic [ref=e1836]: Start in the system tray instead of showing the window
+            - switch [ref=e1838] [cursor=pointer]
+          - generic [ref=e1840]:
+            - generic [ref=e1841]:
+              - generic [ref=e1842]: Auto-connect to default device
+              - generic [ref=e1843]: Automatically connect to the default phone on startup
+            - switch [checked] [ref=e1845] [cursor=pointer]
+          - generic [ref=e1847]:
+            - generic [ref=e1848]:
+              - generic [ref=e1849]: FIDO2 Virtual Authenticator
+              - generic [ref=e1850]: Enable the virtual FIDO2/WebAuthn authenticator for passwordless authentication
+            - switch [checked] [ref=e1852] [cursor=pointer]
+          - generic [ref=e1854]:
+            - generic [ref=e1855]:
+              - generic [ref=e1856]: Require touch (user presence)
+              - generic [ref=e1857]: Require physical touch for FIDO2 operations. Matches the YubiKey experience where the device lights up and waits for touch.
+            - switch [checked] [ref=e1859] [cursor=pointer]
+          - generic [ref=e1861]:
+            - generic [ref=e1862]:
+              - generic [ref=e1863]: Multi-key intent check
+              - generic [ref=e1864]: When multiple security keys are connected, show a confirmation before entering xKey's PIN flow. This lets you decline and use a different key (e.g. YubiKey).
+            - switch [checked] [ref=e1866] [cursor=pointer]

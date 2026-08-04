@@ -25,6 +25,18 @@ func (e *NilInputError) Error() string {
 	return "ssh/known_hosts: nil input: " + e.Field
 }
 
+// NoPublicKeyError is returned by Emit when a pin carries no PublicKey (a
+// legacy fingerprint-only pin) and therefore cannot be rendered as an OpenSSH
+// known_hosts line.
+type NoPublicKeyError struct {
+	Host string
+}
+
+// Error implements the error interface.
+func (e *NoPublicKeyError) Error() string {
+	return "ssh/known_hosts: pin for host " + e.Host + " has no public key to emit"
+}
+
 // NotFoundError is returned by Get / Verify / Remove when no pin exists
 // for the requested (scope, owner, host).
 type NotFoundError struct {
@@ -68,6 +80,20 @@ type MismatchError struct {
 func (e *MismatchError) Error() string {
 	return "ssh/known_hosts: host key mismatch for " + e.Host +
 		": expected " + e.Expected + ", got " + e.Received
+}
+
+// RejectedError is returned by CallbackWithConfirm when a Confirmer declines
+// to trust an unpinned host key (a Confirmer explicitly returning
+// (false, nil)). Host is the bare hostname (post stripPort); Fingerprint is
+// the OpenSSH "SHA256:..." form of the declined key — both are safe to log.
+type RejectedError struct {
+	Host        string
+	Fingerprint string
+}
+
+// Error implements the error interface.
+func (e *RejectedError) Error() string {
+	return "ssh/known_hosts: host key rejected for " + e.Host + ": " + e.Fingerprint
 }
 
 // InvalidHostError is returned when a host string cannot be used as a

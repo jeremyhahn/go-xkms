@@ -128,33 +128,33 @@ type AutofillPolicyResult struct {
 // required fields for the action are missing.
 func (p *AutofillPayload) Validate() error {
 	if p.Action == "" {
-		return fmt.Errorf("%w: autofill action is required", ErrInvalidMessage)
+		return &DetailError{Err: ErrInvalidMessage, Detail: ": autofill action is required"}
 	}
 	if !validAutofillActions[p.Action] {
-		return fmt.Errorf("%w: unknown autofill action %q", ErrInvalidMessage, p.Action)
+		return &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": unknown autofill action %q", p.Action)}
 	}
 	switch p.Action {
 	case ActionAutofillSearch, ActionAutofillTOTP:
 		if p.Domain == "" {
-			return fmt.Errorf("%w: domain is required for %s action", ErrInvalidMessage, p.Action)
+			return &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": domain is required for %s action", p.Action)}
 		}
 	case ActionAutofillGet, ActionAutofillTOTPByID:
 		if p.ID == "" {
-			return fmt.Errorf("%w: id is required for %s action", ErrInvalidMessage, p.Action)
+			return &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": id is required for %s action", p.Action)}
 		}
 	case ActionAutofillSave:
 		if p.Domain == "" {
-			return fmt.Errorf("%w: domain is required for %s action", ErrInvalidMessage, p.Action)
+			return &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": domain is required for %s action", p.Action)}
 		}
 		if p.Username == "" {
-			return fmt.Errorf("%w: username is required for %s action", ErrInvalidMessage, p.Action)
+			return &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": username is required for %s action", p.Action)}
 		}
 		if p.Password == "" {
-			return fmt.Errorf("%w: password is required for %s action", ErrInvalidMessage, p.Action)
+			return &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": password is required for %s action", p.Action)}
 		}
 	case ActionAutofillIgnoreDomain:
 		if p.Domain == "" {
-			return fmt.Errorf("%w: domain is required for %s action", ErrInvalidMessage, p.Action)
+			return &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": domain is required for %s action", p.Action)}
 		}
 	case ActionAutofillStatus, ActionAutofillPolicy, ActionAutofillFocus:
 		// No additional fields required

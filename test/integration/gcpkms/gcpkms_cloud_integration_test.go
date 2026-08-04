@@ -28,6 +28,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+
 	kms "cloud.google.com/go/kms/apiv1"
 	kmspb "cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -132,7 +135,7 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 		}
 		createdKeys = append(createdKeys, attrs)
 
-		_, err := b.GenerateRSA(attrs)
+		_, err := b.GenerateRSA(ctx, attrs)
 		require.NoError(t, err, "Failed to create RSA key in real GCP KMS")
 
 		// Test signing with real GCP KMS
@@ -158,7 +161,7 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 		}
 		createdKeys = append(createdKeys, attrs)
 
-		_, err := b.GenerateECDSA(attrs)
+		_, err := b.GenerateECDSA(ctx, attrs)
 		require.NoError(t, err, "Failed to create ECDSA key in real GCP KMS")
 
 		// Test signing
@@ -184,7 +187,7 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 		}
 		createdKeys = append(createdKeys, attrs)
 
-		_, err := b.GenerateRSA(attrs)
+		_, err := b.GenerateRSA(ctx, attrs)
 		require.NoError(t, err, "Failed to create key")
 
 		// Sign
@@ -216,10 +219,10 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 		}
 		createdKeys = append(createdKeys, attrs)
 
-		_, err := b.GenerateRSA(attrs)
+		_, err := b.GenerateRSA(ctx, attrs)
 		require.NoError(t, err, "Failed to create RSA key in real GCP KMS")
 
-		signer, err := b.Signer(attrs)
+		signer, err := b.Signer(ctx, attrs)
 		require.NoError(t, err, "Failed to get Signer")
 
 		message := []byte("GCP KMS RSA-PSS test with real cloud service")
@@ -255,11 +258,11 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 		}
 		createdKeys = append(createdKeys, attrs)
 
-		_, err := b.GenerateRSA(attrs)
+		_, err := b.GenerateRSA(ctx, attrs)
 		require.NoError(t, err, "Failed to create key")
 
 		// List keys
-		keys, err := b.ListKeys()
+		keys, err := b.ListKeys(ctx)
 		require.NoError(t, err, "Failed to list keys from real GCP KMS")
 		require.NotNil(t, keys, "Keys list should not be nil")
 		require.NotEmpty(t, keys, "Should have at least 1 key")
@@ -280,11 +283,11 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 		}
 		createdKeys = append(createdKeys, attrs)
 
-		_, err := b.GenerateRSA(attrs)
+		_, err := b.GenerateRSA(ctx, attrs)
 		require.NoError(t, err, "Failed to create key")
 
 		// Get Signer interface
-		signer, err := b.Signer(attrs)
+		signer, err := b.Signer(ctx, attrs)
 		require.NoError(t, err, "Failed to get Signer from real GCP KMS")
 		require.NotNil(t, signer, "Signer should not be nil")
 
@@ -327,7 +330,7 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 		require.True(t, ok, "Backend should implement ImportExportBackend")
 
 		// Test creating import job
-		params, err := ieb.GetImportParameters(sourceAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		params, err := ieb.GetImportParameters(ctx, sourceAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		if err != nil {
 			t.Logf("GetImportParameters not fully supported yet: %v", err)
 			return
@@ -359,11 +362,11 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 		createdKeys = append(createdKeys, attrs)
 
 		// Generate symmetric key
-		_, err := symBackend.GenerateSymmetricKey(attrs)
+		_, err := symBackend.GenerateSymmetricKey(ctx, attrs)
 		require.NoError(t, err, "Failed to generate symmetric key in real GCP KMS")
 
 		// Get encrypter
-		encrypter, err := symBackend.SymmetricEncrypter(attrs)
+		encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 		require.NoError(t, err, "Failed to get symmetric encrypter")
 		require.NotNil(t, encrypter, "Encrypter should not be nil")
 
@@ -393,7 +396,7 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 			},
 		}
 
-		_, err := b.GenerateRSA(attrs)
+		_, err := b.GenerateRSA(ctx, attrs)
 		require.NoError(t, err, "Failed to create key")
 
 		// Note: GCP KMS doesn't actually delete keys immediately - they go into a scheduled deletion state
@@ -416,7 +419,7 @@ func setupGCPKeyRing(ctx context.Context, projectID, location, keyringID string)
 	// Import the KMS client package dynamically
 	kmsClient, err := kms.NewKeyManagementClient(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to create KMS client: %w", err)
+		return &errs.Wrapped{Msg: "failed to create KMS client", Err: err}
 	}
 	defer kmsClient.Close()
 
@@ -439,7 +442,7 @@ func setupGCPKeyRing(ctx context.Context, projectID, location, keyringID string)
 	})
 
 	if err != nil {
-		return fmt.Errorf("keyring does not exist and cannot be created (check permissions): %w", err)
+		return &errs.Wrapped{Msg: "keyring does not exist and cannot be created (check permissions)", Err: err}
 	}
 
 	return nil

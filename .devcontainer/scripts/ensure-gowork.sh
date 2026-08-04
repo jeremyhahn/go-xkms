@@ -48,7 +48,7 @@ REPO="$(detect_repo)"
 # stale /tmp/go.work (e.g. left in a long-running devcontainer created before a
 # Go-version bump) is regenerated rather than reused — otherwise `go` rejects it
 # with "go.work lists go X, but module requires go >= Y".
-GOWORK_GO_VERSION="1.26.4"
+GOWORK_GO_VERSION="1.26.5"
 if [ -f "$GOWORK_FILE" ] && ! grep -qxF "go ${GOWORK_GO_VERSION}" "$GOWORK_FILE"; then
 	echo "ensure-gowork: ${GOWORK_FILE} go directive is stale; regenerating for go ${GOWORK_GO_VERSION}" >&2
 	rm -f "$GOWORK_FILE" "$GOWORK_FILE.sum"
@@ -65,35 +65,11 @@ if [ ! -f "$GOWORK_FILE" ]; then
 	done
 
 	echo "ensure-gowork: generating ${GOWORK_FILE} (repo=${REPO})"
-	cat > "$GOWORK_FILE" <<EOF
-go ${GOWORK_GO_VERSION}
-
-use (
-	${REPO}
-	${REPO}/sdk/go
-	${REPO}/xkey
-	/go-codec
-	/go-frost
-	/go-objstore
-	/go-qrdb
-	/go-qrdb/sdk/go
-	/go-quicraft
-	/go-truststrap
-)
-
-replace (
-	github.com/jeremyhahn/go-codec v0.0.0 => /go-codec
-	github.com/jeremyhahn/go-frost v0.0.0 => /go-frost
-	github.com/jeremyhahn/go-objstore v0.0.0 => /go-objstore
-	github.com/jeremyhahn/go-qrdb v0.0.0 => /go-qrdb
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0 => /go-qrdb/sdk/go
-	github.com/jeremyhahn/go-quicraft v0.0.0 => /go-quicraft
-	github.com/jeremyhahn/go-truststrap v0.0.0 => /go-truststrap
-	github.com/jeremyhahn/go-xkms v0.0.0 => ${REPO}
-	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0 => ${REPO}/sdk/go
-	github.com/jeremyhahn/go-xkms/xkey v0.0.0 => ${REPO}/xkey
-)
-EOF
+	# Delegate to the single canonical generator so the module set and the
+	# version-specific replace directives live in exactly one place (see
+	# scripts/gen-gowork.sh). Never inline a go.work heredoc here again — that is
+	# how the per-context copies drifted to stale/incomplete replaces.
+	bash "${REPO}/scripts/gen-gowork.sh" "${REPO}" "${GOWORK_FILE}" "${GOWORK_GO_VERSION}"
 
 	# Populate /tmp/go.work.sum for the workspace build list. Because every
 	# in-house module is a local workspace member, this only fetches public

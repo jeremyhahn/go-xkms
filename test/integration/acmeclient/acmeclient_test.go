@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -322,7 +322,7 @@ func findACMEClientBinary(cfg *acmeClientConfig) error {
 		"./trusted-acme-client",
 		"../../../bin/trusted-acme-client",
 		"/usr/local/bin/trusted-acme-client",
-		"/workspace/go-trusted-ca/bin/trusted-acme-client",
+		"/workspace/go-xkms/bin/trusted-acme-client",
 	}
 
 	for _, p := range possiblePaths {

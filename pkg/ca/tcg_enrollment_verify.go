@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
@@ -57,7 +59,7 @@ func (ca *CA) VerifyTCG_CSR_IDevIDBytes(
 
 	tcgCSR, err := tpm2.UnmarshalIDevIDCSR(packedCSR)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("%w: %v", ErrTCGCSRUnmarshalFailed, err)
+		return nil, nil, nil, &errs.Detail{Err: ErrTCGCSRUnmarshalFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	csrContent := &tcgCSR.CsrContents
@@ -69,12 +71,12 @@ func (ca *CA) VerifyTCG_CSR_IDevIDBytes(
 	if block, _ := pem.Decode(csrContent.EkCert); block != nil {
 		ekCert, err = x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("%w: pem: %v", ErrTCGInvalidEKCert, err)
+			return nil, nil, nil, &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("pem: %v", err)}
 		}
 	} else {
 		ekCert, err = x509.ParseCertificate(csrContent.EkCert)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("%w: der: %v", ErrTCGInvalidEKCert, err)
+			return nil, nil, nil, &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("der: %v", err)}
 		}
 	}
 
@@ -88,7 +90,7 @@ func (ca *CA) VerifyTCG_CSR_IDevIDBytes(
 		nil,
 	)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("%w: %v", ErrTCGMakeCredentialFailed, err)
+		return nil, nil, nil, &errs.Detail{Err: ErrTCGMakeCredentialFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	return credentialBlob, encryptedSecret, plainSecret, nil
 }

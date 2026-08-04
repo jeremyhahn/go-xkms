@@ -1285,6 +1285,11 @@ func (m *mockService) BarrierGenerateRecoveryKeys(_ context.Context, _ *BarrierG
 	return nil, nil
 }
 
+// BarrierEnableEncryption enables barrier encryption.
+func (m *mockService) BarrierEnableEncryption(_ context.Context, _ *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error) {
+	return nil, nil
+}
+
 // BarrierRecoverWithKeys recovers the barrier using recovery keys.
 func (m *mockService) BarrierRecoverWithKeys(_ context.Context, _ *BarrierRecoverWithKeysRequest) error {
 	return nil
@@ -1400,6 +1405,18 @@ func (m *mockService) TenantBarrierInit(ctx context.Context, req *TenantBarrierI
 
 func (m *mockService) TenantBarrierUnseal(ctx context.Context, req *TenantBarrierUnsealRequest) error {
 	return nil
+}
+
+func (m *mockService) TenantBarrierStatus(_ context.Context, _ string) (*TenantBarrierStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) UpdateTenantEntitlements(_ context.Context, _ *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) UpdateTenantQuotas(_ context.Context, _ *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error) {
+	return nil, nil
 }
 
 // InitCeremonyService methods

@@ -23,6 +23,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // WebAuthnClient wraps HTTP client for WebAuthn API testing
@@ -52,7 +54,7 @@ func (c *WebAuthnClient) doWebAuthnRequestWithSession(method, path string, body 
 	if body != nil {
 		jsonBody, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal request: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to marshal request", Err: err}
 		}
 		reqBody = io.NopCloser(io.NewSectionReader(nil, 0, 0))
 		_ = jsonBody // Avoid unused warning

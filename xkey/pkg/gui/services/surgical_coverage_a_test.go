@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1454,7 +1453,7 @@ func TestSA_SealService_UnsealData_UnsealerError(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewSealService(dir)
 	svc.SetContext(context.Background())
-	errUnseal := fmt.Errorf("sa: unseal error")
+	errUnseal := &MessageError{Msg: "sa: unseal error"}
 	saWireSealClient(svc, &saSealer{canSeal: true, unsealErr: errUnseal})
 
 	blob := &sealedBlobStorage{

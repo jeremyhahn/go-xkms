@@ -21,6 +21,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/fxamacker/cbor/v2"
 )
 
@@ -90,7 +92,7 @@ func buildClientDataJSON(challenge []byte, origin string) ([]byte, error) {
 	}
 	out, err := json.Marshal(cd)
 	if err != nil {
-		return nil, fmt.Errorf("fido2: failed to marshal clientDataJSON: %w", err)
+		return nil, &errs.Wrapped{Msg: "fido2: failed to marshal clientDataJSON", Err: err}
 	}
 	return out, nil
 }
@@ -102,10 +104,10 @@ func buildClientDataJSON(challenge []byte, origin string) ([]byte, error) {
 // what the go-webauthn parser expects.
 func encodeAttestationObject(resp *MakeCredentialResponse) ([]byte, error) {
 	if resp == nil {
-		return nil, fmt.Errorf("fido2: nil MakeCredentialResponse")
+		return nil, &errs.Message{Msg: "fido2: nil MakeCredentialResponse"}
 	}
 	if len(resp.AuthData) == 0 {
-		return nil, fmt.Errorf("fido2: MakeCredentialResponse missing authData")
+		return nil, &errs.Message{Msg: "fido2: MakeCredentialResponse missing authData"}
 	}
 
 	attStmt := resp.AttStmt
@@ -121,12 +123,12 @@ func encodeAttestationObject(resp *MakeCredentialResponse) ([]byte, error) {
 
 	encMode, err := cbor.CTAP2EncOptions().EncMode()
 	if err != nil {
-		return nil, fmt.Errorf("fido2: failed to build CBOR encoder: %w", err)
+		return nil, &errs.Wrapped{Msg: "fido2: failed to build CBOR encoder", Err: err}
 	}
 
 	encoded, err := encMode.Marshal(attObj)
 	if err != nil {
-		return nil, fmt.Errorf("fido2: failed to encode attestationObject: %w", err)
+		return nil, &errs.Wrapped{Msg: "fido2: failed to encode attestationObject", Err: err}
 	}
 	return encoded, nil
 }
@@ -142,27 +144,27 @@ func encodeAttestationObject(resp *MakeCredentialResponse) ([]byte, error) {
 func extractCredentialID(authData []byte) ([]byte, error) {
 	// rpIdHash(32) + flags(1) + signCount(4) = 37 byte fixed header.
 	if len(authData) < 37 {
-		return nil, fmt.Errorf("fido2: authData too short: %d bytes", len(authData))
+		return nil, &errs.Message{Msg: fmt.Sprintf("fido2: authData too short: %d bytes", len(authData))}
 	}
 
 	flags := authData[32]
 	const flagAttestedCredentialData = 0x40 // AT flag, bit 6
 	if flags&flagAttestedCredentialData == 0 {
-		return nil, fmt.Errorf("fido2: authData has no attested credential data (AT flag unset)")
+		return nil, &errs.Message{Msg: "fido2: authData has no attested credential data (AT flag unset)"}
 	}
 
 	// attestedCredentialData starts at offset 37: aaguid(16) then credIdLen(2).
 	const aaguidLen = 16
 	credIDLenOffset := 37 + aaguidLen
 	if len(authData) < credIDLenOffset+2 {
-		return nil, fmt.Errorf("fido2: authData truncated before credential id length")
+		return nil, &errs.Message{Msg: "fido2: authData truncated before credential id length"}
 	}
 
 	credIDLen := int(authData[credIDLenOffset])<<8 | int(authData[credIDLenOffset+1])
 	credIDStart := credIDLenOffset + 2
 	credIDEnd := credIDStart + credIDLen
 	if len(authData) < credIDEnd {
-		return nil, fmt.Errorf("fido2: authData truncated: credential id length %d exceeds buffer", credIDLen)
+		return nil, &errs.Message{Msg: fmt.Sprintf("fido2: authData truncated: credential id length %d exceeds buffer", credIDLen)}
 	}
 
 	credentialID := make([]byte, credIDLen)
@@ -198,7 +200,7 @@ func buildPublicKeyCredentialJSON(resp *MakeCredentialResponse, clientDataJSON [
 
 	doc, err = json.Marshal(cred)
 	if err != nil {
-		return nil, nil, fmt.Errorf("fido2: failed to marshal PublicKeyCredential JSON: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "fido2: failed to marshal PublicKeyCredential JSON", Err: err}
 	}
 	return credentialID, doc, nil
 }
@@ -247,10 +249,10 @@ func buildWebAuthnAttestation(resp *MakeCredentialResponse, challenge []byte, or
 // data, and assembles the PublicKeyCredential document.
 func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebAuthnAttestation, error) {
 	if len(opts.Challenge) == 0 {
-		return nil, fmt.Errorf("fido2: registration challenge required")
+		return nil, &errs.Message{Msg: "fido2: registration challenge required"}
 	}
 	if opts.Origin == "" {
-		return nil, fmt.Errorf("fido2: registration origin required")
+		return nil, &errs.Message{Msg: "fido2: registration origin required"}
 	}
 
 	// Build clientDataJSON and derive the clientDataHash the authenticator signs.
@@ -271,7 +273,7 @@ func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebA
 		if closeErr := device.Close(); closeErr != nil {
 			log.Printf("failed to close device after CTAP init error: %v", closeErr)
 		}
-		return nil, fmt.Errorf("fido2: failed to initialize CTAP device: %w", err)
+		return nil, &errs.Wrapped{Msg: "fido2: failed to initialize CTAP device", Err: err}
 	}
 	defer func() {
 		if err := ctapDev.Close(); err != nil {
@@ -281,7 +283,7 @@ func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebA
 
 	auth, err := NewAuthenticator(ctapDev, h.config)
 	if err != nil {
-		return nil, fmt.Errorf("fido2: failed to create authenticator: %w", err)
+		return nil, &errs.Wrapped{Msg: "fido2: failed to create authenticator", Err: err}
 	}
 
 	if opts.Timeout > 0 {
@@ -310,7 +312,7 @@ func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebA
 	h.logger.Printf("Please touch your security key to register...")
 	resp, err := auth.MakeCredential(req)
 	if err != nil {
-		return nil, fmt.Errorf("fido2: MakeCredential failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "fido2: MakeCredential failed", Err: err}
 	}
 
 	return buildWebAuthnAttestation(resp, opts.Challenge, opts.Origin)

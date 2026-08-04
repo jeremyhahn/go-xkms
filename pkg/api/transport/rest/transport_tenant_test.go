@@ -52,7 +52,7 @@ func newTenantTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 	}
 
 	ctx := context.Background()
-	creds := seal.Credentials{Secret: "test-password"}
+	creds := seal.Credentials{Secret: []byte("test-password")}
 	if err := barrier.Initialize(ctx, creds); err != nil {
 		t.Fatal(err)
 	}

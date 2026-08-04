@@ -92,3 +92,56 @@ func NewGadgetError(operation string, err error) *GadgetError {
 		Err:       err,
 	}
 }
+
+// DetailError appends detail text directly after a wrapped error while
+// preserving errors.Is / errors.As matching of the wrapped error through
+// Unwrap. The detail text carries its own leading separator.
+type DetailError struct {
+	Err    error
+	Detail string
+}
+
+// Error implements the error interface.
+func (e *DetailError) Error() string {
+	return e.Err.Error() + e.Detail
+}
+
+// Unwrap returns the wrapped cause.
+func (e *DetailError) Unwrap() error {
+	return e.Err
+}
+
+// SentinelCauseError attaches an underlying cause to a package sentinel
+// error so errors.Is matches both the sentinel and the cause.
+type SentinelCauseError struct {
+	Sentinel error
+	Cause    error
+}
+
+// Error implements the error interface.
+func (e *SentinelCauseError) Error() string {
+	return e.Sentinel.Error() + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the sentinel and the cause for errors.Is / errors.As.
+func (e *SentinelCauseError) Unwrap() []error {
+	return []error{e.Sentinel, e.Cause}
+}
+
+// WrappedError wraps an underlying cause with a contextual message while
+// preserving errors.Is / errors.As matching through Unwrap. It replaces
+// inline formatted-error constructions that wrap another error.
+type WrappedError struct {
+	Msg string
+	Err error
+}
+
+// Error implements the error interface.
+func (e *WrappedError) Error() string {
+	return e.Msg + ": " + e.Err.Error()
+}
+
+// Unwrap returns the wrapped cause.
+func (e *WrappedError) Unwrap() error {
+	return e.Err
+}

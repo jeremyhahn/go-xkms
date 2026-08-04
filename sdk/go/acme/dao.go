@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -15,7 +15,7 @@ package trustedca
 
 // This file re-exports generic DAO types from go-qrdb/sdk/go for SDK consumers
 // that implement storage backends (e.g., go-trusted-platform). By sourcing these
-// types from the go-trusted-ca SDK rather than go-qrdb directly, Layer 5 callers
+// types from the go-xkms SDK rather than go-qrdb directly, Layer 5 callers
 // avoid a direct dependency on the Layer 2 go-qrdb module.
 
 import (

@@ -24,12 +24,15 @@ import (
 	"net"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/correlation"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // Typed errors for barrier MCP handlers.
@@ -78,14 +81,23 @@ type Server struct {
 	xkmsService     *xkms.XKMSService
 	barrier         *seal.Barrier
 	passwordManager *staticpw.TenantPasswordStoreManager
-	listener        net.Listener
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
-	tlsConfig       *tls.Config
-	authenticator   auth.Authenticator
-	logger          *slog.Logger
-	rateLimiter     *ratelimit.Limiter
+	// mu guards listener across the Start goroutine and Stop (called from the
+	// embedding server's Shutdown on a different goroutine).
+	mu            sync.Mutex
+	listener      net.Listener
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	tlsConfig     *tls.Config
+	authenticator auth.Authenticator
+	logger        *slog.Logger
+	rateLimiter   *ratelimit.Limiter
+
+	// sshClient is the optional SSH sub-system. When non-nil, SSH
+	// JSON-RPC methods (ssh.keys.*, ssh.knownHosts.*, etc.) are
+	// dispatched to it. When nil those methods return
+	// ErrSSHNotConfigured.
+	sshClient sdkssh.Client
 
 	// Event subscribers
 	subscribers map[net.Conn]*Subscriber
@@ -110,6 +122,11 @@ type Config struct {
 	PasswordManager *staticpw.TenantPasswordStoreManager
 	// XKMSService is the injected XKMS service; replaces the package singleton lookup.
 	XKMSService *xkms.XKMSService
+	// SSHClient is the optional SSH sub-system. When set, the MCP server
+	// advertises and handles ssh.keys.*, ssh.knownHosts.*, and
+	// ssh.authorizedKeys.* methods. When nil those namespaces return
+	// ErrSSHNotConfigured.
+	SSHClient sdkssh.Client
 }
 
 // NewServer creates a new MCP JSON-RPC server. The XKMS service is injected
@@ -151,6 +168,7 @@ func NewServer(config *Config) (*Server, error) {
 		logger:          log,
 		rateLimiter:     config.RateLimiter,
 		subscribers:     make(map[net.Conn]*Subscriber),
+		sshClient:       config.SSHClient,
 	}
 
 	// Log if rate limiting is enabled
@@ -158,11 +176,15 @@ func NewServer(config *Config) (*Server, error) {
 		log.Info("Rate limiting enabled for MCP")
 	}
 
+	if config.SSHClient != nil {
+		log.Info("SSH sub-system configured for MCP")
+	}
+
 	// Set default keystore from the injected service for backward compatibility.
 	keystore, err := svc.LookupDefaultBackend()
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("failed to get default keystore: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get default keystore", Err: err}
 	}
 	s.keystore = keystore
 
@@ -183,7 +205,7 @@ func (s *Server) SetPasswordManager(pm *staticpw.TenantPasswordStoreManager) {
 func (s *Server) Start() error {
 	listener, err := net.Listen("tcp", s.addr)
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", s.addr, err)
+		return &errs.Wrapped{Msg: fmt.Sprintf("failed to listen on %s", s.addr), Err: err}
 	}
 
 	// Wrap with TLS if configured
@@ -198,20 +220,22 @@ func (s *Server) Start() error {
 			slog.String("auth", s.authenticator.Name()))
 	}
 
+	s.mu.Lock()
 	s.listener = listener
+	s.mu.Unlock()
 
 	s.wg.Add(1)
-	go s.acceptConnections()
+	go s.acceptConnections(listener)
 
 	return nil
 }
 
 // acceptConnections accepts incoming TCP connections
-func (s *Server) acceptConnections() {
+func (s *Server) acceptConnections(listener net.Listener) {
 	defer s.wg.Done()
 
 	for {
-		conn, err := s.listener.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			select {
 			case <-s.ctx.Done():
@@ -327,6 +351,141 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.subMutex.Unlock()
 }
 
+// rpcHandler dispatches a single JSON-RPC method to its handler. The *Server
+// receiver is passed explicitly so the dispatch table can be populated from
+// method expressions, mirroring the qrdb kvMethodHandlers pattern.
+type rpcHandler func(s *Server, ctx context.Context, req *JSONRPCRequest) (interface{}, error)
+
+// rpcMethodHandlers maps every supported JSON-RPC method to its handler for
+// O(1) dispatch. It is built once at package initialization. The connection-
+// bound method xkms.subscribe is intentionally absent: it requires the live
+// net.Conn and is dispatched directly in handleRequest.
+var rpcMethodHandlers = map[string]rpcHandler{
+	// Health
+	"health": (*Server).handleHealth,
+
+	// XKMS key operations
+	"xkms.listBackends":        (*Server).handleListBackends,
+	"xkms.generateKey":         (*Server).handleGenerateKey,
+	"xkms.getKey":              (*Server).handleGetKey,
+	"xkms.deleteKey":           (*Server).handleDeleteKey,
+	"xkms.listKeys":            (*Server).handleListKeys,
+	"xkms.rotateKey":           (*Server).handleRotateKey,
+	"xkms.sign":                (*Server).handleSign,
+	"xkms.verify":              (*Server).handleVerify,
+	"xkms.encrypt":             (*Server).handleEncrypt,
+	"xkms.decrypt":             (*Server).handleDecrypt,
+	"xkms.asymmetricEncrypt":   (*Server).handleAsymmetricEncrypt,
+	"xkms.asymmetricDecrypt":   (*Server).handleAsymmetricDecrypt,
+	"xkms.getImportParameters": (*Server).handleGetImportParameters,
+	"xkms.wrapKey":             (*Server).handleWrapKey,
+	"xkms.unwrapKey":           (*Server).handleUnwrapKey,
+	"xkms.importKey":           (*Server).handleImportKeyMaterial,
+	"xkms.exportKey":           (*Server).handleExportKeyMaterial,
+	"xkms.copyKey":             (*Server).handleCopyKey,
+
+	// XKMS certificate operations
+	"xkms.saveCert":          (*Server).handleSaveCert,
+	"xkms.getCert":           (*Server).handleGetCert,
+	"xkms.deleteCert":        (*Server).handleDeleteCert,
+	"xkms.listCerts":         (*Server).handleListCerts,
+	"xkms.certExists":        (*Server).handleCertExists,
+	"xkms.saveCertChain":     (*Server).handleSaveCertChain,
+	"xkms.getCertChain":      (*Server).handleGetCertChain,
+	"xkms.getTLSCertificate": (*Server).handleGetTLSCertificate,
+
+	// XKMS seal operations
+	"xkms.seal":    (*Server).handleSeal,
+	"xkms.unseal":  (*Server).handleUnseal,
+	"xkms.canSeal": (*Server).handleCanSeal,
+
+	// XKMS PIV operations
+	"xkms.listPIVSlots":         (*Server).handleListPIVSlots,
+	"xkms.getPIVCertificate":    (*Server).handleGetPIVCertificate,
+	"xkms.storePIVCertificate":  (*Server).handleStorePIVCertificate,
+	"xkms.deletePIVCertificate": (*Server).handleDeletePIVCertificate,
+	"xkms.generatePIVKey":       (*Server).handleGeneratePIVKey,
+	"xkms.importPIVCertificate": (*Server).handleImportPIVCertificate,
+	"xkms.exportPIVCertificate": (*Server).handleExportPIVCertificate,
+	"xkms.generatePIVCSR":       (*Server).handleGeneratePIVCSR,
+
+	// CA operations
+	"xkms.ca.bundle":      (*Server).handleGetCABundle,
+	"xkms.ca.certificate": (*Server).handleGetCACertificate,
+	"xkms.ca.sign-csr":    (*Server).handleSignCSR,
+	"xkms.ca.issue":       (*Server).handleIssueCertificate,
+	"xkms.ca.revoke":      (*Server).handleRevokeCertificate,
+	"xkms.ca.crl":         (*Server).handleGenerateCRL,
+	"xkms.ca.is-revoked":  (*Server).handleIsRevoked,
+
+	// TCG CA operations
+	"xkms.ca.tcg.issue-ek": (*Server).handleIssueEKCertificate,
+	"xkms.ca.tcg.issue-ak": (*Server).handleIssueAKCertificate,
+	"xkms.ca.tcg.sign-csr": (*Server).handleSignTCGCSR,
+	"xkms.ca.tcg.enroll":   (*Server).handleEnrollDevice,
+
+	// Barrier and Shamir operations
+	"barrier.initialize":           (*Server).handleBarrierInitialize,
+	"barrier.initializeShamir":     (*Server).handleBarrierInitializeShamir,
+	"barrier.unseal":               (*Server).handleBarrierUnseal,
+	"barrier.unsealShare":          (*Server).handleBarrierUnsealShare,
+	"barrier.unsealShares":         (*Server).handleBarrierUnsealShares,
+	"barrier.seal":                 (*Server).handleBarrierSeal,
+	"barrier.status":               (*Server).handleBarrierStatus,
+	"barrier.rekey":                (*Server).handleBarrierRekey,
+	"barrier.generateRecoveryKeys": (*Server).handleBarrierGenerateRecoveryKeys,
+	"barrier.recoverWithKeys":      (*Server).handleBarrierRecoverWithKeys,
+	"barrier.deleteRecoveryKeys":   (*Server).handleBarrierDeleteRecoveryKeys,
+	"barrier.hasRecoveryKeys":      (*Server).handleBarrierHasRecoveryKeys,
+	"barrier.generateRootToken":    (*Server).handleBarrierGenerateRootToken,
+	"barrier.enableEncryption":     (*Server).handleBarrierEnableEncryption,
+
+	// Init ceremony operations
+	"init.getStatus":         (*Server).handleGetInitStatus,
+	"init.claimCertBegin":    (*Server).handleClaimCertBegin,
+	"init.claimCertComplete": (*Server).handleClaimCertComplete,
+	"init.claimShare":        (*Server).handleClaimShare,
+	"init.signCSR":           (*Server).handleSignCSRInit,
+
+	// Credential management operations
+	"credentials.submit":   (*Server).handleCredentialSubmit,
+	"credentials.strategy": (*Server).handleCredentialStrategy,
+
+	// Password store operations
+	"password.add":      (*Server).handlePasswordAdd,
+	"password.get":      (*Server).handlePasswordGet,
+	"password.list":     (*Server).handlePasswordList,
+	"password.update":   (*Server).handlePasswordUpdate,
+	"password.delete":   (*Server).handlePasswordDelete,
+	"password.unlock":   (*Server).handlePasswordUnlock,
+	"password.lock":     (*Server).handlePasswordLock,
+	"password.status":   (*Server).handlePasswordStatus,
+	"password.generate": (*Server).handlePasswordGenerate,
+
+	// SSH key operations
+	"ssh.keys.generate": (*Server).handleSSHKeysGenerate,
+	"ssh.keys.import":   (*Server).handleSSHKeysImport,
+	"ssh.keys.list":     (*Server).handleSSHKeysList,
+	"ssh.keys.get":      (*Server).handleSSHKeysGet,
+	"ssh.keys.delete":   (*Server).handleSSHKeysDelete,
+	"ssh.keys.export":   (*Server).handleSSHKeysExport,
+	"ssh.keys.sign":     (*Server).handleSSHKeysSign,
+
+	// SSH known-hosts operations
+	"ssh.knownHosts.add":    (*Server).handleSSHKnownHostsAdd,
+	"ssh.knownHosts.list":   (*Server).handleSSHKnownHostsList,
+	"ssh.knownHosts.remove": (*Server).handleSSHKnownHostsRemove,
+	"ssh.knownHosts.verify": (*Server).handleSSHKnownHostsVerify,
+
+	// SSH authorized-keys operations
+	"ssh.authorizedKeys.add":    (*Server).handleSSHAuthorizedKeysAdd,
+	"ssh.authorizedKeys.get":    (*Server).handleSSHAuthorizedKeysGet,
+	"ssh.authorizedKeys.list":   (*Server).handleSSHAuthorizedKeysList,
+	"ssh.authorizedKeys.remove": (*Server).handleSSHAuthorizedKeysRemove,
+	"ssh.authorizedKeys.emit":   (*Server).handleSSHAuthorizedKeysEmit,
+	"ssh.authorizedKeys.verify": (*Server).handleSSHAuthorizedKeysVerify,
+}
+
 // handleRequest processes a JSON-RPC request and returns a response
 func (s *Server) handleRequest(ctx context.Context, req *JSONRPCRequest, conn net.Conn) *JSONRPCResponse {
 	if req.JSONRPC != "2.0" {
@@ -379,177 +538,14 @@ func (s *Server) handleRequest(ctx context.Context, req *JSONRPCRequest, conn ne
 		}
 	}
 
-	switch req.Method {
-	case "health":
-		result, err = s.handleHealth(ctx, req)
-	case "xkms.listBackends":
-		result, err = s.handleListBackends(ctx, req)
-	case "xkms.generateKey":
-		result, err = s.handleGenerateKey(ctx, req)
-	case "xkms.getKey":
-		result, err = s.handleGetKey(ctx, req)
-	case "xkms.deleteKey":
-		result, err = s.handleDeleteKey(ctx, req)
-	case "xkms.listKeys":
-		result, err = s.handleListKeys(ctx, req)
-	case "xkms.rotateKey":
-		result, err = s.handleRotateKey(ctx, req)
-	case "xkms.sign":
-		result, err = s.handleSign(ctx, req)
-	case "xkms.verify":
-		result, err = s.handleVerify(ctx, req)
-	case "xkms.encrypt":
-		result, err = s.handleEncrypt(ctx, req)
-	case "xkms.decrypt":
-		result, err = s.handleDecrypt(ctx, req)
-	case "xkms.asymmetricEncrypt":
-		result, err = s.handleAsymmetricEncrypt(ctx, req)
-	case "xkms.asymmetricDecrypt":
-		result, err = s.handleAsymmetricDecrypt(ctx, req)
-	case "xkms.getImportParameters":
-		result, err = s.handleGetImportParameters(ctx, req)
-	case "xkms.wrapKey":
-		result, err = s.handleWrapKey(ctx, req)
-	case "xkms.unwrapKey":
-		result, err = s.handleUnwrapKey(ctx, req)
-	case "xkms.importKey":
-		result, err = s.handleImportKeyMaterial(ctx, req)
-	case "xkms.exportKey":
-		result, err = s.handleExportKeyMaterial(ctx, req)
-	case "xkms.copyKey":
-		result, err = s.handleCopyKey(ctx, req)
-	case "xkms.saveCert":
-		result, err = s.handleSaveCert(ctx, req)
-	case "xkms.getCert":
-		result, err = s.handleGetCert(ctx, req)
-	case "xkms.deleteCert":
-		result, err = s.handleDeleteCert(ctx, req)
-	case "xkms.listCerts":
-		result, err = s.handleListCerts(ctx, req)
-	case "xkms.certExists":
-		result, err = s.handleCertExists(ctx, req)
-	case "xkms.saveCertChain":
-		result, err = s.handleSaveCertChain(ctx, req)
-	case "xkms.getCertChain":
-		result, err = s.handleGetCertChain(ctx, req)
-	case "xkms.getTLSCertificate":
-		result, err = s.handleGetTLSCertificate(ctx, req)
-	case "xkms.subscribe":
+	// xkms.subscribe is the only method that needs the live connection (to
+	// register the event subscriber), so it is dispatched directly. Every
+	// other JSON-RPC method is routed through the rpcMethodHandlers table.
+	if handler, ok := rpcMethodHandlers[req.Method]; ok {
+		result, err = handler(s, ctx, req)
+	} else if req.Method == "xkms.subscribe" {
 		result, err = s.handleSubscribe(ctx, req, conn)
-	case "xkms.seal":
-		result, err = s.handleSeal(ctx, req)
-	case "xkms.unseal":
-		result, err = s.handleUnseal(ctx, req)
-	case "xkms.canSeal":
-		result, err = s.handleCanSeal(ctx, req)
-	case "xkms.listPIVSlots":
-		result, err = s.handleListPIVSlots(ctx, req)
-	case "xkms.getPIVCertificate":
-		result, err = s.handleGetPIVCertificate(ctx, req)
-	case "xkms.storePIVCertificate":
-		result, err = s.handleStorePIVCertificate(ctx, req)
-	case "xkms.deletePIVCertificate":
-		result, err = s.handleDeletePIVCertificate(ctx, req)
-	case "xkms.generatePIVKey":
-		result, err = s.handleGeneratePIVKey(ctx, req)
-	case "xkms.importPIVCertificate":
-		result, err = s.handleImportPIVCertificate(ctx, req)
-	case "xkms.exportPIVCertificate":
-		result, err = s.handleExportPIVCertificate(ctx, req)
-	case "xkms.generatePIVCSR":
-		result, err = s.handleGeneratePIVCSR(ctx, req)
-
-	// CA operations
-	case "xkms.ca.bundle":
-		result, err = s.handleGetCABundle(ctx, req)
-	case "xkms.ca.certificate":
-		result, err = s.handleGetCACertificate(ctx, req)
-	case "xkms.ca.sign-csr":
-		result, err = s.handleSignCSR(ctx, req)
-	case "xkms.ca.issue":
-		result, err = s.handleIssueCertificate(ctx, req)
-	case "xkms.ca.revoke":
-		result, err = s.handleRevokeCertificate(ctx, req)
-	case "xkms.ca.crl":
-		result, err = s.handleGenerateCRL(ctx, req)
-	case "xkms.ca.is-revoked":
-		result, err = s.handleIsRevoked(ctx, req)
-
-	// TCG CA operations
-	case "xkms.ca.tcg.issue-ek":
-		result, err = s.handleIssueEKCertificate(ctx, req)
-	case "xkms.ca.tcg.issue-ak":
-		result, err = s.handleIssueAKCertificate(ctx, req)
-	case "xkms.ca.tcg.sign-csr":
-		result, err = s.handleSignTCGCSR(ctx, req)
-	case "xkms.ca.tcg.enroll":
-		result, err = s.handleEnrollDevice(ctx, req)
-
-	// Barrier and Shamir operations
-	case "barrier.initialize":
-		result, err = s.handleBarrierInitialize(ctx, req)
-	case "barrier.initializeShamir":
-		result, err = s.handleBarrierInitializeShamir(ctx, req)
-	case "barrier.unseal":
-		result, err = s.handleBarrierUnseal(ctx, req)
-	case "barrier.unsealShare":
-		result, err = s.handleBarrierUnsealShare(ctx, req)
-	case "barrier.unsealShares":
-		result, err = s.handleBarrierUnsealShares(ctx, req)
-	case "barrier.seal":
-		result, err = s.handleBarrierSeal(ctx, req)
-	case "barrier.status":
-		result, err = s.handleBarrierStatus(ctx, req)
-	case "barrier.rekey":
-		result, err = s.handleBarrierRekey(ctx, req)
-	case "barrier.generateRecoveryKeys":
-		result, err = s.handleBarrierGenerateRecoveryKeys(ctx, req)
-	case "barrier.recoverWithKeys":
-		result, err = s.handleBarrierRecoverWithKeys(ctx, req)
-	case "barrier.deleteRecoveryKeys":
-		result, err = s.handleBarrierDeleteRecoveryKeys(ctx, req)
-	case "barrier.generateRootToken":
-		result, err = s.handleBarrierGenerateRootToken(ctx, req)
-
-	// Init ceremony operations
-	case "init.getStatus":
-		result, err = s.handleGetInitStatus(ctx, req)
-	case "init.claimCertBegin":
-		result, err = s.handleClaimCertBegin(ctx, req)
-	case "init.claimCertComplete":
-		result, err = s.handleClaimCertComplete(ctx, req)
-	case "init.claimShare":
-		result, err = s.handleClaimShare(ctx, req)
-	case "init.signCSR":
-		result, err = s.handleSignCSRInit(ctx, req)
-
-	// Credential management operations
-	case "credentials.submit":
-		result, err = s.handleCredentialSubmit(ctx, req)
-	case "credentials.strategy":
-		result, err = s.handleCredentialStrategy(ctx, req)
-
-	// Password store operations
-	case "password.add":
-		result, err = s.handlePasswordAdd(ctx, req)
-	case "password.get":
-		result, err = s.handlePasswordGet(ctx, req)
-	case "password.list":
-		result, err = s.handlePasswordList(ctx, req)
-	case "password.update":
-		result, err = s.handlePasswordUpdate(ctx, req)
-	case "password.delete":
-		result, err = s.handlePasswordDelete(ctx, req)
-	case "password.unlock":
-		result, err = s.handlePasswordUnlock(ctx, req)
-	case "password.lock":
-		result, err = s.handlePasswordLock(ctx, req)
-	case "password.status":
-		result, err = s.handlePasswordStatus(ctx, req)
-	case "password.generate":
-		result, err = s.handlePasswordGenerate(ctx, req)
-
-	default:
+	} else {
 		return s.makeErrorResponse(req.ID, correlationID, ErrCodeMethodNotFound, "Method not found", nil)
 	}
 
@@ -630,8 +626,11 @@ func (s *Server) Stop() error {
 	s.logger.Info("Stopping MCP server")
 	s.cancel()
 
-	if s.listener != nil {
-		if err := s.listener.Close(); err != nil {
+	s.mu.Lock()
+	ln := s.listener
+	s.mu.Unlock()
+	if ln != nil {
+		if err := ln.Close(); err != nil {
 			s.logger.Error("Failed to close listener", slog.String("error", err.Error()))
 			return err
 		}

@@ -143,7 +143,7 @@ func runAWSLogin(region, profile string, crossDevice, noBrowser bool, output, cr
 	// Generate DPoP key
 	dpopKey, err := oidc.GenerateDPoPKey()
 	if err != nil {
-		return fmt.Errorf("failed to generate DPoP key: %w", err)
+		return &WrappedError{Msg: "failed to generate DPoP key", Err: err}
 	}
 
 	// Create AWS client
@@ -156,18 +156,18 @@ func runAWSLogin(region, profile string, crossDevice, noBrowser bool, output, cr
 
 	client, err := aws.NewClient(clientConfig, dpopKey)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAWSLoginFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAWSLoginFailed, Cause: err}
 	}
 
 	// Generate PKCE and state
 	codeVerifier, err := oidc.GenerateCodeVerifier()
 	if err != nil {
-		return fmt.Errorf("failed to generate code verifier: %w", err)
+		return &WrappedError{Msg: "failed to generate code verifier", Err: err}
 	}
 
 	state, err := oidc.GenerateState()
 	if err != nil {
-		return fmt.Errorf("failed to generate state: %w", err)
+		return &WrappedError{Msg: "failed to generate state", Err: err}
 	}
 
 	// Build authorization URL
@@ -176,7 +176,7 @@ func runAWSLogin(region, profile string, crossDevice, noBrowser bool, output, cr
 		CodeVerifier: codeVerifier,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to build auth URL: %w", err)
+		return &WrappedError{Msg: "failed to build auth URL", Err: err}
 	}
 
 	// Parse redirect URL to get port
@@ -203,7 +203,7 @@ func runAWSLogin(region, profile string, crossDevice, noBrowser bool, output, cr
 
 	listener, err := net.Listen("tcp", "127.0.0.1:"+port)
 	if err != nil {
-		return fmt.Errorf("failed to start callback server: %w", err)
+		return &WrappedError{Msg: "failed to start callback server", Err: err}
 	}
 
 	server := &http.Server{Handler: mux}
@@ -245,7 +245,7 @@ func runAWSLogin(region, profile string, crossDevice, noBrowser bool, output, cr
 	case code = <-codeChan:
 		// Success
 	case err := <-errChan:
-		return fmt.Errorf("%w: %v", ErrAWSCallbackFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAWSCallbackFailed, Cause: err}
 	case <-ctx.Done():
 		return errors.New("authorization timed out")
 	}
@@ -261,7 +261,7 @@ func runAWSLogin(region, profile string, crossDevice, noBrowser bool, output, cr
 		CodeVerifier: codeVerifier,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAWSTokenExchangeFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAWSTokenExchangeFailed, Cause: err}
 	}
 
 	// Check for credentials
@@ -272,7 +272,7 @@ func runAWSLogin(region, profile string, crossDevice, noBrowser bool, output, cr
 	// Convert to token data
 	tokenData, err := tokenResp.ToTokenData(region)
 	if err != nil {
-		return fmt.Errorf("failed to convert token data: %w", err)
+		return &WrappedError{Msg: "failed to convert token data", Err: err}
 	}
 
 	// Process output
@@ -347,7 +347,7 @@ func handleAWSCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- s
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = fmt.Fprintf(w, "<html><body><h1>AWS Authentication Failed</h1><p>%s: %s</p></body></html>", errParam, errDesc)
 
-		errChan <- fmt.Errorf("%s: %s", errParam, errDesc)
+		errChan <- &MessageError{Msg: fmt.Sprintf("%s: %s", errParam, errDesc)}
 		return
 	}
 
@@ -386,7 +386,7 @@ func handleAWSOutput(outputMode string, data *handlers.TokenData, profile, crede
 	case "none":
 		handler = handlers.NewNoopHandler()
 	default:
-		return fmt.Errorf("unknown output mode: %s", outputMode)
+		return &MessageError{Msg: fmt.Sprintf("unknown output mode: %s", outputMode)}
 	}
 
 	return handler.Handle(context.Background(), data)
@@ -619,14 +619,14 @@ func startAWSBackgroundRefresh(region, profile, credentialsFile, output, execCmd
 	// Ensure log directory exists
 	logDir := filepath.Dir(logFile)
 	if err := os.MkdirAll(logDir, 0700); err != nil {
-		return fmt.Errorf("failed to create log directory: %w", err)
+		return &WrappedError{Msg: "failed to create log directory", Err: err}
 	}
 
 	// Ensure PID directory exists
 	pidFile := getAWSPIDFile(sessionStore, region, providerName)
 	pidDir := filepath.Dir(pidFile)
 	if err := os.MkdirAll(pidDir, 0700); err != nil {
-		return fmt.Errorf("failed to create PID directory: %w", err)
+		return &WrappedError{Msg: "failed to create PID directory", Err: err}
 	}
 
 	// Check if already running
@@ -637,30 +637,30 @@ func startAWSBackgroundRefresh(region, profile, credentialsFile, output, execCmd
 		displayName = fmt.Sprintf("'%s'", displayName)
 	}
 	if pid, running := isAWSProcessRunning(pidFile); running {
-		return fmt.Errorf("background refresh for %s is already running (PID %d)", displayName, pid)
+		return &MessageError{Msg: fmt.Sprintf("background refresh for %s is already running (PID %d)", displayName, pid)}
 	}
 
 	// Load session to get refresh token and DPoP key
 	session, err := loadAWSSession(sessionStore)
 	if err != nil {
-		return fmt.Errorf("failed to load session: %w (run login without --background first)", err)
+		return &DetailError{Err: &WrappedError{Msg: "failed to load session", Err: err}, Detail: " (run login without --background first)"}
 	}
 
 	if session.RefreshToken == "" {
-		return fmt.Errorf("no refresh token in session store")
+		return &MessageError{Msg: "no refresh token in session store"}
 	}
 
 	// Open log file
 	logFileHandle, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
-		return fmt.Errorf("failed to open log file: %w", err)
+		return &WrappedError{Msg: "failed to open log file", Err: err}
 	}
 
 	// Build command to run ourselves with --background-worker flag (skips login)
 	executable, err := os.Executable()
 	if err != nil {
 		_ = logFileHandle.Close()
-		return fmt.Errorf("failed to get executable path: %w", err)
+		return &WrappedError{Msg: "failed to get executable path", Err: err}
 	}
 
 	args := []string{
@@ -688,14 +688,14 @@ func startAWSBackgroundRefresh(region, profile, credentialsFile, output, execCmd
 	// Start the process
 	if err := cmd.Start(); err != nil {
 		_ = logFileHandle.Close()
-		return fmt.Errorf("failed to start background process: %w", err)
+		return &WrappedError{Msg: "failed to start background process", Err: err}
 	}
 
 	// Write PID file
 	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0600); err != nil {
 		_ = cmd.Process.Kill()
 		_ = logFileHandle.Close()
-		return fmt.Errorf("failed to write PID file: %w", err)
+		return &WrappedError{Msg: "failed to write PID file", Err: err}
 	}
 
 	// Don't wait for the process - let it run in background
@@ -737,7 +737,7 @@ func runAWSBackgroundWorker(cmd *cobra.Command, args []string) error {
 	// Load stored session
 	session, err := loadAWSSession(sessionStore)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAWSSessionLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAWSSessionLoadFailed, Cause: err}
 	}
 
 	if session.RefreshToken == "" {
@@ -747,7 +747,7 @@ func runAWSBackgroundWorker(cmd *cobra.Command, args []string) error {
 	// Restore DPoP key from stored session
 	dpopKey, err := oidc.DeserializeDPoPKey(session.DPoPKeyPEM)
 	if err != nil {
-		return fmt.Errorf("failed to restore DPoP key: %w", err)
+		return &WrappedError{Msg: "failed to restore DPoP key", Err: err}
 	}
 
 	// Create AWS client with restored DPoP key
@@ -758,7 +758,7 @@ func runAWSBackgroundWorker(cmd *cobra.Command, args []string) error {
 
 	client, err := aws.NewClient(clientConfig, dpopKey)
 	if err != nil {
-		return fmt.Errorf("failed to create AWS client: %w", err)
+		return &WrappedError{Msg: "failed to create AWS client", Err: err}
 	}
 
 	// Open log file for writing
@@ -766,7 +766,7 @@ func runAWSBackgroundWorker(cmd *cobra.Command, args []string) error {
 	if logFile != "" {
 		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		if err != nil {
-			return fmt.Errorf("failed to open log file: %w", err)
+			return &WrappedError{Msg: "failed to open log file", Err: err}
 		}
 		defer func() { _ = f.Close() }()
 		logWriter = f

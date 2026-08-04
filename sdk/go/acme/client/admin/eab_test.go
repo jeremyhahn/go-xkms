@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -15,7 +15,6 @@ package admin
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
@@ -71,7 +70,7 @@ func TestEABClient_Create(t *testing.T) {
 	})
 
 	t.Run("transport error", func(t *testing.T) {
-		mt := newMockTransportWithError(fmt.Errorf("internal error"))
+		mt := newMockTransportWithError(errTestInternalError)
 		c := newEABClient(mt)
 
 		_, err := c.Create(context.Background(), "tenant-1", &CreateEABRequest{})

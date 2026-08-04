@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 func testLogger() *slog.Logger {
@@ -49,10 +50,10 @@ func TestLoadTPMConfig_NoFile(t *testing.T) {
 // and correctly overrides default values.
 func TestLoadTPMConfig_WithFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	config.SetConfigDir(tmpDir)
+	defer config.ResetConfigDir()
 
-	configDir := filepath.Join(tmpDir, ".xkey")
-	require.NoError(t, os.MkdirAll(configDir, 0700))
+	require.NoError(t, os.MkdirAll(tmpDir, 0700))
 
 	configYAML := `
 tpm:
@@ -73,7 +74,7 @@ tpm:
     platform-policy: true
 `
 	require.NoError(t, os.WriteFile(
-		filepath.Join(configDir, "config.yaml"),
+		filepath.Join(tmpDir, "xkey.yaml"),
 		[]byte(configYAML),
 		0600,
 	))
@@ -98,10 +99,10 @@ tpm:
 // overrides the fields it specifies, leaving everything else at defaults.
 func TestLoadTPMConfig_PartialFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	config.SetConfigDir(tmpDir)
+	defer config.ResetConfigDir()
 
-	configDir := filepath.Join(tmpDir, ".xkey")
-	require.NoError(t, os.MkdirAll(configDir, 0700))
+	require.NoError(t, os.MkdirAll(tmpDir, 0700))
 
 	// Only override hash; everything else should remain at defaults.
 	configYAML := `
@@ -109,7 +110,7 @@ tpm:
   hash: SHA-512
 `
 	require.NoError(t, os.WriteFile(
-		filepath.Join(configDir, "config.yaml"),
+		filepath.Join(tmpDir, "xkey.yaml"),
 		[]byte(configYAML),
 		0600,
 	))

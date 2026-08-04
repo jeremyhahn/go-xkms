@@ -33,6 +33,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
@@ -122,20 +124,20 @@ func (t *testKeyVaultClient) GetPublicKey(ctx context.Context, name, version str
 
 	// Convert JWK to PEM format
 	if resp.Key.Kty == nil {
-		return nil, fmt.Errorf("key type is nil")
+		return nil, &errs.Message{Msg: "key type is nil"}
 	}
 
 	switch *resp.Key.Kty {
 	case azkeys.KeyTypeRSA, azkeys.KeyTypeRSAHSM:
 		// Extract RSA public key from JWK
 		if resp.Key.N == nil || resp.Key.E == nil {
-			return nil, fmt.Errorf("invalid RSA key: missing N or E")
+			return nil, &errs.Message{Msg: "invalid RSA key: missing N or E"}
 		}
 
 		pubKey := &x509.Certificate{}
 		pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey.PublicKey)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal public key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to marshal public key", Err: err}
 		}
 
 		pemBlock := &pem.Block{
@@ -147,10 +149,10 @@ func (t *testKeyVaultClient) GetPublicKey(ctx context.Context, name, version str
 
 	case azkeys.KeyTypeEC, azkeys.KeyTypeECHSM:
 		// For ECDSA, similar approach
-		return nil, fmt.Errorf("ECDSA public key extraction not yet implemented")
+		return nil, &errs.Message{Msg: "ECDSA public key extraction not yet implemented"}
 
 	default:
-		return nil, fmt.Errorf("unsupported key type: %v", *resp.Key.Kty)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %v", *resp.Key.Kty)}
 	}
 }
 

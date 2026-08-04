@@ -552,10 +552,10 @@ func handlePINError(w http.ResponseWriter, err error) {
 // bounded by the handler's lifetime.
 func barrierCredentialsFromRequest(pw secureio.PasswordField, fallback string) (seal.Credentials, bool) {
 	if buf := pw.Buffer(); buf != nil && buf.Size() > 0 {
-		return seal.Credentials{Secret: string(buf.Bytes())}, true
+		return seal.Credentials{Secret: buf.Bytes()}, true
 	}
 	if fallback == "" {
 		return seal.Credentials{}, false
 	}
-	return seal.Credentials{Secret: fallback}, true
+	return seal.Credentials{Secret: []byte(fallback)}, true
 }

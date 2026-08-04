@@ -298,12 +298,20 @@ func (s *mockKeystoreServer) BarrierGenerateRecoveryKeys(_ context.Context, _ *p
 	return &pb.BarrierRecoveryKeysResponse{Threshold: 2, TotalShares: 2, ShareCount: 2}, nil
 }
 
+func (s *mockKeystoreServer) BarrierEnableEncryption(_ context.Context, _ *pb.BarrierEnableEncryptionRequest) (*pb.BarrierEnableEncryptionResponse, error) {
+	return nil, nil
+}
+
 func (s *mockKeystoreServer) BarrierRecoverWithKeys(_ context.Context, _ *pb.BarrierRecoverWithKeysRequest) (*emptypb.Empty, error) {
 	return &emptypb.Empty{}, nil
 }
 
 func (s *mockKeystoreServer) BarrierDeleteRecoveryKeys(_ context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
 	return &emptypb.Empty{}, nil
+}
+
+func (s *mockKeystoreServer) BarrierHasRecoveryKeys(_ context.Context, _ *emptypb.Empty) (*pb.BarrierHasRecoveryKeysResponse, error) {
+	return &pb.BarrierHasRecoveryKeysResponse{HasKeys: true}, nil
 }
 
 func (s *mockKeystoreServer) BarrierGenerateRootToken(_ context.Context, _ *pb.BarrierGenerateRootTokenRequest) (*pb.BarrierRootTokenResponse, error) {
@@ -1059,8 +1067,9 @@ func TestBarrierHasRecoveryKeys_Connected(t *testing.T) {
 	tr, cleanup := newBufconnTransport(t)
 	defer cleanup()
 
-	_, err := tr.BarrierHasRecoveryKeys(context.Background())
-	assert.ErrorIs(t, err, ErrNotImplemented)
+	resp, err := tr.BarrierHasRecoveryKeys(context.Background())
+	require.NoError(t, err)
+	assert.True(t, resp.HasKeys)
 }
 
 func TestBarrierGenerateRootToken_Connected(t *testing.T) {

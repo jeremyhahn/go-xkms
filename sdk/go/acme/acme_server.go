@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -118,6 +118,18 @@ type ACMEOrderPreSignHookRegistry = acmehandler.OrderPreSignHookRegistry
 // ACMEErrPreSignHookFailed is returned when an OrderPreSignHook aborts finalization.
 type ACMEErrPreSignHookFailed = acmehandler.ErrPreSignHookFailed
 
+// ACMEErrURISANNotIA5 is returned when a pre-sign hook URI cannot be encoded
+// as an IA5String SubjectAltName GeneralName.
+type ACMEErrURISANNotIA5 = acmehandler.ErrURISANNotIA5
+
+// NewACMEPermanentIdentifierURISANHook returns a pre-sign hook that embeds a
+// URI SubjectAltName derived from the ACME order's permanent-identifier in
+// enroll-01 (TCG-CSR-IDEVID) certificates. The caller-supplied uriFor maps a
+// permanent-identifier to the URI to stamp (e.g. a SPIFFE node URI for
+// attested Raft cluster enrollment) and returns "" to leave the certificate
+// unchanged.
+var NewACMEPermanentIdentifierURISANHook = acmehandler.NewPermanentIdentifierURISANHook
+
 // =============================================================================
 // ACME Storage Types
 // =============================================================================
@@ -152,6 +164,10 @@ type ACMECrossSignConfig = acmeclient.CrossSignConfig
 
 // ACMEEnrollmentConfig holds configuration for TPM enrollment via ACME.
 type ACMEEnrollmentConfig = acmeclient.EnrollmentConfig
+
+// ACMEEnrollmentResult is the result of a device enrollment via
+// ACMEClient.EnrollDevice: the issued IAK and IDevID certificate chain.
+type ACMEEnrollmentResult = acmeclient.EnrollmentResult
 
 // ACMERenewalConfig holds configuration for certificate renewal via ACME ARI.
 type ACMERenewalConfig = acmeclient.RenewalConfig

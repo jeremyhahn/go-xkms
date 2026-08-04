@@ -81,6 +81,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -163,6 +165,24 @@ type Params struct {
 	// may return (nil, nil) to indicate the CA has no object store.
 	// Optional.
 	ObjectStoreFactory ObjectStoreFactoryFunc
+
+	// BackendForStore resolves an xkms.Backend per (CA CN, StoreType). When
+	// set, the constructors call it for every unique StoreType in the CA
+	// identity's Keys and build an internal keystoreMap; keys are then routed
+	// to the matching backend at generation and signing time.
+	//
+	// Callers that leave this nil get zero behavior change: every key uses the
+	// single Params.KeyStore backend. Optional.
+	BackendForStore BackendForStoreFunc
+
+	// RequireKeyPassword mirrors MultiIdentityCAConfig.RequireKeyPassword for
+	// the single-identity (New / NewParentCA) and multi-identity (NewCA /
+	// NewIntermediateCA) constructors. When true, getOrGenerateCAKey rejects
+	// an empty key password with ErrKeyPasswordRequired before any key
+	// generation I/O occurs. The default (false) allows plaintext PKCS#8 keys,
+	// which is appropriate when the storage layer provides equivalent
+	// protection. Optional.
+	RequireKeyPassword bool
 }
 
 // Validate checks that all required parameters are present.
@@ -171,10 +191,10 @@ func (p *Params) Validate() error {
 		return ErrInvalidConfig
 	}
 	if err := p.Config.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidConfig, err)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: fmt.Sprintf("%v", err)}
 	}
 	if p.KeyAttributes == nil {
-		return fmt.Errorf("%w: key attributes are required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "key attributes are required"}
 	}
 	if p.KeyStore == nil {
 		return ErrKeyStoreRequired
@@ -213,6 +233,12 @@ type CA struct {
 	// keyStore backend used for CA operations
 	keyStore  xkms.Backend
 	certStore certstore.CertStore
+
+	// keystoreMap holds one xkms.Backend per StoreType for this CA instance.
+	// Populated by the constructors when Params.BackendForStore is set; nil
+	// otherwise. Read-only after construction, so concurrent reads via
+	// resolveKeyBackend need no synchronization.
+	keystoreMap map[types.StoreType]xkms.Backend
 
 	// objectStore is the optional blob store for cross-signed certs, AIA
 	// trust-chain cache, CRL snapshots, and attestation evidence. May be nil;
@@ -400,6 +426,32 @@ func New(params *Params) (TrustedCA, error) {
 
 	// Convert the flat CAConfig to a MultiIdentityCAConfig for internal use
 	multiConfig := caConfigToMultiIdentity(params.Config, params.KeyAttributes)
+	// Propagate the caller's key-password policy into the internal config so
+	// getOrGenerateCAKey can enforce it without needing a separate field on CA.
+	multiConfig.RequireKeyPassword = params.RequireKeyPassword
+
+	// Build the per-StoreType backend map when the caller supplies a factory.
+	// Prefer the caller-supplied Identity[0] (carries the full Keys slice from
+	// NewParentCA / NewIntermediateCA); fall back to the issuing identity
+	// synthesized from the flat CAConfig (Keys[0] only). When BackendForStore
+	// is nil the map stays nil and resolveKeyBackend returns ca.keyStore
+	// unconditionally — identical behavior to legacy callers.
+	var keystoreMap map[types.StoreType]xkms.Backend
+	if params.BackendForStore != nil {
+		cn := params.Config.Identity
+		if params.Config.Subject != nil && params.Config.Subject.CommonName != "" {
+			cn = params.Config.Subject.CommonName
+		}
+		idForMap := multiConfig.IssuingIdentity()
+		if len(params.Identity) > 0 {
+			idForMap = &params.Identity[0]
+		}
+		var err error
+		keystoreMap, err = buildKeystoreMap(idForMap, cn, params.BackendForStore)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	ca := &CA{
 		config:          multiConfig,
@@ -407,6 +459,7 @@ func New(params *Params) (TrustedCA, error) {
 		keyAttrs:        params.KeyAttributes,
 		keyStore:        params.KeyStore,
 		certStore:       params.CertStore,
+		keystoreMap:     keystoreMap,
 		objectStore:     params.ObjectStore,
 		revocationStore: params.RevocationStore,
 		revocations:     make(map[string]*RevocationInfo),
@@ -462,6 +515,12 @@ type MultiIdentityParams struct {
 	// RevocationStore durably persists certificate revocations in the
 	// datastore so the revocation set survives restarts. Optional.
 	RevocationStore storage.Backend
+
+	// BackendForStore resolves an xkms.Backend per (CA CN, StoreType). When
+	// set, it is forwarded to the inner New() call so the CA routes each key
+	// to the backend matching its StoreType. Optional; nil is fully
+	// backward-compatible.
+	BackendForStore BackendForStoreFunc
 }
 
 // NewFromMultiIdentityConfig creates a new CA from a MultiIdentityCAConfig.
@@ -488,13 +547,13 @@ func NewFromMultiIdentityConfig(mp *MultiIdentityParams) (TrustedCA, error) {
 	// Get the issuing identity
 	issuingIdentity := mp.Config.IssuingIdentity()
 	if issuingIdentity == nil {
-		return nil, fmt.Errorf("%w: no issuing identity found", ErrInvalidConfig)
+		return nil, &errs.Detail{Err: ErrInvalidConfig, Detail: "no issuing identity found"}
 	}
 
 	// Derive KeyAttributes from the issuing identity
 	keyAttrs, err := issuingIdentity.ToKeyAttributes()
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to derive key attributes: %v", ErrInvalidConfig, err)
+		return nil, &errs.Detail{Err: ErrInvalidConfig, Detail: fmt.Sprintf("failed to derive key attributes: %v", err)}
 	}
 
 	// Build the flat CAConfig from the issuing identity
@@ -515,15 +574,81 @@ func NewFromMultiIdentityConfig(mp *MultiIdentityParams) (TrustedCA, error) {
 	}
 
 	return New(&Params{
-		Config:          caConfig,
-		KeyAttributes:   keyAttrs,
-		KeyStore:        mp.KeyStore,
-		CertStore:       mp.CertStore,
-		SerialGen:       mp.SerialGen,
-		Profiles:        mp.Profiles,
-		ObjectStore:     mp.ObjectStore,
-		RevocationStore: mp.RevocationStore,
+		Config:             caConfig,
+		KeyAttributes:      keyAttrs,
+		KeyStore:           mp.KeyStore,
+		CertStore:          mp.CertStore,
+		SerialGen:          mp.SerialGen,
+		Profiles:           mp.Profiles,
+		ObjectStore:        mp.ObjectStore,
+		RevocationStore:    mp.RevocationStore,
+		BackendForStore:    mp.BackendForStore,
+		RequireKeyPassword: mp.Config.RequireKeyPassword,
 	})
+}
+
+// NewHierarchicalCA creates a CA that PRESERVES the full multi-identity
+// hierarchy (root plus every configured intermediate) rather than flattening
+// to the single issuing identity the way NewFromMultiIdentityConfig does.
+//
+// Use this when the configuration declares more than one issuing intermediate
+// — for example a platform CA and a dedicated cluster CA as siblings under
+// the root — so that Init creates every intermediate and IssuerForIdentity
+// can resolve any of them by common name. When BackendForStore is nil all
+// identities route to the single KeyStore; supply BackendForStore to place
+// different identities in different keystore backends.
+//
+// The behavior is identical to NewFromMultiIdentityConfig for a config with a
+// single issuing identity, so callers may use it unconditionally.
+//
+// Thread-safe: Yes
+func NewHierarchicalCA(mp *MultiIdentityParams) (TrustedCA, error) {
+	if mp == nil || mp.Config == nil {
+		return nil, ErrInvalidConfig
+	}
+	if err := mp.Config.Validate(); err != nil {
+		return nil, err
+	}
+
+	config := mp.Config
+	config.RequireKeyPassword = mp.Config.RequireKeyPassword
+
+	var keystoreMap map[types.StoreType]xkms.Backend
+	if mp.BackendForStore != nil {
+		built := make(map[types.StoreType]xkms.Backend, len(config.Identity))
+		for i := range config.Identity {
+			id := &config.Identity[i]
+			m, err := buildKeystoreMap(id, id.Subject.CommonName, mp.BackendForStore)
+			if err != nil {
+				return nil, err
+			}
+			for storeType, backend := range m {
+				built[storeType] = backend
+			}
+		}
+		keystoreMap = built
+	}
+
+	instance := &CA{
+		config:          config,
+		keyStore:        mp.KeyStore,
+		certStore:       mp.CertStore,
+		keystoreMap:     keystoreMap,
+		objectStore:     mp.ObjectStore,
+		revocationStore: mp.RevocationStore,
+		revocations:     make(map[string]*RevocationInfo),
+	}
+	if mp.SerialGen != nil {
+		instance.serialGen = mp.SerialGen
+	} else {
+		instance.serialGen = NewSerialGenerator(NewMemoryStorage())
+	}
+	if mp.Profiles != nil {
+		instance.profiles = mp.Profiles
+	} else {
+		instance.profiles = NewDefaultProfileRegistry()
+	}
+	return instance, nil
 }
 
 // ObjectStore returns the configured object store, or nil if none.
@@ -560,13 +685,20 @@ func (ca *CA) Init(ctx context.Context) error {
 
 	// Create root CA certificate
 	if err := ca.createRootCertificate(ctx); err != nil {
-		return fmt.Errorf("failed to create root certificate: %w", err)
+		return &errs.Wrapped{Msg: "failed to create root certificate", Err: err}
 	}
+
+	// Generate any non-primary keys (Keys[1..n]) into their resolved backends.
+	// This is best-effort: the CA is functional once the primary (Keys[0])
+	// certificate exists, so a secondary-key failure must not fail Init.
+	// initSecondaryKeys is a no-op unless a multi-key Identity was preserved
+	// (NewParentCA / NewCA path) and BackendForStore routing is in play.
+	_ = ca.initSecondaryKeys(ctx, ca.config.RootIdentity())
 
 	// Create intermediate CA certificates if configured
 	if ca.config.HasIntermediate() {
 		if err := ca.createIntermediateCertificates(ctx); err != nil {
-			return fmt.Errorf("failed to create intermediate certificates: %w", err)
+			return &errs.Wrapped{Msg: "failed to create intermediate certificates", Err: err}
 		}
 	}
 
@@ -603,17 +735,17 @@ func (ca *CA) Load(ctx context.Context) error {
 
 	rootCert, err := ca.certStore.GetCertificate(rootIdentity.Subject.CommonName)
 	if err != nil {
-		return fmt.Errorf("%w: root certificate: %v", ErrCertificateNotFound, err)
+		return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("root certificate: %v", err)}
 	}
 	ca.rootCert = rootCert
 
 	// Verify root key exists
 	rootAttrs, err := rootIdentity.ToKeyAttributes()
 	if err != nil {
-		return fmt.Errorf("failed to get root key attributes: %w", err)
+		return &errs.Wrapped{Msg: "failed to get root key attributes", Err: err}
 	}
-	if _, err := ca.keyStore.Signer(ctx, rootAttrs); err != nil {
-		return fmt.Errorf("%w: root key not found: %v", ErrKeyStoreRequired, err)
+	if _, err := ca.resolveKeyBackend(rootAttrs.StoreType).Signer(ctx, rootAttrs); err != nil {
+		return &errs.Detail{Err: ErrKeyStoreRequired, Detail: fmt.Sprintf("root key not found: %v", err)}
 	}
 
 	// Load intermediate certificates if configured
@@ -625,17 +757,38 @@ func (ca *CA) Load(ctx context.Context) error {
 
 		intermediateCert, err := ca.certStore.GetCertificate(issuingIdentity.Subject.CommonName)
 		if err != nil {
-			return fmt.Errorf("%w: intermediate certificate: %v", ErrCertificateNotFound, err)
+			return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("intermediate certificate: %v", err)}
 		}
 		ca.intermediateCert = intermediateCert
 
 		// Verify intermediate key exists
 		intermediateAttrs, err := issuingIdentity.ToKeyAttributes()
 		if err != nil {
-			return fmt.Errorf("failed to get intermediate key attributes: %w", err)
+			return &errs.Wrapped{Msg: "failed to get intermediate key attributes", Err: err}
 		}
-		if _, err := ca.keyStore.Signer(ctx, intermediateAttrs); err != nil {
-			return fmt.Errorf("%w: intermediate key not found: %v", ErrKeyStoreRequired, err)
+		if _, err := ca.resolveKeyBackend(intermediateAttrs.StoreType).Signer(ctx, intermediateAttrs); err != nil {
+			return &errs.Detail{Err: ErrKeyStoreRequired, Detail: fmt.Sprintf("intermediate key not found: %v", err)}
+		}
+
+		// Verify EVERY other configured intermediate (certificate present and
+		// key resolvable), not only the selected issuing one, so non-selected
+		// identities — e.g. a dedicated cluster intermediate that signs Raft
+		// transport certificates — are guaranteed usable after Load.
+		for _, intermediate := range ca.config.IntermediateIdentities() {
+			cn := intermediate.Subject.CommonName
+			if cn == issuingIdentity.Subject.CommonName {
+				continue
+			}
+			if _, err := ca.certStore.GetCertificate(cn); err != nil {
+				return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("intermediate %q certificate: %v", cn, err)}
+			}
+			attrs, err := intermediate.ToKeyAttributes()
+			if err != nil {
+				return &errs.Wrapped{Msg: fmt.Sprintf("failed to get intermediate %q key attributes", cn), Err: err}
+			}
+			if _, err := ca.resolveKeyBackend(attrs.StoreType).Signer(ctx, attrs); err != nil {
+				return &errs.Detail{Err: ErrKeyStoreRequired, Detail: fmt.Sprintf("intermediate %q key not found: %v", cn, err)}
+			}
 		}
 	}
 
@@ -709,12 +862,12 @@ func (ca *CA) Sign(randReader io.Reader, digest []byte, opts crypto.SignerOpts) 
 
 	signer, err := ca.getSigner(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+		return nil, &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	signature, err := signer.Sign(randReader, digest, opts)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+		return nil, &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return signature, nil
@@ -833,7 +986,7 @@ func (ca *CA) CABundle() ([]byte, error) {
 			Type:  "CERTIFICATE",
 			Bytes: ca.intermediateCert.Raw,
 		}); err != nil {
-			return nil, fmt.Errorf("%w: failed to encode intermediate certificate", ErrInvalidCertificateChain)
+			return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: "failed to encode intermediate certificate"}
 		}
 	}
 
@@ -843,7 +996,7 @@ func (ca *CA) CABundle() ([]byte, error) {
 			Type:  "CERTIFICATE",
 			Bytes: ca.rootCert.Raw,
 		}); err != nil {
-			return nil, fmt.Errorf("%w: failed to encode root certificate", ErrInvalidCertificateChain)
+			return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: "failed to encode root certificate"}
 		}
 	}
 
@@ -878,10 +1031,10 @@ func (ca *CA) getSigner(ctx context.Context) (crypto.Signer, error) {
 
 	attrs, err := ca.getCAKeyAttributes(issuingIdentity)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get signer: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get signer", Err: err}
 	}
 
-	return ca.keyStore.Signer(ctx, attrs)
+	return ca.resolveKeyBackend(attrs.StoreType).Signer(ctx, attrs)
 }
 
 // getCAKeyAttributes returns KeyAttributes for the specified identity.
@@ -906,29 +1059,127 @@ func (ca *CA) getCAKeyAttributes(identity *Identity) (*types.KeyAttributes, erro
 // This makes key operations idempotent, allowing CA initialization to be retried
 // without failing on "key already exists" errors.
 func (ca *CA) getOrGenerateCAKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	// Route to the backend configured for this key's StoreType. When no
+	// keystoreMap is present this is the single ca.keyStore — identical to
+	// the legacy behavior.
+	backend := ca.resolveKeyBackend(attrs.StoreType)
+
 	// First, try to get the existing key
-	privateKey, err := ca.keyStore.GetKey(ctx, attrs)
+	privateKey, err := backend.GetKey(ctx, attrs)
 	if err == nil {
 		// Key exists, return it
 		return privateKey, nil
 	}
 
+	// Enforce the optional password policy before any I/O: when RequireKeyPassword
+	// is true an empty (nil) password is rejected so the key is never written as
+	// plaintext PKCS#8. This check runs only on the generate path; retrieving an
+	// already-existing key is always allowed.
+	if ca.config.RequireKeyPassword && attrs.Password == nil {
+		return nil, &errs.Detail{Err: ErrKeyPasswordRequired, Detail: fmt.Sprintf("CA identity %q must have a key password", attrs.CN)}
+	}
+
 	// Key doesn't exist, generate a new one based on algorithm
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		privateKey, err = ca.keyStore.GenerateRSA(ctx, attrs)
+		privateKey, err = backend.GenerateRSA(ctx, attrs)
 	case x509.ECDSA:
-		privateKey, err = ca.keyStore.GenerateECDSA(ctx, attrs)
+		privateKey, err = backend.GenerateECDSA(ctx, attrs)
 	case x509.Ed25519:
-		privateKey, err = ca.keyStore.GenerateEd25519(ctx, attrs)
+		privateKey, err = backend.GenerateEd25519(ctx, attrs)
 	default:
-		return nil, fmt.Errorf("%w: unsupported key algorithm: %v", ErrInvalidKeyAlgorithm, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: ErrInvalidKeyAlgorithm, Detail: fmt.Sprintf("unsupported key algorithm: %v", attrs.KeyAlgorithm)}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 
 	return privateKey, nil
+}
+
+// resolveKeyBackend returns the xkms.Backend for a key with the given
+// StoreType. When keystoreMap has a matching entry it is returned; otherwise
+// the single fallback ca.keyStore is returned. keystoreMap is read-only after
+// construction, so this is safe for concurrent use without locking.
+func (ca *CA) resolveKeyBackend(storeType types.StoreType) xkms.Backend {
+	if len(ca.keystoreMap) > 0 {
+		if b, ok := ca.keystoreMap[storeType]; ok {
+			return b
+		}
+	}
+	return ca.keyStore
+}
+
+// buildKeystoreMap iterates identity.Keys, collects the unique StoreTypes, and
+// invokes factory once per unique type to populate the returned map. A nil
+// factory or nil identity yields (nil, nil) — the legacy single-keystore path.
+// An empty StoreType defaults to types.StoreSoftware so unconfigured keys land
+// in the software backend.
+func buildKeystoreMap(
+	identity *Identity,
+	cn string,
+	factory BackendForStoreFunc,
+) (map[types.StoreType]xkms.Backend, error) {
+	if factory == nil || identity == nil {
+		return nil, nil
+	}
+	seen := make(map[types.StoreType]bool)
+	m := make(map[types.StoreType]xkms.Backend)
+	for _, kc := range identity.Keys {
+		if kc == nil {
+			continue
+		}
+		st := kc.StoreType
+		if st == "" {
+			st = types.StoreSoftware
+		}
+		if seen[st] {
+			continue
+		}
+		seen[st] = true
+		b, err := factory(cn, st)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("ca: backend factory for %q storeType %q", cn, st), Err: err}
+		}
+		if b == nil {
+			return nil, &errs.Detail{Err: ErrKeyStoreRequired, Detail: fmt.Sprintf("BackendForStore returned nil for cn=%q storeType=%q", cn, st)}
+		}
+		m[st] = b
+	}
+	return m, nil
+}
+
+// initSecondaryKeys generates the non-primary keys (Keys[1..n]) of the given
+// identity in their resolved backends. It is best-effort and called during
+// Init() after the primary CA certificate is created: the CA certificate binds
+// only the primary key (Keys[0]); secondary keys are pre-generated for backup,
+// rotation, or algorithm-agile signing.
+//
+// The full multi-key slice is preserved on ca.inputIdentity (NewParentCA /
+// NewCA path); the flat caConfig only retains Keys[0]. When no multi-key
+// identity is present this is a no-op. Must be called with mu held.
+func (ca *CA) initSecondaryKeys(ctx context.Context, identity *Identity) error {
+	id := identity
+	if ca.inputIdentity != nil {
+		id = ca.inputIdentity
+	}
+	if id == nil || len(id.Keys) <= 1 {
+		return nil
+	}
+	for i, kc := range id.Keys[1:] {
+		attrs, err := types.KeyAttributesFromConfig(kc)
+		if err != nil {
+			return &errs.Wrapped{Msg: fmt.Sprintf("ca: secondary key %d attributes", i+1), Err: err}
+		}
+		attrs.CN = id.Subject.CommonName
+		if attrs.KeyType == 0 {
+			attrs.KeyType = types.KeyTypeCA
+		}
+		if _, err := ca.getOrGenerateCAKey(ctx, attrs); err != nil {
+			return &errs.Wrapped{Msg: fmt.Sprintf("ca: generate secondary key %d (store=%s)", i+1, attrs.StoreType), Err: err}
+		}
+	}
+	return nil
 }
 
 // createRootCertificate generates a self-signed root CA certificate.
@@ -942,31 +1193,31 @@ func (ca *CA) createRootCertificate(ctx context.Context) error {
 	// Get key attributes for the root CA
 	attrs, err := ca.getCAKeyAttributes(rootIdentity)
 	if err != nil {
-		return fmt.Errorf("failed to get root key attributes: %w", err)
+		return &errs.Wrapped{Msg: "failed to get root key attributes", Err: err}
 	}
 
 	// Get existing key or generate a new one (idempotent operation)
 	privateKey, err := ca.getOrGenerateCAKey(ctx, attrs)
 	if err != nil {
-		return fmt.Errorf("failed to get or generate root CA key: %w", err)
+		return &errs.Wrapped{Msg: "failed to get or generate root CA key", Err: err}
 	}
 
 	// Get the signer interface
 	signer, ok := privateKey.(crypto.Signer)
 	if !ok {
-		return fmt.Errorf("generated key does not implement crypto.Signer")
+		return &errs.Message{Msg: "generated key does not implement crypto.Signer"}
 	}
 
 	// Generate serial number
 	serial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to generate serial number: %w", err)
+		return &errs.Wrapped{Msg: "failed to generate serial number", Err: err}
 	}
 
 	// Determine signature algorithm
 	sigAlgo, err := rootIdentity.GetSignatureAlgorithm()
 	if err != nil {
-		return fmt.Errorf("failed to determine signature algorithm: %w", err)
+		return &errs.Wrapped{Msg: "failed to determine signature algorithm", Err: err}
 	}
 
 	// Create certificate template
@@ -1008,18 +1259,18 @@ func (ca *CA) createRootCertificate(ctx context.Context) error {
 	// Self-sign the certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, signer.Public(), signer)
 	if err != nil {
-		return fmt.Errorf("failed to create root certificate: %w", err)
+		return &errs.Wrapped{Msg: "failed to create root certificate", Err: err}
 	}
 
 	// Parse the certificate
 	cert, err := x509.ParseCertificate(certDER)
 	if err != nil {
-		return fmt.Errorf("failed to parse root certificate: %w", err)
+		return &errs.Wrapped{Msg: "failed to parse root certificate", Err: err}
 	}
 
 	// Store the certificate
 	if err := ca.certStore.StoreCertificate(cert); err != nil {
-		return fmt.Errorf("failed to store root certificate: %w", err)
+		return &errs.Wrapped{Msg: "failed to store root certificate", Err: err}
 	}
 
 	ca.rootCert = cert
@@ -1043,26 +1294,52 @@ func (ca *CA) createIntermediateCertificates(ctx context.Context) error {
 
 	rootAttrs, err := rootIdentity.ToKeyAttributes()
 	if err != nil {
-		return fmt.Errorf("failed to get root key attributes: %w", err)
+		return &errs.Wrapped{Msg: "failed to get root key attributes", Err: err}
 	}
 
-	parentSigner, err := ca.keyStore.Signer(ctx, rootAttrs)
+	parentSigner, err := ca.resolveKeyBackend(rootAttrs.StoreType).Signer(ctx, rootAttrs)
 	if err != nil {
-		return fmt.Errorf("failed to get root signer: %w", err)
+		return &errs.Wrapped{Msg: "failed to get root signer", Err: err}
 	}
 
 	parentCert := ca.rootCert
 
+	// issuersByCN tracks every CA created so far (root plus each finished
+	// intermediate) so an identity's ParentCA can select its issuer by common
+	// name — enabling SIBLING intermediates under the root (e.g. a platform CA
+	// and a cluster CA that are both direct children of the root). Identities
+	// with an empty ParentCA keep the historical sequential chaining: each is
+	// signed by the previous identity in the list.
+	type caIssuer struct {
+		cert   *x509.Certificate
+		signer crypto.Signer
+	}
+	issuersByCN := map[string]caIssuer{
+		rootIdentity.Subject.CommonName: {cert: ca.rootCert, signer: parentSigner},
+	}
+
 	// Create each intermediate CA in order
 	for i, identity := range intermediateIdentities {
-		cert, err := ca.createSingleIntermediateCertificate(ctx, &identity, parentCert, parentSigner)
+		issuer := caIssuer{cert: parentCert, signer: parentSigner}
+		if identity.ParentCA != "" {
+			named, ok := issuersByCN[identity.ParentCA]
+			if !ok {
+				return &ErrUnknownParentCA{
+					Identity: identity.Subject.CommonName,
+					ParentCA: identity.ParentCA,
+				}
+			}
+			issuer = named
+		}
+
+		cert, err := ca.createSingleIntermediateCertificate(ctx, &identity, issuer.cert, issuer.signer)
 		if err != nil {
-			return fmt.Errorf("failed to create intermediate CA %d: %w", i+1, err)
+			return &errs.Wrapped{Msg: fmt.Sprintf("failed to create intermediate CA %d", i+1), Err: err}
 		}
 
 		// Store the certificate
 		if err := ca.certStore.StoreCertificate(cert); err != nil {
-			return fmt.Errorf("failed to store intermediate certificate: %w", err)
+			return &errs.Wrapped{Msg: "failed to store intermediate certificate", Err: err}
 		}
 
 		// If this is the selected issuing CA, store it
@@ -1075,13 +1352,15 @@ func (ca *CA) createIntermediateCertificates(ctx context.Context) error {
 
 		attrs, err := identity.ToKeyAttributes()
 		if err != nil {
-			return fmt.Errorf("failed to get intermediate key attributes: %w", err)
+			return &errs.Wrapped{Msg: "failed to get intermediate key attributes", Err: err}
 		}
 
-		parentSigner, err = ca.keyStore.Signer(ctx, attrs)
+		parentSigner, err = ca.resolveKeyBackend(attrs.StoreType).Signer(ctx, attrs)
 		if err != nil {
-			return fmt.Errorf("failed to get intermediate signer: %w", err)
+			return &errs.Wrapped{Msg: "failed to get intermediate signer", Err: err}
 		}
+
+		issuersByCN[identity.Subject.CommonName] = caIssuer{cert: cert, signer: parentSigner}
 	}
 
 	// If no intermediate was selected, use the last one
@@ -1089,7 +1368,7 @@ func (ca *CA) createIntermediateCertificates(ctx context.Context) error {
 		lastIdentity := &intermediateIdentities[len(intermediateIdentities)-1]
 		cert, err := ca.certStore.GetCertificate(lastIdentity.Subject.CommonName)
 		if err != nil {
-			return fmt.Errorf("failed to retrieve last intermediate certificate: %w", err)
+			return &errs.Wrapped{Msg: "failed to retrieve last intermediate certificate", Err: err}
 		}
 		ca.intermediateCert = cert
 	}
@@ -1107,25 +1386,25 @@ func (ca *CA) createSingleIntermediateCertificate(
 	// Get key attributes for the intermediate CA
 	attrs, err := ca.getCAKeyAttributes(identity)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get intermediate key attributes: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get intermediate key attributes", Err: err}
 	}
 
 	// Get existing key or generate a new one (idempotent operation)
 	privateKey, err := ca.getOrGenerateCAKey(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get or generate intermediate CA key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get or generate intermediate CA key", Err: err}
 	}
 
 	// Get the signer interface for public key extraction
 	signer, ok := privateKey.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("generated key does not implement crypto.Signer")
+		return nil, &errs.Message{Msg: "generated key does not implement crypto.Signer"}
 	}
 
 	// Generate serial number
 	serial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate serial number: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate serial number", Err: err}
 	}
 
 	// Determine signature algorithm based on parent key type
@@ -1170,13 +1449,13 @@ func (ca *CA) createSingleIntermediateCertificate(
 	// Sign with parent CA
 	certDER, err := x509.CreateCertificate(rand.Reader, template, parentCert, signer.Public(), parentSigner)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create intermediate certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create intermediate certificate", Err: err}
 	}
 
 	// Parse the certificate
 	cert, err := x509.ParseCertificate(certDER)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse intermediate certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse intermediate certificate", Err: err}
 	}
 
 	return cert, nil
@@ -1242,12 +1521,12 @@ func (ca *CA) SignCSR(ctx context.Context, csrPEM []byte, opts *SignOptions) (*x
 
 	csr, err := x509.ParseCertificateRequest(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidCSR, err)
+		return nil, &errs.Detail{Err: ErrInvalidCSR, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Verify CSR signature
 	if err := csr.CheckSignature(); err != nil {
-		return nil, fmt.Errorf("%w: invalid CSR signature: %v", ErrInvalidCSR, err)
+		return nil, &errs.Detail{Err: ErrInvalidCSR, Detail: fmt.Sprintf("invalid CSR signature: %v", err)}
 	}
 
 	// Determine the signing key and issuer certificate. When the caller
@@ -1279,14 +1558,14 @@ func (ca *CA) SignCSR(ctx context.Context, csrPEM []byte, opts *SignOptions) (*x
 		var err error
 		signer, err = ca.getSigner(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+			return nil, &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("%v", err)}
 		}
 	}
 
 	// Generate serial number
 	serial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSerialGenerationFailed, err)
+		return nil, &errs.Detail{Err: ErrSerialGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Determine validity period
@@ -1371,7 +1650,7 @@ func (ca *CA) SignCSR(ctx context.Context, csrPEM []byte, opts *SignOptions) (*x
 		}
 		spiffeURI, err := spiffe.BuildURI(opts.SPIFFETrustDomain, opts.TenantID, kind, name)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+			return nil, &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("%v", err)}
 		}
 		template.URIs = append(template.URIs, spiffeURI)
 	}
@@ -1384,18 +1663,18 @@ func (ca *CA) SignCSR(ctx context.Context, csrPEM []byte, opts *SignOptions) (*x
 	// Sign the certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, template, issuingCert, csr.PublicKey, signer)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+		return nil, &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Parse the certificate
 	cert, err := x509.ParseCertificate(certDER)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse issued certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse issued certificate", Err: err}
 	}
 
 	// Store the certificate
 	if err := ca.certStore.StoreCertificate(cert); err != nil {
-		return nil, fmt.Errorf("failed to store certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to store certificate", Err: err}
 	}
 
 	return cert, nil
@@ -1565,7 +1844,7 @@ func (ca *CA) Verify(cert *x509.Certificate, xsigner ...crypto.Signer) ([][]*x50
 			Intermediates: intermediates,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidCertificateChain, err)
+			return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: fmt.Sprintf("%v", err)}
 		}
 		return chains, nil
 	}
@@ -1591,7 +1870,7 @@ func (ca *CA) Verify(cert *x509.Certificate, xsigner ...crypto.Signer) ([][]*x50
 
 	chains, err := cert.Verify(opts)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidCertificateChain, err)
+		return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return chains, nil
@@ -1653,7 +1932,7 @@ func (ca *CA) GenerateCRL(ctx context.Context) ([]byte, error) {
 
 	signer, err := ca.getSigner(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCRLGenerationFailed, err)
+		return nil, &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Build revoked certificates list
@@ -1685,17 +1964,17 @@ func (ca *CA) GenerateCRL(ctx context.Context) ([]byte, error) {
 
 	crlDER, err := x509.CreateRevocationList(rand.Reader, template, issuingCert, signer)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCRLGenerationFailed, err)
+		return nil, &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Store the CRL
 	crl, err := x509.ParseRevocationList(crlDER)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to parse generated CRL: %v", ErrCRLGenerationFailed, err)
+		return nil, &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("failed to parse generated CRL: %v", err)}
 	}
 
 	if err := ca.certStore.StoreCRL(crl); err != nil {
-		return nil, fmt.Errorf("failed to store CRL: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to store CRL", Err: err}
 	}
 
 	return crlDER, nil

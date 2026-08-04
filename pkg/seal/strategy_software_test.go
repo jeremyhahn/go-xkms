@@ -32,7 +32,7 @@ func TestSoftwareStrategy_SealUnsealRoundTrip(t *testing.T) {
 	s := NewSoftwareStrategy()
 	ctx := context.Background()
 	rootKey := []byte("this-is-a-32-byte-root-key-test!")
-	creds := Credentials{Secret: "my-passphrase"}
+	creds := Credentials{Secret: []byte("my-passphrase")}
 
 	sealed, err := s.SealRootKey(ctx, rootKey, creds)
 	require.NoError(t, err)
@@ -47,12 +47,12 @@ func TestSoftwareStrategy_UnsealWrongPassphrase(t *testing.T) {
 	s := NewSoftwareStrategy()
 	ctx := context.Background()
 	rootKey := []byte("this-is-a-32-byte-root-key-test!")
-	creds := Credentials{Secret: "correct-passphrase"}
+	creds := Credentials{Secret: []byte("correct-passphrase")}
 
 	sealed, err := s.SealRootKey(ctx, rootKey, creds)
 	require.NoError(t, err)
 
-	wrongCreds := Credentials{Secret: "wrong-passphrase"}
+	wrongCreds := Credentials{Secret: []byte("wrong-passphrase")}
 	_, err = s.UnsealRootKey(ctx, sealed, wrongCreds)
 	assert.ErrorIs(t, err, ErrInvalidCredentials)
 }

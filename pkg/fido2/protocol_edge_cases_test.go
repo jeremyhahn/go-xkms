@@ -16,9 +16,10 @@ package fido2
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/stretchr/testify/assert"
@@ -56,7 +57,7 @@ type GetInfoAllFieldsMockDevice struct {
 
 func (d *GetInfoAllFieldsMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -177,7 +178,7 @@ func (d *GetInfoAllFieldsMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestGetAssertion_WithAllowListAndOptions tests GetAssertion with allowList
@@ -275,7 +276,7 @@ type RetryMockDevice struct {
 
 func (d *RetryMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -416,7 +417,7 @@ func (d *RetryMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestEnrollCredential_ShortAuthData tests EnrollCredential with short auth data
@@ -454,7 +455,7 @@ type ShortAuthDataMockDevice struct {
 
 func (d *ShortAuthDataMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -583,7 +584,7 @@ func (d *ShortAuthDataMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestDeriveSecret_ShortAuthData tests DeriveSecret with short auth data
@@ -622,7 +623,7 @@ type DeriveSecretShortAuthDataMockDevice struct {
 
 func (d *DeriveSecretShortAuthDataMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -754,7 +755,7 @@ func (d *DeriveSecretShortAuthDataMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestGenerateDerivedKey_InvalidLength tests key derivation with invalid secret length
@@ -1131,7 +1132,7 @@ type UserPresenceRetryMockDevice struct {
 
 func (d *UserPresenceRetryMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -1271,7 +1272,7 @@ func (d *UserPresenceRetryMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestGetAssertion_WithAllOptionalFields tests GetAssertion response with all optional fields
@@ -1312,7 +1313,7 @@ type AllFieldsGetAssertionMockDevice struct {
 
 func (d *AllFieldsGetAssertionMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -1464,7 +1465,7 @@ func (d *AllFieldsGetAssertionMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestMakeCredential_WithAllOptionalFields tests MakeCredential response with all optional fields
@@ -1511,7 +1512,7 @@ type AllFieldsMakeCredentialMockDevice struct {
 
 func (d *AllFieldsMakeCredentialMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -1657,7 +1658,7 @@ func (d *AllFieldsMakeCredentialMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestHandler_EnrollKey_AuthenticatorCreationError tests authenticator creation failure
@@ -1688,7 +1689,7 @@ type AuthenticatorErrorMockDevice struct {
 
 func (d *AuthenticatorErrorMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -1745,7 +1746,7 @@ func (d *AuthenticatorErrorMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // NoHMACSecretMockDevice returns GetInfo without hmac-secret extension
@@ -1755,7 +1756,7 @@ type NoHMACSecretMockDevice struct {
 
 func (d *NoHMACSecretMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -1858,7 +1859,7 @@ func (d *NoHMACSecretMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestHandler_UnlockWithKey_NoHMACSecretSupport tests unlock on device without hmac-secret
@@ -1918,7 +1919,7 @@ type NoExtensionDataMockDevice struct {
 
 func (d *NoExtensionDataMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -2052,7 +2053,7 @@ func (d *NoExtensionDataMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestUnlockWithKey_RetryExhaustion tests exhausting all retries
@@ -2084,7 +2085,7 @@ type UserPresenceTimeoutMockDevice struct {
 
 func (d *UserPresenceTimeoutMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -2208,7 +2209,7 @@ func (d *UserPresenceTimeoutMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestUnlockWithKey_NonRetriableError tests non-retriable error handling
@@ -2239,7 +2240,7 @@ type InvalidCBORMockDevice struct {
 
 func (d *InvalidCBORMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -2363,7 +2364,7 @@ func (d *InvalidCBORMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestCTAPHIDDevice_InitWithHIDError tests CTAP init with HID error response
@@ -2384,7 +2385,7 @@ type HIDErrorMockDevice struct {
 
 func (d *HIDErrorMockDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -2413,7 +2414,7 @@ func (d *HIDErrorMockDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestHandler_UnlockWithKey_CTAPInitError tests CTAP init error with device close
@@ -2442,11 +2443,11 @@ type CTAPInitErrorDevice struct {
 
 func (d *CTAPInitErrorDevice) Write(data []byte) (int, error) {
 	// Return error on write to trigger init failure
-	return 0, fmt.Errorf("write error")
+	return 0, &errs.Message{Msg: "write error"}
 }
 
 func (d *CTAPInitErrorDevice) Read(data []byte) (int, error) {
-	return 0, fmt.Errorf("read error")
+	return 0, &errs.Message{Msg: "read error"}
 }
 
 // TestHandler_EnrollKey_CTAPInitError tests CTAP init error during enrollment
@@ -2518,15 +2519,15 @@ type FailBothCloseAndWriteDevice struct {
 }
 
 func (d *FailBothCloseAndWriteDevice) Write(data []byte) (int, error) {
-	return 0, fmt.Errorf("write error")
+	return 0, &errs.Message{Msg: "write error"}
 }
 
 func (d *FailBothCloseAndWriteDevice) Close() error {
-	return fmt.Errorf("close error")
+	return &errs.Message{Msg: "close error"}
 }
 
 func (d *FailBothCloseAndWriteDevice) Read(data []byte) (int, error) {
-	return 0, fmt.Errorf("read error")
+	return 0, &errs.Message{Msg: "read error"}
 }
 
 // TestHandler_UnlockWithKey_CTAPDeviceCloseError tests CTAP device close error
@@ -2561,7 +2562,7 @@ type CloseErrorCTAPDevice struct {
 
 func (d *CloseErrorCTAPDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -2700,12 +2701,12 @@ func (d *CloseErrorCTAPDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 func (d *CloseErrorCTAPDevice) Close() error {
 	d.closeAttempted = true
-	return fmt.Errorf("close error")
+	return &errs.Message{Msg: "close error"}
 }
 
 // TestNewHandler_EdgeCaseConfigs tests NewHandler with invalid config values
@@ -2756,7 +2757,7 @@ type AuthenticatorCreationErrorDevice struct {
 
 func (d *AuthenticatorCreationErrorDevice) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -2813,5 +2814,5 @@ func (d *AuthenticatorCreationErrorDevice) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }

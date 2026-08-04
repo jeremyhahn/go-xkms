@@ -27,6 +27,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -66,13 +68,13 @@ var _ types.KeyProvider = (*Backend)(nil)
 // NewBackend creates a new YubiKey backend instance.
 func NewBackend(config *Config) (*Backend, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("yubikey: %w", err)
+		return nil, &errs.Wrapped{Msg: "yubikey", Err: err}
 	}
 
 	// Create embedded PKCS#11 backend
 	pkcs11Backend, err := pkcs11backend.NewBackend(config.Config)
 	if err != nil {
-		return nil, fmt.Errorf("yubikey: failed to create PKCS#11 backend: %w", err)
+		return nil, &errs.Wrapped{Msg: "yubikey: failed to create PKCS#11 backend", Err: err}
 	}
 
 	return &Backend{
@@ -114,12 +116,12 @@ func (b *Backend) GetAttestationCertificate(keySlot uint) (*x509.Certificate, er
 	// and proves the key was generated on the YubiKey
 	certData, err := b.readCertificateFromSlot(b.config.AttestationSlot)
 	if err != nil {
-		return nil, fmt.Errorf("yubikey: failed to read attestation certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "yubikey: failed to read attestation certificate", Err: err}
 	}
 
 	cert, err := x509.ParseCertificate(certData)
 	if err != nil {
-		return nil, fmt.Errorf("yubikey: failed to parse attestation certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "yubikey: failed to parse attestation certificate", Err: err}
 	}
 
 	return cert, nil
@@ -154,7 +156,7 @@ func (b *Backend) readCertificateFromSlot(slot uint) ([]byte, error) {
 	// TODO: Implement certificate reading from PIV slot via PKCS#11
 	// This requires finding the certificate object with CKA_ID matching the slot
 	// and reading its CKA_VALUE attribute.
-	return nil, fmt.Errorf("certificate reading not yet implemented for slot 0x%02X", slot)
+	return nil, &errs.Message{Msg: fmt.Sprintf("certificate reading not yet implemented for slot 0x%02X", slot)}
 }
 
 // Config returns the backend configuration.

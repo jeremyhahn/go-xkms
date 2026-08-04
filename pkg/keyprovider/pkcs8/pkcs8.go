@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	ecdhpkg "github.com/jeremyhahn/go-xkms/pkg/crypto/ecdh"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/x25519"
@@ -44,11 +46,16 @@ import (
 // This backend is software-based and supports RSA, ECDSA, and Ed25519 keys.
 // Keys can be optionally encrypted with a password using PKCS#8 encryption.
 //
+// Security: by default the backend is fail-closed — GenerateKey returns
+// ErrPlaintextKeyNotAllowed when no password is provided. Set
+// Config.AllowPlaintextKeys to opt into unencrypted persistence.
+//
 // Thread-safe: Yes, uses a read-write mutex for concurrent access.
 type PKCS8Backend struct {
-	storage storage.Backend
-	closed  bool
-	mu      sync.RWMutex
+	storage        storage.Backend
+	closed         bool
+	allowPlaintext bool
+	mu             sync.RWMutex
 }
 
 // Type returns the backend type identifier.
@@ -97,7 +104,7 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	keyID := attrs.ID()
@@ -118,12 +125,12 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 		case x509.Ed25519:
 			privateKey, err = b.generateEd25519Key()
 		default:
-			return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+			return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
 		}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("key generation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "key generation failed", Err: err}
 	}
 
 	// Encode the key, then store it atomically only if its ID is unused. The
@@ -134,10 +141,10 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 	}
 	stored, err := storage.SaveKeyIfAbsent(ctx, b.storage, keyID, keyData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to store key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to store key", Err: err}
 	}
 	if !stored {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyAlreadyExists, keyID)
+		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", keyID)}
 	}
 
 	// Store metadata (including exportable flag). Metadata is non-authoritative.
@@ -150,16 +157,16 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 	}
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 	metaKey := "meta/" + keyID
 	if err := b.storage.Put(ctx, metaKey, metadataBytes); err != nil {
 		// Roll back the key blob so a failed generation does not leave an
 		// orphaned key that blocks regenerating under the same ID.
 		if delErr := storage.DeleteKey(ctx, b.storage, keyID); delErr != nil {
-			return nil, fmt.Errorf("failed to store metadata: %w (rollback of key %s also failed: %v)", err, keyID, delErr)
+			return nil, &errs.Affix{Prefix: "failed to store metadata: ", Err: err, Suffix: fmt.Sprintf(" (rollback of key %s also failed: %v)", keyID, delErr)}
 		}
-		return nil, fmt.Errorf("failed to store metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to store metadata", Err: err}
 	}
 
 	return privateKey, nil
@@ -176,16 +183,16 @@ func (b *PKCS8Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	keyID := attrs.ID()
 	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
 		if err == storage.ErrNotFound {
-			return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyID)}
 		}
-		return nil, fmt.Errorf("failed to retrieve key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
 	}
 
 	// Decode the key
@@ -208,15 +215,15 @@ func (b *PKCS8Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	keyID := attrs.ID()
 	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
 		if err == storage.ErrNotFound {
-			return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
+			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyID)}
 		}
-		return fmt.Errorf("failed to delete key: %w", err)
+		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
 	}
 
 	return nil
@@ -237,7 +244,7 @@ func (b *PKCS8Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, er
 
 	keyIDs, err := storage.ListKeys(ctx, b.storage)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
 
 	// Parse key ID to extract attributes
@@ -392,11 +399,11 @@ func (b *PKCS8Backend) Close() error {
 // generateRSAKey generates a new RSA private key.
 func (b *PKCS8Backend) generateRSAKey(attrs *types.RSAAttributes) (*rsa.PrivateKey, error) {
 	if attrs == nil {
-		return nil, fmt.Errorf("%w: RSA attributes are required", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "RSA attributes are required"}
 	}
 
 	if attrs.KeySize < 2048 {
-		return nil, fmt.Errorf("%w: RSA key size must be at least 2048 bits", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "RSA key size must be at least 2048 bits"}
 	}
 
 	return rsa.GenerateKey(rand.Reader, attrs.KeySize)
@@ -405,11 +412,11 @@ func (b *PKCS8Backend) generateRSAKey(attrs *types.RSAAttributes) (*rsa.PrivateK
 // generateECDSAKey generates a new ECDSA private key.
 func (b *PKCS8Backend) generateECDSAKey(attrs *types.ECCAttributes) (*ecdsa.PrivateKey, error) {
 	if attrs == nil {
-		return nil, fmt.Errorf("%w: ECC attributes are required", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "ECC attributes are required"}
 	}
 
 	if attrs.Curve == nil {
-		return nil, fmt.Errorf("%w: curve is required", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "curve is required"}
 	}
 
 	return ecdsa.GenerateKey(attrs.Curve, rand.Reader)
@@ -426,13 +433,13 @@ func (b *PKCS8Backend) generateX25519Key() (crypto.PrivateKey, error) {
 	ka := x25519.New()
 	keyPair, err := ka.GenerateKey()
 	if err != nil {
-		return nil, fmt.Errorf("X25519 key generation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "X25519 key generation failed", Err: err}
 	}
 
 	// Wrap the X25519 private key to implement crypto.PrivateKey
 	wrappedKey, err := x25519.NewPrivateKeyStorage(keyPair.PrivateKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap X25519 private key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to wrap X25519 private key", Err: err}
 	}
 
 	return wrappedKey, nil
@@ -461,15 +468,24 @@ func (b *PKCS8Backend) encodeKey(privateKey crypto.PrivateKey, password types.Pa
 		// Encrypted PKCS#8
 		keyData, err := pkcs8.MarshalPrivateKey(actualPrivateKey, passwordBytes, nil)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrKeyEncodingFailed, err)
+			return nil, &errs.Detail{Err: ErrKeyEncodingFailed, Detail: fmt.Sprintf("%v", err)}
 		}
 		return keyData, nil
 	}
 
-	// Unencrypted PKCS#8
+	// Fail-closed: refuse unencrypted persistence unless explicitly opted in.
+	// This protects CA signing keys and any other sensitive material that has
+	// not been given a password. Callers that intentionally want plaintext
+	// storage (e.g., ephemeral test backends, volume-encrypted deployments)
+	// must set AllowPlaintextKeys: true in Config.
+	if !b.allowPlaintext {
+		return nil, ErrPlaintextKeyNotAllowed
+	}
+
+	// Unencrypted PKCS#8 — AllowPlaintextKeys is explicitly true.
 	keyData, err := x509.MarshalPKCS8PrivateKey(actualPrivateKey)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrKeyEncodingFailed, err)
+		return nil, &errs.Detail{Err: ErrKeyEncodingFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	return keyData, nil
 }
@@ -490,7 +506,7 @@ func (b *PKCS8Backend) decodeKey(keyData []byte, password types.Password) (crypt
 	if len(passwordBytes) > 0 {
 		privateKey, err = pkcs8.ParsePKCS8PrivateKey(keyData, passwordBytes)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrKeyDecodingFailed, err)
+			return nil, &errs.Detail{Err: ErrKeyDecodingFailed, Detail: fmt.Sprintf("%v", err)}
 		}
 	} else {
 		// Try unencrypted PKCS#8
@@ -500,9 +516,9 @@ func (b *PKCS8Backend) decodeKey(keyData []byte, password types.Password) (crypt
 			// unencrypted parsing failed, this likely means password retrieval
 			// failed (e.g., TPM unseal error) and the key is actually encrypted.
 			if password != nil {
-				return nil, fmt.Errorf("%w: unencrypted parsing failed and password retrieval returned empty (possible TPM unseal failure or key is encrypted): %v", ErrKeyDecodingFailed, err)
+				return nil, &errs.Detail{Err: ErrKeyDecodingFailed, Detail: fmt.Sprintf("unencrypted parsing failed and password retrieval returned empty (possible TPM unseal failure or key is encrypted): %v", err)}
 			}
-			return nil, fmt.Errorf("%w: %v", ErrKeyDecodingFailed, err)
+			return nil, &errs.Detail{Err: ErrKeyDecodingFailed, Detail: fmt.Sprintf("%v", err)}
 		}
 	}
 
@@ -511,7 +527,7 @@ func (b *PKCS8Backend) decodeKey(keyData []byte, password types.Password) (crypt
 		if ecdhPrivKey.Curve() == ecdh.X25519() {
 			wrapped, err := x25519.NewPrivateKeyStorage(ecdhPrivKey)
 			if err != nil {
-				return nil, fmt.Errorf("failed to wrap X25519 key: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to wrap X25519 key", Err: err}
 			}
 			return wrapped, nil
 		}
@@ -538,7 +554,7 @@ func (b *PKCS8Backend) Public(ctx context.Context, attrs *types.KeyAttributes) (
 	case *x25519.PrivateKeyStorage:
 		return k.Public(), nil
 	default:
-		return nil, fmt.Errorf("%w: %T", backend.ErrInvalidKeyType, key)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("%T", key)}
 	}
 }
 
@@ -556,18 +572,18 @@ func (b *PKCS8Backend) Sign(ctx context.Context, attrs *types.KeyAttributes, ran
 // For PKCS#8 software keys, rotation means generating a new key and replacing the old one.
 func (b *PKCS8Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil {
-		return fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "attributes cannot be nil"}
 	}
 
 	// Delete the old key
 	if err := b.DeleteKey(ctx, attrs); err != nil && !errors.Is(err, backend.ErrKeyNotFound) {
-		return fmt.Errorf("failed to delete old key: %w", err)
+		return &errs.Wrapped{Msg: "failed to delete old key", Err: err}
 	}
 
 	// Generate a new key with the same attributes
 	_, err := b.GenerateKey(ctx, attrs)
 	if err != nil {
-		return fmt.Errorf("failed to generate new key: %w", err)
+		return &errs.Wrapped{Msg: "failed to generate new key", Err: err}
 	}
 
 	return nil
@@ -591,11 +607,11 @@ func (b *PKCS8Backend) DeriveSharedSecret(ctx context.Context, attrs *types.KeyA
 	}
 
 	if attrs == nil {
-		return nil, fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "attributes cannot be nil"}
 	}
 
 	if publicKey == nil {
-		return nil, fmt.Errorf("public key cannot be nil")
+		return nil, &errs.Message{Msg: "public key cannot be nil"}
 	}
 
 	// Get the private key
@@ -610,7 +626,7 @@ func (b *PKCS8Backend) DeriveSharedSecret(ctx context.Context, attrs *types.KeyA
 		// X25519 key agreement
 		pubKeyStorage, ok := publicKey.(*x25519.PublicKeyStorage)
 		if !ok {
-			return nil, fmt.Errorf("public key must be X25519 for X25519 private key")
+			return nil, &errs.Message{Msg: "public key must be X25519 for X25519 private key"}
 		}
 		ka := x25519.New()
 		return ka.DeriveSharedSecret(privKey.PrivateKey(), pubKeyStorage.PublicKey())
@@ -619,13 +635,13 @@ func (b *PKCS8Backend) DeriveSharedSecret(ctx context.Context, attrs *types.KeyA
 		// NIST curve ECDH (P-256, P-384, P-521)
 		pubKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
 		if !ok {
-			return nil, fmt.Errorf("public key must be ECDSA for ECDSA private key")
+			return nil, &errs.Message{Msg: "public key must be ECDSA for ECDSA private key"}
 		}
 		// Use the ECDH package from pkg/crypto/ecdh
 		return deriveECDHSharedSecret(privKey, pubKeyECDSA)
 
 	default:
-		return nil, fmt.Errorf("%w: %T does not support key agreement", backend.ErrInvalidKeyType, privateKey)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("%T does not support key agreement", privateKey)}
 	}
 }
 
@@ -633,8 +649,7 @@ func (b *PKCS8Backend) DeriveSharedSecret(ctx context.Context, attrs *types.KeyA
 func deriveECDHSharedSecret(privateKey *ecdsa.PrivateKey, publicKey *ecdsa.PublicKey) ([]byte, error) {
 	// Check that curves match
 	if privateKey.Curve != publicKey.Curve {
-		return nil, fmt.Errorf("curve mismatch: private key uses %s, public key uses %s",
-			privateKey.Curve.Params().Name, publicKey.Curve.Params().Name)
+		return nil, &errs.Message{Msg: fmt.Sprintf("curve mismatch: private key uses %s, public key uses %s", privateKey.Curve.Params().Name, publicKey.Curve.Params().Name)}
 	}
 
 	// Use the ecdh package from pkg/crypto/ecdh for NIST curves

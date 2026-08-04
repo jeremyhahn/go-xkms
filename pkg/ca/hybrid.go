@@ -35,7 +35,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
-	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/quantum"
 )
@@ -99,35 +100,35 @@ func CreateHybridCertificate(
 ) ([]byte, error) {
 
 	if template == nil {
-		return nil, &HybridCertError{Op: "create", Err: fmt.Errorf("template certificate is nil")}
+		return nil, &HybridCertError{Op: "create", Err: &errs.Message{Msg: "template certificate is nil"}}
 	}
 	if parent == nil {
-		return nil, &HybridCertError{Op: "create", Err: fmt.Errorf("parent certificate is nil")}
+		return nil, &HybridCertError{Op: "create", Err: &errs.Message{Msg: "parent certificate is nil"}}
 	}
 	if classicalKey == nil {
-		return nil, &HybridCertError{Op: "create", Err: fmt.Errorf("classical key is nil")}
+		return nil, &HybridCertError{Op: "create", Err: &errs.Message{Msg: "classical key is nil"}}
 	}
 	if quantumKey == nil {
-		return nil, &HybridCertError{Op: "create", Err: fmt.Errorf("quantum key is nil")}
+		return nil, &HybridCertError{Op: "create", Err: &errs.Message{Msg: "quantum key is nil"}}
 	}
 
 	// Determine the quantum signature algorithm OID
 	quantumAlgOID, err := quantumAlgorithmOID(quantumKey.Algorithm)
 	if err != nil {
-		return nil, &HybridCertError{Op: "create", Err: fmt.Errorf("quantum algorithm OID: %w", err)}
+		return nil, &HybridCertError{Op: "create", Err: &errs.Wrapped{Msg: "quantum algorithm OID", Err: err}}
 	}
 
 	// Build the subjectAltPublicKeyInfo extension value.
 	// This embeds the quantum public key in the certificate.
 	altPubKeyExt, err := buildAltPublicKeyInfoExtension(quantumKey.PublicKey, quantumAlgOID)
 	if err != nil {
-		return nil, &HybridCertError{Op: "create", Err: fmt.Errorf("build alt public key info: %w", err)}
+		return nil, &HybridCertError{Op: "create", Err: &errs.Wrapped{Msg: "build alt public key info", Err: err}}
 	}
 
 	// Build the altSignatureAlgorithm extension value.
 	altSigAlgExt, err := buildAltSignatureAlgorithmExtension(quantumAlgOID)
 	if err != nil {
-		return nil, &HybridCertError{Op: "create", Err: fmt.Errorf("build alt signature algorithm: %w", err)}
+		return nil, &HybridCertError{Op: "create", Err: &errs.Wrapped{Msg: "build alt signature algorithm", Err: err}}
 	}
 
 	// Create a working copy of the template so we do not mutate the caller's template.
@@ -149,25 +150,25 @@ func CreateHybridCertificate(
 		classicalKey,
 	)
 	if err != nil {
-		return nil, &HybridCertError{Op: "create", Err: fmt.Errorf("create initial certificate: %w", err)}
+		return nil, &HybridCertError{Op: "create", Err: &errs.Wrapped{Msg: "create initial certificate", Err: err}}
 	}
 
 	// Step 2: Extract the TBS from the initial certificate and sign with quantum key.
 	tbsRaw, err := extractTBS(initialDER)
 	if err != nil {
-		return nil, &HybridCertError{Op: "create", Err: fmt.Errorf("extract TBS: %w", err)}
+		return nil, &HybridCertError{Op: "create", Err: &errs.Wrapped{Msg: "extract TBS", Err: err}}
 	}
 
 	// Sign the TBS with the quantum key (ML-DSA operates on the full message, no pre-hashing)
 	quantumSig, err := quantumKey.Sign(nil, tbsRaw, crypto.Hash(0))
 	if err != nil {
-		return nil, &HybridCertError{Op: "create", Err: fmt.Errorf("quantum signing: %w", err)}
+		return nil, &HybridCertError{Op: "create", Err: &errs.Wrapped{Msg: "quantum signing", Err: err}}
 	}
 
 	// Step 3: Build the altSignatureValue extension containing the quantum signature.
 	altSigValueExt, err := buildAltSignatureValueExtension(quantumSig)
 	if err != nil {
-		return nil, &HybridCertError{Op: "create", Err: fmt.Errorf("build alt signature value: %w", err)}
+		return nil, &HybridCertError{Op: "create", Err: &errs.Wrapped{Msg: "build alt signature value", Err: err}}
 	}
 
 	// Step 4: Add altSignatureValue and re-sign with the classical key.
@@ -182,7 +183,7 @@ func CreateHybridCertificate(
 		classicalKey,
 	)
 	if err != nil {
-		return nil, &HybridCertError{Op: "create", Err: fmt.Errorf("create final certificate: %w", err)}
+		return nil, &HybridCertError{Op: "create", Err: &errs.Wrapped{Msg: "create final certificate", Err: err}}
 	}
 
 	return finalDER, nil
@@ -209,19 +210,19 @@ func VerifyHybridCertificate(
 ) error {
 
 	if len(certDER) == 0 {
-		return &HybridCertError{Op: "verify", Err: fmt.Errorf("empty certificate data")}
+		return &HybridCertError{Op: "verify", Err: &errs.Message{Msg: "empty certificate data"}}
 	}
 	if classicalIssuer == nil {
-		return &HybridCertError{Op: "verify", Err: fmt.Errorf("classical issuer is nil")}
+		return &HybridCertError{Op: "verify", Err: &errs.Message{Msg: "classical issuer is nil"}}
 	}
 	if quantumIssuerPubKey == nil {
-		return &HybridCertError{Op: "verify", Err: fmt.Errorf("quantum issuer public key is nil")}
+		return &HybridCertError{Op: "verify", Err: &errs.Message{Msg: "quantum issuer public key is nil"}}
 	}
 
 	// Step 1: Parse the certificate
 	cert, err := x509.ParseCertificate(certDER)
 	if err != nil {
-		return &HybridCertError{Op: "verify", Err: fmt.Errorf("parse certificate: %w", err)}
+		return &HybridCertError{Op: "verify", Err: &errs.Wrapped{Msg: "parse certificate", Err: err}}
 	}
 
 	// Step 2: Verify the classical signature
@@ -260,18 +261,18 @@ func VerifyHybridCertificate(
 	// Step 4: Parse the algorithm from altSignatureAlgorithm
 	var algID pkix.AlgorithmIdentifier
 	if _, err := asn1.Unmarshal(altSigAlgExt.Value, &algID); err != nil {
-		return &HybridCertError{Op: "verify", Err: fmt.Errorf("parse alt signature algorithm: %w", err)}
+		return &HybridCertError{Op: "verify", Err: &errs.Wrapped{Msg: "parse alt signature algorithm", Err: err}}
 	}
 
 	algorithm, err := oidToQuantumAlgorithm(algID.Algorithm)
 	if err != nil {
-		return &HybridCertError{Op: "verify", Err: fmt.Errorf("resolve quantum algorithm: %w", err)}
+		return &HybridCertError{Op: "verify", Err: &errs.Wrapped{Msg: "resolve quantum algorithm", Err: err}}
 	}
 
 	// Step 5: Parse the quantum signature from altSignatureValue
 	var sigBitString asn1.BitString
 	if _, err := asn1.Unmarshal(altSigValueExt.Value, &sigBitString); err != nil {
-		return &HybridCertError{Op: "verify", Err: fmt.Errorf("parse alt signature value: %w", err)}
+		return &HybridCertError{Op: "verify", Err: &errs.Wrapped{Msg: "parse alt signature value", Err: err}}
 	}
 
 	// Step 6: Extract the TBS that was signed by the quantum key.
@@ -281,13 +282,13 @@ func VerifyHybridCertificate(
 	// and re-encoding.
 	tbsForQuantum, err := extractTBSWithoutExtension(certDER, oidAltSignatureValue)
 	if err != nil {
-		return &HybridCertError{Op: "verify", Err: fmt.Errorf("extract TBS for quantum verification: %w", err)}
+		return &HybridCertError{Op: "verify", Err: &errs.Wrapped{Msg: "extract TBS for quantum verification", Err: err}}
 	}
 
 	// Step 7: Verify the quantum signature
 	valid, err := verifyMLDSASignature(algorithm, quantumIssuerPubKey.Key, tbsForQuantum, sigBitString.Bytes)
 	if err != nil {
-		return &HybridCertError{Op: "verify", Err: fmt.Errorf("quantum signature verification: %w", err)}
+		return &HybridCertError{Op: "verify", Err: &errs.Wrapped{Msg: "quantum signature verification", Err: err}}
 	}
 	if !valid {
 		return &HybridVerificationError{
@@ -322,7 +323,7 @@ func buildAltPublicKeyInfoExtension(pubKey *quantum.MLDSAPublicKey, algOID asn1.
 
 	value, err := asn1.Marshal(spki)
 	if err != nil {
-		return pkix.Extension{}, fmt.Errorf("marshal alt public key info: %w", err)
+		return pkix.Extension{}, &errs.Wrapped{Msg: "marshal alt public key info", Err: err}
 	}
 
 	return pkix.Extension{
@@ -343,7 +344,7 @@ func buildAltSignatureAlgorithmExtension(algOID asn1.ObjectIdentifier) (pkix.Ext
 
 	value, err := asn1.Marshal(algID)
 	if err != nil {
-		return pkix.Extension{}, fmt.Errorf("marshal alt signature algorithm: %w", err)
+		return pkix.Extension{}, &errs.Wrapped{Msg: "marshal alt signature algorithm", Err: err}
 	}
 
 	return pkix.Extension{
@@ -365,7 +366,7 @@ func buildAltSignatureValueExtension(signature []byte) (pkix.Extension, error) {
 
 	value, err := asn1.Marshal(bs)
 	if err != nil {
-		return pkix.Extension{}, fmt.Errorf("marshal alt signature value: %w", err)
+		return pkix.Extension{}, &errs.Wrapped{Msg: "marshal alt signature value", Err: err}
 	}
 
 	return pkix.Extension{
@@ -379,14 +380,14 @@ func buildAltSignatureValueExtension(signature []byte) (pkix.Extension, error) {
 func extractTBS(certDER []byte) ([]byte, error) {
 	var outer asn1.RawValue
 	if _, err := asn1.Unmarshal(certDER, &outer); err != nil {
-		return nil, fmt.Errorf("unmarshal certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "unmarshal certificate", Err: err}
 	}
 
 	// The certificate is a SEQUENCE of (TBSCertificate, SignatureAlgorithm, SignatureValue)
 	// We need to extract just the first element.
 	var tbs asn1.RawValue
 	if _, err := asn1.Unmarshal(outer.Bytes, &tbs); err != nil {
-		return nil, fmt.Errorf("unmarshal TBS: %w", err)
+		return nil, &errs.Wrapped{Msg: "unmarshal TBS", Err: err}
 	}
 
 	return tbs.FullBytes, nil
@@ -400,7 +401,7 @@ func extractTBSWithoutExtension(certDER []byte, excludeOID asn1.ObjectIdentifier
 	// Parse the certificate to get its extensions
 	cert, err := x509.ParseCertificate(certDER)
 	if err != nil {
-		return nil, fmt.Errorf("parse certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "parse certificate", Err: err}
 	}
 
 	// Build a new template without the excluded extension
@@ -458,13 +459,13 @@ func rebuildTBSWithoutExtension(certDER []byte, excludeOID asn1.ObjectIdentifier
 	// Parse outer certificate SEQUENCE
 	var outer asn1.RawValue
 	if _, err := asn1.Unmarshal(certDER, &outer); err != nil {
-		return nil, fmt.Errorf("unmarshal outer certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "unmarshal outer certificate", Err: err}
 	}
 
 	// Parse the TBS as a raw value
 	var tbsRaw asn1.RawValue
 	if _, err := asn1.Unmarshal(outer.Bytes, &tbsRaw); err != nil {
-		return nil, fmt.Errorf("unmarshal TBS: %w", err)
+		return nil, &errs.Wrapped{Msg: "unmarshal TBS", Err: err}
 	}
 
 	// Parse the TBS contents to find extensions
@@ -479,7 +480,7 @@ func rebuildTBSWithoutExtension(certDER []byte, excludeOID asn1.ObjectIdentifier
 		var err error
 		rest, err = asn1.Unmarshal(rest, &field)
 		if err != nil {
-			return nil, fmt.Errorf("unmarshal TBS field: %w", err)
+			return nil, &errs.Wrapped{Msg: "unmarshal TBS field", Err: err}
 		}
 		fields = append(fields, field)
 	}
@@ -506,7 +507,7 @@ func rebuildTBSWithoutExtension(certDER []byte, excludeOID asn1.ObjectIdentifier
 	// The explicit tag wraps a SEQUENCE OF Extension
 	var extSeq asn1.RawValue
 	if _, err := asn1.Unmarshal(extRest, &extSeq); err != nil {
-		return nil, fmt.Errorf("unmarshal extensions SEQUENCE: %w", err)
+		return nil, &errs.Wrapped{Msg: "unmarshal extensions SEQUENCE", Err: err}
 	}
 
 	extContents := extSeq.Bytes
@@ -515,7 +516,7 @@ func rebuildTBSWithoutExtension(certDER []byte, excludeOID asn1.ObjectIdentifier
 		var err error
 		extContents, err = asn1.Unmarshal(extContents, &ext)
 		if err != nil {
-			return nil, fmt.Errorf("unmarshal extension: %w", err)
+			return nil, &errs.Wrapped{Msg: "unmarshal extension", Err: err}
 		}
 
 		// Parse the extension to check its OID
@@ -552,7 +553,7 @@ func rebuildTBSWithoutExtension(certDER []byte, excludeOID asn1.ObjectIdentifier
 		Bytes:      rebuiltExtBytes,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("marshal rebuilt extensions SEQUENCE: %w", err)
+		return nil, &errs.Wrapped{Msg: "marshal rebuilt extensions SEQUENCE", Err: err}
 	}
 
 	// Rebuild the explicit tag [3] wrapper
@@ -564,7 +565,7 @@ func rebuildTBSWithoutExtension(certDER []byte, excludeOID asn1.ObjectIdentifier
 	}
 	rebuiltExtFieldBytes, err := asn1.Marshal(rebuiltExtField)
 	if err != nil {
-		return nil, fmt.Errorf("marshal extensions field: %w", err)
+		return nil, &errs.Wrapped{Msg: "marshal extensions field", Err: err}
 	}
 
 	// Rebuild the TBS with the modified extensions
@@ -585,7 +586,7 @@ func rebuildTBSWithoutExtension(certDER []byte, excludeOID asn1.ObjectIdentifier
 		Bytes:      rebuiltTBSBytes,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("marshal rebuilt TBS: %w", err)
+		return nil, &errs.Wrapped{Msg: "marshal rebuilt TBS", Err: err}
 	}
 
 	return rebuiltTBS, nil

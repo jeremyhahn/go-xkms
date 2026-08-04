@@ -41,7 +41,7 @@ test.describe('Settings View', () => {
   });
 
   test.describe('Category Navigation', () => {
-    test('settings navigation sidebar renders all 12 categories', async ({
+    test('settings navigation sidebar renders all 13 categories', async ({
       page,
     }) => {
       const settingsNav = page.locator('.settings-nav');
@@ -59,6 +59,7 @@ test.describe('Settings View', () => {
         'PIN Management',
         'Storage',
         'Notifications',
+        'SSH',
         'Advanced',
       ];
 
@@ -69,10 +70,10 @@ test.describe('Settings View', () => {
       }
     });
 
-    test('exactly 12 navigation items are rendered', async ({ page }) => {
+    test('exactly 13 navigation items are rendered', async ({ page }) => {
       const navItems = page.locator('.settings-nav .settings-nav-item');
       const count = await navItems.count();
-      expect(count).toBe(12);
+      expect(count).toBe(13);
     });
 
     test('General is the default active category', async ({ page }) => {
@@ -523,7 +524,10 @@ test.describe('Settings View', () => {
       await page.waitForTimeout(500);
 
       const loading = page.getByText('Loading auto-unseal status...');
-      const tpmAvailable = page.getByText('TPM Available');
+      // Both the LUKS and the barrier auto-unseal sections render a
+      // "TPM Available" row when loaded — match the first to avoid a
+      // strict-mode violation (which .catch would silently turn into false).
+      const tpmAvailable = page.getByText('TPM Available').first();
       const retryBtn = page.getByRole('button', { name: 'Retry' });
 
       const hasLoading = await loading.isVisible().catch(() => false);
@@ -540,7 +544,8 @@ test.describe('Settings View', () => {
       await page.waitForTimeout(500);
 
       const loading = page.getByText('Loading barrier auto-unseal status...');
-      const tpmAvailable = page.getByText('TPM Available');
+      // See above: "TPM Available" appears in both auto-unseal sections.
+      const tpmAvailable = page.getByText('TPM Available').first();
       const retryBtn = page.getByRole('button', { name: 'Retry' });
       const unableToLoad = page.getByText('Unable to load barrier auto-unseal status.');
 

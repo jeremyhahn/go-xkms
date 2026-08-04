@@ -1,0 +1,61 @@
+- generic [ref=e217]:
+  - generic [ref=e218]:
+    - generic [ref=e219]:
+      - img [ref=e262]
+      - generic [ref=e221]: Welcome
+    - generic [ref=e223]:
+      - img [ref=e284]
+      - generic [ref=e225]: Deployment
+    - generic [ref=e227]:
+      - img [ref=e308]
+      - generic [ref=e229]: Mode
+    - generic [ref=e231]:
+      - img [ref=e373]
+      - generic [ref=e233]: Security
+    - generic [ref=e235]:
+      - generic [ref=e236]: "5"
+      - generic [ref=e237]: Storage
+    - generic [ref=e239]:
+      - generic [ref=e240]: "6"
+      - generic [ref=e241]: Summary
+  - generic [ref=e375]:
+    - heading "Encrypted Storage" [level=2] [ref=e376]
+    - paragraph [ref=e377]: xKey uses layered encryption. Choose a storage backend and configure barrier encryption.
+    - generic [ref=e378]:
+      - generic [ref=e379]:
+        - img [ref=e380]
+        - generic [ref=e382]: Barrier Encryption
+        - generic [ref=e383]: Always Active
+      - generic [ref=e384]:
+        - generic [ref=e385]: All data is encrypted at the application layer using AES-256-GCM barrier encryption, regardless of storage backend. The best available strategy is selected automatically.
+        - generic [ref=e386]:
+          - generic [ref=e387]: "Passphrase (AES-256-GCM): Available"
+          - generic [ref=e388]: "TPM 2.0 Hardware: Available"
+    - generic [ref=e389]:
+      - generic [ref=e390]:
+        - img [ref=e391]
+        - generic [ref=e393]: Storage Backend
+      - generic [ref=e394]:
+        - generic [ref=e395] [cursor=pointer]:
+          - radio "Standard Filesystem Data stored on the local filesystem. Barrier encryption protects all data at the application layer." [checked] [ref=e396]
+          - generic [ref=e397]:
+            - generic [ref=e398]: Standard Filesystem
+            - generic [ref=e399]: Data stored on the local filesystem. Barrier encryption protects all data at the application layer.
+        - generic [ref=e400] [cursor=pointer]:
+          - radio "LUKS Encrypted Volume Linux-native full-disk encryption as a base layer underneath barrier encryption. Provides defense-in-depth. Requires administrator privileges." [ref=e401]
+          - generic [ref=e402]:
+            - generic [ref=e403]: LUKS Encrypted Volume
+            - generic [ref=e404]: Linux-native full-disk encryption as a base layer underneath barrier encryption. Provides defense-in-depth. Requires administrator privileges.
+    - generic [ref=e405]:
+      - generic [ref=e406]:
+        - img [ref=e407]
+        - generic [ref=e409]: Barrier Password
+      - generic [ref=e410]:
+        - img [ref=e411]
+        - generic [ref=e413]: TPM 2.0 hardware will be used to protect the barrier encryption key. No password required.
+      - generic [ref=e414] [cursor=pointer]:
+        - checkbox "Enable auto-unseal on startup" [ref=e415]
+        - generic [ref=e416]: Enable auto-unseal on startup
+    - generic [ref=e417]:
+      - button "Back" [ref=e418] [cursor=pointer]
+      - button "Next" [ref=e419] [cursor=pointer]

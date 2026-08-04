@@ -179,7 +179,7 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -190,7 +190,7 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -200,7 +200,7 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) error {
 	// Connect to phone
 	phoneBackend, err := connectToPhone(device, timeout, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDeviceListSlotsFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVDeviceListSlotsFailed, Cause: err}
 	}
 	defer phoneBackend.Close()
 
@@ -209,22 +209,22 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDeviceListSlotsFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVDeviceListSlotsFailed, Cause: err}
 	}
 
 	// Request PIV slot listing
 	req := phone.NewRequest(phone.MethodLocalPIVListSlots, &phone.LocalPIVListSlotsParams{})
 	resp, err := phoneBackend.SendRequest(ctx, req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDeviceListSlotsFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVDeviceListSlotsFailed, Cause: err}
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("%w: [%d] %s", ErrPIVDeviceListSlotsFailed, resp.Error.Code, resp.Error.Message)
+		return &DetailError{Err: ErrPIVDeviceListSlotsFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
 	result, err := phone.DecodeResult[phone.LocalPIVListSlotsResult](resp)
 	if err != nil {
-		return fmt.Errorf("%w: failed to decode result: %v", ErrPIVDeviceListSlotsFailed, err)
+		return &DetailError{Err: ErrPIVDeviceListSlotsFailed, Detail: fmt.Sprintf(": failed to decode result: %v", err)}
 	}
 
 	if len(result.Slots) == 0 {
@@ -282,12 +282,12 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
 	// Read and parse certificate
 	certData, err := os.ReadFile(certFile)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVCertificateReadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVCertificateReadFailed, Cause: err}
 	}
 
 	cert, _, err := parseCertificateAuto(certData)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVCertificateParseFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVCertificateParseFailed, Cause: err}
 	}
 
 	// Load phone config
@@ -296,7 +296,7 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -307,7 +307,7 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -319,7 +319,7 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
 	// Connect to phone
 	phoneBackend, err := connectToPhone(device, timeout, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDevicePushCertFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVDevicePushCertFailed, Cause: err}
 	}
 	defer phoneBackend.Close()
 
@@ -328,7 +328,7 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDevicePushCertFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVDevicePushCertFailed, Cause: err}
 	}
 
 	// Send certificate to phone
@@ -340,15 +340,15 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
 
 	resp, err := phoneBackend.SendRequest(ctx, req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDevicePushCertFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVDevicePushCertFailed, Cause: err}
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("%w: [%d] %s", ErrPIVDevicePushCertFailed, resp.Error.Code, resp.Error.Message)
+		return &DetailError{Err: ErrPIVDevicePushCertFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
 	result, err := phone.DecodeResult[phone.LocalPIVImportCertResult](resp)
 	if err != nil {
-		return fmt.Errorf("%w: failed to decode result: %v", ErrPIVDevicePushCertFailed, err)
+		return &DetailError{Err: ErrPIVDevicePushCertFailed, Detail: fmt.Sprintf(": failed to decode result: %v", err)}
 	}
 
 	if result.Success {
@@ -382,7 +382,7 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -393,7 +393,7 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -405,7 +405,7 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
 	// Connect to phone
 	phoneBackend, err := connectToPhone(device, timeout, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDevicePullCertFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVDevicePullCertFailed, Cause: err}
 	}
 	defer phoneBackend.Close()
 
@@ -414,7 +414,7 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDevicePullCertFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVDevicePullCertFailed, Cause: err}
 	}
 
 	// Request certificate from phone
@@ -425,25 +425,25 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
 
 	resp, err := phoneBackend.SendRequest(ctx, req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDevicePullCertFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVDevicePullCertFailed, Cause: err}
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("%w: [%d] %s", ErrPIVDevicePullCertFailed, resp.Error.Code, resp.Error.Message)
+		return &DetailError{Err: ErrPIVDevicePullCertFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
 	result, err := phone.DecodeResult[phone.LocalPIVGetCertResult](resp)
 	if err != nil {
-		return fmt.Errorf("%w: failed to decode result: %v", ErrPIVDevicePullCertFailed, err)
+		return &DetailError{Err: ErrPIVDevicePullCertFailed, Detail: fmt.Sprintf(": failed to decode result: %v", err)}
 	}
 
 	if len(result.CertificateDER) == 0 {
-		return fmt.Errorf("%w: no certificate in slot %s", ErrPIVCertificateNotFound, slot)
+		return &DetailError{Err: ErrPIVCertificateNotFound, Detail: fmt.Sprintf(": no certificate in slot %s", slot)}
 	}
 
 	// Parse certificate to display info
 	cert, parseErr := x509.ParseCertificate(result.CertificateDER)
 	if parseErr != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDevicePullCertFailed, parseErr)
+		return &SentinelCauseError{Sentinel: ErrPIVDevicePullCertFailed, Cause: parseErr}
 	}
 
 	// Encode as PEM
@@ -454,7 +454,7 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
 
 	if outputPath != "" {
 		if writeErr := os.WriteFile(outputPath, pemData, 0600); writeErr != nil {
-			return fmt.Errorf("%w: %v", ErrPIVDevicePullCertFailed, writeErr)
+			return &SentinelCauseError{Sentinel: ErrPIVDevicePullCertFailed, Cause: writeErr}
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Certificate saved to: %s\n", outputPath)
 	} else {
@@ -488,7 +488,7 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -499,7 +499,7 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -511,7 +511,7 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) error {
 	// Connect to phone
 	phoneBackend, err := connectToPhone(device, timeout, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDeviceGenerateKeyFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVDeviceGenerateKeyFailed, Cause: err}
 	}
 	defer phoneBackend.Close()
 
@@ -520,7 +520,7 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDeviceGenerateKeyFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVDeviceGenerateKeyFailed, Cause: err}
 	}
 
 	// Request key generation on phone
@@ -532,15 +532,15 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) error {
 
 	resp, err := phoneBackend.SendRequest(ctx, req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPIVDeviceGenerateKeyFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPIVDeviceGenerateKeyFailed, Cause: err}
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("%w: [%d] %s", ErrPIVDeviceGenerateKeyFailed, resp.Error.Code, resp.Error.Message)
+		return &DetailError{Err: ErrPIVDeviceGenerateKeyFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
 	result, err := phone.DecodeResult[phone.LocalPIVGenerateKeyResult](resp)
 	if err != nil {
-		return fmt.Errorf("%w: failed to decode result: %v", ErrPIVDeviceGenerateKeyFailed, err)
+		return &DetailError{Err: ErrPIVDeviceGenerateKeyFailed, Detail: fmt.Sprintf(": failed to decode result: %v", err)}
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "  Slot:      %s (%s)\n", result.Slot, slotName)

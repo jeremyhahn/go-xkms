@@ -28,6 +28,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	pivpkcs11 "github.com/jeremyhahn/go-xkms/pkg/pivcert/pkcs11"
@@ -106,7 +108,7 @@ type Backend struct {
 // Returns an error if the configuration is invalid.
 func NewBackend(config *Config) (*Backend, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid configuration", Err: err}
 	}
 
 	// Initialize tracker
@@ -206,15 +208,15 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 	id := []byte(createKeyID(attrs))
 	signer, err := findKeyPairByID(b.pool, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 	if signer == nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	// For PKCS#11, we can only return public key
 	// Private key material never leaves the HSM
-	return nil, fmt.Errorf("%w: PKCS#11 private keys cannot be exported", backend.ErrNotSupported)
+	return nil, &errs.Detail{Err: backend.ErrNotSupported, Detail: "PKCS#11 private keys cannot be exported"}
 }
 
 // Save stores key metadata to the PKCS#11 backend.
@@ -232,7 +234,7 @@ func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.
 
 	// For PKCS#11, saving key material directly is not supported
 	// Keys must be generated on the HSM using GenerateRSA/GenerateECDSA
-	return fmt.Errorf("%w: use GenerateKey methods to create keys on HSM", backend.ErrNotSupported)
+	return &errs.Detail{Err: backend.ErrNotSupported, Detail: "use GenerateKey methods to create keys on HSM"}
 }
 
 // DeleteKey removes a key from the PKCS#11 backend.
@@ -248,15 +250,15 @@ func (b *Backend) findObjectsByClassAndID(session pkcs11.SessionHandle, class ui
 		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 	}
 	if err := b.p11ctx.FindObjectsInit(session, tmpl); err != nil {
-		return nil, fmt.Errorf("failed to init find objects: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to init find objects", Err: err}
 	}
 	objs, _, err := b.p11ctx.FindObjects(session, 10)
 	if err != nil {
 		b.p11ctx.FindObjectsFinal(session)
-		return nil, fmt.Errorf("failed to find objects: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find objects", Err: err}
 	}
 	if err := b.p11ctx.FindObjectsFinal(session); err != nil {
-		return nil, fmt.Errorf("failed to finalize find objects: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to finalize find objects", Err: err}
 	}
 	return objs, nil
 }
@@ -272,7 +274,7 @@ func (b *Backend) deleteKeyInSession(session pkcs11.SessionHandle, id []byte, cn
 	}
 	for _, obj := range privObjs {
 		if err := b.p11ctx.DestroyObject(session, obj); err != nil {
-			return fmt.Errorf("failed to destroy private key: %w", err)
+			return &errs.Wrapped{Msg: "failed to destroy private key", Err: err}
 		}
 	}
 
@@ -282,23 +284,21 @@ func (b *Backend) deleteKeyInSession(session pkcs11.SessionHandle, id []byte, cn
 	}
 	for _, obj := range pubObjs {
 		if err := b.p11ctx.DestroyObject(session, obj); err != nil {
-			return fmt.Errorf("failed to destroy public key: %w", err)
+			return &errs.Wrapped{Msg: "failed to destroy public key", Err: err}
 		}
 	}
 
 	if len(privObjs) == 0 && len(pubObjs) == 0 {
-		return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, cn)
+		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", cn)}
 	}
 
 	// Verify objects are actually gone. YubiKey PIV libykcs11 accepts
 	// C_DestroyObject under CKU_SO but leaves PIV slot contents in place.
 	if remaining, verr := b.findObjectsByClassAndID(session, pkcs11.CKO_PRIVATE_KEY, id); verr == nil && len(remaining) > 0 {
-		return fmt.Errorf("%w: private key %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')",
-			hardware.ErrDeleteNotSupportedOnToken, cn)
+		return &errs.Detail{Err: hardware.ErrDeleteNotSupportedOnToken, Detail: fmt.Sprintf("private key %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')", cn)}
 	}
 	if remaining, verr := b.findObjectsByClassAndID(session, pkcs11.CKO_PUBLIC_KEY, id); verr == nil && len(remaining) > 0 {
-		return fmt.Errorf("%w: public key %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')",
-			hardware.ErrDeleteNotSupportedOnToken, cn)
+		return &errs.Detail{Err: hardware.ErrDeleteNotSupportedOnToken, Detail: fmt.Sprintf("public key %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')", cn)}
 	}
 
 	return nil
@@ -359,13 +359,13 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 			pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
 		}
 		if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
-			return fmt.Errorf("list keys: init search: %w", err)
+			return &errs.Wrapped{Msg: "list keys: init search", Err: err}
 		}
 		defer b.p11ctx.FindObjectsFinal(session)
 
 		handles, _, err := b.p11ctx.FindObjects(session, 256)
 		if err != nil {
-			return fmt.Errorf("list keys: find objects: %w", err)
+			return &errs.Wrapped{Msg: "list keys: find objects", Err: err}
 		}
 
 		for _, h := range handles {
@@ -429,13 +429,13 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 		return decrypter, nil
 	}
 
-	return nil, fmt.Errorf("%w: key does not support decryption", backend.ErrOperationNotSupported)
+	return nil, &errs.Detail{Err: backend.ErrOperationNotSupported, Detail: "key does not support decryption"}
 }
 
 // RotateKey rotates/updates a key identified by attrs.
 // For PKCS#11, this is not typically supported as keys are managed on the HSM.
 func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
-	return fmt.Errorf("%w: key rotation not supported for PKCS#11", backend.ErrOperationNotSupported)
+	return &errs.Detail{Err: backend.ErrOperationNotSupported, Detail: "key rotation not supported for PKCS#11"}
 }
 
 // GenerateRandom generates cryptographically secure random bytes using the HSM's
@@ -458,7 +458,7 @@ func (b *Backend) GenerateRandom(length int) ([]byte, error) {
 	}
 
 	if length <= 0 {
-		return nil, fmt.Errorf("pkcs11: invalid length %d, must be > 0", length)
+		return nil, &errs.Message{Msg: fmt.Sprintf("pkcs11: invalid length %d, must be > 0", length)}
 	}
 
 	var randomBytes []byte
@@ -466,7 +466,7 @@ func (b *Backend) GenerateRandom(length int) ([]byte, error) {
 		var err error
 		randomBytes, err = b.p11ctx.GenerateRandom(session, length)
 		if err != nil {
-			return fmt.Errorf("pkcs11: failed to generate random bytes: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: failed to generate random bytes", Err: err}
 		}
 		return nil
 	})
@@ -531,7 +531,7 @@ func (b *Backend) Initialize(soPIN, userPIN string) error {
 	if err := b.initializeToken(soPIN, userPIN); err != nil {
 		// If already initialized, that's okay
 		if err != ErrAlreadyInitialized {
-			return fmt.Errorf("failed to initialize token: %w", err)
+			return &errs.Wrapped{Msg: "failed to initialize token", Err: err}
 		}
 	}
 
@@ -563,12 +563,12 @@ func (b *Backend) loginUser(pin string) error {
 	if b.p11ctx == nil {
 		p := pkcs11.New(b.config.Library)
 		if p == nil {
-			return fmt.Errorf("failed to load PKCS#11 library: %s", b.config.Library)
+			return &errs.Message{Msg: fmt.Sprintf("failed to load PKCS#11 library: %s", b.config.Library)}
 		}
 		if err := p.Initialize(); err != nil {
 			if err != pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
 				p.Destroy()
-				return fmt.Errorf("failed to initialize PKCS#11: %w", err)
+				return &errs.Wrapped{Msg: "failed to initialize PKCS#11", Err: err}
 			}
 		}
 		b.p11ctx = p
@@ -578,7 +578,7 @@ func (b *Backend) loginUser(pin string) error {
 	// Resolve slot by token label or configured slot number
 	slotID, err := b.resolveSlot()
 	if err != nil {
-		return fmt.Errorf("failed to resolve slot: %w", err)
+		return &errs.Wrapped{Msg: "failed to resolve slot", Err: err}
 	}
 
 	// Create session pool
@@ -588,7 +588,7 @@ func (b *Backend) loginUser(pin string) error {
 	}
 	pool, err := NewSessionPool(b.p11ctx, slotID, pin, poolSize)
 	if err != nil {
-		return fmt.Errorf("failed to create session pool: %w", err)
+		return &errs.Wrapped{Msg: "failed to create session pool", Err: err}
 	}
 	b.pool = pool
 
@@ -617,7 +617,7 @@ func (b *Backend) resolveSlot() (uint, error) {
 
 	slots, err := b.p11ctx.GetSlotList(true)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get slot list: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to get slot list", Err: err}
 	}
 	if len(slots) == 0 {
 		return 0, ErrTokenNotFound
@@ -635,7 +635,7 @@ func (b *Backend) resolveSlot() (uint, error) {
 				return slot, nil
 			}
 		}
-		return 0, fmt.Errorf("%w: token label %q not found", ErrTokenNotFound, b.config.TokenLabel)
+		return 0, &errs.Detail{Err: ErrTokenNotFound, Detail: fmt.Sprintf("token label %q not found", b.config.TokenLabel)}
 	}
 
 	// Default to first available slot
@@ -648,7 +648,7 @@ func (b *Backend) initializeToken(soPIN, userPIN string) error {
 	// Initialize low-level PKCS#11 context
 	p := pkcs11.New(b.config.Library)
 	if p == nil {
-		return fmt.Errorf("failed to load PKCS#11 library: %s", b.config.Library)
+		return &errs.Message{Msg: fmt.Sprintf("failed to load PKCS#11 library: %s", b.config.Library)}
 	}
 
 	if err := p.Initialize(); err != nil {
@@ -658,7 +658,7 @@ func (b *Backend) initializeToken(soPIN, userPIN string) error {
 			return ErrAlreadyInitialized
 		}
 		p.Destroy()
-		return fmt.Errorf("failed to initialize PKCS#11: %w", err)
+		return &errs.Wrapped{Msg: "failed to initialize PKCS#11", Err: err}
 	}
 
 	defer p.Destroy()
@@ -667,7 +667,7 @@ func (b *Backend) initializeToken(soPIN, userPIN string) error {
 	// Get token slot
 	slots, err := p.GetSlotList(true)
 	if err != nil {
-		return fmt.Errorf("failed to get slot list: %w", err)
+		return &errs.Wrapped{Msg: "failed to get slot list", Err: err}
 	}
 
 	if len(slots) == 0 {
@@ -682,32 +682,32 @@ func (b *Backend) initializeToken(soPIN, userPIN string) error {
 	// Get token info to check initialization status
 	tokenInfo, err := p.GetTokenInfo(slot)
 	if err != nil {
-		return fmt.Errorf("failed to get token info: %w", err)
+		return &errs.Wrapped{Msg: "failed to get token info", Err: err}
 	}
 
 	// Check if token needs initialization
 	if tokenInfo.Flags&pkcs11.CKF_TOKEN_INITIALIZED == 0 {
 		// Initialize token
 		if err := p.InitToken(slot, soPIN, b.config.TokenLabel); err != nil {
-			return fmt.Errorf("failed to init token: %w", err)
+			return &errs.Wrapped{Msg: "failed to init token", Err: err}
 		}
 
 		// Open session and init user PIN
 		session, err := p.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
 		if err != nil {
-			return fmt.Errorf("failed to open session: %w", err)
+			return &errs.Wrapped{Msg: "failed to open session", Err: err}
 		}
 		defer p.CloseSession(session)
 
 		// Login as SO
 		if err := p.Login(session, pkcs11.CKU_SO, soPIN); err != nil {
-			return fmt.Errorf("failed to login as SO: %w", err)
+			return &errs.Wrapped{Msg: "failed to login as SO", Err: err}
 		}
 		defer p.Logout(session)
 
 		// Initialize user PIN
 		if err := p.InitPIN(session, userPIN); err != nil {
-			return fmt.Errorf("failed to init user PIN: %w", err)
+			return &errs.Wrapped{Msg: "failed to init user PIN", Err: err}
 		}
 	} else {
 		return ErrAlreadyInitialized
@@ -766,7 +766,7 @@ func (b *Backend) generateQuantumKey(attrs *types.KeyAttributes) (crypto.Private
 	switch {
 	case strings.HasPrefix(algorithm, "ML-DSA"):
 		if !b.supportsMLDSA {
-			return nil, fmt.Errorf("%w: token does not support ML-DSA", ErrUnsupportedKeyAlgorithm)
+			return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: "token does not support ML-DSA"}
 		}
 		keyType = CKK_ML_DSA
 		keyPairGenMechanism = CKM_ML_DSA_KEY_PAIR_GEN
@@ -774,14 +774,14 @@ func (b *Backend) generateQuantumKey(attrs *types.KeyAttributes) (crypto.Private
 
 	case strings.HasPrefix(algorithm, "ML-KEM"):
 		if !b.supportsMLKEM {
-			return nil, fmt.Errorf("%w: token does not support ML-KEM", ErrUnsupportedKeyAlgorithm)
+			return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: "token does not support ML-KEM"}
 		}
 		keyType = CKK_ML_KEM
 		keyPairGenMechanism = CKM_ML_KEM_KEY_PAIR_GEN
 		signMechanism = CKM_ML_KEM
 
 	default:
-		return nil, fmt.Errorf("%w: unsupported quantum algorithm: %s", ErrUnsupportedKeyAlgorithm, algorithm)
+		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("unsupported quantum algorithm: %s", algorithm)}
 	}
 
 	// Create key ID and label
@@ -822,7 +822,7 @@ func (b *Backend) generateQuantumKey(attrs *types.KeyAttributes) (crypto.Private
 		return err
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate %s key pair: %w", algorithm, err)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to generate %s key pair", algorithm), Err: err}
 	}
 
 	// Create a signer wrapper that delegates operations to the HSM
@@ -866,7 +866,7 @@ func (b *Backend) GenerateRSAWithSize(attrs *types.KeyAttributes, keySize int) (
 
 	signer, err := generateRSAKeyPair(b.pool, id, id, keySize, b.config.IsYubiKeyPIV(), b.config.SOPIN, b.config.PIN)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate RSA key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate RSA key", Err: err}
 	}
 
 	return signer, nil
@@ -913,7 +913,7 @@ func (b *Backend) GenerateECDSAWithCurve(attrs *types.KeyAttributes, curve ellip
 
 	signer, err := generateECDSAKeyPair(b.pool, id, id, curve, b.config.IsYubiKeyPIV(), b.config.SOPIN, b.config.PIN)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate ECDSA key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate ECDSA key", Err: err}
 	}
 
 	return signer, nil
@@ -944,7 +944,7 @@ func (b *Backend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.Signer, er
 	defer b.mu.Unlock()
 
 	if b.config != nil && b.config.IsYubiKeyPIV() {
-		return nil, fmt.Errorf("%w: YubiKey PIV does not support Ed25519 keys; use ECDSA P-256 or RSA instead", ErrUnsupportedKeyAlgorithm)
+		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: "YubiKey PIV does not support Ed25519 keys; use ECDSA P-256 or RSA instead"}
 	}
 
 	if b.pool == nil {
@@ -993,7 +993,7 @@ func (b *Backend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.Signer, er
 		return err
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate Ed25519 key pair: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate Ed25519 key pair", Err: err}
 	}
 
 	signer := &pkcs11Ed25519Signer{
@@ -1027,7 +1027,7 @@ func (b *Backend) GenerateSecretKey(attrs *types.KeyAttributes, keySize int) (pk
 	}
 
 	if keySize != 128 && keySize != 256 {
-		return 0, fmt.Errorf("%w: AES key size %d bits (only 128 and 256 are supported)", backend.ErrInvalidAlgorithm, keySize)
+		return 0, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("AES key size %d bits (only 128 and 256 are supported)", keySize)}
 	}
 
 	label := createKeyID(attrs)
@@ -1055,7 +1055,7 @@ func (b *Backend) GenerateSecretKey(attrs *types.KeyAttributes, keySize int) (pk
 		return err
 	})
 	if err != nil {
-		return 0, fmt.Errorf("failed to generate AES secret key: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to generate AES secret key", Err: err}
 	}
 
 	return handle, nil
@@ -1081,18 +1081,18 @@ func (b *Backend) FindSecretKey(attrs *types.KeyAttributes) (pkcs11.ObjectHandle
 	var handle pkcs11.ObjectHandle
 	err := b.pool.WithSession(func(session pkcs11.SessionHandle) error {
 		if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
-			return fmt.Errorf("failed to init object search: %w", err)
+			return &errs.Wrapped{Msg: "failed to init object search", Err: err}
 		}
 		handles, _, err := b.p11ctx.FindObjects(session, 1)
 		if err != nil {
 			b.p11ctx.FindObjectsFinal(session)
-			return fmt.Errorf("failed to find objects: %w", err)
+			return &errs.Wrapped{Msg: "failed to find objects", Err: err}
 		}
 		if err := b.p11ctx.FindObjectsFinal(session); err != nil {
-			return fmt.Errorf("failed to finalize object search: %w", err)
+			return &errs.Wrapped{Msg: "failed to finalize object search", Err: err}
 		}
 		if len(handles) == 0 {
-			return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 		}
 		handle = handles[0]
 		return nil
@@ -1124,7 +1124,7 @@ func (b *Backend) GetSignerByID(keyID string) (crypto.Signer, error) {
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("%w: key %s does not implement crypto.Signer", backend.ErrInvalidKeyType, keyID)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key %s does not implement crypto.Signer", keyID)}
 	}
 	return signer, nil
 }
@@ -1142,7 +1142,7 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 	}
 	decrypter, ok := key.(crypto.Decrypter)
 	if !ok {
-		return nil, fmt.Errorf("%w: key %s does not implement crypto.Decrypter", backend.ErrInvalidKeyType, keyID)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key %s does not implement crypto.Decrypter", keyID)}
 	}
 	return decrypter, nil
 }
@@ -1164,10 +1164,10 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 
 	signer, err := findKeyPairByID(b.pool, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 	if signer == nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	return signer, nil
@@ -1196,10 +1196,10 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 	id := []byte(createKeyID(attrs))
 	signer, err := findKeyPairByID(b.pool, id)
 	if err != nil {
-		return fmt.Errorf("failed to find key: %w", err)
+		return &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 	if signer == nil {
-		return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	pubKey := signer.Public()
@@ -1208,15 +1208,15 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 	switch pub := pubKey.(type) {
 	case *rsa.PublicKey:
 		// For RSA, we'd need to know the hash algorithm
-		return fmt.Errorf("%w: RSA verification requires hash algorithm specification", backend.ErrInvalidAlgorithm)
+		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: "RSA verification requires hash algorithm specification"}
 	case *ecdsa.PublicKey:
 		// Verify ECDSA signature
 		if !ecdsa.VerifyASN1(pub, digest, signature) {
-			return fmt.Errorf("signature verification failed")
+			return &errs.Message{Msg: "signature verification failed"}
 		}
 		return nil
 	default:
-		return fmt.Errorf("%w: unsupported key type for verification", backend.ErrInvalidKeyType)
+		return &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "unsupported key type for verification"}
 	}
 }
 
@@ -1258,10 +1258,10 @@ func (b *Backend) findKey(attrs *types.KeyAttributes) (crypto.Signer, error) {
 	id := []byte(createKeyID(attrs))
 	signer, err := findKeyPairByID(b.pool, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 	if signer == nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	return signer, nil
@@ -1281,15 +1281,15 @@ func findKeyPairByID(pool *SessionPool, id []byte) (crypto.Signer, error) {
 			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
 			pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 		}); err != nil {
-			return fmt.Errorf("pkcs11: FindObjectsInit for private key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjectsInit for private key", Err: err}
 		}
 		privObjs, _, err := pool.Ctx().FindObjects(session, 1)
 		if err != nil {
 			pool.Ctx().FindObjectsFinal(session)
-			return fmt.Errorf("pkcs11: FindObjects for private key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjects for private key", Err: err}
 		}
 		if err := pool.Ctx().FindObjectsFinal(session); err != nil {
-			return fmt.Errorf("pkcs11: FindObjectsFinal for private key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjectsFinal for private key", Err: err}
 		}
 		if len(privObjs) == 0 {
 			return nil // not found
@@ -1301,10 +1301,10 @@ func findKeyPairByID(pool *SessionPool, id []byte) (crypto.Signer, error) {
 			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, nil),
 		})
 		if err != nil {
-			return fmt.Errorf("pkcs11: GetAttributeValue for key type: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: GetAttributeValue for key type", Err: err}
 		}
 		if len(attrs) == 0 || len(attrs[0].Value) == 0 {
-			return fmt.Errorf("pkcs11: could not determine key type")
+			return &errs.Message{Msg: "pkcs11: could not determine key type"}
 		}
 		// CKA_KEY_TYPE is a CK_ULONG, encoded as little-endian bytes
 		for i, b := range attrs[0].Value {
@@ -1316,15 +1316,15 @@ func findKeyPairByID(pool *SessionPool, id []byte) (crypto.Signer, error) {
 			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
 			pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 		}); err != nil {
-			return fmt.Errorf("pkcs11: FindObjectsInit for public key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjectsInit for public key", Err: err}
 		}
 		pubObjs, _, err := pool.Ctx().FindObjects(session, 1)
 		if err != nil {
 			pool.Ctx().FindObjectsFinal(session)
-			return fmt.Errorf("pkcs11: FindObjects for public key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjects for public key", Err: err}
 		}
 		if err := pool.Ctx().FindObjectsFinal(session); err != nil {
-			return fmt.Errorf("pkcs11: FindObjectsFinal for public key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjectsFinal for public key", Err: err}
 		}
 		if len(pubObjs) > 0 {
 			pubHandle = pubObjs[0]
@@ -1374,7 +1374,7 @@ func findKeyPairByID(pool *SessionPool, id []byte) (crypto.Signer, error) {
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("%w: unknown key type 0x%04x", ErrUnsupportedKeyAlgorithm, keyType)
+		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("unknown key type 0x%04x", keyType)}
 	}
 }
 
@@ -1386,11 +1386,11 @@ func (b *Backend) resolveKeyID(attrs *types.KeyAttributes) ([]byte, error) {
 	if attrs.PIVSlot != "" {
 		slot := pivcert.PIVSlot(attrs.PIVSlot)
 		if !slot.IsValid() {
-			return nil, fmt.Errorf("%w: invalid PIV slot: %s", ErrInvalidKeyAttributes, attrs.PIVSlot)
+			return nil, &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: fmt.Sprintf("invalid PIV slot: %s", attrs.PIVSlot)}
 		}
 		ckaID, ok := pivpkcs11.PIVSlotToCKAID(slot)
 		if !ok {
-			return nil, fmt.Errorf("%w: no CKA_ID mapping for slot %s", ErrInvalidKeyAttributes, attrs.PIVSlot)
+			return nil, &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: fmt.Sprintf("no CKA_ID mapping for slot %s", attrs.PIVSlot)}
 		}
 		return []byte{ckaID}, nil
 	}
@@ -1498,7 +1498,7 @@ func (s *pkcs11Ed25519Signer) Public() crypto.PublicKey {
 // Ed25519 performs its own hashing internally.
 func (s *pkcs11Ed25519Signer) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts) ([]byte, error) {
 	if s.pool == nil {
-		return nil, fmt.Errorf("pkcs11: session pool not initialized")
+		return nil, &errs.Message{Msg: "pkcs11: session pool not initialized"}
 	}
 
 	var signature []byte
@@ -1506,13 +1506,13 @@ func (s *pkcs11Ed25519Signer) Sign(_ io.Reader, digest []byte, _ crypto.SignerOp
 		if err := s.pool.Ctx().SignInit(session, []*pkcs11.Mechanism{
 			pkcs11.NewMechanism(CKM_EDDSA, nil),
 		}, s.privateHandle); err != nil {
-			return fmt.Errorf("pkcs11: Ed25519 SignInit: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: Ed25519 SignInit", Err: err}
 		}
 
 		var err error
 		signature, err = s.pool.Ctx().Sign(session, digest)
 		if err != nil {
-			return fmt.Errorf("pkcs11: Ed25519 Sign: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: Ed25519 Sign", Err: err}
 		}
 		return nil
 	})
@@ -1562,7 +1562,7 @@ func (s *pkcs11MLDSASigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts
 	defer s.mu.RUnlock()
 
 	if s.pool == nil {
-		return nil, fmt.Errorf("pkcs11: session pool not initialized")
+		return nil, &errs.Message{Msg: "pkcs11: session pool not initialized"}
 	}
 
 	var signature []byte
@@ -1570,13 +1570,13 @@ func (s *pkcs11MLDSASigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts
 		if err := s.pool.Ctx().SignInit(session, []*pkcs11.Mechanism{
 			pkcs11.NewMechanism(s.signMechanism, nil),
 		}, s.privateHandle); err != nil {
-			return fmt.Errorf("pkcs11: %s SignInit: %w", s.algorithm, err)
+			return &errs.Wrapped{Msg: fmt.Sprintf("pkcs11: %s SignInit", s.algorithm), Err: err}
 		}
 
 		var err error
 		signature, err = s.pool.Ctx().Sign(session, digest)
 		if err != nil {
-			return fmt.Errorf("pkcs11: %s Sign: %w", s.algorithm, err)
+			return &errs.Wrapped{Msg: fmt.Sprintf("pkcs11: %s Sign", s.algorithm), Err: err}
 		}
 		return nil
 	})

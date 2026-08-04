@@ -33,7 +33,7 @@ All DNS-01 providers support:
 ### Using Environment Variables
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/dns-01/providers"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers"
 
 // Create provider from environment variables
 provider, err := providers.NewProviderFromEnv(ctx, providers.NameCloudflare)
@@ -49,7 +49,7 @@ err = provider.Present(ctx, domain, fqdn, value)
 ### Using Explicit Configuration
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/dns-01/providers/cloudflare"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers/cloudflare"
 
 provider, err := cloudflare.New(ctx, cloudflare.Config{
     APIToken:           "your-api-token",

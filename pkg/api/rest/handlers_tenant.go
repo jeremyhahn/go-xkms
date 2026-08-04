@@ -46,19 +46,25 @@ func isCrossTenantAccess(identity *auth.Identity, tenantID string) bool {
 	return identity.TenantID != tenantID
 }
 
-// createTenantRequest represents a request to register a new tenant.
+// createTenantRequest represents a request to register a new tenant. The
+// optional IsolationType selects the tenant's isolation mode (prefix / barrier
+// / volume / raft; default prefix) and BarrierAutoUnseal opts a dedicated-
+// isolation tenant into system-managed auto-unseal (entitlement-gated).
 type createTenantRequest struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	IsolationType     string `json:"isolation_type,omitempty"`
+	BarrierAutoUnseal bool   `json:"barrier_auto_unseal,omitempty"`
 }
 
 // tenantInfoResponse represents tenant information.
 type tenantInfoResponse struct {
-	ID        string `json:"id"`
-	Name      string `json:"name,omitempty"`
-	Sealed    bool   `json:"sealed"`
-	CreatedAt string `json:"created_at,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
+	ID            string `json:"id"`
+	Name          string `json:"name,omitempty"`
+	Sealed        bool   `json:"sealed"`
+	IsolationType string `json:"isolation_type,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
 }
 
 // wrappedTenantResponse wraps a single tenant for SDK compatibility.
@@ -138,6 +144,34 @@ func (h *TenantHandlers) CreateTenantHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Preferred path: delegate to the XKMS service, which routes through
+	// go-qrdb's TenantService so the requested isolation mode and the
+	// system-managed auto-unseal key-management mode are entitlement-gated and
+	// the per-tenant barrier is sealed by the composed hardware strategies. The
+	// registry fallback below preserves the legacy sealed-shell behavior when no
+	// service is wired.
+	if h.xkmsService != nil {
+		createResp, err := h.xkmsService.CreateTenant(r.Context(), &transport.CreateTenantRequest{
+			ID:                req.ID,
+			Name:              req.Name,
+			IsolationType:     transport.TenantIsolationType(req.IsolationType),
+			BarrierAutoUnseal: req.BarrierAutoUnseal,
+		})
+		if err != nil {
+			handleTenantError(w, err)
+			return
+		}
+		writeJSON(w, wrappedTenantResponse{
+			Tenant: tenantInfoResponse{
+				ID:            createResp.Tenant.ID,
+				Name:          createResp.Tenant.Name,
+				Sealed:        h.tenantSealed(req.ID),
+				IsolationType: string(createResp.Tenant.IsolationType),
+			},
+		}, http.StatusCreated)
+		return
+	}
+
 	tb, err := h.registry.RegisterTenant(req.ID)
 	if err != nil {
 		handleTenantError(w, err)
@@ -154,6 +188,20 @@ func (h *TenantHandlers) CreateTenantHandler(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, resp, http.StatusCreated)
 }
 
+// tenantSealed reports the live sealed state of a tenant's barrier. Prefix-
+// isolated tenants have no dedicated barrier and are reported unsealed; a
+// dedicated-isolation tenant reports its barrier's current sealed state.
+func (h *TenantHandlers) tenantSealed(tenantID string) bool {
+	if h.registry == nil {
+		return false
+	}
+	tb, err := h.registry.Tenant(tenantID)
+	if err != nil {
+		return false
+	}
+	return tb.IsSealed()
+}
+
 // ListTenantsHandler handles GET /tenants requests.
 // It returns all registered tenant IDs with their barrier status.
 // Tenant-scoped identities see only their own tenant; system-level
@@ -166,24 +214,47 @@ func (h *TenantHandlers) ListTenantsHandler(w http.ResponseWriter, r *http.Reque
 
 	identity := auth.GetIdentity(r.Context())
 
-	ids := h.registry.ListTenants()
-	sort.Strings(ids)
+	tenants := make([]tenantInfoResponse, 0)
 
-	tenants := make([]tenantInfoResponse, 0, len(ids))
-	for _, id := range ids {
-		// If identity is tenant-scoped, only include the caller's own tenant
-		if identity != nil && !auth.IsCrossTenant(identity) && id != identity.TenantID {
-			continue
-		}
-
-		tb, err := h.registry.Tenant(id)
+	// Preferred path: list through the XKMS tenant service so prefix-isolated
+	// (default) tenants — which are not in the barrier registry — are included,
+	// consistent with the create/get paths.
+	if h.xkmsService != nil {
+		listResp, err := h.xkmsService.ListTenants(r.Context())
 		if err != nil {
-			continue
+			handleTenantError(w, err)
+			return
 		}
-		tenants = append(tenants, tenantInfoResponse{
-			ID:     id,
-			Sealed: tb.IsSealed(),
-		})
+		for _, ti := range listResp.Tenants {
+			if identity != nil && !auth.IsCrossTenant(identity) && ti.ID != identity.TenantID {
+				continue
+			}
+			tenants = append(tenants, tenantInfoResponse{
+				ID:            ti.ID,
+				Name:          ti.Name,
+				Sealed:        h.tenantSealed(ti.ID),
+				IsolationType: string(ti.IsolationType),
+			})
+		}
+		sort.Slice(tenants, func(i, j int) bool { return tenants[i].ID < tenants[j].ID })
+	} else {
+		ids := h.registry.ListTenants()
+		sort.Strings(ids)
+		for _, id := range ids {
+			// If identity is tenant-scoped, only include the caller's own tenant
+			if identity != nil && !auth.IsCrossTenant(identity) && id != identity.TenantID {
+				continue
+			}
+
+			tb, err := h.registry.Tenant(id)
+			if err != nil {
+				continue
+			}
+			tenants = append(tenants, tenantInfoResponse{
+				ID:     id,
+				Sealed: tb.IsSealed(),
+			})
+		}
 	}
 
 	pageReq := parsePageRequest(r)
@@ -216,6 +287,29 @@ func (h *TenantHandlers) GetTenantHandler(w http.ResponseWriter, r *http.Request
 	identity := auth.GetIdentity(r.Context())
 	if isCrossTenantAccess(identity, tenantID) {
 		writeError(w, seal.ErrTenantNotFound, http.StatusNotFound)
+		return
+	}
+
+	// Preferred path: the XKMS tenant service is the source of truth for ALL
+	// tenants. Prefix-isolated (default) tenants share the system store and are
+	// NOT registered in the barrier registry, so the registry-only lookup below
+	// would 404 them even though CreateTenant persisted their metadata. Read
+	// through the same service the write path uses to keep create→get
+	// consistent.
+	if h.xkmsService != nil {
+		getResp, err := h.xkmsService.GetTenant(r.Context(), tenantID)
+		if err != nil {
+			handleTenantError(w, err)
+			return
+		}
+		writeJSON(w, wrappedTenantResponse{
+			Tenant: tenantInfoResponse{
+				ID:            getResp.Tenant.ID,
+				Name:          getResp.Tenant.Name,
+				Sealed:        h.tenantSealed(tenantID),
+				IsolationType: string(getResp.Tenant.IsolationType),
+			},
+		}, http.StatusOK)
 		return
 	}
 
@@ -257,6 +351,18 @@ func (h *TenantHandlers) DeleteTenantHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Preferred path: delete through the XKMS tenant service so prefix-isolated
+	// tenants (absent from the barrier registry) are removed, consistent with
+	// the create/get/list paths.
+	if h.xkmsService != nil {
+		if err := h.xkmsService.DeleteTenant(r.Context(), tenantID); err != nil {
+			handleTenantError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	if err := h.registry.UnregisterTenant(tenantID); err != nil {
 		handleTenantError(w, err)
 		return
@@ -289,6 +395,18 @@ func (h *TenantHandlers) TenantBarrierStatusHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Preferred path: the servicer surfaces the full per-tenant status
+	// (initialized flag, active strategy, hardware-backing, Shamir quorum).
+	if h.xkmsService != nil {
+		resp, err := h.xkmsService.TenantBarrierStatus(r.Context(), tenantID)
+		if err != nil {
+			handleTenantError(w, err)
+			return
+		}
+		writeJSON(w, resp, http.StatusOK)
+		return
+	}
+
 	status, err := h.registry.TenantStatus(tenantID)
 	if err != nil {
 		handleTenantError(w, err)
@@ -300,6 +418,63 @@ func (h *TenantHandlers) TenantBarrierStatusHandler(w http.ResponseWriter, r *ht
 		Sealed:         status.Sealed,
 		Strategy:       status.Strategy,
 		HardwareBacked: status.HardwareBacked,
+	}
+	writeJSON(w, resp, http.StatusOK)
+}
+
+// UpdateTenantEntitlementsHandler handles PUT /tenants/{tenantID}/entitlements.
+// It updates which isolation tiers and dedicated-storage features the tenant's
+// plan permits. Requires the composed TenantService.
+func (h *TenantHandlers) UpdateTenantEntitlementsHandler(w http.ResponseWriter, r *http.Request) {
+	if h.xkmsService == nil {
+		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
+		return
+	}
+	tenantID := chi.URLParam(r, "tenantID")
+	if tenantID == "" {
+		writeError(w, ErrMissingTenantID, http.StatusBadRequest)
+		return
+	}
+
+	var req transport.UpdateTenantEntitlementsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+	req.TenantID = tenantID
+
+	resp, err := h.xkmsService.UpdateTenantEntitlements(r.Context(), &req)
+	if err != nil {
+		handleTenantError(w, err)
+		return
+	}
+	writeJSON(w, resp, http.StatusOK)
+}
+
+// UpdateTenantQuotasHandler handles PUT /tenants/{tenantID}/quotas. It updates
+// the tenant's resource quotas. Requires the composed TenantService.
+func (h *TenantHandlers) UpdateTenantQuotasHandler(w http.ResponseWriter, r *http.Request) {
+	if h.xkmsService == nil {
+		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
+		return
+	}
+	tenantID := chi.URLParam(r, "tenantID")
+	if tenantID == "" {
+		writeError(w, ErrMissingTenantID, http.StatusBadRequest)
+		return
+	}
+
+	var req transport.UpdateTenantQuotasRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+	req.TenantID = tenantID
+
+	resp, err := h.xkmsService.UpdateTenantQuotas(r.Context(), &req)
+	if err != nil {
+		handleTenantError(w, err)
+		return
 	}
 	writeJSON(w, resp, http.StatusOK)
 }
@@ -460,6 +635,14 @@ func handleTenantError(w http.ResponseWriter, err error) {
 	case errors.Is(err, seal.ErrNilSystemBarrier):
 		writeError(w, err, http.StatusServiceUnavailable)
 	default:
+		// Delegate to the central mapper, which classifies go-qrdb tenant
+		// entitlement / barrier-mode / quota denials (EntitlementError → 403,
+		// ErrSharedBarrierImmutable → 409, quota-exceeded → 429). Only a genuinely
+		// unrecognized error falls through to a generic 500 with details hidden.
+		if status := mapErrorToStatusCode(err); status != http.StatusInternalServerError {
+			writeError(w, err, status)
+			return
+		}
 		slog.Default().Error("tenant operation failed", "error", err)
 		writeError(w, ErrInternalError, http.StatusInternalServerError)
 	}

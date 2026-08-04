@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -317,7 +317,7 @@ func (p *Provider) changeRecord(ctx context.Context, action types.ChangeAction, 
 	input := &route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: aws.String(hostedZoneID),
 		ChangeBatch: &types.ChangeBatch{
-			Comment: aws.String("Managed by go-trusted-ca ACME DNS-01 challenge"),
+			Comment: aws.String("Managed by go-xkms ACME DNS-01 challenge"),
 			Changes: []types.Change{
 				{
 					Action:            action,
@@ -515,7 +515,7 @@ func assumeRole(ctx context.Context, cfg aws.Config, stsClient StsAPI, providerC
 		// Assume role with web identity (IRSA)
 		result, err := stsClient.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityInput{
 			RoleArn:          aws.String(providerCfg.Role),
-			RoleSessionName:  aws.String("go-trusted-ca"),
+			RoleSessionName:  aws.String("go-xkms"),
 			WebIdentityToken: aws.String(providerCfg.WebIdentityToken),
 		})
 		if err != nil {
@@ -530,7 +530,7 @@ func assumeRole(ctx context.Context, cfg aws.Config, stsClient StsAPI, providerC
 		// Regular assume role
 		result, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
 			RoleArn:         aws.String(providerCfg.Role),
-			RoleSessionName: aws.String("go-trusted-ca"),
+			RoleSessionName: aws.String("go-xkms"),
 		})
 		if err != nil {
 			return aws.Config{}, err

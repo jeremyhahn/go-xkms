@@ -15,6 +15,7 @@ package known_hosts
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -30,7 +31,7 @@ const storagePrefix = "ssh/known_hosts/"
 
 // envelopeVersion is the current on-disk envelope format. Incremented
 // on incompatible schema changes.
-const envelopeVersion = 1
+const envelopeVersion = 2
 
 // Store is the pluggable persistence interface for host-key pins. All
 // methods take a context.Context so storage backends can propagate
@@ -70,6 +71,10 @@ type storedEnvelope struct {
 	Algorithm   string    `json:"algo,omitempty"`
 	AddedAt     time.Time `json:"added"`
 	Source      string    `json:"source,omitempty"`
+
+	// PublicKey is the base64 (std) SSH wire-format host key, present from
+	// envelope v2 onward. omitempty keeps v1 pins decoding unchanged.
+	PublicKey string `json:"pub,omitempty"`
 }
 
 // BackendStore is the production Store. It serializes Pins into JSON
@@ -122,6 +127,9 @@ func (s *BackendStore) Add(ctx context.Context, pin *Pin) error {
 		Algorithm:   pin.Algorithm,
 		AddedAt:     pin.AddedAt,
 		Source:      pin.Source,
+	}
+	if len(pin.PublicKey) > 0 {
+		env.PublicKey = base64.StdEncoding.EncodeToString(pin.PublicKey)
 	}
 	if env.AddedAt.IsZero() {
 		env.AddedAt = time.Now().UTC()
@@ -235,7 +243,7 @@ func decodeEnvelope(data []byte) (*Pin, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Pin{
+	pin := &Pin{
 		Host:        env.Host,
 		Fingerprint: env.Fingerprint,
 		Algorithm:   env.Algorithm,
@@ -243,5 +251,11 @@ func decodeEnvelope(data []byte) (*Pin, error) {
 		Owner:       env.Owner,
 		AddedAt:     env.AddedAt,
 		Source:      env.Source,
-	}, nil
+	}
+	if env.PublicKey != "" {
+		if raw, derr := base64.StdEncoding.DecodeString(env.PublicKey); derr == nil {
+			pin.PublicKey = raw
+		}
+	}
+	return pin, nil
 }

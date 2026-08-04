@@ -160,7 +160,7 @@ func resolveCanonicalInitEnvFallbacks(cmd *cobra.Command, f *canonicalInitFlags)
 		if !cmd.Flags().Changed(flagName) {
 			if val := v.GetString(flagName); val != "" {
 				if err := cmd.Flags().Set(flagName, val); err != nil {
-					return fmt.Errorf("xkmsctl init: invalid env value for %s: %w", flagName, err)
+					return &InitEnvValueError{Flag: flagName, Err: err}
 				}
 			}
 		}
@@ -186,23 +186,23 @@ func runCanonicalInit(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	}
 	if f.soPin == "" {
-		return fmt.Errorf("xkmsctl init: --so-pin is required (or set XKMS_SO_PIN)")
+		return ErrInitSOPINRequired
 	}
 	if f.userPin == "" {
-		return fmt.Errorf("xkmsctl init: --user-pin is required (or set XKMS_USER_PIN)")
+		return ErrInitUserPINRequired
 	}
 	if _, ok := validBarrierStrategies[f.barrierStrategy]; !ok {
-		return fmt.Errorf("xkmsctl init: invalid --barrier-strategy %q", f.barrierStrategy)
+		return &InitBarrierStrategyError{Strategy: f.barrierStrategy}
 	}
 	if f.barrierStrategy == "shamir" {
 		if f.shares < 2 {
-			return fmt.Errorf("xkmsctl init: --shares >= 2 required when --barrier-strategy=shamir")
+			return ErrInitSharesRequired
 		}
 		if f.threshold < 2 || f.threshold > f.shares {
-			return fmt.Errorf("xkmsctl init: --threshold (2 <= threshold <= shares) required when --barrier-strategy=shamir")
+			return ErrInitThresholdRequired
 		}
 	} else if f.shares != 0 || f.threshold != 0 {
-		return fmt.Errorf("xkmsctl init: --shares / --threshold only valid when --barrier-strategy=shamir")
+		return ErrInitSharesRequireShamir
 	}
 
 	out := cmd.OutOrStdout()
@@ -333,14 +333,14 @@ Example:
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if bundlePath == "" {
-				return fmt.Errorf("bootstrap direct: --bundle is required")
+				return ErrBootstrapDirectBundleRequired
 			}
 			info, err := os.Stat(bundlePath)
 			if err != nil {
-				return fmt.Errorf("bootstrap direct: cannot stat bundle: %w", err)
+				return &WrappedError{Sentinel: ErrBootstrapDirectBundleStat, Err: err}
 			}
 			if info.IsDir() {
-				return fmt.Errorf("bootstrap direct: %s is a directory", bundlePath)
+				return &BundlePathIsDirError{Path: bundlePath}
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Direct CA bundle accepted: %s (%d bytes)\n", bundlePath, info.Size())
 			return nil

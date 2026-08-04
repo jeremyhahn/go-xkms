@@ -14,8 +14,6 @@
 package main
 
 import (
-	"fmt"
-
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -154,7 +152,7 @@ func (c *Config) CreateBackend() (client.KeyProvider, error) {
 	// Create file-based storage backend via the SDK.
 	storageBackend, err := client.NewFileStorageBackend(c.KeyDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create storage backend: %w", err)
+		return nil, &WrappedError{Sentinel: ErrCreateStorageBackendFailed, Err: err}
 	}
 
 	// Create software backend (unified asymmetric + symmetric with import/export support)
@@ -162,7 +160,7 @@ func (c *Config) CreateBackend() (client.KeyProvider, error) {
 		KeyStorage: storageBackend,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create software backend: %w", err)
+		return nil, &WrappedError{Sentinel: ErrCreateSoftwareBackendFailed, Err: err}
 	}
 
 	return softwareBackend, nil
@@ -173,7 +171,7 @@ func (c *Config) CreateCertStorage() (*client.StorageCertAdapter, error) {
 	// Create file-based storage backend via the SDK.
 	storageBackend, err := client.NewFileStorageBackend(c.KeyDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create storage backend: %w", err)
+		return nil, &WrappedError{Sentinel: ErrCreateStorageBackendFailed, Err: err}
 	}
 
 	// Wrap in a CertAdapter for certificate-specific operations
@@ -239,7 +237,7 @@ func (c *Config) CreateClient() (client.Client, error) {
 	// Parse the server URL to determine protocol
 	cl, err := client.NewFromURL(c.Server)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create client from URL: %w", err)
+		return nil, &WrappedError{Sentinel: ErrCreateClientFromURLFailed, Err: err}
 	}
 
 	// If we need to set TLS options, we need to create a new client with full config
@@ -268,7 +266,7 @@ func (c *Config) createClientFromProtocol() (client.Client, error) {
 			PIN:        c.PKCS11PIN,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create PKCS#11 TLS config: %w", err)
+			return nil, &WrappedError{Sentinel: ErrCreatePKCS11TLSConfigFailed, Err: err}
 		}
 		// Note: cleanup is not called here - resources live for the lifetime of the client.
 		// The PKCS#11 session/module will be cleaned up when the process exits.
@@ -313,7 +311,7 @@ func (c *Config) createClientFromProtocol() (client.Client, error) {
 			cfg.Address = "localhost:9444"
 		}
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %s", c.Protocol)
+		return nil, &WrappedDetailError{Sentinel: ErrUnsupportedProtocol, Detail: c.Protocol}
 	}
 
 	return client.New(cfg)
@@ -336,7 +334,7 @@ func (c *Config) createClientWithTLS() (client.Client, error) {
 			PIN:        c.PKCS11PIN,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create PKCS#11 TLS config: %w", err)
+			return nil, &WrappedError{Sentinel: ErrCreatePKCS11TLSConfigFailed, Err: err}
 		}
 		// Note: cleanup is not called here - resources live for the lifetime of the client.
 		// The PKCS#11 session/module will be cleaned up when the process exits.

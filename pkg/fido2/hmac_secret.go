@@ -17,6 +17,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // HMACSecretExtension handles the hmac-secret extension for key derivation
@@ -37,14 +39,14 @@ func (h *HMACSecretExtension) EnrollCredential(config *EnrollmentConfig) (*Enrol
 	// Generate client data hash
 	challenge := make([]byte, 32)
 	if _, err := rand.Read(challenge); err != nil {
-		return nil, fmt.Errorf("failed to generate challenge: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate challenge", Err: err}
 	}
 	clientDataHash := CreateClientDataHash(challenge)
 
 	// Generate user ID
 	userID := make([]byte, 32)
 	if _, err := rand.Read(userID); err != nil {
-		return nil, fmt.Errorf("failed to generate user ID: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate user ID", Err: err}
 	}
 
 	// Build MakeCredential request with hmac-secret extension
@@ -70,13 +72,13 @@ func (h *HMACSecretExtension) EnrollCredential(config *EnrollmentConfig) (*Enrol
 	// Create credential
 	resp, err := h.auth.MakeCredential(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create credential: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create credential", Err: err}
 	}
 
 	// Parse authenticator data to extract credential ID
 	authData := resp.AuthData
 	if len(authData) < 37 {
-		return nil, fmt.Errorf("invalid authenticator data length: %d", len(authData))
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid authenticator data length: %d", len(authData))}
 	}
 
 	// AuthData structure:
@@ -93,7 +95,7 @@ func (h *HMACSecretExtension) EnrollCredential(config *EnrollmentConfig) (*Enrol
 	attestedCredentialDataIncluded := (flags & 0x40) != 0
 
 	if !attestedCredentialDataIncluded {
-		return nil, fmt.Errorf("attested credential data not included")
+		return nil, &errs.Message{Msg: "attested credential data not included"}
 	}
 
 	// Extract AAGUID
@@ -102,7 +104,7 @@ func (h *HMACSecretExtension) EnrollCredential(config *EnrollmentConfig) (*Enrol
 	// Extract credential ID length
 	credIDLen := int(authData[53])<<8 | int(authData[54])
 	if len(authData) < 55+credIDLen {
-		return nil, fmt.Errorf("invalid credential ID length")
+		return nil, &errs.Message{Msg: "invalid credential ID length"}
 	}
 
 	// Extract credential ID
@@ -120,7 +122,7 @@ func (h *HMACSecretExtension) EnrollCredential(config *EnrollmentConfig) (*Enrol
 	if len(salt) == 0 {
 		salt = make([]byte, 32)
 		if _, err := rand.Read(salt); err != nil {
-			return nil, fmt.Errorf("failed to generate salt: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to generate salt", Err: err}
 		}
 	}
 
@@ -149,7 +151,7 @@ func (h *HMACSecretExtension) DeriveSecret(config *AuthenticationConfig) (*Authe
 	if len(challenge) == 0 {
 		challenge = make([]byte, 32)
 		if _, err := rand.Read(challenge); err != nil {
-			return nil, fmt.Errorf("failed to generate challenge: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to generate challenge", Err: err}
 		}
 	}
 	clientDataHash := CreateClientDataHash(challenge)
@@ -181,13 +183,13 @@ func (h *HMACSecretExtension) DeriveSecret(config *AuthenticationConfig) (*Authe
 	// Get assertion
 	resp, err := h.auth.GetAssertion(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get assertion: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get assertion", Err: err}
 	}
 
 	// Parse authenticator data
 	authData := resp.AuthData
 	if len(authData) < 37 {
-		return nil, fmt.Errorf("invalid authenticator data length: %d", len(authData))
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid authenticator data length: %d", len(authData))}
 	}
 
 	// Extract flags and sign count
@@ -250,7 +252,7 @@ func (h *HMACSecretExtension) DeriveSecret(config *AuthenticationConfig) (*Authe
 // This derives a 512-bit key suitable for encryption from the HMAC secret
 func GenerateDerivedKey(hmacSecret []byte) ([]byte, error) {
 	if len(hmacSecret) != 32 {
-		return nil, fmt.Errorf("invalid HMAC secret length: expected 32, got %d", len(hmacSecret))
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid HMAC secret length: expected 32, got %d", len(hmacSecret))}
 	}
 
 	// Derive a 512-bit key using SHA-256 based KDF
@@ -283,7 +285,7 @@ func VerifyHMACSecret(secret []byte) error {
 		return ErrInvalidHMACSecret
 	}
 	if len(secret) != 32 && len(secret) != 64 {
-		return fmt.Errorf("invalid HMAC secret length: expected 32 or 64, got %d", len(secret))
+		return &errs.Message{Msg: fmt.Sprintf("invalid HMAC secret length: expected 32 or 64, got %d", len(secret))}
 	}
 	return nil
 }
@@ -292,7 +294,7 @@ func VerifyHMACSecret(secret []byte) error {
 // This is a helper for extracting hmac-secret output
 func ParseAuthDataExtensions(authData []byte) (map[string]interface{}, error) {
 	if len(authData) < 37 {
-		return nil, fmt.Errorf("invalid authenticator data length")
+		return nil, &errs.Message{Msg: "invalid authenticator data length"}
 	}
 
 	flags := authData[32]
@@ -312,7 +314,7 @@ func ParseAuthDataExtensions(authData []byte) (map[string]interface{}, error) {
 		offset += 16
 
 		if len(authData) < offset+2 {
-			return nil, fmt.Errorf("invalid attested credential data")
+			return nil, &errs.Message{Msg: "invalid attested credential data"}
 		}
 
 		// Get credential ID length
@@ -320,7 +322,7 @@ func ParseAuthDataExtensions(authData []byte) (map[string]interface{}, error) {
 		offset += 2
 
 		if len(authData) < offset+credIDLen {
-			return nil, fmt.Errorf("invalid credential ID length")
+			return nil, &errs.Message{Msg: "invalid credential ID length"}
 		}
 
 		// Skip credential ID

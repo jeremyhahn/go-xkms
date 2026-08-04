@@ -28,6 +28,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
@@ -37,6 +39,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -92,6 +95,22 @@ type Service struct {
 	authorizer  *auth.Authorizer
 	auditLogger audit.Logger
 	xkmsService *xkms.XKMSService
+	sshClient   sdkssh.Client
+	sshHostKeys sdkssh.HostKeyStore
+}
+
+// SetSSHClient wires the SSH SDK client used by the SSH RPC handlers. When
+// nil (the default), the SSH RPCs return codes.Unavailable. The server
+// composition constructs the client with a backend provider so remote SSH
+// key generation honors the server's configured backends.
+func (s *Service) SetSSHClient(client sdkssh.Client) {
+	s.sshClient = client
+}
+
+// SetSSHHostKeyStore wires the host-key pin store the SSHConsole stream verifies
+// against. When nil, SSHConsole returns codes.Unavailable.
+func (s *Service) SetSSHHostKeyStore(store sdkssh.HostKeyStore) {
+	s.sshHostKeys = store
 }
 
 // NewService creates a new gRPC service.
@@ -2538,7 +2557,7 @@ func (s *Service) findKeyAttributes(ctx context.Context, ks xkms.Backend, keyID 
 		}
 	}
 
-	return nil, fmt.Errorf("key %s not found", keyID)
+	return nil, &errs.Message{Msg: fmt.Sprintf("key %s not found", keyID)}
 }
 
 // getAlgorithmString returns the algorithm name as a string, handling both
@@ -2624,7 +2643,7 @@ func extractPublicKeyPEM(privKey crypto.PrivateKey) (string, error) {
 		// Handle OpaqueKey and other Signer implementations
 		pubKey = k.Public()
 	default:
-		return "", fmt.Errorf("unsupported key type")
+		return "", &errs.Message{Msg: "unsupported key type"}
 	}
 
 	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
@@ -2643,15 +2662,15 @@ func extractPublicKeyPEM(privKey crypto.PrivateKey) (string, error) {
 func parseCertFromPEM(certPem string) (*x509.Certificate, error) {
 	block, _ := pem.Decode([]byte(certPem))
 	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM block")
+		return nil, &errs.Message{Msg: "failed to decode PEM block"}
 	}
 	if block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("invalid PEM type: %s (expected CERTIFICATE)", block.Type)
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid PEM type: %s (expected CERTIFICATE)", block.Type)}
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse certificate: %v", err)
+		return nil, &errs.Message{Msg: fmt.Sprintf("failed to parse certificate: %v", err)}
 	}
 
 	return cert, nil
@@ -2678,16 +2697,16 @@ func encodePrivateKeyToPEM(privKey crypto.PrivateKey) (string, error) {
 		pemType = "EC PRIVATE KEY"
 		keyBytes, err = x509.MarshalECPrivateKey(k)
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal ECDSA key: %v", err)
+			return "", &errs.Message{Msg: fmt.Sprintf("failed to marshal ECDSA key: %v", err)}
 		}
 	case ed25519.PrivateKey:
 		pemType = "PRIVATE KEY"
 		keyBytes, err = x509.MarshalPKCS8PrivateKey(k)
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal Ed25519 key: %v", err)
+			return "", &errs.Message{Msg: fmt.Sprintf("failed to marshal Ed25519 key: %v", err)}
 		}
 	default:
-		return "", fmt.Errorf("unsupported private key type: %T", privKey)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported private key type: %T", privKey)}
 	}
 
 	pemBlock := &pem.Block{

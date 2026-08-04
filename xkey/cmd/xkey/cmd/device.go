@@ -279,7 +279,7 @@ func runDeviceList(cmd *cobra.Command, args []string) error {
 			fmt.Println("No paired devices.")
 			return nil
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -315,7 +315,7 @@ func runDeviceUnpair(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	// Find the device
@@ -328,7 +328,7 @@ func runDeviceUnpair(cmd *cobra.Command, args []string) error {
 	}
 
 	if deviceIndex == -1 {
-		return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+		return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 	}
 
 	// Confirm unless force flag is set
@@ -354,7 +354,7 @@ func runDeviceUnpair(cmd *cobra.Command, args []string) error {
 
 	// Save configuration
 	if err := saveDevicesConfig(cfg); err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceConfigSaveFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigSaveFailed, Cause: err}
 	}
 
 	fmt.Printf("Device \"%s\" unpaired successfully.\n", deviceName)
@@ -372,7 +372,7 @@ func runDeviceStatus(cmd *cobra.Command, args []string) error {
 			fmt.Println("No paired devices.")
 			return nil
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {

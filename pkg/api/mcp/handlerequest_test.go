@@ -210,6 +210,7 @@ func TestHandleRequest_BarrierRoutes(t *testing.T) {
 		"barrier.generateRecoveryKeys",
 		"barrier.recoverWithKeys",
 		"barrier.deleteRecoveryKeys",
+		"barrier.hasRecoveryKeys",
 		"barrier.generateRootToken",
 	}
 

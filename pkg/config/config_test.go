@@ -3280,3 +3280,132 @@ func TestStorageConfig_QRDBDefaults(t *testing.T) {
 		t.Errorf("QRDBConfig.Transport zero value = %q, want empty", sc.QRDB.Transport)
 	}
 }
+
+// TestConfig_ComplianceGaps verifies the secure-by-default posture check that
+// the daemon uses to refuse an insecure start.
+func TestConfig_ComplianceGaps(t *testing.T) {
+	// A fully compliant config reports no gaps. A real (non-noop) auth type is
+	// required: auth.enabled alone is not sufficient if the type resolves to the
+	// no-op authenticator.
+	secure := &Config{}
+	secure.Barrier.Enabled = true
+	secure.TLS.Enabled = true
+	secure.Auth.Enabled = true
+	secure.Auth.Type = "mtls"
+	secure.CA = &ca.MultiIdentityCAConfig{}
+	if gaps := secure.ComplianceGaps(); len(gaps) != 0 {
+		t.Errorf("compliant config should report no gaps, got %v", gaps)
+	}
+
+	// auth.enabled=true but a no-op / empty auth type is still effectively
+	// anonymous, so it is reported as a gap.
+	for _, noopType := range []string{"", "noop", "none", "NoOp"} {
+		c := &Config{}
+		c.Barrier.Enabled = true
+		c.TLS.Enabled = true
+		c.Auth.Enabled = true
+		c.Auth.Type = noopType
+		c.CA = &ca.MultiIdentityCAConfig{}
+		if gaps := c.ComplianceGaps(); len(gaps) != 1 {
+			t.Errorf("auth.type=%q should report 1 gap (no-op auth), got %d: %v", noopType, len(gaps), gaps)
+		}
+	}
+
+	// A zero-value config is insecure on all four dimensions.
+	if gaps := (&Config{}).ComplianceGaps(); len(gaps) != 4 {
+		t.Errorf("zero config should report 4 gaps, got %d: %v", len(gaps), gaps)
+	}
+
+	// Each dimension is independently detected.
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantGap int
+	}{
+		{"only barrier off", func(c *Config) {
+			c.TLS.Enabled = true
+			c.Auth.Enabled = true
+			c.Auth.Type = "mtls"
+			c.CA = &ca.MultiIdentityCAConfig{}
+		}, 1},
+		{"only tls off", func(c *Config) {
+			c.Barrier.Enabled = true
+			c.Auth.Enabled = true
+			c.Auth.Type = "mtls"
+			c.CA = &ca.MultiIdentityCAConfig{}
+		}, 1},
+		{"only auth off", func(c *Config) {
+			c.Barrier.Enabled = true
+			c.TLS.Enabled = true
+			c.CA = &ca.MultiIdentityCAConfig{}
+		}, 1},
+		{"only ca missing", func(c *Config) {
+			c.Barrier.Enabled = true
+			c.TLS.Enabled = true
+			c.Auth.Enabled = true
+			c.Auth.Type = "mtls"
+		}, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Config{}
+			tt.mutate(c)
+			if gaps := c.ComplianceGaps(); len(gaps) != tt.wantGap {
+				t.Errorf("got %d gaps, want %d: %v", len(gaps), tt.wantGap, gaps)
+			}
+		})
+	}
+}
+
+// TestConfig_ComplianceGaps_ClusterCAKeyProtection verifies that a plaintext
+// ("none") cluster CA key protection is flagged as a gap only when cluster ACME
+// enrollment is actually enabled, and that secure protection modes are not.
+func TestConfig_ComplianceGaps_ClusterCAKeyProtection(t *testing.T) {
+	base := func() *Config {
+		c := &Config{}
+		c.Barrier.Enabled = true
+		c.TLS.Enabled = true
+		c.Auth.Enabled = true
+		c.Auth.Type = "mtls"
+		c.CA = &ca.MultiIdentityCAConfig{}
+		c.Cluster.Enabled = true
+		c.Cluster.RaftEnrollment.ACME.Enabled = true
+		return c
+	}
+
+	// Plaintext cluster CA key with ACME enrollment on → one gap.
+	c := base()
+	c.Cluster.RaftEnrollment.CAKeyProtection = "none"
+	gaps := c.ComplianceGaps()
+	if len(gaps) != 1 {
+		t.Fatalf("plaintext cluster CA key should report 1 gap, got %d: %v", len(gaps), gaps)
+	}
+	if !strings.Contains(gaps[0], "cluster CA key protection is plaintext") {
+		t.Errorf("unexpected gap message: %q", gaps[0])
+	}
+
+	// Secure protection modes are not a gap.
+	for _, mode := range []string{"", "auto", "tpm2", "pkcs11", "passphrase", "NONE "} {
+		c := base()
+		c.Cluster.RaftEnrollment.CAKeyProtection = strings.TrimSpace(mode)
+		if mode == "NONE " {
+			// A trimmed "none" is still plaintext; this asserts trimming applies.
+			if gaps := c.ComplianceGaps(); len(gaps) != 1 {
+				t.Errorf("mode %q (trimmed none) should report 1 gap, got %v", mode, gaps)
+			}
+			continue
+		}
+		if gaps := c.ComplianceGaps(); len(gaps) != 0 {
+			t.Errorf("mode %q should report no gaps, got %v", mode, gaps)
+		}
+	}
+
+	// Plaintext but cluster ACME enrollment OFF → not flagged (the keystore is
+	// not used).
+	c = base()
+	c.Cluster.RaftEnrollment.ACME.Enabled = false
+	c.Cluster.RaftEnrollment.CAKeyProtection = "none"
+	if gaps := c.ComplianceGaps(); len(gaps) != 0 {
+		t.Errorf("plaintext CA key with ACME off should not be flagged, got %v", gaps)
+	}
+}

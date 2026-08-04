@@ -84,7 +84,7 @@ func runBarrierUnseal(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	creds := xkms.SealCredentials{Secret: password}
+	creds := xkms.SealCredentials{Secret: []byte(password)}
 	if err := barrier.Unseal(context.Background(), creds); err != nil {
 		return &BarrierError{
 			Operation: "unseal",

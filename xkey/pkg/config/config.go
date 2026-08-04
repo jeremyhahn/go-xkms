@@ -313,30 +313,25 @@ func DefaultConfig() *Config {
 func (c *Config) Validate() error {
 	if c.Log.Level != "" {
 		if _, ok := validLogLevels[c.Log.Level]; !ok {
-			return fmt.Errorf("%w: log.level %q is not one of trace, debug, info, warn, error",
-				ErrConfigInvalid, c.Log.Level)
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": log.level %q is not one of trace, debug, info, warn, error", c.Log.Level)}
 		}
 	}
 
 	if c.GUI.ClipboardTimeout < 0 {
-		return fmt.Errorf("%w: gui.clipboard_timeout must be >= 0, got %d",
-			ErrConfigInvalid, c.GUI.ClipboardTimeout)
+		return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": gui.clipboard_timeout must be >= 0, got %d", c.GUI.ClipboardTimeout)}
 	}
 
 	if c.GUI.WindowWidth <= 0 {
-		return fmt.Errorf("%w: gui.window_width must be > 0, got %d",
-			ErrConfigInvalid, c.GUI.WindowWidth)
+		return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": gui.window_width must be > 0, got %d", c.GUI.WindowWidth)}
 	}
 
 	if c.GUI.WindowHeight <= 0 {
-		return fmt.Errorf("%w: gui.window_height must be > 0, got %d",
-			ErrConfigInvalid, c.GUI.WindowHeight)
+		return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": gui.window_height must be > 0, got %d", c.GUI.WindowHeight)}
 	}
 
 	if c.Backend.Default != "" {
 		if _, ok := validBackends[c.Backend.Default]; !ok {
-			return fmt.Errorf("%w: backend.default %q is not one of software, tpm2, pkcs11, phone",
-				ErrConfigInvalid, c.Backend.Default)
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backend.default %q is not one of software, tpm2, pkcs11, phone", c.Backend.Default)}
 		}
 	}
 
@@ -350,16 +345,14 @@ func (c *Config) Validate() error {
 	// Validate state mode if set.
 	if c.State.Mode != "" {
 		if _, ok := validModes[c.State.Mode]; !ok {
-			return fmt.Errorf("%w: state.mode %q is not one of personal, enterprise",
-				ErrConfigInvalid, c.State.Mode)
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": state.mode %q is not one of personal, enterprise", c.State.Mode)}
 		}
 	}
 
 	// Validate storage engine if set.
 	if c.State.StorageEngine != "" {
 		if _, ok := validStorageEngines[c.State.StorageEngine]; !ok {
-			return fmt.Errorf("%w: state.storage_engine %q is not one of file, pebble, memory",
-				ErrConfigInvalid, c.State.StorageEngine)
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": state.storage_engine %q is not one of file, pebble, memory", c.State.StorageEngine)}
 		}
 	}
 
@@ -372,34 +365,34 @@ func (c *Config) validateBackends() error {
 
 	for i, lb := range c.Backends.Local {
 		if lb.ID == "" {
-			return fmt.Errorf("%w: backends.local[%d].id must not be empty", ErrConfigInvalid, i)
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backends.local[%d].id must not be empty", i)}
 		}
 		if _, ok := seen[lb.ID]; ok {
-			return fmt.Errorf("%w: backends.local[%d].id %q is a duplicate", ErrConfigInvalid, i, lb.ID)
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backends.local[%d].id %q is a duplicate", i, lb.ID)}
 		}
 		seen[lb.ID] = struct{}{}
 		if _, ok := validBackendCategories[lb.Category]; !ok {
-			return fmt.Errorf("%w: backends.local[%d].category %q is not valid", ErrConfigInvalid, i, lb.Category)
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backends.local[%d].category %q is not valid", i, lb.Category)}
 		}
 		if lb.Category == "pkcs11" && lb.PKCS11 != nil && lb.PKCS11.LibraryPath == "" {
-			return fmt.Errorf("%w: backends.local[%d].pkcs11.library_path must not be empty", ErrConfigInvalid, i)
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backends.local[%d].pkcs11.library_path must not be empty", i)}
 		}
 	}
 
 	for i, rb := range c.Backends.Remote {
 		if rb.ID == "" {
-			return fmt.Errorf("%w: backends.remote[%d].id must not be empty", ErrConfigInvalid, i)
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backends.remote[%d].id must not be empty", i)}
 		}
 		if _, ok := seen[rb.ID]; ok {
-			return fmt.Errorf("%w: backends.remote[%d].id %q is a duplicate", ErrConfigInvalid, i, rb.ID)
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backends.remote[%d].id %q is a duplicate", i, rb.ID)}
 		}
 		seen[rb.ID] = struct{}{}
 		if rb.Address == "" {
-			return fmt.Errorf("%w: backends.remote[%d].address must not be empty", ErrConfigInvalid, i)
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backends.remote[%d].address must not be empty", i)}
 		}
 		if rb.Protocol != "" {
 			if _, ok := validRemoteProtocols[rb.Protocol]; !ok {
-				return fmt.Errorf("%w: backends.remote[%d].protocol %q is not valid", ErrConfigInvalid, i, rb.Protocol)
+				return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backends.remote[%d].protocol %q is not valid", i, rb.Protocol)}
 			}
 		}
 	}
@@ -407,7 +400,7 @@ func (c *Config) validateBackends() error {
 	// Validate default references point to registered backend IDs.
 	for cap, backendID := range c.Backends.Defaults {
 		if _, ok := seen[backendID]; !ok {
-			return fmt.Errorf("%w: backends.defaults[%q] references unknown backend %q", ErrConfigInvalid, cap, backendID)
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backends.defaults[%q] references unknown backend %q", cap, backendID)}
 		}
 	}
 

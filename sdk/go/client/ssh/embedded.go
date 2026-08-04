@@ -36,6 +36,13 @@ import (
 type EmbeddedOptions struct {
 	// Backend is the shared storage used by every sub-client. Required.
 	Backend storage.Backend
+
+	// BackendProvider, when set, enables backend-backed key generation:
+	// a GenerateRequest carrying a Backend ID mints the key on that crypto
+	// backend (software / tpm2 / pkcs11 / cloud) and delegates signing.
+	// When nil, only software keys (sealed in-process) are supported and a
+	// GenerateRequest with a Backend ID is rejected. Optional.
+	BackendProvider pkgkeys.BackendProvider
 }
 
 // NewEmbedded constructs the embedded Client. Returns *NilInputError
@@ -57,25 +64,27 @@ func NewEmbedded(opts EmbeddedOptions) (Client, error) {
 		return nil, err
 	}
 	return &embeddedClient{
-		backend:   opts.Backend,
-		keyStore:  keyStore,
-		hostStore: hostStore,
-		authStore: authStore,
+		backend:      opts.Backend,
+		keyStore:     keyStore,
+		hostStore:    hostStore,
+		authStore:    authStore,
+		backendKeyer: opts.BackendProvider,
 	}, nil
 }
 
 // embeddedClient is the concrete Client for the in-process transport.
 // It delegates directly to the pkg/ssh/* implementations.
 type embeddedClient struct {
-	backend   storage.Backend
-	keyStore  pkgkeys.Store
-	hostStore pkgknownhosts.Store
-	authStore pkgauthorized.Store
+	backend      storage.Backend
+	keyStore     pkgkeys.Store
+	hostStore    pkgknownhosts.Store
+	authStore    pkgauthorized.Store
+	backendKeyer pkgkeys.BackendProvider
 }
 
 // Keys implements Client.Keys.
 func (c *embeddedClient) Keys() KeysClient {
-	return &embeddedKeysClient{store: c.keyStore}
+	return &embeddedKeysClient{store: c.keyStore, backendKeyer: c.backendKeyer}
 }
 
 // KnownHosts implements Client.KnownHosts.
@@ -93,6 +102,24 @@ func (c *embeddedClient) Session() SessionClient {
 	return &embeddedSessionClient{keys: c.keyStore, hosts: c.hostStore}
 }
 
+// Console implements Client.Console for the embedded transport: it resolves the
+// key's signer (software enclave OR hardware-backed) and opens an in-process
+// interactive PTY, verified against the embedded host-key store.
+func (c *embeddedClient) Console(ctx context.Context, req ConsoleConnectRequest, cfg ConsoleConfig) (ConsoleSession, error) {
+	signer, err := c.Keys().Signer(ctx, GetKeyRequest{Scope: req.KeyScope, Owner: req.KeyOwner, Name: req.KeyName})
+	if err != nil {
+		return nil, err
+	}
+	return OpenConsole(ctx, signer, ConsoleRequest{
+		Host:     req.Host,
+		Port:     req.Port,
+		User:     req.User,
+		HostKeys: c.hostStore,
+		Scope:    req.KeyScope,
+		Owner:    req.KeyOwner,
+	}, cfg)
+}
+
 // Close implements Client.Close.
 func (c *embeddedClient) Close() error {
 	if c.backend == nil {
@@ -105,10 +132,13 @@ func (c *embeddedClient) Close() error {
 
 // embeddedKeysClient is the embedded KeysClient.
 type embeddedKeysClient struct {
-	store pkgkeys.Store
+	store        pkgkeys.Store
+	backendKeyer pkgkeys.BackendProvider
 }
 
-// Generate implements KeysClient.Generate.
+// Generate implements KeysClient.Generate. When req.Backend is set the key
+// is minted on that crypto backend (private key never leaves a hardware
+// backend); otherwise a software key is generated and sealed in-process.
 func (c *embeddedKeysClient) Generate(ctx context.Context, req GenerateRequest) (*Key, error) {
 	sc, err := pkgscope.Parse(req.Scope)
 	if err != nil {
@@ -118,6 +148,25 @@ func (c *embeddedKeysClient) Generate(ctx context.Context, req GenerateRequest) 
 	if err != nil {
 		return nil, err
 	}
+
+	if req.Backend != "" {
+		if c.backendKeyer == nil {
+			return nil, &BackendUnavailableError{Backend: req.Backend}
+		}
+		k, gerr := pkgkeys.GenerateOnBackend(ctx, c.backendKeyer, req.Backend, pkgkeys.GenerateOptions{
+			Algorithm: algo,
+			RSABits:   req.RSABits,
+			Comment:   req.Comment,
+		}, sc, req.Owner, req.Name)
+		if gerr != nil {
+			return nil, gerr
+		}
+		if perr := c.store.Put(ctx, k); perr != nil {
+			return nil, perr
+		}
+		return toDTO(k), nil
+	}
+
 	k, err := pkgkeys.Generate(pkgkeys.GenerateOptions{
 		Algorithm: algo,
 		RSABits:   req.RSABits,
@@ -248,6 +297,19 @@ func (c *embeddedKeysClient) Signer(ctx context.Context, req GetKeyRequest) (gos
 	k, err := c.store.Get(ctx, sc, req.Owner, req.Name)
 	if err != nil {
 		return nil, err
+	}
+	// Backend-backed keys delegate signing to the crypto backend; the
+	// private key never leaves the device. Software keys use the
+	// enclave-backed signer.
+	if k.IsBackendBacked() {
+		if c.backendKeyer == nil {
+			return nil, &BackendUnavailableError{Backend: k.BackendID}
+		}
+		signer, serr := k.BackendSigner(ctx, c.backendKeyer)
+		if serr != nil {
+			return nil, serr
+		}
+		return signer, nil
 	}
 	signer, err := k.Signer()
 	if err != nil {
@@ -539,14 +601,16 @@ func toDTO(k *pkgkeys.Key) *Key {
 		pubLine = strings.TrimRight(string(gossh.MarshalAuthorizedKey(k.PublicKey)), "\n")
 	}
 	return &Key{
-		Scope:       string(k.Scope),
-		Owner:       k.Owner,
-		Name:        k.Name,
-		Algorithm:   string(k.Algorithm),
-		PublicKey:   pubLine,
-		Fingerprint: k.Fingerprint,
-		CreatedAt:   k.CreatedAt,
-		Comment:     k.Comment,
+		Scope:        string(k.Scope),
+		Owner:        k.Owner,
+		Name:         k.Name,
+		Algorithm:    string(k.Algorithm),
+		PublicKey:    pubLine,
+		Fingerprint:  k.Fingerprint,
+		CreatedAt:    k.CreatedAt,
+		Comment:      k.Comment,
+		Backend:      k.BackendID,
+		BackendKeyID: k.BackendKeyID,
 	}
 }
 

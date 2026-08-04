@@ -49,7 +49,7 @@ func newTestBarrier(t *testing.T) *seal.Barrier {
 		seal.NewSoftwareStrategy(),
 	)
 	require.NoError(t, err)
-	err = barrier.Initialize(context.Background(), seal.Credentials{Secret: "test-system-pw"})
+	err = barrier.Initialize(context.Background(), seal.Credentials{Secret: []byte("test-system-pw")})
 	require.NoError(t, err)
 	return barrier
 }
@@ -69,7 +69,7 @@ func registerAndInitTenant(t *testing.T, reg *seal.BarrierRegistry, tenantID str
 	t.Helper()
 	_, err := reg.RegisterTenant(tenantID)
 	require.NoError(t, err)
-	err = reg.InitializeTenant(context.Background(), tenantID, seal.Credentials{Secret: "pw-" + tenantID})
+	err = reg.InitializeTenant(context.Background(), tenantID, seal.Credentials{Secret: []byte("pw-" + tenantID)})
 	require.NoError(t, err)
 }
 

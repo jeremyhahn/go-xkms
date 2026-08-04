@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -556,6 +557,116 @@ func TestDAOStore_GetAutoUnsealPolicy_Closed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Save
+// ---------------------------------------------------------------------------
+
+func TestDAOStore_Save_CreatesNew(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	entity := &PCRPolicyEntity{
+		Name: "gui-policy",
+		Bank: "SHA256",
+		PCRs: testPCRs(),
+	}
+	require.NoError(t, store.Save(ctx, entity))
+	assert.NotZero(t, entity.EntityID())
+	assert.False(t, entity.CreatedAt.IsZero())
+
+	got, err := store.Get(ctx, "gui-policy")
+	require.NoError(t, err)
+	assert.Equal(t, "SHA256", got.Bank)
+}
+
+func TestDAOStore_Save_InvalidName(t *testing.T) {
+	store := newTestStore(t)
+	err := store.Save(context.Background(), &PCRPolicyEntity{Bank: "SHA256", PCRs: testPCRs()})
+	require.ErrorIs(t, err, ErrInvalidName)
+}
+
+func TestDAOStore_Save_NilEntity(t *testing.T) {
+	store := newTestStore(t)
+	err := store.Save(context.Background(), nil)
+	require.ErrorIs(t, err, ErrInvalidName)
+}
+
+func TestDAOStore_Save_InvalidBank(t *testing.T) {
+	store := newTestStore(t)
+	err := store.Save(context.Background(), &PCRPolicyEntity{Name: "bad-bank", Bank: "MD5", PCRs: testPCRs()})
+	require.ErrorIs(t, err, ErrInvalidBank)
+}
+
+func TestDAOStore_Save_AllowsEmptyBank(t *testing.T) {
+	// Save (unlike Create) tolerates an empty bank so the GUI can persist a
+	// draft policy before PCR selections are finalized.
+	store := newTestStore(t)
+	err := store.Save(context.Background(), &PCRPolicyEntity{Name: "draft-policy"})
+	require.NoError(t, err)
+}
+
+func TestDAOStore_Save_AllowsEmptyPCRs(t *testing.T) {
+	// Save (unlike Create) tolerates a nil/empty PCR map so the GUI can
+	// persist a policy created while the TPM was temporarily unavailable.
+	store := newTestStore(t)
+	err := store.Save(context.Background(), &PCRPolicyEntity{Name: "no-pcrs-yet", Bank: "SHA256"})
+	require.NoError(t, err)
+}
+
+func TestDAOStore_Save_PreservesSuppliedCreatedAt(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	original := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	entity := &PCRPolicyEntity{
+		Name:      "preserve-created",
+		Bank:      "SHA256",
+		PCRs:      testPCRs(),
+		CreatedAt: original,
+	}
+	require.NoError(t, store.Save(ctx, entity))
+
+	got, err := store.Get(ctx, "preserve-created")
+	require.NoError(t, err)
+	assert.True(t, original.Equal(got.CreatedAt), "Save must not overwrite a non-zero CreatedAt")
+}
+
+func TestDAOStore_Save_PreservesAutoUnsealWhenCarriedOver(t *testing.T) {
+	// Simulates the GUI's full-list-sync pattern: fetch the existing entity,
+	// carry over AutoUnseal, then Save the updated fields.
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	_, err := store.Create(ctx, "auto-policy", "SHA256", testPCRs())
+	require.NoError(t, err)
+	require.NoError(t, store.SetAutoUnseal(ctx, "auto-policy"))
+
+	existing, err := store.Get(ctx, "auto-policy")
+	require.NoError(t, err)
+	require.True(t, existing.AutoUnseal)
+
+	updated := &PCRPolicyEntity{
+		Name:       "auto-policy",
+		Bank:       "SHA256",
+		PCRs:       testPCRs(),
+		AutoUnseal: existing.AutoUnseal,
+		CreatedAt:  existing.CreatedAt,
+	}
+	require.NoError(t, store.Save(ctx, updated))
+
+	got, err := store.Get(ctx, "auto-policy")
+	require.NoError(t, err)
+	assert.True(t, got.AutoUnseal, "AutoUnseal must survive a Save that carries it over explicitly")
+}
+
+func TestDAOStore_Save_Closed(t *testing.T) {
+	store := newTestStore(t)
+	require.NoError(t, store.Close())
+
+	err := store.Save(context.Background(), &PCRPolicyEntity{Name: "x", Bank: "SHA256", PCRs: testPCRs()})
+	require.ErrorIs(t, err, ErrStoreClosed)
+}
+
+// ---------------------------------------------------------------------------
 // Close
 // ---------------------------------------------------------------------------
 
@@ -615,7 +726,7 @@ func TestDAOStore_Concurrency(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestErrDAOCreation_ErrorAndUnwrap(t *testing.T) {
-	cause := fmt.Errorf("underlying issue")
+	cause := &MessageError{Msg: "underlying issue"}
 	err := ErrDAOCreation{Cause: cause}
 
 	assert.Contains(t, err.Error(), "failed to create DAO")

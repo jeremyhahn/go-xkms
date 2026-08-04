@@ -48,6 +48,13 @@ type wizardMockPINBackend struct {
 	verifySOErr   error
 	verifyUserErr error
 
+	// Call counters let tests assert that a strategy-inapplicable operation
+	// (e.g. SO PIN management against a tpm2 backend) was never attempted,
+	// rather than merely tolerating its (design-mandated) failure.
+	setSOPINCalls    int
+	changeSOPINCalls int
+	verifySOPINCalls int
+
 	lockoutStatus *qrdbsdk.PINLockoutStatus
 }
 
@@ -58,6 +65,7 @@ func (m *wizardMockPINBackend) IsInitialized() bool                         { re
 func (m *wizardMockPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus { return m.lockoutStatus }
 
 func (m *wizardMockPINBackend) SetSOPIN(_, newSOPIN string) error {
+	m.setSOPINCalls++
 	if m.setSOPINErr != nil {
 		return m.setSOPINErr
 	}
@@ -76,10 +84,15 @@ func (m *wizardMockPINBackend) SetUserPIN(_, newUserPIN string) error {
 	return nil
 }
 
-func (m *wizardMockPINBackend) ChangeSOPIN(_, _ string) error   { return nil }
+func (m *wizardMockPINBackend) ChangeSOPIN(_, _ string) error {
+	m.changeSOPINCalls++
+	return nil
+}
+
 func (m *wizardMockPINBackend) ChangeUserPIN(_, _ string) error { return nil }
 
 func (m *wizardMockPINBackend) VerifySOPIN(p string) error {
+	m.verifySOPINCalls++
 	if m.verifySOErr != nil {
 		return m.verifySOErr
 	}

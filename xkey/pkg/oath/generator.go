@@ -58,7 +58,7 @@ func (g *Generator) Generate() (string, error) {
 // GenerateAt generates a TOTP code for the specified time.
 func (g *Generator) GenerateAt(t time.Time) (string, error) {
 	if g.cred.Type != TypeTOTP {
-		return "", fmt.Errorf("oath: GenerateAt only valid for TOTP credentials")
+		return "", &MessageError{Msg: "oath: GenerateAt only valid for TOTP credentials"}
 	}
 	counter := uint64(t.Unix()) / uint64(g.cred.Period)
 	return g.GenerateCounter(counter)

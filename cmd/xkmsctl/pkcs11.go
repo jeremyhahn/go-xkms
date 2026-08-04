@@ -97,7 +97,7 @@ var pkcs11RegisterCmd = &cobra.Command{
 		displayName, _ := cmd.Flags().GetString("name")
 
 		if modulePath == "" {
-			handleError(fmt.Errorf("--module is required"))
+			handleError(ErrModuleRequired)
 			return
 		}
 
@@ -106,7 +106,7 @@ var pkcs11RegisterCmd = &cobra.Command{
 
 		moduleID, err := mgr.RegisterModule(modulePath, displayName)
 		if err != nil {
-			handleError(fmt.Errorf("failed to register module: %w", err))
+			handleError(&WrappedError{Sentinel: ErrRegisterModuleFailed, Err: err})
 			return
 		}
 
@@ -277,15 +277,15 @@ WARNING: This will erase all data on the token!`,
 		userPin, _ := cmd.Flags().GetString("user-pin")
 
 		if label == "" {
-			handleError(fmt.Errorf("--label is required"))
+			handleError(ErrLabelRequired)
 			return
 		}
 		if soPin == "" {
-			handleError(fmt.Errorf("--so-pin is required"))
+			handleError(ErrSOPINRequired)
 			return
 		}
 		if userPin == "" {
-			handleError(fmt.Errorf("--user-pin is required"))
+			handleError(ErrUserPINRequired)
 			return
 		}
 
@@ -297,21 +297,21 @@ WARNING: This will erase all data on the token!`,
 			var err error
 			moduleID, err = mgr.RegisterModule(modulePath, "")
 			if err != nil {
-				handleError(fmt.Errorf("failed to register module: %w", err))
+				handleError(&WrappedError{Sentinel: ErrRegisterModuleFailed, Err: err})
 				return
 			}
 		} else if moduleID == "" {
 			// Neither path nor ID provided - try to auto-detect
 			probed := manager.ProbeModulesWithNames()
 			if len(probed) == 0 {
-				handleError(fmt.Errorf("no PKCS#11 modules found; specify --module or --module-id"))
+				handleError(ErrNoPKCS11ModulesFound)
 				return
 			}
 			// Use the first probed module
 			var err error
 			moduleID, err = mgr.RegisterModule(probed[0].LibraryPath, probed[0].DisplayName)
 			if err != nil {
-				handleError(fmt.Errorf("failed to register module: %w", err))
+				handleError(&WrappedError{Sentinel: ErrRegisterModuleFailed, Err: err})
 				return
 			}
 			printVerbose("Using auto-detected module: %s", moduleID)
@@ -321,7 +321,7 @@ WARNING: This will erase all data on the token!`,
 
 		err := mgr.InitializeToken(moduleID, slotID, label, soPin, userPin)
 		if err != nil {
-			handleError(fmt.Errorf("failed to initialize token: %w", err))
+			handleError(&WrappedError{Sentinel: ErrInitializeTokenFailed, Err: err})
 			return
 		}
 
@@ -358,7 +358,7 @@ var pkcs11ConnectCmd = &cobra.Command{
 		pin, _ := cmd.Flags().GetString("pin")
 
 		if pin == "" {
-			handleError(fmt.Errorf("--pin is required"))
+			handleError(ErrPINRequired)
 			return
 		}
 
@@ -370,11 +370,11 @@ var pkcs11ConnectCmd = &cobra.Command{
 			var err error
 			moduleID, err = mgr.RegisterModule(modulePath, "")
 			if err != nil {
-				handleError(fmt.Errorf("failed to register module: %w", err))
+				handleError(&WrappedError{Sentinel: ErrRegisterModuleFailed, Err: err})
 				return
 			}
 		} else if moduleID == "" {
-			handleError(fmt.Errorf("--module or --module-id is required"))
+			handleError(ErrModuleOrModuleIDRequired)
 			return
 		}
 
@@ -382,7 +382,7 @@ var pkcs11ConnectCmd = &cobra.Command{
 
 		backend, err := mgr.Connect(moduleID, slotID, pin, "")
 		if err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 
@@ -422,7 +422,7 @@ var pkcs11DisconnectCmd = &cobra.Command{
 		slotID, _ := cmd.Flags().GetUint("slot")
 
 		if moduleID == "" {
-			handleError(fmt.Errorf("--module-id is required"))
+			handleError(ErrModuleIDRequired)
 			return
 		}
 
@@ -433,7 +433,7 @@ var pkcs11DisconnectCmd = &cobra.Command{
 
 		err := mgr.Disconnect(moduleID, slotID)
 		if err != nil {
-			handleError(fmt.Errorf("failed to disconnect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDisconnectFailed, Err: err})
 			return
 		}
 

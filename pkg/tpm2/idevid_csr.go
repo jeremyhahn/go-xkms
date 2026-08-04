@@ -12,11 +12,14 @@ import (
 	"math/big"
 	"os"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"fmt"
+	"math"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"math"
 )
 
 var (
@@ -65,7 +68,7 @@ func (tpm *TPM2) CreateTCG_CSR_IDEVID(
 			content.AtCertifyInfoSZ + content.AtCertifyInfoSignatureSZ +
 			content.PadSz
 		if numSizeFields*4 > math.MaxUint32 {
-			return TCG_CSR_IDEVID{}, fmt.Errorf("size fields overflow: %d", numSizeFields*4)
+			return TCG_CSR_IDEVID{}, &errs.Message{Msg: fmt.Sprintf("size fields overflow: %d", numSizeFields*4)}
 		}
 		contents = sz + uint32(numSizeFields*4) // #nosec G115 -- CSR size calculation
 		padSz = uint32(contents % 16)
@@ -152,7 +155,7 @@ func (tpm *TPM2) CreateTCG_CSR_IDEVID(
 	binary.BigEndian.PutUint32(tcgCSR.StructVer[:], 0x00000100)
 	binary.BigEndian.PutUint32(tcgCSR.Contents[:], contents)
 	if len(signature) > math.MaxUint32 {
-		return TCG_CSR_IDEVID{}, fmt.Errorf("signature too large: %d", len(signature))
+		return TCG_CSR_IDEVID{}, &errs.Message{Msg: fmt.Sprintf("signature too large: %d", len(signature))}
 	}
 	binary.BigEndian.PutUint32(tcgCSR.SigSz[:], uint32(len(signature))) // #nosec G115 -- CSR signature size
 	tcgCSR.CsrContents = *tcgContent
@@ -170,6 +173,7 @@ func (tpm *TPM2) createIDevIDContent(
 	if ekCert == nil {
 		return nil, ErrInvalidEKCert
 	}
+	ekCertRaw := ekCert.Raw
 
 	hashSz, err := ParseHashSize(idevidAttrs.Hash)
 	if err != nil {
@@ -223,7 +227,7 @@ func (tpm *TPM2) createIDevIDContent(
 		{"model", len(platformAttrs.Model)},
 		{"serial", len(platformAttrs.Serial)},
 		{"bootEventLog", len(bootEventLog)},
-		{"ekCert.Raw", len(ekCert.Raw)},
+		{"ekCert.Raw", len(ekCertRaw)},
 		{"akPublicBytes", len(akPublicBytes)},
 		{"atCreateTktBytes", len(atCreateTktBytes)},
 		{"akCertifyInfoBytes", len(akCertifyInfoBytes)},
@@ -234,7 +238,7 @@ func (tpm *TPM2) createIDevIDContent(
 	}
 	for _, f := range csrFields {
 		if f.size > math.MaxUint32 {
-			return nil, fmt.Errorf("%w: %s (%d bytes)", ErrCSRFieldTooLarge, f.name, f.size)
+			return nil, &errs.Detail{Err: ErrCSRFieldTooLarge, Detail: fmt.Sprintf("%s (%d bytes)", f.name, f.size)}
 		}
 	}
 
@@ -249,7 +253,7 @@ func (tpm *TPM2) createIDevIDContent(
 		ProdSerialSz:              uint32(len(platformAttrs.Serial)), // #nosec G115 -- Bounds checked above
 		ProdCaDataSz:              prodCaDataSz,
 		BootEvntLogSz:             uint32(len(bootEventLog)),           // #nosec G115 -- Bounds checked above
-		EkCertSZ:                  uint32(len(ekCert.Raw)),             // #nosec G115 -- Bounds checked above
+		EkCertSZ:                  uint32(len(ekCertRaw)),              // #nosec G115 -- Bounds checked above
 		AttestPubSZ:               uint32(len(akPublicBytes)),          // #nosec G115 -- Bounds checked above
 		AtCreateTktSZ:             uint32(len(atCreateTktBytes)),       // #nosec G115 -- Bounds checked above
 		AtCertifyInfoSZ:           uint32(len(akCertifyInfoBytes)),     // #nosec G115 -- Bounds checked above
@@ -265,7 +269,7 @@ func (tpm *TPM2) createIDevIDContent(
 		ProdSerial:        []byte(platformAttrs.Serial),
 		ProdCaData:        prodCaData,
 		BootEvntLog:       bootEventLog,
-		EkCert:            ekCert.Raw,
+		EkCert:            ekCertRaw,
 		AttestPub:         akPublicBytes,
 		AtCreateTkt:       atCreateTktBytes,
 		AtCertifyInfo:     akCertifyInfoBytes,
@@ -301,7 +305,7 @@ func (tpm *TPM2) createProdCaData() ([]byte, uint32, error) {
 	// Generate a random nonce for the quote
 	nonce, err := tpm.Random()
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to generate nonce for ProdCaData: %w", err)
+		return nil, 0, &errs.Wrapped{Msg: "failed to generate nonce for ProdCaData", Err: err}
 	}
 
 	tpm.logger.Info("creating ProdCaData attestation", slog.Any("pcrs", pcrs))
@@ -309,19 +313,19 @@ func (tpm *TPM2) createProdCaData() ([]byte, uint32, error) {
 	// Perform TPM Quote over the configured PCRs
 	quote, err := tpm.Quote(pcrs, nonce)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to create quote for ProdCaData: %w", err)
+		return nil, 0, &errs.Wrapped{Msg: "failed to create quote for ProdCaData", Err: err}
 	}
 
 	// Create ProdCaData from the quote
 	prodCaData, err := NewProdCaData(&quote)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to create ProdCaData: %w", err)
+		return nil, 0, &errs.Wrapped{Msg: "failed to create ProdCaData", Err: err}
 	}
 
 	// Pack the ProdCaData
 	packedData, err := PackProdCaData(prodCaData)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to pack ProdCaData: %w", err)
+		return nil, 0, &errs.Wrapped{Msg: "failed to pack ProdCaData", Err: err}
 	}
 
 	if len(packedData) > math.MaxUint32 {
@@ -969,7 +973,7 @@ func (tpm *TPM2) VerifyTCG_CSR_IAK(
 
 	// Set the TCG and crypto hash algorithm
 	if unpacked.CsrContents.HashAlgoId > math.MaxUint16 {
-		return nil, nil, fmt.Errorf("hash algorithm ID too large: %d", unpacked.CsrContents.HashAlgoId)
+		return nil, nil, &errs.Message{Msg: fmt.Sprintf("hash algorithm ID too large: %d", unpacked.CsrContents.HashAlgoId)}
 	}
 	hashAlgo := tpm2.TPMAlgID(unpacked.CsrContents.HashAlgoId) // #nosec G115 -- TPM algorithm ID from CSR
 	hash, err := hashAlgo.Hash()
@@ -1067,7 +1071,7 @@ func (tpm *TPM2) VerifyTCG_CSR_IDevID(
 
 	// // Set the TCG and crypto hash algorithm
 	if unpacked.CsrContents.HashAlgoId > math.MaxUint16 {
-		return nil, nil, fmt.Errorf("hash algorithm ID too large: %d", unpacked.CsrContents.HashAlgoId)
+		return nil, nil, &errs.Message{Msg: fmt.Sprintf("hash algorithm ID too large: %d", unpacked.CsrContents.HashAlgoId)}
 	}
 	hashAlgo := tpm2.TPMAlgID(unpacked.CsrContents.HashAlgoId) // #nosec G115 -- TPM algorithm ID from CSR
 	hash, err := hashAlgo.Hash()

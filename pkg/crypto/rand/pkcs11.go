@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/miekg/pkcs11"
 )
 
@@ -36,22 +38,22 @@ var _ Resolver = (*pkcs11Resolver)(nil)
 
 func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 	if config == nil {
-		return nil, fmt.Errorf("PKCS#11 configuration required")
+		return nil, &errs.Message{Msg: "PKCS#11 configuration required"}
 	}
 
 	if config.Module == "" {
-		return nil, fmt.Errorf("PKCS#11 module path is required")
+		return nil, &errs.Message{Msg: "PKCS#11 module path is required"}
 	}
 
 	// Initialize PKCS#11 context
 	ctx := pkcs11.New(config.Module)
 	if ctx == nil {
-		return nil, fmt.Errorf("failed to load PKCS#11 module: %s", config.Module)
+		return nil, &errs.Message{Msg: fmt.Sprintf("failed to load PKCS#11 module: %s", config.Module)}
 	}
 
 	err := ctx.Initialize()
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize PKCS#11: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to initialize PKCS#11", Err: err}
 	}
 
 	// Call GetSlotList to activate slots in this context
@@ -60,7 +62,7 @@ func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 	if err != nil {
 		ctx.Finalize()
 		ctx.Destroy()
-		return nil, fmt.Errorf("failed to get PKCS#11 slot list: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get PKCS#11 slot list", Err: err}
 	}
 
 	// Open session
@@ -68,7 +70,7 @@ func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 	if err != nil {
 		ctx.Finalize()
 		ctx.Destroy()
-		return nil, fmt.Errorf("failed to open PKCS#11 session: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to open PKCS#11 session", Err: err}
 	}
 
 	// Login if PIN is required
@@ -78,7 +80,7 @@ func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 			ctx.CloseSession(session)
 			ctx.Finalize()
 			ctx.Destroy()
-			return nil, fmt.Errorf("failed to authenticate with PKCS#11: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to authenticate with PKCS#11", Err: err}
 		}
 	}
 
@@ -98,13 +100,13 @@ func (p *pkcs11Resolver) Rand(n int) ([]byte, error) {
 	defer p.mu.Unlock()
 
 	if p.ctx == nil {
-		return nil, fmt.Errorf("PKCS#11 resolver closed")
+		return nil, &errs.Message{Msg: "PKCS#11 resolver closed"}
 	}
 
 	// Use PKCS#11 GenerateRandom function
 	result, err := p.ctx.GenerateRandom(p.session, n)
 	if err != nil {
-		return nil, fmt.Errorf("PKCS#11 random generation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "PKCS#11 random generation failed", Err: err}
 	}
 
 	return result, nil

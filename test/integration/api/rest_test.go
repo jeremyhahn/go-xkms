@@ -24,6 +24,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // RESTClient wraps HTTP client for REST API testing
@@ -51,14 +53,14 @@ func (c *RESTClient) doRequest(method, path string, body interface{}) (*http.Res
 	if body != nil {
 		jsonBody, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal request: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to marshal request", Err: err}
 		}
 		reqBody = bytes.NewReader(jsonBody)
 	}
 
 	req, err := http.NewRequest(method, c.baseURL+path, reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create request", Err: err}
 	}
 
 	if body != nil {

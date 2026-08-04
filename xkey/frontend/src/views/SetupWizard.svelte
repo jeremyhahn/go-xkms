@@ -10,6 +10,7 @@
     setQuickSetup
   } from '$lib/stores/wizard';
   import type { EnvironmentProbe, SetupChoices, SetupResult, BarrierStrategyInfo, UserOnboardingChoices, DeploymentMode, StartupState, GeneratedPINs } from '$lib/types/setup';
+  import type { PINStatus } from '$lib/api/backend';
   import { addNotification } from '$lib/stores/notifications';
   import Icon from '$lib/components/Icon.svelte';
   import XKeyBrandIcon from '$lib/components/XKeyBrandIcon.svelte';
@@ -35,6 +36,12 @@
   let policyData: Record<string, any> | null = null;
 
   // Quick setup state
+  // Whether the active PIN backend supports a separate Security Officer PIN.
+  // False for the tpm2 strategy, which binds authorization to the platform
+  // SRK auth value instead. Defaults to true so the Summary/Security steps
+  // render their normal copy until GetPINStatus resolves.
+  let soPinSupported = true;
+
   let showSOPin = false;
   let showUserPin = false;
   let soPinCopied = false;
@@ -174,6 +181,16 @@
     const data = await callBackend<Record<string, any>>('SetupWizardService', 'GetPolicy');
     if (data) {
       policyData = data;
+    }
+  }
+
+  /** Loads the active PIN backend's SO PIN capability so the Security and
+   * Summary steps can accurately reflect it (e.g. tpm2 has no SO PIN
+   * concept — see PINService.SOPINSupported). */
+  async function loadPINCapability(): Promise<void> {
+    const status = await callBackend<PINStatus>('PINService', 'GetPINStatus');
+    if (status) {
+      soPinSupported = status.so_pin_supported;
     }
   }
 
@@ -368,6 +385,9 @@
     const { result: res, error: err } = await callBackendWithError<SetupResult>('SetupWizardService', 'ApplySetup', payload);
     if (res) {
       setResult(res);
+      if (res.success && res.warnings.length > 0) {
+        addNotification('warning', 'Setup completed with security warnings — check the results panel below');
+      }
     } else {
       setError(err || 'Failed to apply setup');
     }
@@ -431,6 +451,7 @@
       loadPolicy();
     }
     probeEnvironment();
+    loadPINCapability();
   });
 </script>
 
@@ -1056,6 +1077,13 @@
               <span class="badge badge-success text-label-small">Required</span>
             </div>
 
+            {#if !soPinSupported}
+              <div class="info-banner info">
+                <Icon path={mdiInformation} size={18} />
+                <span class="text-body-small">The detected TPM 2.0 PIN backend binds authorization to the platform SRK directly, so this value is not stored as a separate Security Officer PIN. It is still used below to set TPM hierarchy passwords (if enabled) and can be saved to your password store for reference.</span>
+              </div>
+            {/if}
+
             <div class="security-fields">
               <label class="field-label text-label-medium" for="wizard-so-pin">Security Officer PIN</label>
               <input id="wizard-so-pin" type="password" class="field-input" class:field-input-error={choices.so_pin.length > 0 && !soPinValid} placeholder="Minimum 6 characters (required)" value={choices.so_pin} on:input={(e) => { setChoice('so_pin', e.currentTarget.value); securityError = ''; }} />
@@ -1637,7 +1665,9 @@
               <div class="summary-row">
                 <span class="summary-label text-label-medium">SO PIN</span>
                 <span class="summary-value text-body-medium">
-                  {#if isQuickSetup && choices.so_pin}
+                  {#if !soPinSupported}
+                    N/A (TPM platform authorization)
+                  {:else if isQuickSetup && choices.so_pin}
                     Auto-generated (16 chars)
                   {:else if choices.so_pin}
                     Configured

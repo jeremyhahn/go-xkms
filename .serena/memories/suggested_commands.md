@@ -45,7 +45,7 @@ make integration-test-software   # Software backend (devcontainer)
 make integration-test-pkcs8      # PKCS8 (Docker)
 make integration-test-pkcs11     # PKCS11/SoftHSM (Docker)
 make integration-test-tpm2       # TPM2 simulator (Docker)
-make integration-test-awskms     # AWS KMS/LocalStack (Docker)
+make integration-test-awskms     # AWS KMS/Floci (Docker)
 make integration-test-gcpkms     # GCP KMS mock (Docker)
 make integration-test-azurekv    # Azure Key Vault mock (Docker)
 make integration-test-vault      # HashiCorp Vault (Docker)
@@ -124,7 +124,7 @@ make clean-test-containers  # Clean integration test containers
 
 ## Cloud Emulators
 ```bash
-make emulator-start         # Start LocalStack, Azure emulator
+make emulator-start         # Start Floci, Azure emulator
 make emulator-stop          # Stop emulators
 make emulator-status        # Check health
 make emulator-logs          # View logs

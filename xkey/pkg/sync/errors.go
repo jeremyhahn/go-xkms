@@ -58,3 +58,38 @@ var (
 	// ErrStateLoad is returned when sync state loading fails.
 	ErrStateLoad = errors.New("sync: failed to load state")
 )
+
+// DetailError appends detail text directly after a wrapped error while
+// preserving errors.Is / errors.As matching of the wrapped error through
+// Unwrap. The detail text carries its own leading separator.
+type DetailError struct {
+	Err    error
+	Detail string
+}
+
+// Error implements the error interface.
+func (e *DetailError) Error() string {
+	return e.Err.Error() + e.Detail
+}
+
+// Unwrap returns the wrapped cause.
+func (e *DetailError) Unwrap() error {
+	return e.Err
+}
+
+// SentinelCauseError attaches an underlying cause to a package sentinel
+// error so errors.Is matches both the sentinel and the cause.
+type SentinelCauseError struct {
+	Sentinel error
+	Cause    error
+}
+
+// Error implements the error interface.
+func (e *SentinelCauseError) Error() string {
+	return e.Sentinel.Error() + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the sentinel and the cause for errors.Is / errors.As.
+func (e *SentinelCauseError) Unwrap() []error {
+	return []error{e.Sentinel, e.Cause}
+}

@@ -28,6 +28,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -85,7 +87,7 @@ func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateReques
 	// Generate serial number
 	serial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSerialGenerationFailed, err)
+		return nil, &errs.Detail{Err: ErrSerialGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Build TCG-compliant EK certificate extensions
@@ -164,17 +166,17 @@ func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateReques
 	// Sign the certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, template, signingCert, ekPubKey, signer)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTCGCertIssuanceFailed, err)
+		return nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	cert, err := x509.ParseCertificate(certDER)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTCGCertIssuanceFailed, err)
+		return nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Store the certificate
 	if err := ca.certStore.StoreCertificate(cert); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrStorageError, err)
+		return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return cert, nil
@@ -218,7 +220,7 @@ func (ca *CA) IssueAKCertificate(ctx context.Context, request *CertificateReques
 	// Generate serial number
 	serial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSerialGenerationFailed, err)
+		return nil, &errs.Detail{Err: ErrSerialGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Build TCG-compliant AK certificate extensions
@@ -265,17 +267,17 @@ func (ca *CA) IssueAKCertificate(ctx context.Context, request *CertificateReques
 	// Sign the certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, template, signingCert, pubKey, signer)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTCGCertIssuanceFailed, err)
+		return nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	cert, err := x509.ParseCertificate(certDER)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTCGCertIssuanceFailed, err)
+		return nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Store the certificate
 	if err := ca.certStore.StoreCertificate(cert); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrStorageError, err)
+		return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return cert, nil
@@ -316,13 +318,13 @@ func (ca *CA) SignTCGCSRIDevID(
 		}
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrTCGCSRVerificationFailed, err)
+		return nil, nil, &errs.Detail{Err: ErrTCGCSRVerificationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Extract IAK public key from TPM public area
 	iakPubKey, err := tpm2.ExtractPublicKeyFromTPMPublic(unpacked.CsrContents.AttestPub)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrTCGIAKKeyExtraction, err)
+		return nil, nil, &errs.Detail{Err: ErrTCGIAKKeyExtraction, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Get the CA signer and issuing certificate
@@ -339,7 +341,7 @@ func (ca *CA) SignTCGCSRIDevID(
 	// Generate IAK serial number
 	iakSerial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrSerialGenerationFailed, err)
+		return nil, nil, &errs.Detail{Err: ErrSerialGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Create IAK certificate template
@@ -363,7 +365,7 @@ func (ca *CA) SignTCGCSRIDevID(
 
 	iakCertDER, err := x509.CreateCertificate(rand.Reader, iakTemplate, signingCert, iakPubKey, signer)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: iak: %v", ErrTCGCertIssuanceFailed, err)
+		return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("iak: %v", err)}
 	}
 
 	// Build IDevID certificate extensions and append any caller-supplied extras
@@ -376,7 +378,7 @@ func (ca *CA) SignTCGCSRIDevID(
 	// Generate IDevID serial number
 	idevidSerial, err := ca.serialGen.Generate(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrSerialGenerationFailed, err)
+		return nil, nil, &errs.Detail{Err: ErrSerialGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Create IDevID certificate template
@@ -405,7 +407,7 @@ func (ca *CA) SignTCGCSRIDevID(
 
 	idevidCertDER, err := x509.CreateCertificate(rand.Reader, idevidTemplate, signingCert, pubKey, signer)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: idevid: %v", ErrTCGCertIssuanceFailed, err)
+		return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("idevid: %v", err)}
 	}
 
 	// Persist both issued certs to the CA's certificate store so they
@@ -418,17 +420,17 @@ func (ca *CA) SignTCGCSRIDevID(
 	if ca.certStore != nil {
 		iakCert, parseErr := x509.ParseCertificate(iakCertDER)
 		if parseErr != nil {
-			return nil, nil, fmt.Errorf("%w: parse iak for store: %v", ErrTCGCertIssuanceFailed, parseErr)
+			return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("parse iak for store: %v", parseErr)}
 		}
 		if storeErr := ca.certStore.StoreCertificate(iakCert); storeErr != nil {
-			return nil, nil, fmt.Errorf("%w: store iak: %v", ErrTCGCertIssuanceFailed, storeErr)
+			return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("store iak: %v", storeErr)}
 		}
 		idevidCert, parseErr := x509.ParseCertificate(idevidCertDER)
 		if parseErr != nil {
-			return nil, nil, fmt.Errorf("%w: parse idevid for store: %v", ErrTCGCertIssuanceFailed, parseErr)
+			return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("parse idevid for store: %v", parseErr)}
 		}
 		if storeErr := ca.certStore.StoreCertificate(idevidCert); storeErr != nil {
-			return nil, nil, fmt.Errorf("%w: store idevid: %v", ErrTCGCertIssuanceFailed, storeErr)
+			return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("store idevid: %v", storeErr)}
 		}
 	}
 
@@ -458,7 +460,7 @@ func (ca *CA) resolveTCGSigner(ctx context.Context, request *CertificateRequest)
 
 	signer, err := ca.getSigner(ctx)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("%w: %v", ErrSigningFailed, err)
+		return nil, nil, "", &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	issuerKeyStoreType := ""
@@ -594,12 +596,12 @@ func (ca *CA) VerifyQuote(attrs *types.KeyAttributes, quote *tpm2.Quote, nonce [
 		return ErrNotInitialized
 	}
 	if attrs == nil || quote == nil {
-		return fmt.Errorf("%w: attrs and quote must not be nil", ErrInvalidCSR)
+		return &errs.Detail{Err: ErrInvalidCSR, Detail: "attrs and quote must not be nil"}
 	}
 
 	// Verify the nonce matches.
 	if !bytes.Equal(quote.Nonce, nonce) {
-		return fmt.Errorf("%w: nonce mismatch", ErrInvalidSignature)
+		return &errs.Detail{Err: ErrInvalidSignature, Detail: "nonce mismatch"}
 	}
 
 	// Compute digest of quoted data.
@@ -612,15 +614,13 @@ func (ca *CA) VerifyQuote(attrs *types.KeyAttributes, quote *tpm2.Quote, nonce [
 	if attrs.TPMAttributes != nil && len(attrs.TPMAttributes.PublicKeyBytes) > 0 {
 		pubKey, err = x509.ParsePKIXPublicKey(attrs.TPMAttributes.PublicKeyBytes)
 		if err != nil {
-			return fmt.Errorf("%w: failed to parse AK public key from TPM attributes: %v",
-				ErrInvalidSignature, err)
+			return &errs.Detail{Err: ErrInvalidSignature, Detail: fmt.Sprintf("failed to parse AK public key from TPM attributes: %v", err)}
 		}
 	} else {
 		// Fall back to the certificate store.
 		cert, err := ca.certStore.GetCertificate(attrs.CN)
 		if err != nil {
-			return fmt.Errorf("%w: AK certificate not found for CN %q: %v",
-				ErrCertificateNotFound, attrs.CN, err)
+			return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("AK certificate not found for CN %q: %v", attrs.CN, err)}
 		}
 		pubKey = cert.PublicKey
 	}
@@ -637,21 +637,21 @@ func (ca *CA) VerifyQuote(attrs *types.KeyAttributes, quote *tpm2.Quote, nonce [
 			err = rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], quote.Signature)
 		}
 		if err != nil {
-			return fmt.Errorf("%w: RSA quote signature verification failed", ErrInvalidSignature)
+			return &errs.Detail{Err: ErrInvalidSignature, Detail: "RSA quote signature verification failed"}
 		}
 
 	case *ecdsa.PublicKey:
 		if !ecdsa.VerifyASN1(key, digest[:], quote.Signature) {
-			return fmt.Errorf("%w: ECDSA quote signature verification failed", ErrInvalidSignature)
+			return &errs.Detail{Err: ErrInvalidSignature, Detail: "ECDSA quote signature verification failed"}
 		}
 
 	case ed25519.PublicKey:
 		if !ed25519.Verify(key, digest[:], quote.Signature) {
-			return fmt.Errorf("%w: Ed25519 quote signature verification failed", ErrInvalidSignature)
+			return &errs.Detail{Err: ErrInvalidSignature, Detail: "Ed25519 quote signature verification failed"}
 		}
 
 	default:
-		return fmt.Errorf("%w: unsupported AK key type %T", ErrInvalidSignature, pubKey)
+		return &errs.Detail{Err: ErrInvalidSignature, Detail: fmt.Sprintf("unsupported AK key type %T", pubKey)}
 	}
 
 	return nil
@@ -668,7 +668,7 @@ func (ca *CA) ImportEndorsementKeyCertificate(cert *x509.Certificate) error {
 		return ErrNotInitialized
 	}
 	if cert == nil {
-		return fmt.Errorf("%w: nil EK certificate", ErrInvalidCertificate)
+		return &errs.Detail{Err: ErrInvalidCertificate, Detail: "nil EK certificate"}
 	}
 
 	// Warn when the TCG EK OID is absent; some manufacturer certs omit it.
@@ -685,7 +685,7 @@ func (ca *CA) ImportEndorsementKeyCertificate(cert *x509.Certificate) error {
 	}
 
 	if err := ca.certStore.StoreCertificate(cert); err != nil {
-		return fmt.Errorf("%w: failed to store EK certificate: %v", ErrStorageError, err)
+		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store EK certificate: %v", err)}
 	}
 
 	return nil
@@ -703,8 +703,7 @@ func (ca *CA) EndorsementKeyCertificate(cn string) (*x509.Certificate, error) {
 
 	cert, err := ca.certStore.GetCertificate(cn)
 	if err != nil {
-		return nil, fmt.Errorf("%w: EK certificate not found for CN %q: %v",
-			ErrCertificateNotFound, cn, err)
+		return nil, &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("EK certificate not found for CN %q: %v", cn, err)}
 	}
 
 	// Warn when the TCG EK OID is absent.

@@ -32,6 +32,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/gcpkms"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -54,7 +56,7 @@ func gcpKMSExample() error {
 	// Create GCP KMS backend
 	b, err := createGCPKMSBackend()
 	if err != nil {
-		return fmt.Errorf("failed to create GCP KMS backend: %w", err)
+		return &errs.Wrapped{Msg: "failed to create GCP KMS backend", Err: err}
 	}
 	defer func() { _ = b.Close() }()
 
@@ -70,7 +72,7 @@ func gcpKMSExample() error {
 	fmt.Println("1. Generating AES-256 key in GCP KMS...")
 	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
-		return fmt.Errorf("failed to generate key: %w", err)
+		return &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 	fmt.Printf("   ✓ Generated %s key in GCP KMS\n", key.Algorithm())
 	fmt.Println("   ✓ Key material never leaves GCP KMS")
@@ -79,7 +81,7 @@ func gcpKMSExample() error {
 	fmt.Println("\n2. Creating encrypter...")
 	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
-		return fmt.Errorf("failed to get encrypter: %w", err)
+		return &errs.Wrapped{Msg: "failed to get encrypter", Err: err}
 	}
 	fmt.Println("   ✓ Encrypter created")
 
@@ -95,7 +97,7 @@ func gcpKMSExample() error {
 		AdditionalData: aad,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to encrypt: %w", err)
+		return &errs.Wrapped{Msg: "failed to encrypt", Err: err}
 	}
 	fmt.Printf("   ✓ Ciphertext: %s...\n", base64.StdEncoding.EncodeToString(encrypted.Ciphertext[:min(32, len(encrypted.Ciphertext))]))
 	fmt.Println("   ✓ Encryption performed in GCP KMS")
@@ -106,14 +108,14 @@ func gcpKMSExample() error {
 		AdditionalData: aad,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to decrypt: %w", err)
+		return &errs.Wrapped{Msg: "failed to decrypt", Err: err}
 	}
 	fmt.Printf("   ✓ Decrypted: %q\n", decrypted)
 	fmt.Println("   ✓ Decryption performed in GCP KMS")
 
 	// Verify
 	if string(decrypted) != string(plaintext) {
-		return fmt.Errorf("decrypted data does not match original")
+		return &errs.Message{Msg: "decrypted data does not match original"}
 	}
 	fmt.Println("   ✓ Verification successful!")
 
@@ -125,7 +127,7 @@ func createGCPKMSBackend() (types.SymmetricKeyProvider, error) {
 	// Requires: GOOGLE_APPLICATION_CREDENTIALS, GCP_PROJECT_ID, GCP_LOCATION, GCP_KEYRING
 	projectID := os.Getenv("GCP_PROJECT_ID")
 	if projectID == "" {
-		return nil, fmt.Errorf("GCP_PROJECT_ID environment variable not set")
+		return nil, &errs.Message{Msg: "GCP_PROJECT_ID environment variable not set"}
 	}
 
 	location := os.Getenv("GCP_LOCATION")
@@ -141,7 +143,7 @@ func createGCPKMSBackend() (types.SymmetricKeyProvider, error) {
 	// Create temporary storage for key metadata
 	storage, err := createTempStorage()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create storage: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create storage", Err: err}
 	}
 
 	// Create GCP KMS backend configuration
@@ -157,7 +159,7 @@ func createGCPKMSBackend() (types.SymmetricKeyProvider, error) {
 	ctx := context.Background()
 	b, err := gcpkms.NewBackend(ctx, backendCfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCP KMS backend: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCP KMS backend", Err: err}
 	}
 
 	return b, nil

@@ -48,6 +48,14 @@ Cluster settings are configured via the `cluster:` block in `xkmsd.yaml` and ove
 | RaftTLS.CACertFile | `raft_tls.ca_cert_file` | `XKMS_CLUSTER_RAFT_CA_CERT` | string | Path to the PEM CA certificate used to verify Raft peer certificates. Enables mutual TLS on the inter-node Raft transport when all three `raft_tls.*` paths are set. |
 | RaftTLS.CertFile | `raft_tls.cert_file` | `XKMS_CLUSTER_RAFT_CERT` | string | Path to this node's PEM Raft certificate. |
 | RaftTLS.KeyFile | `raft_tls.key_file` | `XKMS_CLUSTER_RAFT_KEY` | string | Path to this node's PEM Raft private key. |
+| RaftEnrollment.TrustDomain | `raft_enrollment.trust_domain` | (config only) | string | SPIFFE trust domain stamped into auto-provisioned node certificates. Defaults to `xkms.cluster`. |
+| RaftEnrollment.KeyBackend | `raft_enrollment.key_backend` | (config only) | string | Crypto backend holding the node's Raft signing key: `tpm2`/`pkcs11` (hardware-resident) or empty (software, default). |
+| RaftEnrollment.ACME.Enabled | `raft_enrollment.acme.enabled` | (config only) | bool | Switches node-certificate issuance to TPM-attested ACME enroll-01 with the runtime TrustedCA as the single cluster trust anchor. |
+| RaftEnrollment.ACME.DirectoryURL | `raft_enrollment.acme.directory_url` | (config only) | string | ACME directory of an existing node. Required on joining nodes; ignored on the first node (issues in-process). |
+| RaftEnrollment.ClusterCACN | `raft_enrollment.cluster_ca_cn` | (config only) | string | CN of the dedicated cluster intermediate that issues node transport certificates. Empty uses the CA's default issuing identity. |
+| RaftEnrollment.CAKeyProtection | `raft_enrollment.ca_key_protection` | (config only) | string | Protection at rest for the node-local cluster CA keystore: `""` (auto), `tpm2`/`pkcs11`, `passphrase`, or `none` (insecure). |
+| RaftEnrollment.CAKeyPassphrase | `raft_enrollment.ca_key_passphrase` | (config only) | string | Operator passphrase for `passphrase` protection (and auto fallback). Supports `credential://` references. |
+| RaftEnrollment.CAKeyStrategy | `raft_enrollment.ca_key_strategy` | (config only) | string | Cluster CA key custody so any node can issue: `""`/`barrier` (replicated barrier-encrypted, default), `hsm` (shared PKCS#11), `tpm-kek` (planned). |
 
 ### Example: 3-Node Cluster via YAML
 
@@ -154,6 +162,129 @@ transport replicates, so binding Raft mTLS to it would be circular.
 When `raft_tls` is unset, Raft peers communicate without TLS. That is suitable
 only for a trusted private network; for untrusted networks configure `raft_tls`
 or restrict Raft traffic with firewall rules to authorized members.
+
+### Auto-provisioned Raft mTLS (`raft_enrollment`)
+
+Supplying `raft_tls.*` files by hand does not scale past a few nodes. The
+`raft_enrollment` block instead provisions inter-node mTLS **touch-free**: the
+first node stands up a cluster CA and every node obtains its own transport
+certificate automatically. Provisioning follows a fixed precedence, highest
+first:
+
+1. **Operator files** — `raft_tls.*` set (above). Always wins when present.
+2. **ACME-attested** — `raft_enrollment.acme.enabled: true`. TPM-attested
+   enroll-01 with the runtime TrustedCA as the single cluster trust anchor
+   (below).
+3. **Hardware node key** — `raft_enrollment.key_backend: tpm2|pkcs11`. The node
+   key is generated inside the device and never leaves it; the transport uses a
+   signer-backed certificate.
+4. **Software node key** — the default. The first node generates the cluster CA
+   and serves a Noise NK bootstrap endpoint; joining nodes fetch the CA bundle
+   over the configured `raft_enrollment.bootstrap` method (Noise NK / SPKI /
+   DANE / Direct) and enroll.
+
+This is the same `pkg/trust/clusterca` provisioning toolkit every product in the
+stack consumes through the go-xkms SDK (`sdk/go/clusterca`), so xkmsd,
+quicbaasd, and downstream nodes provision cluster mTLS identically.
+
+### ACME-attested cluster enrollment
+
+With `raft_enrollment.acme.enabled: true`, node certificates are issued through
+**TPM-attested ACME enroll-01** rather than a shared CA key:
+
+- The **first node** pre-stages the CA hierarchy from the `ca` configuration
+  (the datastore does not exist yet), issues its own transport leaf, and caches
+  the full CA certificate set so a later boot adopts it without forking a second
+  root.
+- **Joining nodes** fetch the trust anchor via `raft_enrollment.bootstrap`, then
+  prove their identity with TPM attestation to the existing node's ACME
+  directory (`raft_enrollment.acme.directory_url`). No shared CA private key is
+  ever distributed.
+- Each node certificate carries its **SPIFFE identity**
+  (`spiffe://<trust-domain>/node/<raft-address>`) as a URI SAN, stamped by the
+  server-side pre-sign hook from the TCG permanent identifier the joiner
+  presents.
+- Transport issuance is routed through a **dedicated cluster intermediate**
+  (`raft_enrollment.cluster_ca_cn`) — root signs intermediates only — the
+  recommended FedRAMP/PCI posture. When unset, the CA's default issuing identity
+  is used.
+
+```yaml
+cluster:
+  enabled: true
+  node_id: 1
+  raft_address: 10.0.0.1:63001
+  peers: "1=10.0.0.1:63001,2=10.0.0.2:63001,3=10.0.0.3:63001"
+  raft_enrollment:
+    trust_domain: prod.cluster
+    acme:
+      enabled: true
+      # directory_url is required on JOINING nodes only; the first node issues
+      # in-process from its local TrustedCA.
+      directory_url: https://10.0.0.1:8443/acme/directory
+    cluster_ca_cn: "Cluster Intermediate CA"   # dedicated transport intermediate
+    ca_key_protection: ""                        # auto: TPM/HSM → passphrase → refuse
+    bootstrap:
+      # how a joiner fetches the trust anchor from an existing node
+      spki_pin: <base64 SPKI pin>
+      server_addr: 10.0.0.1:8443
+```
+
+#### Cluster CA key protection
+
+The node-local cluster CA signing keystore must exist **before** the replicated
+datastore, so it lives outside the storage barrier and is protected instead by
+the stack's standard seal strategies via `raft_enrollment.ca_key_protection`:
+
+| Value | Protection at rest |
+| --- | --- |
+| `""` (auto) | TPM/HSM-sealed when available, else operator passphrase, else **refused** |
+| `tpm2` / `pkcs11` | random keystore key sealed to the TPM/HSM (unattended) |
+| `passphrase` | PBES2 with `raft_enrollment.ca_key_passphrase` (supports `credential://`) |
+| `none` | plaintext PKCS#8 — **development/testing only**; refused unless the daemon is started with `--insecure` |
+
+Auto mode never silently falls back to plaintext: with no hardware and no
+passphrase it refuses to start (surfaced by `config.ComplianceGaps`). This
+mirrors the barrier's secure-by-default posture — no private key lands on disk
+in the clear unless the operator explicitly opts into an insecure configuration.
+
+#### Cluster CA key custody — which nodes can issue (`ca_key_strategy`)
+
+`ca_key_protection` above protects the *bootstrap* keystore. Which nodes can
+issue node certificates at steady state — and where the signing key lives — is
+governed by `raft_enrollment.ca_key_strategy`, a pluggable custody strategy so
+every product (xkmsd, quicbaasd) behaves identically:
+
+| Value | Custody model |
+| --- | --- |
+| `""` / `barrier` | **Default, software HA.** The first node bootstraps the CA key node-local (so it can issue before the datastore exists), then *promotes* it into the qrdb-routed **replicated, barrier-encrypted** datastore. Every node loads it — each decrypting with its own barrier (sealed to its own TPM/passphrase) — so **any node can issue**. The CA key exists barrier-encrypted on every node. Set a cluster `ca_key_passphrase` so the promoted key blob is decryptable cluster-wide. |
+| `hsm` | **Shared PKCS#11 HSM.** The CA key is generated inside a shared HSM under a fixed label; every node signs through the same HSM by reference. **Key material never leaves the HSM** and there is no promotion. FIPS-grade. Requires all nodes to reach the same HSM (network HSM / shared partition) and the CA keystore type to be `pkcs11`. |
+| `tpm-kek` | **TPM-sealed cluster seed, hardware-rooted without a shared HSM.** The replicated CA key is wrapped under a KEK derived from a cluster seed. The bootstrap node generates the seed and seals it to its local TPM; each joining node receives it via **TPM credential activation** during attested enrollment (so it never transits any channel in the clear — only the genuine target TPM can recover it) and seals it to its own TPM. Delivery is a **post-enrollment authenticated fetch**: after enrolling, a node presents its cluster-CA-signed cert over mTLS to an existing node's secret-delivery endpoint and receives the credential-wrapped seed. Requires every node to have a TPM. |
+
+The `tpm-kek` seed delivery is intentionally **decoupled** from enroll-01: the enrollment protocol stays generic (it knows only the pre-sign hook seam), and a strategy that needs to deliver material implements the optional `EnrollmentSecretStrategy` interface, discovered by type assertion. A neutral `NodeSecretProvider` produces the wrapped material and a reusable `SecretDeliveryService` serves the fetch — so quicbaas and trusted-platform reuse the identical mechanism.
+
+The strategy is the single seam every composition root consumes via
+`sdk/go/clusterca` (`NewClusterCAKeyStrategy`, `ClusterCAKeyStrategy`), so the
+custody model is a one-line config choice rather than product-specific code. For
+the internal design — the strategy seam, the three custody models, and the
+decoupled TPM seed delivery — see [Cluster CA Key Custody
+Architecture](ca-key-custody.md).
+
+### enroll-01 vs. endorse-01 node admission
+
+Two distinct admission models are available; enable whichever the deployment
+needs via the ACME challenge configuration:
+
+- **enroll-01** — TPM-attested **self-enrollment**. The node proves TPM
+  residency of its key; the attestation itself is the gate. Suitable for
+  touch-free scale-out on a trusted bootstrap network.
+- **endorse-01** — **EAB-admin-gated** admission. An operator holding an
+  external-account-binding credential explicitly authorizes a specific node
+  (matched by device identifier) before it can enroll. Enable with
+  `endorse_eab_required` on the ACME server.
+
+Both issue through the same cluster intermediate when `cluster_ca_cn` is set. A
+deployment that requires every node to be admin-approved enables endorse-01 only.
 
 ## Client Request Routing
 

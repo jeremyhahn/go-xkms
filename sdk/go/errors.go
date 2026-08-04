@@ -399,3 +399,36 @@ func ConvertSentinelError(err error) *XKMSError {
 		}
 	}
 }
+
+// UnsupportedProtocolError wraps ErrUnsupportedProtocol with the offending
+// protocol name or URL scheme detail.
+type UnsupportedProtocolError struct {
+	// Detail identifies the unsupported protocol or scheme.
+	Detail string
+}
+
+// Error returns a human-readable description.
+func (e *UnsupportedProtocolError) Error() string {
+	return ErrUnsupportedProtocol.Error() + ": " + e.Detail
+}
+
+// Unwrap returns ErrUnsupportedProtocol so errors.Is matches the sentinel.
+func (e *UnsupportedProtocolError) Unwrap() error {
+	return ErrUnsupportedProtocol
+}
+
+// InvalidURLError indicates a client URL could not be parsed.
+type InvalidURLError struct {
+	// Err is the underlying parse error.
+	Err error
+}
+
+// Error returns a human-readable description.
+func (e *InvalidURLError) Error() string {
+	return "invalid URL: " + e.Err.Error()
+}
+
+// Unwrap returns the underlying parse error.
+func (e *InvalidURLError) Unwrap() error {
+	return e.Err
+}

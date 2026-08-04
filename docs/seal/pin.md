@@ -164,6 +164,37 @@ On auth failure, the backend queries DA counters and returns:
 
 `ResetLockout(lockoutAuth)` calls `DictionaryAttackLockoutReset` on the provider.
 
+For DA lockout to actually throttle PIN brute-force attempts, the Platform SRK
+must have its `NoDA` attribute cleared. The Platform SRK used for PIN
+verification (`0x81000002`) is provisioned with `NoDA = false`; a standard SRK
+template's `NoDA = true` would leave brute-forcing unthrottled despite the
+counter plumbing being present.
+
+### First-Boot SRK Enrollment
+
+Before the TPM2 PIN backend is usable, the Platform SRK must be enrolled with
+the user PIN as its authorization value.
+
+`PlatformKeyStore.EnrollPlatformSRK(userPIN string) error` is the one-shot
+first-boot entry point. It is idempotent: if `IsAuthReady()` is already `true`
+it returns `ErrPlatformSRKAlreadyEnrolled`, which daemons should treat as
+a no-op. An empty `userPIN` is rejected with `ErrPlatformSRKEnrollEmptyPIN`.
+
+**`IsInitialized` vs `IsAuthReady`**: `IsInitialized()` only means the SRK
+object exists; it can be `true` even when the SRK was created by a prior TPM
+owner with unknown auth. `IsAuthReady()` is the correct gate for activating the
+TPM2 PIN backend — it is only `true` when the auth value is known-good.
+`SetAuthReady(bool)` restores a previously confirmed state from persisted config
+(e.g. `PINStrategy == "tpm2"`) without re-running enrollment.
+
+Boot lifecycle:
+
+1. **First boot** — call `EnrollPlatformSRK(userPIN)`. The SRK is created with
+   `userPIN` as auth and `authReady` is marked.
+2. **Subsequent boots** — `EnrollPlatformSRK` returns
+   `ErrPlatformSRKAlreadyEnrolled` (when `authReady`), or the daemon calls
+   `SetAuthReady(true)` after loading a persisted `PINStrategy == "tpm2"`.
+
 ## FIDO2 Integration
 
 Both backends cache the CTAP2-mandated PIN hash (`SHA-256(PIN)[:16]`) in a `mem.GuardedBuffer` (mlock'd, guard-paged memory). The hash is computed and cached when:
@@ -277,6 +308,9 @@ if status := svc.GetLockoutStatus(); status != nil && status.IsLocked {
 | `ErrStoragePersistFailed` | struct | Failed to write PIN record to `storage.Backend` |
 | `ErrStorageLoadFailed` | struct | Failed to read PIN record from `storage.Backend` |
 | `ErrUnsupportedPBKDF2Hash` | struct | Unsupported hash function specified for PBKDF2 |
+| `ErrPlatformSRKAlreadyEnrolled` | sentinel | `EnrollPlatformSRK` called when `IsAuthReady()` is already `true`; safe to ignore on subsequent boots |
+| `ErrPlatformSRKEnrollEmptyPIN` | sentinel | `EnrollPlatformSRK` called with an empty `userPIN` |
+| `ErrAuthProbeRejected` | struct | TPM rejected the auth-probe `TPM2_Create` for a non-authorization reason (template fault, transport error); never a wrong-PIN signal |
 
 ## Security Properties
 

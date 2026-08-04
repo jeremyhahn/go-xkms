@@ -73,7 +73,7 @@ func runDeviceRelay(cmd *cobra.Command, args []string) error {
 	localKey, err := phone.GenerateStaticKey()
 	if err != nil {
 		logger.Error("failed to generate noise static key", slog.String("error", err.Error()))
-		return fmt.Errorf("%w: %v", ErrDeviceRelayStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceRelayStartFailed, Cause: err}
 	}
 
 	// Create the TCP pairing server.
@@ -84,13 +84,13 @@ func runDeviceRelay(cmd *cobra.Command, args []string) error {
 	})
 	if err != nil {
 		logger.Error("failed to create TCP pairing server", slog.String("error", err.Error()))
-		return fmt.Errorf("%w: %v", ErrDeviceRelayStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceRelayStartFailed, Cause: err}
 	}
 
 	// Start the server (begins accepting connections in the background).
 	if err := server.Start(); err != nil {
 		logger.Error("failed to start TCP pairing server", slog.String("error", err.Error()))
-		return fmt.Errorf("%w: %v", ErrDeviceRelayStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceRelayStartFailed, Cause: err}
 	}
 
 	actualAddr := server.Addr()
@@ -136,7 +136,7 @@ func runDeviceRelay(cmd *cobra.Command, args []string) error {
 	fmt.Println("\nStopping relay server...")
 	if stopErr := server.Stop(); stopErr != nil {
 		logger.Error("relay server stop error", slog.String("error", stopErr.Error()))
-		return fmt.Errorf("%w: %v", ErrDeviceRelayStopFailed, stopErr)
+		return &SentinelCauseError{Sentinel: ErrDeviceRelayStopFailed, Cause: stopErr}
 	}
 
 	return nil

@@ -29,6 +29,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
@@ -204,27 +206,27 @@ func signFile(ks xkms.Backend, attrs *types.KeyAttributes, filename string) ([]b
 	// #nosec G304 - Example code with controlled file paths
 	f, err := os.Open(filename)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open file: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to open file", Err: err}
 	}
 	defer func() { _ = f.Close() }()
 
 	// Calculate SHA-256 hash
 	hasher := sha256.New()
 	if _, err := io.Copy(hasher, f); err != nil {
-		return nil, nil, fmt.Errorf("failed to hash file: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to hash file", Err: err}
 	}
 	hash := hasher.Sum(nil)
 
 	// Get signer
 	signer, err := ks.Signer(context.Background(), attrs)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get signer: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to get signer", Err: err}
 	}
 
 	// Sign the hash
 	signature, err := signer.Sign(rand.Reader, hash, crypto.SHA256)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to sign: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to sign", Err: err}
 	}
 
 	return signature, hash, nil

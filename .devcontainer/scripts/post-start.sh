@@ -57,14 +57,48 @@ for hidraw in /dev/hidraw*; do
     fi
 done
 
+# Start a local ephemeral swtpm (software TPM 2.0) on a unix socket, matching
+# the go-trusted-platform devcontainer. Fresh state every container start (no
+# persistence, nothing to clear), provisioned with an EK + platform certificate
+# so it looks like real hardware. Exposed as /tmp/swtpm/swtpm.sock and advertised
+# via TPM_DEVICE so binaries open it like a real TPM device (config:
+# device=/tmp/swtpm/swtpm.sock, simulator=false). The in-process google simulator
+# stays unit-tests-only; the swtpm:2321 TCP service remains for legacy suites.
+SWTPM_STATE_DIR="/tmp/swtpm"
+SWTPM_SOCK="${SWTPM_STATE_DIR}/swtpm.sock"
+if command -v swtpm >/dev/null 2>&1; then
+    if ! pgrep -f "swtpm socket.*${SWTPM_SOCK}" >/dev/null 2>&1; then
+        echo "Starting local ephemeral swtpm on ${SWTPM_SOCK}..."
+        rm -rf "${SWTPM_STATE_DIR}"
+        mkdir -p "${SWTPM_STATE_DIR}"
+        swtpm_setup --tpm2 --tpmstate "${SWTPM_STATE_DIR}" --overwrite --pcr-banks sha256 \
+            --create-ek-cert --create-platform-cert 2>/dev/null || true
+        swtpm socket --tpm2 \
+            --tpmstate dir="${SWTPM_STATE_DIR}" \
+            --server type=unixio,path="${SWTPM_SOCK}" \
+            --ctrl type=unixio,path="${SWTPM_SOCK}.ctrl" \
+            --flags startup-clear,not-need-init \
+            --log level=1,file="${SWTPM_STATE_DIR}/swtpm.log" &
+        for _ in $(seq 1 30); do [ -S "${SWTPM_SOCK}" ] && break; sleep 0.2; done
+    fi
+    if [ -S "${SWTPM_SOCK}" ]; then
+        export TPM_DEVICE="${SWTPM_SOCK}"
+        echo "✓ Local swtpm device ready at ${SWTPM_SOCK} (TPM_DEVICE)"
+    else
+        echo "⚠ Local swtpm failed to start (see ${SWTPM_STATE_DIR}/swtpm.log)"
+    fi
+else
+    echo "⚠ swtpm not installed in devcontainer"
+fi
+
 # Check if services are available
 echo "Checking service availability..."
 
-# Check SWTPM
+# Check the legacy TCP SWTPM service (still used by api/sdk integration suites).
 if nc -z swtpm 2321 2>/dev/null; then
     echo "✓ SWTPM TPM simulator available at swtpm:2321"
 else
-    echo "⚠ SWTPM not available (some TPM tests will be skipped)"
+    echo "⚠ SWTPM (TCP service) not available (some TPM tests will be skipped)"
 fi
 
 # Check SoftHSM

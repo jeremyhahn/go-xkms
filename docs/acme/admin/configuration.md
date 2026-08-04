@@ -169,7 +169,7 @@ admin:
   auth:
     token:
       issuer: "https://auth.example.com"
-      audience: "go-trusted-ca-admin"
+      audience: "go-xkms-admin"
       clock_skew: "1m"
       jwks_url: "https://auth.example.com/.well-known/jwks.json"
       jwks_refresh: "1h"
@@ -445,7 +445,7 @@ admin:
       timeout: "30s"
     token:
       issuer: "https://auth.example.com"
-      audience: "go-trusted-ca-admin"
+      audience: "go-xkms-admin"
       clock_skew: "1m"
 
   # Authorization

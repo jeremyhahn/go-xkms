@@ -177,6 +177,9 @@ func (s *errServer) BarrierRekey(context.Context, *pb.BarrierRekeyRequest) (*pb.
 func (s *errServer) BarrierGenerateRecoveryKeys(context.Context, *pb.BarrierGenerateRecoveryKeysRequest) (*pb.BarrierRecoveryKeysResponse, error) {
 	return nil, status.Error(codes.Internal, "fail")
 }
+func (s *errServer) BarrierEnableEncryption(context.Context, *pb.BarrierEnableEncryptionRequest) (*pb.BarrierEnableEncryptionResponse, error) {
+	return nil, status.Error(codes.Internal, "fail")
+}
 func (s *errServer) BarrierRecoverWithKeys(context.Context, *pb.BarrierRecoverWithKeysRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Internal, "fail")
 }

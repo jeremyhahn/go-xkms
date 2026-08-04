@@ -283,9 +283,9 @@ func TestAdapter_GenerateCredentialAttrs_AllSlotsFull(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyGenerationFailed,
 		"error should wrap ErrKeyGenerationFailed")
-	// The adapter uses fmt.Errorf("%w: %v", ...) which formats the inner
-	// error as a string via %v, so errors.Is cannot unwrap it. Verify the
-	// inner error message is present in the error string instead.
+	// The adapter attaches the slot-allocation failure as the cause of
+	// ErrKeyGenerationFailed. Verify the inner error message is present
+	// in the error string.
 	assert.Contains(t, err.Error(), xkms.ErrPIVNoAvailableSlot.Error(),
 		"error message should contain ErrNoAvailableSlot text")
 

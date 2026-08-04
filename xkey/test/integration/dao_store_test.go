@@ -65,7 +65,7 @@ func setupBarrier(t *testing.T) (*xkms.Barrier, string) {
 	t.Cleanup(func() { barrier.Close() })
 
 	ctx := context.Background()
-	creds := xkms.SealCredentials{Secret: barrierPassword}
+	creds := xkms.SealCredentials{Secret: []byte(barrierPassword)}
 
 	err = barrier.Initialize(ctx, creds)
 	require.NoError(t, err, "failed to initialize barrier")
@@ -419,7 +419,7 @@ func TestDAOTeamStore_PersistenceAcrossSealUnseal(t *testing.T) {
 	t.Cleanup(func() { strategy.Close() })
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	creds := xkms.SealCredentials{Secret: barrierPassword}
+	creds := xkms.SealCredentials{Secret: []byte(barrierPassword)}
 
 	barrier, err := xkms.NewBarrier(
 		logger,

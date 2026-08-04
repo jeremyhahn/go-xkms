@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"io"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // Mock keystore for testing
@@ -61,7 +63,7 @@ func (e *ecdsaWrapper) Public() crypto.PublicKey {
 func (e *ecdsaWrapper) Decrypt(rand io.Reader, msg []byte, opts crypto.DecrypterOpts) ([]byte, error) {
 	// Not used for ECDH - go-jose handles ECDH internally when it sees *ecdsa.PrivateKey
 	// This method exists only to satisfy the crypto.Decrypter interface
-	return nil, fmt.Errorf("not implemented")
+	return nil, &errs.Message{Msg: "not implemented"}
 }
 
 // GetPrivateKey returns the underlying ECDSA private key for direct use with go-jose
@@ -72,7 +74,7 @@ func (e *ecdsaWrapper) GetPrivateKey() *ecdsa.PrivateKey {
 func (m *mockKeyStore) GetPublicKey(keyID string) (crypto.PublicKey, error) {
 	key, ok := m.publicKeys[keyID]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", keyID)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyID)}
 	}
 	return key, nil
 }
@@ -80,7 +82,7 @@ func (m *mockKeyStore) GetPublicKey(keyID string) (crypto.PublicKey, error) {
 func (m *mockKeyStore) GetDecrypter(keyID string) (crypto.Decrypter, error) {
 	key, ok := m.privateKeys[keyID]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", keyID)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyID)}
 	}
 	return key, nil
 }

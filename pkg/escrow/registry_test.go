@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -423,7 +425,7 @@ func TestRegistry_Close_Success(t *testing.T) {
 func TestRegistry_Close_WithErrors(t *testing.T) {
 	r := NewRegistry()
 	a1 := newMockAgent("xkms")
-	a1.closeErr = fmt.Errorf("close failed")
+	a1.closeErr = &errs.Message{Msg: "close failed"}
 	require.NoError(t, r.Register("xkms", a1))
 
 	err := r.Close()

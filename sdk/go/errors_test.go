@@ -15,9 +15,21 @@ package xkms
 
 import (
 	"errors"
-	"fmt"
 	"testing"
 )
+
+// wrappedTestError wraps a cause with a message prefix, mimicking the
+// "<prefix>: <cause>" rendering of a wrapping error for chain tests.
+type wrappedTestError struct {
+	prefix string
+	err    error
+}
+
+// Error returns a human-readable description.
+func (e *wrappedTestError) Error() string { return e.prefix + ": " + e.err.Error() }
+
+// Unwrap returns the wrapped cause.
+func (e *wrappedTestError) Unwrap() error { return e.err }
 
 func TestErrorCode_String(t *testing.T) {
 	tests := []struct {
@@ -244,13 +256,13 @@ func TestErrorsIs_Integration(t *testing.T) {
 		},
 		{
 			name:     "WrappedXKMSErrorMatchesSentinel",
-			err:      fmt.Errorf("operation failed: %w", &XKMSError{Code: ErrCodeNotFound, Message: "key not found"}),
+			err:      &wrappedTestError{prefix: "operation failed", err: &XKMSError{Code: ErrCodeNotFound, Message: "key not found"}},
 			target:   ErrKeyNotFound,
 			expected: true,
 		},
 		{
 			name:     "WrappedXKMSErrorMatchesXKMSError",
-			err:      fmt.Errorf("operation failed: %w", &XKMSError{Code: ErrCodeNotFound, Message: "key not found"}),
+			err:      &wrappedTestError{prefix: "operation failed", err: &XKMSError{Code: ErrCodeNotFound, Message: "key not found"}},
 			target:   &XKMSError{Code: ErrCodeNotFound},
 			expected: true,
 		},
@@ -293,7 +305,7 @@ func TestErrorsAs_Integration(t *testing.T) {
 			Message:   "connection failed",
 			Operation: "Connect",
 		}
-		err := fmt.Errorf("outer error: %w", innerErr)
+		err := &wrappedTestError{prefix: "outer error", err: innerErr}
 
 		var ke *XKMSError
 		if !errors.As(err, &ke) {
@@ -399,8 +411,8 @@ func TestIsNotFound(t *testing.T) {
 		{"XKMSErrorNotFound", &XKMSError{Code: ErrCodeNotFound, Message: "test"}, true},
 		{"XKMSErrorConnection", &XKMSError{Code: ErrCodeConnection, Message: "test"}, false},
 		{"PlainError", errors.New("not found"), false},
-		{"WrappedKeyNotFound", fmt.Errorf("wrapped: %w", ErrKeyNotFound), true},
-		{"WrappedXKMSErrorNotFound", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeNotFound}), true},
+		{"WrappedKeyNotFound", &wrappedTestError{prefix: "wrapped", err: ErrKeyNotFound}, true},
+		{"WrappedXKMSErrorNotFound", &wrappedTestError{prefix: "wrapped", err: &XKMSError{Code: ErrCodeNotFound}}, true},
 	}
 
 	for _, tt := range tests {
@@ -427,8 +439,8 @@ func TestIsRetryable(t *testing.T) {
 		{"XKMSErrorNotFound", &XKMSError{Code: ErrCodeNotFound, Message: "test"}, false},
 		{"XKMSErrorAuthentication", &XKMSError{Code: ErrCodeAuthentication, Message: "test"}, false},
 		{"PlainError", errors.New("some error"), false},
-		{"WrappedConnectionFailed", fmt.Errorf("wrapped: %w", ErrConnectionFailed), true},
-		{"WrappedXKMSErrorTimeout", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeTimeout}), true},
+		{"WrappedConnectionFailed", &wrappedTestError{prefix: "wrapped", err: ErrConnectionFailed}, true},
+		{"WrappedXKMSErrorTimeout", &wrappedTestError{prefix: "wrapped", err: &XKMSError{Code: ErrCodeTimeout}}, true},
 	}
 
 	for _, tt := range tests {
@@ -454,9 +466,9 @@ func TestIsConnectionError(t *testing.T) {
 		{"XKMSErrorNotConnected", &XKMSError{Code: ErrCodeNotConnected, Message: "test"}, true},
 		{"XKMSErrorTimeout", &XKMSError{Code: ErrCodeTimeout, Message: "test"}, false},
 		{"PlainError", errors.New("connection error"), false},
-		{"WrappedNotConnected", fmt.Errorf("wrapped: %w", ErrNotConnected), true},
-		{"WrappedXKMSErrorConnection", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeConnection}), true},
-		{"WrappedXKMSErrorNotConnected", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeNotConnected}), true},
+		{"WrappedNotConnected", &wrappedTestError{prefix: "wrapped", err: ErrNotConnected}, true},
+		{"WrappedXKMSErrorConnection", &wrappedTestError{prefix: "wrapped", err: &XKMSError{Code: ErrCodeConnection}}, true},
+		{"WrappedXKMSErrorNotConnected", &wrappedTestError{prefix: "wrapped", err: &XKMSError{Code: ErrCodeNotConnected}}, true},
 	}
 
 	for _, tt := range tests {
@@ -479,7 +491,7 @@ func TestIsAuthenticationError(t *testing.T) {
 		{"XKMSErrorAuthentication", &XKMSError{Code: ErrCodeAuthentication, Message: "test"}, true},
 		{"XKMSErrorPermission", &XKMSError{Code: ErrCodePermission, Message: "test"}, false},
 		{"PlainError", errors.New("auth error"), false},
-		{"WrappedXKMSErrorAuth", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeAuthentication}), true},
+		{"WrappedXKMSErrorAuth", &wrappedTestError{prefix: "wrapped", err: &XKMSError{Code: ErrCodeAuthentication}}, true},
 	}
 
 	for _, tt := range tests {
@@ -502,7 +514,7 @@ func TestIsPermissionError(t *testing.T) {
 		{"XKMSErrorPermission", &XKMSError{Code: ErrCodePermission, Message: "test"}, true},
 		{"XKMSErrorAuthentication", &XKMSError{Code: ErrCodeAuthentication, Message: "test"}, false},
 		{"PlainError", errors.New("permission denied"), false},
-		{"WrappedXKMSErrorPermission", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodePermission}), true},
+		{"WrappedXKMSErrorPermission", &wrappedTestError{prefix: "wrapped", err: &XKMSError{Code: ErrCodePermission}}, true},
 	}
 
 	for _, tt := range tests {
@@ -526,8 +538,8 @@ func TestIsInvalidRequest(t *testing.T) {
 		{"XKMSErrorInvalidRequest", &XKMSError{Code: ErrCodeInvalidRequest, Message: "test"}, true},
 		{"XKMSErrorNotFound", &XKMSError{Code: ErrCodeNotFound, Message: "test"}, false},
 		{"PlainError", errors.New("invalid"), false},
-		{"WrappedInvalidRequest", fmt.Errorf("wrapped: %w", ErrInvalidRequest), true},
-		{"WrappedXKMSErrorInvalid", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeInvalidRequest}), true},
+		{"WrappedInvalidRequest", &wrappedTestError{prefix: "wrapped", err: ErrInvalidRequest}, true},
+		{"WrappedXKMSErrorInvalid", &wrappedTestError{prefix: "wrapped", err: &XKMSError{Code: ErrCodeInvalidRequest}}, true},
 	}
 
 	for _, tt := range tests {
@@ -550,7 +562,7 @@ func TestIsTimeout(t *testing.T) {
 		{"XKMSErrorTimeout", &XKMSError{Code: ErrCodeTimeout, Message: "test"}, true},
 		{"XKMSErrorConnection", &XKMSError{Code: ErrCodeConnection, Message: "test"}, false},
 		{"PlainError", errors.New("timeout"), false},
-		{"WrappedXKMSErrorTimeout", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeTimeout}), true},
+		{"WrappedXKMSErrorTimeout", &wrappedTestError{prefix: "wrapped", err: &XKMSError{Code: ErrCodeTimeout}}, true},
 	}
 
 	for _, tt := range tests {
@@ -573,7 +585,7 @@ func TestGetErrorCode(t *testing.T) {
 		{"XKMSErrorNotFound", &XKMSError{Code: ErrCodeNotFound, Message: "test"}, ErrCodeNotFound},
 		{"XKMSErrorTimeout", &XKMSError{Code: ErrCodeTimeout, Message: "test"}, ErrCodeTimeout},
 		{"PlainError", errors.New("error"), ErrCodeUnknown},
-		{"WrappedXKMSError", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeConnection}), ErrCodeConnection},
+		{"WrappedXKMSError", &wrappedTestError{prefix: "wrapped", err: &XKMSError{Code: ErrCodeConnection}}, ErrCodeConnection},
 	}
 
 	for _, tt := range tests {
@@ -641,7 +653,7 @@ func TestConvertSentinelError(t *testing.T) {
 	})
 
 	t.Run("WrappedSentinelError", func(t *testing.T) {
-		wrapped := fmt.Errorf("operation failed: %w", ErrKeyNotFound)
+		wrapped := &wrappedTestError{prefix: "operation failed", err: ErrKeyNotFound}
 		result := ConvertSentinelError(wrapped)
 
 		if result.Code != ErrCodeNotFound {
@@ -711,10 +723,10 @@ func TestBackwardCompatibility(t *testing.T) {
 
 	t.Run("WrappedErrorsWork", func(t *testing.T) {
 		// Simulate a function returning wrapped XKMSError
-		err := fmt.Errorf("GetKey operation: %w", &XKMSError{
+		err := &wrappedTestError{prefix: "GetKey operation", err: &XKMSError{
 			Code:    ErrCodeNotFound,
 			Message: "key 'test-key' not found",
-		})
+		}}
 
 		// Legacy code should still be able to check for ErrKeyNotFound
 		if !errors.Is(err, ErrKeyNotFound) {
@@ -737,9 +749,9 @@ func TestErrorChaining(t *testing.T) {
 	// Test deeply nested error chains
 	t.Run("DeepErrorChain", func(t *testing.T) {
 		root := errors.New("network unreachable")
-		level1 := fmt.Errorf("dial failed: %w", root)
+		level1 := &wrappedTestError{prefix: "dial failed", err: root}
 		level2 := WrapError(ErrCodeConnection, "connection failed", level1)
-		level3 := fmt.Errorf("Connect operation: %w", level2)
+		level3 := &wrappedTestError{prefix: "Connect operation", err: level2}
 
 		// Should be able to find root error
 		if !errors.Is(level3, root) {

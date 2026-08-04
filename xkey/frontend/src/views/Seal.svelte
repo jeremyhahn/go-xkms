@@ -11,6 +11,7 @@
   import Input from '$lib/components/Input.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
+  import BackendBadge from '$lib/components/BackendBadge.svelte';
   import { mdiFilter } from '$lib/utils/icons';
   import {
     mdiPlus, mdiLockOutline, mdiDelete,
@@ -445,14 +446,7 @@
               <span class="text-body-medium">{value}</span>
             </div>
           {:else if column.key === 'backend_id'}
-            <span class="backend-badge" class:backend-tpm={value === 'tpm2'} class:backend-sw={value !== 'tpm2'}>
-              {#if value === 'tpm2'}
-                <Icon path={mdiChip} size={14} />
-                TPM 2.0
-              {:else}
-                Software
-              {/if}
-            </span>
+            <BackendBadge backend={value} compact />
           {:else if column.key === 'policy_type'}
             {#if value && value !== 'none'}
               <span class="policy-badge">
@@ -785,26 +779,6 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-  }
-
-  .backend-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.125rem 0.5rem;
-    border-radius: 99px;
-    font-size: 0.75rem;
-    font-weight: 500;
-  }
-
-  .backend-tpm {
-    background: var(--md-sys-color-tertiary-container);
-    color: var(--md-sys-color-on-tertiary-container);
-  }
-
-  .backend-sw {
-    background: var(--md-sys-color-surface-container-highest);
-    color: var(--md-sys-color-on-surface-variant);
   }
 
   .policy-badge {

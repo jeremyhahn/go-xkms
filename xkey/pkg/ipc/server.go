@@ -104,10 +104,10 @@ var handlers = map[string]dispatchFunc{
 	MessageTypePKCS11: func(h Handler, m *Message) (*Response, error) {
 		pkcs11Handler, ok := h.(PKCS11Handler)
 		if !ok {
-			return nil, fmt.Errorf("%w: handler does not implement PKCS11Handler", ErrHandlerFailed)
+			return nil, &DetailError{Err: ErrHandlerFailed, Detail: ": handler does not implement PKCS11Handler"}
 		}
 		if m.PKCS11 == nil {
-			return nil, fmt.Errorf("%w: pkcs11 payload is required", ErrInvalidMessage)
+			return nil, &DetailError{Err: ErrInvalidMessage, Detail: ": pkcs11 payload is required"}
 		}
 		if err := m.PKCS11.Validate(); err != nil {
 			return nil, err
@@ -117,10 +117,10 @@ var handlers = map[string]dispatchFunc{
 	MessageTypeAutofill: func(h Handler, m *Message) (*Response, error) {
 		afHandler, ok := h.(AutofillHandler)
 		if !ok {
-			return nil, fmt.Errorf("%w: handler does not implement AutofillHandler", ErrHandlerFailed)
+			return nil, &DetailError{Err: ErrHandlerFailed, Detail: ": handler does not implement AutofillHandler"}
 		}
 		if m.Autofill == nil {
-			return nil, fmt.Errorf("%w: autofill payload is required", ErrInvalidMessage)
+			return nil, &DetailError{Err: ErrInvalidMessage, Detail: ": autofill payload is required"}
 		}
 		if err := m.Autofill.Validate(); err != nil {
 			return nil, err
@@ -130,10 +130,10 @@ var handlers = map[string]dispatchFunc{
 	MessageTypePairing: func(h Handler, m *Message) (*Response, error) {
 		pairingHandler, ok := h.(PairingHandler)
 		if !ok {
-			return nil, fmt.Errorf("%w: handler does not implement PairingHandler", ErrHandlerFailed)
+			return nil, &DetailError{Err: ErrHandlerFailed, Detail: ": handler does not implement PairingHandler"}
 		}
 		if m.Pairing == nil {
-			return nil, fmt.Errorf("%w: pairing payload is required", ErrInvalidMessage)
+			return nil, &DetailError{Err: ErrInvalidMessage, Detail: ": pairing payload is required"}
 		}
 		if err := m.Pairing.Validate(); err != nil {
 			return nil, err
@@ -143,10 +143,10 @@ var handlers = map[string]dispatchFunc{
 	MessageTypeUnlock: func(h Handler, m *Message) (*Response, error) {
 		unlockHandler, ok := h.(UnlockHandler)
 		if !ok {
-			return nil, fmt.Errorf("%w: handler does not implement UnlockHandler", ErrHandlerFailed)
+			return nil, &DetailError{Err: ErrHandlerFailed, Detail: ": handler does not implement UnlockHandler"}
 		}
 		if m.Unlock == nil {
-			return nil, fmt.Errorf("%w: unlock payload is required", ErrInvalidMessage)
+			return nil, &DetailError{Err: ErrInvalidMessage, Detail: ": unlock payload is required"}
 		}
 		if err := m.Unlock.Validate(); err != nil {
 			return nil, err
@@ -206,7 +206,7 @@ var pkcs11Handlers = map[string]pkcs11DispatchFunc{
 func dispatchPKCS11(h PKCS11Handler, p *PKCS11Payload) (*Response, error) {
 	fn, ok := pkcs11Handlers[p.Action]
 	if !ok {
-		return nil, fmt.Errorf("%w: unknown pkcs11 action %q", ErrInvalidMessage, p.Action)
+		return nil, &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": unknown pkcs11 action %q", p.Action)}
 	}
 	return fn(h, p)
 }
@@ -294,7 +294,7 @@ var autofillHandlers = map[string]autofillDispatchFunc{
 func dispatchAutofill(h AutofillHandler, p *AutofillPayload) (*Response, error) {
 	fn, ok := autofillHandlers[p.Action]
 	if !ok {
-		return nil, fmt.Errorf("%w: unknown autofill action %q", ErrInvalidMessage, p.Action)
+		return nil, &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": unknown autofill action %q", p.Action)}
 	}
 	return fn(h, p)
 }
@@ -331,7 +331,7 @@ var pairingHandlers = map[string]pairingDispatchFunc{
 func dispatchPairing(h PairingHandler, p *PairingPayload) (*Response, error) {
 	fn, ok := pairingHandlers[p.Action]
 	if !ok {
-		return nil, fmt.Errorf("%w: unknown pairing action %q", ErrInvalidMessage, p.Action)
+		return nil, &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": unknown pairing action %q", p.Action)}
 	}
 	return fn(h, p)
 }
@@ -351,6 +351,13 @@ type Server struct {
 	logger     *slog.Logger
 	socketPath string
 	closed     atomic.Bool
+	// shutdownMu serializes each accept loop iteration's "register with wg"
+	// decision against Close's shutdown sequence. Without it, wg.Add (in
+	// Serve) and wg.Wait (in Close) can transition the WaitGroup's counter
+	// away from zero with no happens-before edge between them, which is a
+	// data race by sync.WaitGroup's own documented contract even though the
+	// counter itself is manipulated atomically.
+	shutdownMu sync.Mutex
 	wg         sync.WaitGroup
 	auditLog   atomic.Pointer[audit.Logger]
 }
@@ -365,14 +372,14 @@ type Server struct {
 func NewServer(socketPath string, handler Handler, logger *slog.Logger) (*Server, error) {
 	dir := filepath.Dir(socketPath)
 	if err := os.MkdirAll(dir, socketDirMode); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSocketCreateFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrSocketCreateFailed, Cause: err}
 	}
 
 	// When running as root via sudo, chown the directory to the original user
 	// so that client commands (notifications, xkey touch) can access it.
 	if uid, gid, ok := sudoOwnership(); ok {
 		if err := os.Chown(dir, uid, gid); err != nil {
-			return nil, fmt.Errorf("%w: chown directory: %v", ErrSocketCreateFailed, err)
+			return nil, &DetailError{Err: ErrSocketCreateFailed, Detail: fmt.Sprintf(": chown directory: %v", err)}
 		}
 	}
 
@@ -382,30 +389,29 @@ func NewServer(socketPath string, handler Handler, logger *slog.Logger) (*Server
 		probe, dialErr := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
 		if dialErr == nil {
 			_ = probe.Close()
-			return nil, fmt.Errorf("%w: another IPC server is already listening on %s",
-				ErrSocketCreateFailed, socketPath)
+			return nil, &DetailError{Err: ErrSocketCreateFailed, Detail: fmt.Sprintf(": another IPC server is already listening on %s", socketPath)}
 		}
 		// Socket file exists but nobody is listening — stale, safe to remove.
 		if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%w: %v", ErrSocketCreateFailed, err)
+			return nil, &SentinelCauseError{Sentinel: ErrSocketCreateFailed, Cause: err}
 		}
 	}
 
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSocketCreateFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrSocketCreateFailed, Cause: err}
 	}
 
 	if err := os.Chmod(socketPath, socketFileMode); err != nil {
 		_ = listener.Close()
-		return nil, fmt.Errorf("%w: %v", ErrSocketPermission, err)
+		return nil, &SentinelCauseError{Sentinel: ErrSocketPermission, Cause: err}
 	}
 
 	// When running as root via sudo, chown the socket to the original user.
 	if uid, gid, ok := sudoOwnership(); ok {
 		if err := os.Chown(socketPath, uid, gid); err != nil {
 			_ = listener.Close()
-			return nil, fmt.Errorf("%w: chown socket: %v", ErrSocketPermission, err)
+			return nil, &DetailError{Err: ErrSocketPermission, Detail: fmt.Sprintf(": chown socket: %v", err)}
 		}
 	}
 
@@ -459,7 +465,21 @@ func (s *Server) Serve(ctx context.Context) error {
 			continue
 		}
 
+		// Register the connection under shutdownMu so Close cannot observe
+		// wg reach zero and return from Wait while this Add is in flight (or
+		// begin waiting concurrently with it): Close acquires the same lock
+		// after closing the listener, so any Add that wins the race to
+		// acquire the lock first is guaranteed to finish before Close's Wait
+		// runs, and any Add that loses the race sees closed already true.
+		s.shutdownMu.Lock()
+		if s.closed.Load() {
+			s.shutdownMu.Unlock()
+			_ = conn.Close()
+			continue
+		}
 		s.wg.Add(1)
+		s.shutdownMu.Unlock()
+
 		go func() {
 			defer s.wg.Done()
 			s.handleConnection(conn)
@@ -485,6 +505,16 @@ func (s *Server) Close() error {
 	}
 
 	err := s.listener.Close()
+
+	// Acquire and release shutdownMu as a barrier: any accept-loop iteration
+	// that started registering a connection (see Serve) before closed was
+	// observed true is guaranteed to finish its wg.Add before this unlocks,
+	// and every iteration after this point sees closed true and skips wg.Add
+	// entirely. This establishes the happens-before edge sync.WaitGroup
+	// requires between the last Add and Wait.
+	s.shutdownMu.Lock()
+	s.shutdownMu.Unlock() //nolint:staticcheck // SA2001: intentional empty critical section used as a happens-before barrier, see comment above
+
 	s.wg.Wait()
 
 	// Best-effort removal of the socket file.

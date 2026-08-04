@@ -87,12 +87,12 @@ type FileStore struct {
 // directories if they do not exist and loads any existing certificates from disk.
 func NewFileStore(cfg *FileStoreConfig) (*FileStore, error) {
 	if cfg == nil || cfg.BaseDir == "" {
-		return nil, fmt.Errorf("%w: base directory is required", ErrInvalidCertificate)
+		return nil, &DetailError{Err: ErrInvalidCertificate, Detail: ": base directory is required"}
 	}
 
 	certsDir := filepath.Join(cfg.BaseDir, certsDirName)
 	if err := os.MkdirAll(certsDir, dirMode); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrStorageWrite, err)
+		return nil, &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
 	}
 
 	fs := &FileStore{
@@ -251,7 +251,7 @@ func (fs *FileStore) RemoveCertificate(fingerprint string) error {
 	// Remove PEM file from disk.
 	pemPath := fs.certPath(fingerprint)
 	if err := os.Remove(pemPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("%w: %v", ErrStorageWrite, err)
+		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
 	}
 
 	// Remove from in-memory state.
@@ -500,7 +500,7 @@ func (fs *FileStore) loadFromDisk() error {
 
 	metaData, err := os.ReadFile(metaPath)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("%w: %v", ErrStorageRead, err)
+		return &SentinelCauseError{Sentinel: ErrStorageRead, Cause: err}
 	}
 
 	// Load metadata index if it exists.
@@ -554,7 +554,7 @@ func (fs *FileStore) loadFromPEMFiles() error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("%w: %v", ErrStorageRead, err)
+		return &SentinelCauseError{Sentinel: ErrStorageRead, Cause: err}
 	}
 
 	for _, entry := range entries {
@@ -598,7 +598,7 @@ func (fs *FileStore) writeCertPEM(fingerprint string, cert *x509.Certificate) er
 
 	pemBytes := pem.EncodeToMemory(block)
 	if err := os.WriteFile(pemPath, pemBytes, pemFileMode); err != nil {
-		return fmt.Errorf("%w: %v", ErrStorageWrite, err)
+		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
 	}
 
 	return nil
@@ -613,7 +613,7 @@ func (fs *FileStore) writeMetadata() error {
 
 	data, err := json.MarshalIndent(entries, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrStorageWrite, err)
+		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
 	}
 
 	metaPath := filepath.Join(fs.config.BaseDir, metadataFile)
@@ -621,12 +621,12 @@ func (fs *FileStore) writeMetadata() error {
 	// Write to a temp file first, then rename for atomicity.
 	tmpPath := metaPath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, metadataMode); err != nil {
-		return fmt.Errorf("%w: %v", ErrStorageWrite, err)
+		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
 	}
 
 	if err := os.Rename(tmpPath, metaPath); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("%w: %v", ErrStorageWrite, err)
+		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
 	}
 
 	return nil
@@ -641,17 +641,17 @@ func (fs *FileStore) certPath(fingerprint string) string {
 func readCertPEM(path string) (*x509.Certificate, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrStorageRead, err)
+		return nil, &SentinelCauseError{Sentinel: ErrStorageRead, Cause: err}
 	}
 
 	block, _ := pem.Decode(data)
 	if block == nil || block.Type != pemBlockType {
-		return nil, fmt.Errorf("%w: invalid PEM block in %s", ErrInvalidCertificate, path)
+		return nil, &DetailError{Err: ErrInvalidCertificate, Detail: fmt.Sprintf(": invalid PEM block in %s", path)}
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidCertificate, err)
+		return nil, &SentinelCauseError{Sentinel: ErrInvalidCertificate, Cause: err}
 	}
 
 	return cert, nil
@@ -674,7 +674,7 @@ func parsePEMCertificates(pemData []byte) ([]*x509.Certificate, error) {
 
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidCertificate, err)
+			return nil, &SentinelCauseError{Sentinel: ErrInvalidCertificate, Cause: err}
 		}
 		certs = append(certs, cert)
 	}

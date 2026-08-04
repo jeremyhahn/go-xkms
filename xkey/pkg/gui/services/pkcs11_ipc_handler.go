@@ -58,12 +58,12 @@ func (h *PKCS11IPCHandler) HandlePKCS11Sign(params *ipc.SignParams) (*ipc.SignRe
 		return nil, err
 	}
 	if h.transport == nil {
-		return nil, fmt.Errorf("%w: embedded transport not initialized", ipc.ErrPKCS11Operation)
+		return nil, &DetailError{Err: ipc.ErrPKCS11Operation, Detail: ": embedded transport not initialized"}
 	}
 
 	data, err := base64.StdEncoding.DecodeString(params.Data)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to decode sign data: %v", ipc.ErrPKCS11Operation, err)
+		return nil, &DetailError{Err: ipc.ErrPKCS11Operation, Detail: fmt.Sprintf(": failed to decode sign data: %v", err)}
 	}
 
 	resp, err := h.transport.Sign(context.Background(), &transport.SignRequest{
@@ -74,7 +74,7 @@ func (h *PKCS11IPCHandler) HandlePKCS11Sign(params *ipc.SignParams) (*ipc.SignRe
 	})
 	if err != nil {
 		h.logger.Error("pkcs11 ipc sign failed", "key_id", params.KeyID, "error", err)
-		return nil, fmt.Errorf("%w: %v", ipc.ErrPKCS11Operation, err)
+		return nil, &SentinelCauseError{Sentinel: ipc.ErrPKCS11Operation, Cause: err}
 	}
 
 	return &ipc.SignResult{
@@ -89,7 +89,7 @@ func (h *PKCS11IPCHandler) HandlePKCS11GetPIVCertificate(params *ipc.PIVCertPara
 		return nil, err
 	}
 	if h.transport == nil {
-		return nil, fmt.Errorf("%w: embedded transport not initialized", ipc.ErrPKCS11Operation)
+		return nil, &DetailError{Err: ipc.ErrPKCS11Operation, Detail: ": embedded transport not initialized"}
 	}
 
 	format := params.Format
@@ -104,7 +104,7 @@ func (h *PKCS11IPCHandler) HandlePKCS11GetPIVCertificate(params *ipc.PIVCertPara
 	})
 	if err != nil {
 		h.logger.Error("pkcs11 ipc get_piv_certificate failed", "slot", params.Slot, "error", err)
-		return nil, fmt.Errorf("%w: %v", ipc.ErrPKCS11Operation, err)
+		return nil, &SentinelCauseError{Sentinel: ipc.ErrPKCS11Operation, Cause: err}
 	}
 
 	return &ipc.PIVCertResult{
@@ -119,7 +119,7 @@ func (h *PKCS11IPCHandler) HandlePKCS11ListPIVSlots(params *ipc.PIVSlotsParams) 
 		return nil, err
 	}
 	if h.transport == nil {
-		return nil, fmt.Errorf("%w: embedded transport not initialized", ipc.ErrPKCS11Operation)
+		return nil, &DetailError{Err: ipc.ErrPKCS11Operation, Detail: ": embedded transport not initialized"}
 	}
 
 	resp, err := h.transport.ListPIVSlots(context.Background(), &transport.ListPIVSlotsRequest{
@@ -127,7 +127,7 @@ func (h *PKCS11IPCHandler) HandlePKCS11ListPIVSlots(params *ipc.PIVSlotsParams) 
 	})
 	if err != nil {
 		h.logger.Error("pkcs11 ipc list_piv_slots failed", "error", err)
-		return nil, fmt.Errorf("%w: %v", ipc.ErrPKCS11Operation, err)
+		return nil, &SentinelCauseError{Sentinel: ipc.ErrPKCS11Operation, Cause: err}
 	}
 
 	slots := make([]ipc.PIVSlotInfo, len(resp.Slots))

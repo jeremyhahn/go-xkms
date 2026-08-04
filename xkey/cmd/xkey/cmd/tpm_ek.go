@@ -187,7 +187,7 @@ func runEKShow(cmd *cobra.Command, args []string) error {
 	// Get EK attributes
 	ekAttrs, err := tpm.EKAttributes()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrKeyNotFound, err)
+		return &SentinelCauseError{Sentinel: ErrKeyNotFound, Cause: err}
 	}
 
 	// Get EK certificate based on algorithm flag
@@ -204,7 +204,7 @@ func runEKShow(cmd *cobra.Command, args []string) error {
 		ekCert, err = tpm.EKCertificateRSA()
 	}
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrKeyNotFound, err)
+		return &SentinelCauseError{Sentinel: ErrKeyNotFound, Cause: err}
 	}
 
 	// Output based on format
@@ -384,7 +384,7 @@ func runEKExport(cmd *cobra.Command, args []string) error {
 		ekCert, err = tpm.EKCertificateRSA()
 	}
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCertificateNotFound, err)
+		return &SentinelCauseError{Sentinel: ErrCertificateNotFound, Cause: err}
 	}
 
 	// Encode as PEM
@@ -401,7 +401,7 @@ func runEKExport(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := os.WriteFile(ekExportOutput, pemData, 0600); err != nil {
-		return fmt.Errorf("%w: %v", ErrExportFailed, err)
+		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
 	fmt.Printf("EK certificate exported to: %s\n", ekExportOutput)
@@ -418,7 +418,7 @@ func runEKBackup(cmd *cobra.Command, args []string) error {
 
 	// Ensure output directory exists
 	if err := os.MkdirAll(ekBackupOutput, 0750); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+		return &WrappedError{Msg: "failed to create output directory", Err: err}
 	}
 
 	backupCount := 0
@@ -432,7 +432,7 @@ func runEKBackup(cmd *cobra.Command, args []string) error {
 			Bytes: rsaCert.Raw,
 		}
 		if err := os.WriteFile(rsaPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
-			return fmt.Errorf("failed to write RSA EK certificate: %w", err)
+			return &WrappedError{Msg: "failed to write RSA EK certificate", Err: err}
 		}
 		fmt.Printf("RSA EK certificate backed up to: %s\n", rsaPath)
 		fmt.Printf("  Issuer: %s\n", rsaCert.Issuer.CommonName)
@@ -451,7 +451,7 @@ func runEKBackup(cmd *cobra.Command, args []string) error {
 			Bytes: ecCert.Raw,
 		}
 		if err := os.WriteFile(ecPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
-			return fmt.Errorf("failed to write EC EK certificate: %w", err)
+			return &WrappedError{Msg: "failed to write EC EK certificate", Err: err}
 		}
 		fmt.Printf("EC EK certificate backed up to: %s\n", ecPath)
 		fmt.Printf("  Issuer: %s\n", ecCert.Issuer.CommonName)
@@ -462,7 +462,7 @@ func runEKBackup(cmd *cobra.Command, args []string) error {
 	}
 
 	if backupCount == 0 {
-		return fmt.Errorf("no EK certificates available to backup")
+		return &MessageError{Msg: "no EK certificates available to backup"}
 	}
 
 	fmt.Printf("\nBacked up %d EK certificate(s) to: %s\n", backupCount, ekBackupOutput)
@@ -473,19 +473,19 @@ func runEKRestore(cmd *cobra.Command, args []string) error {
 	// Read the certificate from file
 	pemData, err := os.ReadFile(ekRestoreInput)
 	if err != nil {
-		return fmt.Errorf("failed to read certificate file: %w", err)
+		return &WrappedError{Msg: "failed to read certificate file", Err: err}
 	}
 
 	// Parse PEM
 	block, _ := pem.Decode(pemData)
 	if block == nil {
-		return fmt.Errorf("failed to decode PEM data")
+		return &MessageError{Msg: "failed to decode PEM data"}
 	}
 
 	// Parse certificate
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return fmt.Errorf("failed to parse certificate: %w", err)
+		return &WrappedError{Msg: "failed to parse certificate", Err: err}
 	}
 
 	fmt.Println("Certificate to restore:")
@@ -516,13 +516,13 @@ func runEKRestore(cmd *cobra.Command, args []string) error {
 			case *rsa.PublicKey:
 				if ekKey, ok := ekCert.PublicKey.(*rsa.PublicKey); ok {
 					if certKey.N.Cmp(ekKey.N) != 0 || certKey.E != ekKey.E {
-						return fmt.Errorf("certificate public key does not match TPM EK - use --force to override")
+						return &MessageError{Msg: "certificate public key does not match TPM EK - use --force to override"}
 					}
 				}
 			case *ecdsa.PublicKey:
 				if ekKey, ok := ekCert.PublicKey.(*ecdsa.PublicKey); ok {
 					if !certKey.Equal(ekKey) {
-						return fmt.Errorf("certificate public key does not match TPM EK - use --force to override")
+						return &MessageError{Msg: "certificate public key does not match TPM EK - use --force to override"}
 					}
 				}
 
@@ -540,7 +540,7 @@ func runEKRestore(cmd *cobra.Command, args []string) error {
 	// Note: This requires hierarchy authorization
 	hierarchyAuth := []byte(tpmCfg.hierarchyAuth)
 	if err := tpm.WriteEKCert(block.Bytes); err != nil {
-		return fmt.Errorf("failed to write EK certificate to NV RAM: %w", err)
+		return &WrappedError{Msg: "failed to write EK certificate to NV RAM", Err: err}
 	}
 
 	_ = hierarchyAuth

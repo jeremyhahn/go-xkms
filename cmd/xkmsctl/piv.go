@@ -16,7 +16,6 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"os"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -78,13 +77,13 @@ var pivStoreCmd = &cobra.Command{
 		}
 
 		if certFile == "" {
-			handleError(fmt.Errorf("--cert-file is required"))
+			handleError(ErrCertFileRequired)
 			return
 		}
 
 		certData, err := os.ReadFile(certFile)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read certificate file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCertFileRead, Err: err})
 			return
 		}
 
@@ -140,13 +139,13 @@ var pivImportCmd = &cobra.Command{
 		}
 
 		if certFile == "" {
-			handleError(fmt.Errorf("--cert-file is required"))
+			handleError(ErrCertFileRequired)
 			return
 		}
 
 		certData, err := os.ReadFile(certFile)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read certificate file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCertFileRead, Err: err})
 			return
 		}
 
@@ -193,14 +192,14 @@ var pivCSRCmd = &cobra.Command{
 func pivListSlots(cfg *Config, printer *Printer) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -210,7 +209,7 @@ func pivListSlots(cfg *Config, printer *Printer) {
 		Backend: cfg.Backend,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to list PIV slots: %w", err))
+		handleError(&WrappedError{Sentinel: ErrListPIVSlotsFailed, Err: err})
 		return
 	}
 
@@ -223,14 +222,14 @@ func pivListSlots(cfg *Config, printer *Printer) {
 func pivGetCertificate(cfg *Config, printer *Printer, slot, format string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -242,7 +241,7 @@ func pivGetCertificate(cfg *Config, printer *Printer, slot, format string) {
 		Format:  format,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to get PIV certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGetPIVCertificateFailed, Err: err})
 		return
 	}
 
@@ -260,14 +259,14 @@ func pivGetCertificate(cfg *Config, printer *Printer, slot, format string) {
 func pivStoreCertificate(cfg *Config, printer *Printer, slot string, certData []byte, format string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -280,7 +279,7 @@ func pivStoreCertificate(cfg *Config, printer *Printer, slot string, certData []
 		Format:      format,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to store PIV certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrStorePIVCertificateFailed, Err: err})
 		return
 	}
 
@@ -297,14 +296,14 @@ func pivStoreCertificate(cfg *Config, printer *Printer, slot string, certData []
 func pivDeleteCertificate(cfg *Config, printer *Printer, slot string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -315,7 +314,7 @@ func pivDeleteCertificate(cfg *Config, printer *Printer, slot string) {
 		Slot:    slot,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to delete PIV certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrDeletePIVCertificateFailed, Err: err})
 		return
 	}
 
@@ -332,14 +331,14 @@ func pivDeleteCertificate(cfg *Config, printer *Printer, slot string) {
 func pivGenerateKey(cfg *Config, printer *Printer, slot, algorithm, subject string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -352,7 +351,7 @@ func pivGenerateKey(cfg *Config, printer *Printer, slot, algorithm, subject stri
 		Subject:   subject,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to generate PIV key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGeneratePIVKeyFailed, Err: err})
 		return
 	}
 
@@ -370,14 +369,14 @@ func pivGenerateKey(cfg *Config, printer *Printer, slot, algorithm, subject stri
 func pivImportCertificate(cfg *Config, printer *Printer, slot string, certData []byte, format string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -390,7 +389,7 @@ func pivImportCertificate(cfg *Config, printer *Printer, slot string, certData [
 		Format:      format,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to import PIV certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrImportPIVCertificateFailed, Err: err})
 		return
 	}
 
@@ -407,14 +406,14 @@ func pivImportCertificate(cfg *Config, printer *Printer, slot string, certData [
 func pivExportCertificate(cfg *Config, printer *Printer, slot, format string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -426,7 +425,7 @@ func pivExportCertificate(cfg *Config, printer *Printer, slot, format string) {
 		Format:  format,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to export PIV certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrExportPIVCertificateFailed, Err: err})
 		return
 	}
 
@@ -448,14 +447,14 @@ func pivExportCertificate(cfg *Config, printer *Printer, slot, format string) {
 func pivCSR(cfg *Config, printer *Printer, slot, subject string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -467,7 +466,7 @@ func pivCSR(cfg *Config, printer *Printer, slot, subject string) {
 		Subject: subject,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to generate PIV CSR: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGeneratePIVCSRFailed, Err: err})
 		return
 	}
 

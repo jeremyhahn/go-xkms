@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/quic-go/quic-go/http3"
 )
 
@@ -58,14 +60,14 @@ func (c *QUICTestClient) doRequest(method, path string, body interface{}) (*http
 	if body != nil {
 		jsonBody, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal request: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to marshal request", Err: err}
 		}
 		reqBody = bytes.NewReader(jsonBody)
 	}
 
 	req, err := http.NewRequest(method, c.baseURL+path, reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create request", Err: err}
 	}
 
 	if body != nil {
@@ -632,13 +634,13 @@ func TestQUIC_ConcurrentRequests(t *testing.T) {
 
 				resp, err := client.doRequest("POST", "/api/v1/keys", reqBody)
 				if err != nil {
-					errors <- fmt.Errorf("request %d failed: %w", idx, err)
+					errors <- &errs.Wrapped{Msg: fmt.Sprintf("request %d failed", idx), Err: err}
 					return
 				}
 				defer resp.Body.Close()
 
 				if resp.StatusCode != http.StatusCreated {
-					errors <- fmt.Errorf("request %d: unexpected status %d", idx, resp.StatusCode)
+					errors <- &errs.Message{Msg: fmt.Sprintf("request %d: unexpected status %d", idx, resp.StatusCode)}
 					return
 				}
 
@@ -684,13 +686,13 @@ func TestQUIC_ConcurrentRequests(t *testing.T) {
 				resp, err := client.doRequest("GET",
 					fmt.Sprintf("/api/v1/keys/%s?backend=software", keyIDs[idx]), nil)
 				if err != nil {
-					errors <- fmt.Errorf("get request %d failed: %w", idx, err)
+					errors <- &errs.Wrapped{Msg: fmt.Sprintf("get request %d failed", idx), Err: err}
 					return
 				}
 				defer resp.Body.Close()
 
 				if resp.StatusCode != http.StatusOK {
-					errors <- fmt.Errorf("get request %d: unexpected status %d", idx, resp.StatusCode)
+					errors <- &errs.Message{Msg: fmt.Sprintf("get request %d: unexpected status %d", idx, resp.StatusCode)}
 					return
 				}
 

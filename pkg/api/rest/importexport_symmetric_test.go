@@ -36,6 +36,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
@@ -201,7 +203,7 @@ func (m *mockImportExportSymmetricBackend) GenerateKey(ctx context.Context, attr
 		}
 		key, err = ecdsa.GenerateKey(curve, rand.Reader)
 	default:
-		return nil, fmt.Errorf("unsupported algorithm: %s", attrs.KeyAlgorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported algorithm: %s", attrs.KeyAlgorithm)}
 	}
 
 	if err != nil {
@@ -218,7 +220,7 @@ func (m *mockImportExportSymmetricBackend) GetKey(ctx context.Context, attrs *ty
 
 	key, ok := m.keys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 	return key, nil
 }
@@ -229,7 +231,7 @@ func (m *mockImportExportSymmetricBackend) DeleteKey(ctx context.Context, attrs 
 
 	if _, ok := m.keys[attrs.CN]; !ok {
 		if _, ok := m.symmetricKeys[attrs.CN]; !ok {
-			return fmt.Errorf("key not found: %s", attrs.CN)
+			return &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 		}
 		delete(m.symmetricKeys, attrs.CN)
 		return nil
@@ -268,12 +270,12 @@ func (m *mockImportExportSymmetricBackend) Signer(ctx context.Context, attrs *ty
 
 	key, ok := m.keys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("key does not implement crypto.Signer")
+		return nil, &errs.Message{Msg: "key does not implement crypto.Signer"}
 	}
 	return signer, nil
 }
@@ -284,12 +286,12 @@ func (m *mockImportExportSymmetricBackend) Decrypter(ctx context.Context, attrs 
 
 	key, ok := m.keys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 
 	decrypter, ok := key.(crypto.Decrypter)
 	if !ok {
-		return nil, fmt.Errorf("key does not implement crypto.Decrypter")
+		return nil, &errs.Message{Msg: "key does not implement crypto.Decrypter"}
 	}
 	return decrypter, nil
 }
@@ -326,7 +328,7 @@ func (m *mockImportExportSymmetricBackend) WrapKey(ctx context.Context, keyMater
 	// Simple RSA-OAEP wrapping for testing
 	pubKey, ok := params.WrappingPublicKey.(*rsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("wrapping public key is not RSA")
+		return nil, &errs.Message{Msg: "wrapping public key is not RSA"}
 	}
 
 	wrapped, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pubKey, keyMaterial, nil)
@@ -389,7 +391,7 @@ func (m *mockImportExportSymmetricBackend) ExportKey(ctx context.Context, attrs 
 	// Check if key exists
 	if _, ok := m.keys[attrs.CN]; !ok {
 		if _, ok := m.symmetricKeys[attrs.CN]; !ok {
-			return nil, fmt.Errorf("key not found: %s", attrs.CN)
+			return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 		}
 	}
 
@@ -408,7 +410,7 @@ func (m *mockImportExportSymmetricBackend) ExportKeyMaterial(ctx context.Context
 
 	key, ok := m.symmetricKeys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("symmetric key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("symmetric key not found: %s", attrs.CN)}
 	}
 
 	return key.rawKey, nil
@@ -458,7 +460,7 @@ func (m *mockImportExportSymmetricBackend) GetSymmetricKey(ctx context.Context, 
 
 	key, ok := m.symmetricKeys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("symmetric key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("symmetric key not found: %s", attrs.CN)}
 	}
 	return key, nil
 }
@@ -473,7 +475,7 @@ func (m *mockImportExportSymmetricBackend) SymmetricEncrypter(ctx context.Contex
 
 	key, ok := m.symmetricKeys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("symmetric key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("symmetric key not found: %s", attrs.CN)}
 	}
 
 	return &mockSymmetricEncrypter{
@@ -535,7 +537,7 @@ func (m *mockKeyStoreWithImportExport) GenerateECDSA(ctx context.Context, attrs 
 }
 
 func (m *mockKeyStoreWithImportExport) GenerateEd25519(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return nil, fmt.Errorf("ed25519 not supported")
+	return nil, &errs.Message{Msg: "ed25519 not supported"}
 }
 
 func (m *mockKeyStoreWithImportExport) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
@@ -567,7 +569,7 @@ func (m *mockKeyStoreWithImportExport) SaveCert(_ context.Context, keyID string,
 }
 
 func (m *mockKeyStoreWithImportExport) GetCert(_ context.Context, keyID string) (*x509.Certificate, error) {
-	return nil, fmt.Errorf("cert not found")
+	return nil, &errs.Message{Msg: "cert not found"}
 }
 
 func (m *mockKeyStoreWithImportExport) DeleteCert(_ context.Context, keyID string) error {
@@ -591,7 +593,7 @@ func (m *mockKeyStoreWithImportExport) GetCertChain(_ context.Context, keyID str
 }
 
 func (m *mockKeyStoreWithImportExport) GetTLSCertificate(ctx context.Context, keyID string, attrs *types.KeyAttributes) (tls.Certificate, error) {
-	return tls.Certificate{}, fmt.Errorf("not implemented")
+	return tls.Certificate{}, &errs.Message{Msg: "not implemented"}
 }
 
 func (m *mockKeyStoreWithImportExport) GetKeyByID(ctx context.Context, keyID string) (crypto.PrivateKey, error) {
@@ -607,11 +609,11 @@ func (m *mockKeyStoreWithImportExport) GetDecrypterByID(ctx context.Context, key
 }
 
 func (m *mockKeyStoreWithImportExport) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
-	return nil, fmt.Errorf("not supported")
+	return nil, &errs.Message{Msg: "not supported"}
 }
 
 func (m *mockKeyStoreWithImportExport) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
-	return nil, fmt.Errorf("not supported")
+	return nil, &errs.Message{Msg: "not supported"}
 }
 
 func (m *mockKeyStoreWithImportExport) CanSeal() bool {
@@ -710,7 +712,7 @@ func TestEncryptHandler_SymmetricEncrypterError(t *testing.T) {
 		ks.backend.SetSymmetricKey("sym-key-error", rawKey, string(types.SymmetricAES256GCM))
 
 		ks.backend.SymmetricEncrypterFunc = func(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
-			return nil, fmt.Errorf("encrypter error")
+			return nil, &errs.Message{Msg: "encrypter error"}
 		}
 
 		router := createRouterWithHandler(http.MethodPost, "/api/v1/keys/{id}/encrypt", ctx.EncryptHandler)
@@ -758,7 +760,7 @@ func TestGetImportParametersHandler_ImportExportError(t *testing.T) {
 		ctx := newTestHandlerContext()
 
 		ks.backend.GetImportParametersFunc = func(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
-			return nil, fmt.Errorf("get import parameters failed")
+			return nil, &errs.Message{Msg: "get import parameters failed"}
 		}
 
 		body := `{"backend": "test-backend", "key_id": "test-key", "key_type": "rsa", "algorithm": "RSAES_OAEP_SHA_256"}`
@@ -806,7 +808,7 @@ func TestWrapKeyHandler_ImportExportError(t *testing.T) {
 		ctx := newTestHandlerContext()
 
 		ks.backend.WrapKeyFunc = func(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
-			return nil, fmt.Errorf("wrap key failed")
+			return nil, &errs.Message{Msg: "wrap key failed"}
 		}
 
 		wrappingKeyPEM := getWrappingPublicKeyPEM(t, ks.backend.wrappingKey)
@@ -859,7 +861,7 @@ func TestUnwrapKeyHandler_ImportExportError(t *testing.T) {
 		ctx := newTestHandlerContext()
 
 		ks.backend.UnwrapKeyFunc = func(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
-			return nil, fmt.Errorf("unwrap key failed")
+			return nil, &errs.Message{Msg: "unwrap key failed"}
 		}
 
 		wrappingKeyPEM := getWrappingPublicKeyPEM(t, ks.backend.wrappingKey)
@@ -919,7 +921,7 @@ func TestImportKeyHandler_ImportExportError(t *testing.T) {
 		ctx := newTestHandlerContext()
 
 		ks.backend.ImportKeyFunc = func(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
-			return fmt.Errorf("import key failed")
+			return &errs.Message{Msg: "import key failed"}
 		}
 
 		body := `{"backend": "test-backend", "key_id": "import-error-key", "key_type": "rsa", "wrapped_key": "dGVzdA==", "algorithm": "RSAES_OAEP_SHA_256"}`
@@ -973,7 +975,7 @@ func TestExportKeyHandler_ImportExportError(t *testing.T) {
 		ks.backend.SetKey("export-error-key", key)
 
 		ks.backend.ExportKeyFunc = func(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
-			return nil, fmt.Errorf("export key failed")
+			return nil, &errs.Message{Msg: "export key failed"}
 		}
 
 		router := createRouterWithHandler(http.MethodPost, "/api/v1/keys/{id}/export", ctx.ExportKeyHandler)
@@ -1105,7 +1107,7 @@ func TestCopyKeyHandler_ExportError(t *testing.T) {
 		srcKs.backend.SetKey("source-key", key)
 
 		srcKs.backend.ExportKeyFunc = func(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
-			return nil, fmt.Errorf("export key failed during copy")
+			return nil, &errs.Message{Msg: "export key failed during copy"}
 		}
 
 		ctx := newTestHandlerContext()
@@ -1151,7 +1153,7 @@ func TestCopyKeyHandler_ImportError(t *testing.T) {
 		srcKs.backend.SetKey("source-key", key)
 
 		dstKs.backend.ImportKeyFunc = func(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
-			return fmt.Errorf("import key failed during copy")
+			return &errs.Message{Msg: "import key failed during copy"}
 		}
 
 		ctx := newTestHandlerContext()
@@ -1185,7 +1187,7 @@ func (m *mockNonMemorySessionStore) Save(ctx context.Context, session *webauthn.
 }
 
 func (m *mockNonMemorySessionStore) Get(ctx context.Context, sessionID string) (*webauthn.SessionData, error) {
-	return nil, fmt.Errorf("session not found")
+	return nil, &errs.Message{Msg: "session not found"}
 }
 
 func (m *mockNonMemorySessionStore) Delete(ctx context.Context, sessionID string) error {

@@ -321,7 +321,7 @@ make integration-test       # Run all integration tests
 make integration-test-software # Run software backend integration tests
 make integration-test-pkcs11   # Run PKCS#11/SoftHSM integration tests
 make integration-test-tpm2     # Run TPM2 simulator integration tests
-make integration-test-awskms   # Run AWS KMS/LocalStack integration tests
+make integration-test-awskms   # Run AWS KMS/Floci integration tests
 make integration-test-gcpkms   # Run GCP KMS integration tests
 make integration-test-azurekv  # Run Azure Key Vault integration tests
 make integration-test-vault    # Run HashiCorp Vault integration tests
@@ -485,7 +485,7 @@ func init() {
 
 ### Integration Tests
 - Docker-based environment (per backend)
-- Real service dependencies (LocalStack, SoftHSM, SWTPM)
+- Real service dependencies (Floci, SoftHSM, SWTPM)
 - End-to-end workflows
 - Organized in `test/integration/{backend}/`
 - Run with: `make integration-test` or `make integration-test-{backend}`

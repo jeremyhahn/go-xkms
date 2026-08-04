@@ -7,8 +7,9 @@ package transport
 
 import (
 	"errors"
-	"fmt"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -209,7 +210,7 @@ func TestConfigError_Is_UnrelatedError(t *testing.T) {
 func TestIsNotConnected(t *testing.T) {
 	assert.True(t, IsNotConnected(ErrNotConnected))
 	assert.True(t, IsNotConnected(&TransportError{Code: ErrCodeNotConnected}))
-	assert.True(t, IsNotConnected(fmt.Errorf("wrapped: %w", ErrNotConnected)))
+	assert.True(t, IsNotConnected(&errs.Wrapped{Msg: "wrapped", Err: ErrNotConnected}))
 	assert.False(t, IsNotConnected(ErrTimeout))
 	assert.False(t, IsNotConnected(nil))
 }
@@ -287,7 +288,7 @@ func TestGetErrorCode(t *testing.T) {
 		{"sentinel TLS handshake", ErrTLSHandshakeFailed, ErrCodeTLSHandshakeFailed},
 		{"sentinel auth failed", ErrAuthenticationFailed, ErrCodeAuthenticationFailed},
 		{"unknown error", errors.New("random"), ErrCodeUnknown},
-		{"wrapped sentinel", fmt.Errorf("wrap: %w", ErrTimeout), ErrCodeTimeout},
+		{"wrapped sentinel", &errs.Wrapped{Msg: "wrap", Err: ErrTimeout}, ErrCodeTimeout},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -27,6 +27,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
@@ -120,7 +122,7 @@ func basicEncryption(b types.SymmetricKeyProvider) error {
 	fmt.Println("1. Generating AES-256 key...")
 	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
-		return fmt.Errorf("failed to generate key: %w", err)
+		return &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 	fmt.Printf("   ✓ Generated %s key (%d bits)\n", key.Algorithm(), key.KeySize())
 
@@ -128,7 +130,7 @@ func basicEncryption(b types.SymmetricKeyProvider) error {
 	fmt.Println("\n2. Creating symmetric encrypter...")
 	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
-		return fmt.Errorf("failed to get encrypter: %w", err)
+		return &errs.Wrapped{Msg: "failed to get encrypter", Err: err}
 	}
 	fmt.Println("   ✓ Encrypter created")
 
@@ -138,7 +140,7 @@ func basicEncryption(b types.SymmetricKeyProvider) error {
 
 	encrypted, err := encrypter.Encrypt(plaintext, nil)
 	if err != nil {
-		return fmt.Errorf("failed to encrypt: %w", err)
+		return &errs.Wrapped{Msg: "failed to encrypt", Err: err}
 	}
 	fmt.Printf("   ✓ Ciphertext: %s\n", base64.StdEncoding.EncodeToString(encrypted.Ciphertext))
 	fmt.Printf("   ✓ Nonce: %s\n", base64.StdEncoding.EncodeToString(encrypted.Nonce))
@@ -148,13 +150,13 @@ func basicEncryption(b types.SymmetricKeyProvider) error {
 	fmt.Println("\n4. Decrypting ciphertext...")
 	decrypted, err := encrypter.Decrypt(encrypted, nil)
 	if err != nil {
-		return fmt.Errorf("failed to decrypt: %w", err)
+		return &errs.Wrapped{Msg: "failed to decrypt", Err: err}
 	}
 	fmt.Printf("   ✓ Decrypted: %q\n", decrypted)
 
 	// Verify the decrypted data matches the original
 	if string(decrypted) != string(plaintext) {
-		return fmt.Errorf("decrypted data does not match original")
+		return &errs.Message{Msg: "decrypted data does not match original"}
 	}
 	fmt.Println("   ✓ Verification successful!")
 
@@ -180,7 +182,7 @@ func passwordProtectedEncryption(b types.SymmetricKeyProvider) error {
 	fmt.Println("1. Generating password-protected AES-256 key...")
 	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
-		return fmt.Errorf("failed to generate key: %w", err)
+		return &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 	fmt.Printf("   ✓ Generated password-protected %s key (%d bits)\n", key.Algorithm(), key.KeySize())
 	fmt.Println("   ✓ Key is encrypted at rest with password")
@@ -189,7 +191,7 @@ func passwordProtectedEncryption(b types.SymmetricKeyProvider) error {
 	fmt.Println("\n2. Retrieving key with password...")
 	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
-		return fmt.Errorf("failed to get encrypter: %w", err)
+		return &errs.Wrapped{Msg: "failed to get encrypter", Err: err}
 	}
 	fmt.Println("   ✓ Key decrypted successfully with password")
 
@@ -199,7 +201,7 @@ func passwordProtectedEncryption(b types.SymmetricKeyProvider) error {
 
 	encrypted, err := encrypter.Encrypt(plaintext, nil)
 	if err != nil {
-		return fmt.Errorf("failed to encrypt: %w", err)
+		return &errs.Wrapped{Msg: "failed to encrypt", Err: err}
 	}
 	fmt.Printf("   ✓ Data encrypted successfully\n")
 
@@ -207,13 +209,13 @@ func passwordProtectedEncryption(b types.SymmetricKeyProvider) error {
 	fmt.Println("\n4. Decrypting ciphertext...")
 	decrypted, err := encrypter.Decrypt(encrypted, nil)
 	if err != nil {
-		return fmt.Errorf("failed to decrypt: %w", err)
+		return &errs.Wrapped{Msg: "failed to decrypt", Err: err}
 	}
 	fmt.Printf("   ✓ Decrypted: %q\n", decrypted)
 
 	// Verify
 	if string(decrypted) != string(plaintext) {
-		return fmt.Errorf("decrypted data does not match original")
+		return &errs.Message{Msg: "decrypted data does not match original"}
 	}
 	fmt.Println("   ✓ Verification successful!")
 
@@ -229,7 +231,7 @@ func passwordProtectedEncryption(b types.SymmetricKeyProvider) error {
 
 	_, err = b.SymmetricEncrypter(context.Background(), wrongAttrs)
 	if err == nil {
-		return fmt.Errorf("expected error with wrong password, got nil")
+		return &errs.Message{Msg: "expected error with wrong password, got nil"}
 	}
 	fmt.Printf("   ✓ Correctly rejected wrong password: %v\n", err)
 
@@ -252,14 +254,14 @@ func encryptionWithAAD(b types.SymmetricKeyProvider) error {
 	fmt.Println("1. Generating AES-256 key...")
 	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
-		return fmt.Errorf("failed to generate key: %w", err)
+		return &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 	fmt.Println("   ✓ Key generated")
 
 	// Get encrypter
 	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
-		return fmt.Errorf("failed to get encrypter: %w", err)
+		return &errs.Wrapped{Msg: "failed to get encrypter", Err: err}
 	}
 
 	// Define plaintext and AAD
@@ -276,7 +278,7 @@ func encryptionWithAAD(b types.SymmetricKeyProvider) error {
 		AdditionalData: aad,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to encrypt: %w", err)
+		return &errs.Wrapped{Msg: "failed to encrypt", Err: err}
 	}
 	fmt.Printf("   ✓ Encrypted with AAD authentication\n")
 
@@ -286,7 +288,7 @@ func encryptionWithAAD(b types.SymmetricKeyProvider) error {
 		AdditionalData: aad,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to decrypt: %w", err)
+		return &errs.Wrapped{Msg: "failed to decrypt", Err: err}
 	}
 	fmt.Printf("   ✓ Decrypted: %q\n", decrypted)
 
@@ -297,7 +299,7 @@ func encryptionWithAAD(b types.SymmetricKeyProvider) error {
 		AdditionalData: wrongAAD,
 	})
 	if err == nil {
-		return fmt.Errorf("expected error with wrong AAD, got nil")
+		return &errs.Message{Msg: "expected error with wrong AAD, got nil"}
 	}
 	fmt.Printf("   ✓ Correctly rejected wrong AAD: %v\n", err)
 
@@ -305,7 +307,7 @@ func encryptionWithAAD(b types.SymmetricKeyProvider) error {
 	fmt.Println("\n5. Testing with missing AAD (should fail)...")
 	_, err = encrypter.Decrypt(encrypted, nil)
 	if err == nil {
-		return fmt.Errorf("expected error with missing AAD, got nil")
+		return &errs.Message{Msg: "expected error with missing AAD, got nil"}
 	}
 	fmt.Printf("   ✓ Correctly rejected missing AAD: %v\n", err)
 

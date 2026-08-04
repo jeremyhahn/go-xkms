@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -160,6 +161,9 @@ func TestInitialize_WithMultipleBackends(t *testing.T) {
 				Enabled: true,
 				Config: map[string]interface{}{
 					"key_dir": tempDir + "/pkcs8",
+					// Backend-wiring integration test (not a key-protection
+					// test): generates no-password keys, so opt into plaintext.
+					"allow_plaintext_keys": true,
 				},
 			},
 			{
@@ -441,6 +445,9 @@ func TestBackendFactory_Integration(t *testing.T) {
 				Enabled: true,
 				Config: map[string]interface{}{
 					"key_dir": tempDir + "/pkcs8",
+					// Backend-wiring integration test (not a key-protection
+					// test): generates no-password keys, so opt into plaintext.
+					"allow_plaintext_keys": true,
 				},
 			},
 			{
@@ -523,6 +530,9 @@ func TestBackendFactory_SharedCertStorage(t *testing.T) {
 				Enabled: true,
 				Config: map[string]interface{}{
 					"key_dir": tempDir + "/pkcs8",
+					// Backend-wiring integration test (not a key-protection
+					// test): generates no-password keys, so opt into plaintext.
+					"allow_plaintext_keys": true,
 				},
 			},
 			{
@@ -556,6 +566,71 @@ func TestBackendFactory_SharedCertStorage(t *testing.T) {
 	assert.Equal(t, cert.Subject.CommonName, retrievedCert.Subject.CommonName)
 
 	xkms.Reset()
+}
+
+// TestCreatePKCS8Backend_AllowPlaintextKeys verifies that setting
+// allow_plaintext_keys: true in the backend config is correctly threaded into
+// the pkcs8.Config and that the resulting backend permits password-free key
+// persistence. Ed25519 is used for speed (no key-size parameter needed).
+func TestCreatePKCS8Backend_AllowPlaintextKeys(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	config := BackendConfig{
+		Name: "pkcs8",
+		Type: "pkcs8",
+		Config: map[string]interface{}{
+			"key_dir":              tempDir,
+			"allow_plaintext_keys": true,
+		},
+	}
+
+	backend, err := createPKCS8Backend(config)
+	require.NoError(t, err)
+	require.NotNil(t, backend)
+
+	// With AllowPlaintextKeys: true, generating a key without a password must succeed.
+	attrs := &types.KeyAttributes{
+		CN:           "test-allow-plaintext",
+		KeyType:      types.KeyTypeTLS,
+		StoreType:    types.StoreSoftware,
+		KeyAlgorithm: x509.Ed25519,
+	}
+	_, err = backend.GenerateKey(context.Background(), attrs)
+	assert.NoError(t, err, "password-free key generation must succeed when allow_plaintext_keys is true")
+}
+
+// TestCreatePKCS8Backend_DisallowPlaintextKeysByDefault verifies the secure
+// default (AllowPlaintextKeys: false): generating a key without a password
+// must fail with ErrPlaintextKeyNotAllowed when allow_plaintext_keys is not
+// set in the config.
+func TestCreatePKCS8Backend_DisallowPlaintextKeysByDefault(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	config := BackendConfig{
+		Name: "pkcs8",
+		Type: "pkcs8",
+		Config: map[string]interface{}{
+			"key_dir": tempDir,
+			// allow_plaintext_keys intentionally absent — defaults to false.
+		},
+	}
+
+	backend, err := createPKCS8Backend(config)
+	require.NoError(t, err)
+	require.NotNil(t, backend)
+
+	// Without AllowPlaintextKeys, generating a key without a password must fail.
+	attrs := &types.KeyAttributes{
+		CN:           "test-disallow-plaintext",
+		KeyType:      types.KeyTypeTLS,
+		StoreType:    types.StoreSoftware,
+		KeyAlgorithm: x509.Ed25519,
+	}
+	_, err = backend.GenerateKey(context.Background(), attrs)
+	require.Error(t, err, "password-free key generation must fail when allow_plaintext_keys is false")
+	require.ErrorIs(t, err, pkcs8.ErrPlaintextKeyNotAllowed)
 }
 
 // Helper for creating test certificates

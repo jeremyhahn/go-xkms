@@ -81,13 +81,13 @@ Examples:
 func createClusterClient(cfg *Config) (*client.ClusterClient, func(), error) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create client: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrCreateClientFailed, Err: err}
 	}
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
 		_ = cl.Close()
-		return nil, nil, fmt.Errorf("failed to connect: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
 
 	cluster, err := client.Cluster(cl)
@@ -113,7 +113,7 @@ func clusterStatus(cfg *Config, printer *Printer) {
 
 	resp, err := cluster.Status(context.Background())
 	if err != nil {
-		handleError(fmt.Errorf("failed to get cluster status: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGetClusterStatusFailed, Err: err})
 		return
 	}
 
@@ -133,7 +133,7 @@ func clusterMembers(cfg *Config, printer *Printer) {
 
 	resp, err := cluster.Members(context.Background())
 	if err != nil {
-		handleError(fmt.Errorf("failed to list cluster members: %w", err))
+		handleError(&WrappedError{Sentinel: ErrListClusterMembersFailed, Err: err})
 		return
 	}
 

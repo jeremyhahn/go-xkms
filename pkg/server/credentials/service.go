@@ -36,15 +36,24 @@ const StrategyManual = "manual"
 const credentialPrefix = "credentials/"
 
 // validStrategies maps all supported strategy names to true for O(1) validation.
+// The canonical cloud-KMS names match the seal layer's StrategyID constants
+// (awskms/gcpkms/azurekv, no underscores); the underscored spellings are
+// retained as backward-compatible aliases so an operator can configure seal the
+// same way across the stack.
 var validStrategies = map[string]bool{
 	StrategyManual: true,
 	"barrier":      true,
 	"tpm2":         true,
 	"pkcs11":       true,
-	"aws_kms":      true,
-	"gcp_kms":      true,
-	"azure_kv":     true,
-	"vault":        true,
+	// Canonical cloud-KMS names (align with pkg/seal StrategyAWSKMS/GCPKMS/AzureKV).
+	"awskms":  true,
+	"gcpkms":  true,
+	"azurekv": true,
+	// Underscored spellings retained as backward-compatible aliases.
+	"aws_kms":  true,
+	"gcp_kms":  true,
+	"azure_kv": true,
+	"vault":    true,
 	// "passphrase" is the canonical name for password/software-derived sealing
 	// (aligns with the seal layer's StrategyPassphrase and qrdb's naming).
 	"passphrase": true,

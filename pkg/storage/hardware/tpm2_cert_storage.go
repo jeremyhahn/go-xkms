@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/cespare/xxhash/v2"
 
 	"github.com/google/go-tpm/tpm2"
@@ -102,11 +104,11 @@ func NewTPM2CertStorage(
 
 	// Validate base index is in NV RAM range
 	if config.BaseIndex < 0x01000000 || config.BaseIndex > 0x01BFFFFF {
-		return nil, fmt.Errorf("%w: got %#x", ErrInvalidBaseIndex, config.BaseIndex)
+		return nil, &errs.Detail{Err: ErrInvalidBaseIndex, Detail: fmt.Sprintf("got %#x", config.BaseIndex)}
 	}
 
 	if config.MaxCertSize < 512 || config.MaxCertSize > 4096 {
-		return nil, fmt.Errorf("%w: got %d bytes", ErrInvalidCertSize, config.MaxCertSize)
+		return nil, &errs.Detail{Err: ErrInvalidCertSize, Detail: fmt.Sprintf("got %d bytes", config.MaxCertSize)}
 	}
 
 	return &TPM2CertStorage{

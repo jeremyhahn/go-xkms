@@ -1,6 +1,6 @@
 # cactl Command Reference
 
-`cactl` is a multi-protocol CLI for administering the go-trusted-ca server.
+`cactl` is a multi-protocol CLI for administering the go-xkms server.
 
 ## Overview
 

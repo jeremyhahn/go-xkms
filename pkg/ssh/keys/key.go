@@ -50,6 +50,17 @@ const (
 // String returns the canonical algorithm name.
 func (a Algorithm) String() string { return string(a) }
 
+// supported reports whether a is one of the canonical algorithms the
+// package can generate and sign.
+func (a Algorithm) supported() bool {
+	switch a {
+	case AlgorithmEd25519, AlgorithmRSA, AlgorithmECDSAP256, AlgorithmECDSAP384, AlgorithmECDSAP521:
+		return true
+	default:
+		return false
+	}
+}
+
 // Key bundles the in-memory representation of an SSH key.
 //
 // Material holds the PEM-encoded private key sealed inside a
@@ -99,6 +110,26 @@ type Key struct {
 	// key (OpenSSH emits it in authorized_keys lines). Never contains
 	// sensitive material by convention.
 	Comment string
+
+	// BackendID identifies the crypto backend (e.g. "software", "tpm2",
+	// "pkcs11", a cloud KMS, or a remote xkms backend) that holds the
+	// private half of a backend-backed key. Empty for software keys whose
+	// PEM lives in Material. When set, Material is nil and signing is
+	// delegated to the backend via BackendSigner.
+	BackendID string
+
+	// BackendKeyID is the backend-scoped identifier (the key's CN) used to
+	// resolve the crypto.Signer for a backend-backed key. Only meaningful
+	// when BackendID is non-empty.
+	BackendKeyID string
+}
+
+// IsBackendBacked reports whether the key's private half lives in an
+// external crypto backend (TPM2 / PKCS#11 / cloud KMS / remote xkms)
+// rather than in a sealed software PEM. Backend-backed keys carry no
+// Material and delegate signing to the backend.
+func (k *Key) IsBackendBacked() bool {
+	return k != nil && k.BackendID != ""
 }
 
 // ID returns the canonical storage identifier for this key, computed

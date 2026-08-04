@@ -24,6 +24,8 @@ package xkms
 import (
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
@@ -60,7 +62,7 @@ func newPKCS11KeyProvider(config map[string]interface{}) (types.KeyProvider, err
 		if p11Config.KeyStorage == nil {
 			fs, err := file.New(keyDir)
 			if err != nil {
-				return nil, fmt.Errorf("pkcs11: failed to create key storage at %s: %w", keyDir, err)
+				return nil, &errs.Wrapped{Msg: fmt.Sprintf("pkcs11: failed to create key storage at %s", keyDir), Err: err}
 			}
 			p11Config.KeyStorage = fs
 		}
@@ -68,7 +70,7 @@ func newPKCS11KeyProvider(config map[string]interface{}) (types.KeyProvider, err
 			certDir := keyDir + "/certs"
 			fs, err := file.New(certDir)
 			if err != nil {
-				return nil, fmt.Errorf("pkcs11: failed to create cert storage at %s: %w", certDir, err)
+				return nil, &errs.Wrapped{Msg: fmt.Sprintf("pkcs11: failed to create cert storage at %s", certDir), Err: err}
 			}
 			p11Config.CertStorage = fs
 		}

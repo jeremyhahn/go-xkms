@@ -58,6 +58,10 @@ export function ImportKey(arg1, arg2) {
   return window['go']['services']['KeyService']['ImportKey'](arg1, arg2);
 }
 
+export function KeyCountForBackend(arg1) {
+  return window['go']['services']['KeyService']['KeyCountForBackend'](arg1);
+}
+
 export function ListAllKeys(arg1) {
   return window['go']['services']['KeyService']['ListAllKeys'](arg1);
 }

@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-Common issues and solutions for go-trusted-ca deployments.
+Common issues and solutions for go-xkms deployments.
 
 ## Startup Problems
 
@@ -129,7 +129,7 @@ docker compose config --quiet
 
 ```bash
 # Verify image exists
-docker pull go-trusted-ca:latest
+docker pull go-xkms:latest
 
 # For private registry, login first
 docker login registry.example.com
@@ -602,7 +602,7 @@ If issues persist:
 2. Collect logs and metrics
 3. Check GitHub issues
 4. Open a new issue with:
-   - go-trusted-ca version
+   - go-xkms version
    - Deployment method (Docker/Docker Compose/Bare metal)
    - Configuration (sanitized)
    - Full error logs

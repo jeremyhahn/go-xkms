@@ -1,6 +1,6 @@
 # Admin API Reference
 
-Complete REST API reference for the go-trusted-ca Admin API. For the full OpenAPI specification, see [openapi.yaml](../api/openapi.yaml).
+Complete REST API reference for the go-xkms Admin API. For the full OpenAPI specification, see [openapi.yaml](../api/openapi.yaml).
 
 ## Overview
 

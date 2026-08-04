@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -56,11 +58,66 @@ type Config struct {
 	Trust *resolver.Config `yaml:"trust,omitempty"`
 }
 
-// BarrierConfig configures the barrier (seal/unseal) subsystem.
+// BarrierConfig configures the barrier (seal/unseal) subsystem. The barrier is
+// the go-qrdb node's own StorageBarrier: when Enabled, the node encrypts its
+// data-plane KV (encfs, AES-256-GCM) so every value at rest — including the
+// crypto backends' key stores — is encrypted, and it auto-unseals at boot per
+// the resolved Strategy + Passphrase. This is the same barrier go-quicbaas uses;
+// xkms provisions its own instance through this config (config/CLI/env), the
+// same shared mechanism every product in the stack drives through its own
+// front door.
 type BarrierConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	RootKeyPath     string   `yaml:"root_key_path"`
+	// Enabled turns the node barrier on. When false the node boots unsealed
+	// with a plaintext data plane (development/insecure — refused by
+	// ComplianceGaps unless --insecure).
+	Enabled bool `yaml:"enabled"`
+
+	// Strategy selects the seal strategy using the canonical stack vocabulary:
+	// none | passphrase | shamir | tpm2 | pkcs11 | awskms | gcpkms | azurekv |
+	// vault. Empty defaults to passphrase. Hardware/cloud strategies are
+	// resolved and injected as a SealingStrategy; passphrase/shamir/none map to
+	// the node's native SealConfig.Strategy.
+	Strategy string `yaml:"strategy,omitempty"`
+
+	// RootKeyPath is the barrier root-key location in the seal store.
+	RootKeyPath string `yaml:"root_key_path,omitempty"`
+
+	// Passphrase supplies the boot-time unseal secret for the passphrase
+	// strategy (and the auto-unseal fallback). Supports credential:// references
+	// and ${ENV} expansion, resolved at boot. Hardware strategies need no
+	// passphrase (PCR-policy / empty-creds auto-unseal). Prefer the
+	// XKMS_SEAL_PASSPHRASE env var or a credential:// reference over a literal.
+	Passphrase string `yaml:"passphrase,omitempty"`
+
+	// ShamirThreshold and ShamirTotal configure the Shamir M-of-N quorum for the
+	// shamir strategy. Shamir never auto-unseals (operator quorum required).
+	ShamirThreshold int `yaml:"shamir_threshold,omitempty"`
+	ShamirTotal     int `yaml:"shamir_total,omitempty"`
+
+	// PreferenceOrder retains the hardware-strategy ordering used when resolving
+	// which configured hardware backend seals the barrier. Optional.
 	PreferenceOrder []string `yaml:"preference_order,omitempty"`
+}
+
+// SealStrategy returns the configured strategy, defaulting to "passphrase" when
+// unset (matching the node's SealConfig default).
+func (b BarrierConfig) SealStrategy() string {
+	if b.Strategy == "" {
+		return "passphrase"
+	}
+	return b.Strategy
+}
+
+// IsHardwareSealStrategy reports whether the configured strategy is a
+// hardware/cloud strategy (resolved via a SealingStrategy) rather than one of
+// the node's native passphrase/shamir/none strategies.
+func (b BarrierConfig) IsHardwareSealStrategy() bool {
+	switch b.SealStrategy() {
+	case "tpm2", "pkcs11", "awskms", "gcpkms", "azurekv", "vault":
+		return true
+	default:
+		return false
+	}
 }
 
 // PINConfig configures the PIN management subsystem.
@@ -326,9 +383,18 @@ type ClusterConfig struct {
 	// meaningful only for multi-node clusters (more than one peer). The PEM
 	// material is operator-supplied and MUST NOT be the runtime xkms CA: the
 	// CA is hosted by the very node the Raft transport replicates, so binding
-	// Raft mTLS to it would be circular. When unset, Raft peers communicate
-	// without TLS (suitable only for a trusted private network).
+	// Raft mTLS to it would be circular. When RaftTLS is set it takes precedence
+	// over RaftEnrollment.
 	RaftTLS RaftTLSConfig `yaml:"raft_tls"`
+
+	// RaftEnrollment auto-provisions the inter-node Raft mTLS material when
+	// RaftTLS files are not supplied. A multi-node Raft transport always
+	// requires mTLS (it is mandatory in the transport layer), so without either
+	// RaftTLS or RaftEnrollment a multi-node node fails to start. Enrollment is
+	// delegated to go-qrdb's shared cluster-TLS toolkit (a dedicated self-signed
+	// cluster CA, distinct from the runtime xkms CA): the first node generates
+	// the CA and advertises it; joining nodes fetch it.
+	RaftEnrollment RaftEnrollmentConfig `yaml:"raft_enrollment"`
 }
 
 // RaftTLSConfig holds the operator-supplied PEM file paths for mutual TLS on
@@ -371,6 +437,169 @@ func (r RaftTLSConfig) IsComplete() bool {
 	return set == 0 || set == 3
 }
 
+// RaftEnrollmentConfig configures automatic provisioning of the inter-node Raft
+// mTLS material when RaftTLS files are not supplied. xkms delegates the
+// provisioning to go-qrdb's shared cluster-TLS enrollment: the first node
+// generates a dedicated self-signed cluster CA and advertises it over a Noise
+// NK channel; joining nodes fetch it and issue their own node leaf. All fields
+// are optional and default at boot.
+type RaftEnrollmentConfig struct {
+	// TrustDomain is the SPIFFE trust domain stamped into node certificates.
+	// Defaults to "xkms.cluster".
+	TrustDomain string `yaml:"trust_domain"`
+
+	// KeyBackend selects the xkms crypto backend that generates and holds this
+	// node's Raft TLS signing key. When set to a hardware backend ("tpm2" /
+	// "pkcs11"), the private key is generated inside and never leaves the
+	// device, and the Raft transport uses a signer-backed certificate (the node
+	// leaf is issued from the cluster CA for the hardware key's public part).
+	// When empty, the node key is a software key managed by the cluster-TLS
+	// toolkit (the default).
+	KeyBackend string `yaml:"key_backend"`
+
+	// AdvertiseNoisePort is the TCP port the first (bootstrapping) node serves
+	// the Noise NK bootstrap endpoint on for peer enrollment. Defaults to 63006.
+	AdvertiseNoisePort int `yaml:"advertise_noise_port"`
+
+	// Bootstrap configures how a JOINING node fetches the cluster CA bundle from
+	// an existing node. Leave empty on the first (bootstrapping) node, which
+	// generates the CA instead of fetching it.
+	Bootstrap RaftBootstrapConfig `yaml:"bootstrap"`
+
+	// ACME switches node-certificate issuance to TPM-attested ACME enroll-01:
+	// the TrustedCA is the cluster trust anchor, node certificates are
+	// TrustedCA-signed with a SPIFFE node SAN, and joining nodes prove their
+	// identity via TPM attestation instead of receiving a shared CA key.
+	ACME RaftACMEEnrollmentConfig `yaml:"acme"`
+
+	// ClusterCACN names the CA identity (a dedicated intermediate) that issues
+	// Raft transport certificates in ACME-attested mode. It must match a
+	// Subject.CommonName in the CA configuration. When empty the CA's issuing
+	// identity (SelectedCA) is used. Keeping transport issuance on a dedicated
+	// intermediate (root signs intermediates only) is the recommended
+	// FedRAMP/PCI posture.
+	ClusterCACN string `yaml:"cluster_ca_cn"`
+
+	// CAKeyProtection selects how the node-local cluster CA signing keystore
+	// is protected at rest, using the canonical seal vocabulary:
+	//   "" (auto) — TPM/HSM-sealed when available, else passphrase, else refuse
+	//   "tpm2" / "pkcs11" — random key sealed to the TPM/HSM (unattended)
+	//   "passphrase" — PBES2 with an operator passphrase
+	//   "none" — plaintext PKCS#8 (development/testing only; refused in secure mode)
+	// The cluster CA keys must exist before the replicated datastore, so they
+	// live node-local and cannot be protected by the barrier; this reuses the
+	// stack's standard seal strategies instead.
+	CAKeyProtection string `yaml:"ca_key_protection"`
+
+	// CAKeyPassphrase supplies the operator passphrase for the "passphrase"
+	// protection mode (and the passphrase fallback in auto mode). Supports
+	// credential:// references resolved at boot.
+	CAKeyPassphrase string `yaml:"ca_key_passphrase"`
+
+	// CAKeyStrategy selects how the cluster CA signing key is made available
+	// across the cluster so that (per the custody model) the appropriate node(s)
+	// can issue node certificates:
+	//   "" / "barrier" — key in the replicated barrier-encrypted datastore; any
+	//                    node loads it and can issue (the default, software HA).
+	//   "hsm"          — key kept inside a shared PKCS#11 HSM; never leaves it.
+	//   "tpm-kek"      — replicated key wrapped under a KEK derived from a cluster
+	//                    seed sealed to each node's local TPM.
+	CAKeyStrategy string `yaml:"ca_key_strategy"`
+}
+
+// RaftACMEEnrollmentConfig configures TPM-attested Raft node enrollment via
+// ACME enroll-01. In this mode the xkms TrustedCA signs every Raft node
+// certificate (it IS the cluster CA): the first node issues its own node
+// certificate in-process from the local TrustedCA and advertises the
+// TrustedCA trust anchor (certificates only, never a key) over the Noise NK
+// bootstrap channel; joining nodes fetch the anchor, then obtain their node
+// certificate through the ACME enroll-01 challenge (TCG-CSR-IDEVID +
+// TPM2_MakeCredential/ActivateCredential) against an existing node's ACME
+// server. Requires RaftEnrollment.KeyBackend "tpm2".
+type RaftACMEEnrollmentConfig struct {
+	// Enabled switches Raft node certificate provisioning to ACME-attested
+	// mode. Requires KeyBackend "tpm2" and, on nodes serving enrollment, an
+	// ACME server with the enroll-01 challenge enabled.
+	Enabled bool `yaml:"enabled"`
+
+	// DirectoryURL is the ACME directory endpoint of an existing cluster node
+	// (e.g. "https://node1:8443/api/v1/acme/directory"). Required on JOINING
+	// nodes; ignored on the first node, which issues in-process from the
+	// local TrustedCA.
+	DirectoryURL string `yaml:"directory_url"`
+
+	// ChallengePort is the local HTTP port this node serves the enroll-01
+	// credential-activation exchange on while enrolling; the ACME server
+	// dials back to it. Defaults to "8080", matching the server default.
+	ChallengePort string `yaml:"challenge_port"`
+}
+
+// Validate checks the attested-enrollment configuration against the rest of
+// the enrollment config. The key backend is accepted for context: ACME-
+// attested issuance works for any backend on the first node (in-process
+// issuance stamps a key-provenance OID), and a JOINING node's challenge is
+// selected by backend at runtime (tpm2 → enroll-01 TPM attestation; other
+// backends → CSR enrollment). A software-only cluster is therefore valid;
+// the runtime surfaces a precise error if a not-yet-implemented joiner path
+// is reached.
+func (a RaftACMEEnrollmentConfig) Validate(keyBackend string) error {
+	if !a.Enabled {
+		return nil
+	}
+	return nil
+}
+
+// RaftACMEConfigError is returned when the ACME-attested Raft enrollment
+// configuration is invalid.
+type RaftACMEConfigError struct {
+	// Field names the offending configuration field.
+	Field string
+	// Reason describes why the value is invalid.
+	Reason string
+}
+
+// Error returns the error message.
+func (e *RaftACMEConfigError) Error() string {
+	return "cluster: raft_enrollment.acme." + e.Field + ": " + e.Reason
+}
+
+// RaftBootstrapConfig holds the join-side bootstrap source a node uses to fetch
+// the cluster CA bundle from an existing cluster member. The methods mirror
+// go-qrdb's truststrap dispatch (Noise / SPKI-pinned HTTPS / DANE / Direct);
+// configure whichever the bootstrapping node advertises.
+type RaftBootstrapConfig struct {
+	// NoiseKey is the hex Curve25519 public key of an existing node's Noise NK
+	// bootstrap server (the first node logs it at startup).
+	NoiseKey string `yaml:"noise_key"`
+
+	// NoiseAddr is the host:port of that Noise NK bootstrap server.
+	NoiseAddr string `yaml:"noise_addr"`
+
+	// SPKIPin is a hex SHA-256 SPKI pin used to fetch the bundle over HTTPS.
+	SPKIPin string `yaml:"spki_pin"`
+
+	// ServerAddr is the host:port of the bootstrap HTTPS server (SPKI/DANE).
+	ServerAddr string `yaml:"server_addr"`
+
+	// DANEDNS is the DNS server used for DANE TLSA validation of the bootstrap
+	// server certificate.
+	DANEDNS string `yaml:"dane_dns"`
+
+	// DANEDoT enables DNS-over-TLS for the DANE lookup.
+	DANEDoT bool `yaml:"dane_dot"`
+
+	// DirectURL fetches the bundle over plain HTTPS using the system trust
+	// store. Last-resort fallback for trusted networks.
+	DirectURL string `yaml:"direct_url"`
+}
+
+// Configured reports whether any join-side bootstrap source is set, indicating
+// this node should fetch the cluster CA rather than generate it.
+func (b RaftBootstrapConfig) Configured() bool {
+	return b.NoiseKey != "" || b.NoiseAddr != "" || b.SPKIPin != "" ||
+		b.DANEDNS != "" || b.DirectURL != ""
+}
+
 // Members parses Peers into the replicaID→address map that go-qrdb's
 // NewClusteredNode expects. It returns a typed error for malformed entries.
 func (c ClusterConfig) Members() (map[uint64]string, error) {
@@ -382,15 +611,15 @@ func (c ClusterConfig) Members() (map[uint64]string, error) {
 		}
 		id, addr, ok := strings.Cut(entry, "=")
 		if !ok {
-			return nil, fmt.Errorf("cluster: peer %q is not in nodeID=address form", entry)
+			return nil, &errs.Message{Msg: fmt.Sprintf("cluster: peer %q is not in nodeID=address form", entry)}
 		}
 		replicaID, err := strconv.ParseUint(strings.TrimSpace(id), 10, 64)
 		if err != nil || replicaID == 0 {
-			return nil, fmt.Errorf("cluster: peer %q has an invalid node ID", entry)
+			return nil, &errs.Message{Msg: fmt.Sprintf("cluster: peer %q has an invalid node ID", entry)}
 		}
 		addr = strings.TrimSpace(addr)
 		if addr == "" {
-			return nil, fmt.Errorf("cluster: peer %q has an empty address", entry)
+			return nil, &errs.Message{Msg: fmt.Sprintf("cluster: peer %q has an empty address", entry)}
 		}
 		members[replicaID] = addr
 	}
@@ -479,6 +708,22 @@ type PKCS8Config struct {
 type TPM2Config struct {
 	Enabled    bool   `yaml:"enabled"`
 	DevicePath string `yaml:"device_path"`
+
+	// UseSimulator selects the in-process/TCP TPM simulator instead of a
+	// hardware device — for development and testing. SimulatorHost/Port target
+	// an external swtpm when set.
+	UseSimulator  bool   `yaml:"use_simulator,omitempty"`
+	SimulatorHost string `yaml:"simulator_host,omitempty"`
+	SimulatorPort int    `yaml:"simulator_port,omitempty"`
+
+	// SRKHandle is the persistent Storage Root Key handle (default 0x81000001).
+	SRKHandle uint32 `yaml:"srk_handle,omitempty"`
+
+	// PlatformPolicy binds sealed objects to a PCR policy; PlatformPCR /
+	// PlatformPCRBank select the PCR index and bank.
+	PlatformPolicy  bool   `yaml:"platform_policy,omitempty"`
+	PlatformPCR     uint   `yaml:"platform_pcr,omitempty"`
+	PlatformPCRBank string `yaml:"platform_pcr_bank,omitempty"`
 }
 
 // PKCS11Config contains PKCS#11 backend settings
@@ -613,13 +858,13 @@ func Load(path string) (*Config, error) {
 	// #nosec G304 - Config file path is provided by admin/user
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to read config file", Err: err}
 	}
 
 	// Parse YAML
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse config file", Err: err}
 	}
 
 	// Apply environment variable overrides
@@ -627,7 +872,7 @@ func Load(path string) (*Config, error) {
 
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid configuration", Err: err}
 	}
 
 	return &cfg, nil
@@ -944,30 +1189,107 @@ func applyEnvOverrides(cfg *Config) {
 	if strategy := os.Getenv("XKMS_CREDENTIALS_SEAL_STRATEGY"); strategy != "" {
 		cfg.Credentials.SealStrategy = strategy
 	}
+
+	// Barrier / seal overrides. XKMS_SEAL_PASSPHRASE is the primary unattended
+	// auto-unseal secret source; XKMS_SEAL_STRATEGY selects the strategy.
+	if strategy := os.Getenv("XKMS_SEAL_STRATEGY"); strategy != "" {
+		cfg.Barrier.Strategy = strategy
+	}
+	if pass := os.Getenv("XKMS_SEAL_PASSPHRASE"); pass != "" {
+		cfg.Barrier.Passphrase = pass
+	}
+}
+
+// ComplianceGaps reports security settings that fall short of the
+// secure-by-default posture required for FedRAMP (SC-8, SC-28, IA-2),
+// PCI-DSS v4 (3.5, 4.2, 8.x), and HIPAA (§164.312(a)(2)(iv), (e)(1))
+// deployments: encryption at rest (the barrier), TLS in transit, authenticated
+// access, and a CA for certificate provisioning / mTLS trust. An empty slice
+// means the configuration meets the baseline. The daemon uses this to refuse an
+// insecure start unless the operator explicitly opts into development mode.
+func (c *Config) ComplianceGaps() []string {
+	var gaps []string
+	if !c.Barrier.Enabled {
+		gaps = append(gaps, "encryption-at-rest disabled (barrier.enabled=false): data is stored in plaintext")
+	} else if strings.EqualFold(c.Storage.Backend, "qrdb") && c.barrierLeavesKeysPlaintext() {
+		// On an embedded qrdb node the barrier encrypts the data plane (and thus
+		// the crypto backends' key stores) only when it can auto-unseal at boot —
+		// a TPM/hardware strategy or a boot passphrase. A passphrase strategy with
+		// no boot secret cannot auto-unseal, so the node falls back to a plaintext
+		// data plane; the backend key stores would be written in the clear.
+		gaps = append(gaps, "barrier cannot auto-unseal (barrier.strategy=\""+c.Barrier.SealStrategy()+
+			"\" with no passphrase and no hardware backend): the embedded data plane — including backend key stores — "+
+			"would be stored in plaintext. Provide XKMS_SEAL_PASSPHRASE (or barrier.passphrase), or configure a TPM/HSM seal strategy")
+	}
+	if !c.TLS.Enabled {
+		gaps = append(gaps, "TLS disabled (tls.enabled=false): traffic is sent in cleartext")
+	}
+	if !c.Auth.Enabled {
+		gaps = append(gaps, "authentication disabled (auth.enabled=false): access is anonymous")
+	} else if t := strings.ToLower(strings.TrimSpace(c.Auth.Type)); t == "" || t == "noop" || t == "none" {
+		// auth.enabled=true but the type resolves to the no-op authenticator
+		// (see config/auth.go: "noop"/"none"/"" all map to NewNoOpAuthenticator),
+		// so every request is admitted without credentials — indistinguishable
+		// from disabled auth for FedRAMP IA-2 / PCI 8.x / HIPAA.
+		gaps = append(gaps, "authentication is no-op (auth.type=\""+c.Auth.Type+"\"): access is effectively anonymous")
+	}
+	if c.CA == nil {
+		gaps = append(gaps, "no CA configured (ca is unset): no certificate provisioning or mTLS trust anchor")
+	}
+	// The cluster ACME node-local CA signing keystore lives outside the barrier
+	// (it must exist before the replicated datastore) and is protected by the
+	// standard seal strategies instead. Plaintext ("none") protection writes the
+	// cluster CA private key to disk in the clear — refused unless the operator
+	// explicitly opts into development mode.
+	if c.Cluster.Enabled && c.Cluster.RaftEnrollment.ACME.Enabled &&
+		strings.EqualFold(strings.TrimSpace(c.Cluster.RaftEnrollment.CAKeyProtection), "none") {
+		gaps = append(gaps, "cluster CA key protection is plaintext (cluster.raft_enrollment.ca_key_protection=\"none\"): "+
+			"the node-local cluster CA signing key would be stored in the clear. Use \"tpm2\"/\"pkcs11\", \"passphrase\", or auto")
+	}
+	return gaps
+}
+
+// barrierLeavesKeysPlaintext reports whether the configured barrier would leave
+// the qrdb node's data plane unencrypted because it cannot auto-unseal at boot:
+// a passphrase/software/none strategy with no boot passphrase and no hardware
+// backend to seal against. A hardware strategy (tpm2/pkcs11/cloud) or a
+// configured passphrase can auto-unseal, so the data plane is encrypted.
+func (c *Config) barrierLeavesKeysPlaintext() bool {
+	if c.Barrier.IsHardwareSealStrategy() {
+		return false
+	}
+	switch c.Barrier.SealStrategy() {
+	case "passphrase":
+		return c.Barrier.Passphrase == ""
+	case "none":
+		return true
+	default: // shamir and anything else never auto-unseals at boot
+		return true
+	}
 }
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
 	// Validate server ports
 	if c.Protocols.REST && (c.Server.RESTPort < 1 || c.Server.RESTPort > 65535) {
-		return fmt.Errorf("invalid REST port: %d", c.Server.RESTPort)
+		return &errs.Message{Msg: fmt.Sprintf("invalid REST port: %d", c.Server.RESTPort)}
 	}
 	if c.Protocols.GRPC && (c.Server.GRPCPort < 1 || c.Server.GRPCPort > 65535) {
-		return fmt.Errorf("invalid gRPC port: %d", c.Server.GRPCPort)
+		return &errs.Message{Msg: fmt.Sprintf("invalid gRPC port: %d", c.Server.GRPCPort)}
 	}
 	if c.Protocols.QUIC && (c.Server.QUICPort < 1 || c.Server.QUICPort > 65535) {
-		return fmt.Errorf("invalid QUIC port: %d", c.Server.QUICPort)
+		return &errs.Message{Msg: fmt.Sprintf("invalid QUIC port: %d", c.Server.QUICPort)}
 	}
 	if c.Protocols.MCP && (c.Server.MCPPort < 1 || c.Server.MCPPort > 65535) {
-		return fmt.Errorf("invalid MCP port: %d", c.Server.MCPPort)
+		return &errs.Message{Msg: fmt.Sprintf("invalid MCP port: %d", c.Server.MCPPort)}
 	}
 	if c.Protocols.Noise && (c.Server.NoisePort < 1 || c.Server.NoisePort > 65535) {
-		return fmt.Errorf("invalid Noise port: %d", c.Server.NoisePort)
+		return &errs.Message{Msg: fmt.Sprintf("invalid Noise port: %d", c.Server.NoisePort)}
 	}
 
 	// Validate at least one protocol is enabled (Unix socket counts as a protocol)
 	if !c.Protocols.Unix && !c.Protocols.REST && !c.Protocols.GRPC && !c.Protocols.QUIC && !c.Protocols.MCP && !c.Protocols.Noise {
-		return fmt.Errorf("at least one protocol must be enabled")
+		return &errs.Message{Msg: "at least one protocol must be enabled"}
 	}
 
 	// Validate Unix socket protocol
@@ -977,7 +1299,7 @@ func (c *Config) Validate() error {
 			"http": true,
 		}
 		if !validProtocols[strings.ToLower(c.Unix.Protocol)] {
-			return fmt.Errorf("invalid Unix socket protocol: %s (must be grpc or http)", c.Unix.Protocol)
+			return &errs.Message{Msg: fmt.Sprintf("invalid Unix socket protocol: %s (must be grpc or http)", c.Unix.Protocol)}
 		}
 	}
 
@@ -986,7 +1308,7 @@ func (c *Config) Validate() error {
 		"debug": true, "info": true, "warn": true, "error": true, "fatal": true,
 	}
 	if !validLevels[strings.ToLower(c.Logging.Level)] {
-		return fmt.Errorf("invalid log level: %s (must be debug, info, warn, error, or fatal)", c.Logging.Level)
+		return &errs.Message{Msg: fmt.Sprintf("invalid log level: %s (must be debug, info, warn, error, or fatal)", c.Logging.Level)}
 	}
 
 	// Validate logging format
@@ -994,7 +1316,7 @@ func (c *Config) Validate() error {
 		"json": true, "text": true, "console": true,
 	}
 	if !validFormats[strings.ToLower(c.Logging.Format)] {
-		return fmt.Errorf("invalid log format: %s (must be json, text, or console)", c.Logging.Format)
+		return &errs.Message{Msg: fmt.Sprintf("invalid log format: %s (must be json, text, or console)", c.Logging.Format)}
 	}
 
 	// Validate TLS settings.
@@ -1002,10 +1324,10 @@ func (c *Config) Validate() error {
 	// (hardware-backed crypto.Signer), so cert_file/key_file are not required.
 	if c.TLS.Enabled && c.CA == nil {
 		if c.TLS.CertFile == "" {
-			return fmt.Errorf("TLS cert_file is required when TLS is enabled without CA")
+			return &errs.Message{Msg: "TLS cert_file is required when TLS is enabled without CA"}
 		}
 		if c.TLS.KeyFile == "" {
-			return fmt.Errorf("TLS key_file is required when TLS is enabled without CA")
+			return &errs.Message{Msg: "TLS key_file is required when TLS is enabled without CA"}
 		}
 	}
 
@@ -1028,19 +1350,19 @@ func (c *Config) Validate() error {
 			// Embedded qrdb persists data under the storage path, so a path
 			// is required but a cluster address is not.
 			if c.Storage.Path == "" {
-				return fmt.Errorf("storage path must be specified for embedded qrdb")
+				return &errs.Message{Msg: "storage path must be specified for embedded qrdb"}
 			}
 		case "rest", "grpc":
 			// Remote qrdb dials a cluster endpoint, so an address is required.
 			if c.Storage.QRDB.Address == "" {
-				return fmt.Errorf("qrdb storage address is required for remote qrdb transport")
+				return &errs.Message{Msg: "qrdb storage address is required for remote qrdb transport"}
 			}
 		default:
-			return fmt.Errorf("invalid qrdb transport: %s (must be embedded, rest, or grpc)", c.Storage.QRDB.Transport)
+			return &errs.Message{Msg: fmt.Sprintf("invalid qrdb transport: %s (must be embedded, rest, or grpc)", c.Storage.QRDB.Transport)}
 		}
 	default:
 		if c.Storage.Path == "" {
-			return fmt.Errorf("storage path must be specified")
+			return &errs.Message{Msg: "storage path must be specified"}
 		}
 	}
 
@@ -1050,7 +1372,7 @@ func (c *Config) Validate() error {
 			"auto": true, "software": true, "tpm2": true, "pkcs11": true,
 		}
 		if !validModes[strings.ToLower(c.RNG.Mode)] {
-			return fmt.Errorf("invalid RNG mode: %s (must be auto, software, tpm2, or pkcs11)", c.RNG.Mode)
+			return &errs.Message{Msg: fmt.Sprintf("invalid RNG mode: %s (must be auto, software, tpm2, or pkcs11)", c.RNG.Mode)}
 		}
 	}
 	if c.RNG.FallbackMode != "" {
@@ -1058,13 +1380,13 @@ func (c *Config) Validate() error {
 			"software": true, "tpm2": true, "pkcs11": true,
 		}
 		if !validModes[strings.ToLower(c.RNG.FallbackMode)] {
-			return fmt.Errorf("invalid RNG fallback mode: %s (must be software, tpm2, or pkcs11)", c.RNG.FallbackMode)
+			return &errs.Message{Msg: fmt.Sprintf("invalid RNG fallback mode: %s (must be software, tpm2, or pkcs11)", c.RNG.FallbackMode)}
 		}
 	}
 
 	// Validate default backend
 	if string(c.Default) == "" {
-		return fmt.Errorf("default_backend must be specified")
+		return &errs.Message{Msg: "default_backend must be specified"}
 	}
 
 	// Validate at least one backend is enabled
@@ -1072,25 +1394,25 @@ func (c *Config) Validate() error {
 	if c.Backends.Software != nil && c.Backends.Software.Enabled {
 		hasEnabledBackend = true
 		if c.Backends.Software.Path == "" {
-			return fmt.Errorf("software backend path is required when enabled")
+			return &errs.Message{Msg: "software backend path is required when enabled"}
 		}
 	}
 	if c.Backends.PKCS8 != nil && c.Backends.PKCS8.Enabled {
 		hasEnabledBackend = true
 		if c.Backends.PKCS8.Path == "" {
-			return fmt.Errorf("PKCS8 backend path is required when enabled")
+			return &errs.Message{Msg: "PKCS8 backend path is required when enabled"}
 		}
 	}
 	if c.Backends.TPM2 != nil && c.Backends.TPM2.Enabled {
 		hasEnabledBackend = true
 		if c.Backends.TPM2.DevicePath == "" {
-			return fmt.Errorf("TPM2 device_path is required when enabled")
+			return &errs.Message{Msg: "TPM2 device_path is required when enabled"}
 		}
 	}
 	if c.Backends.PKCS11 != nil && c.Backends.PKCS11.Enabled {
 		hasEnabledBackend = true
 		if c.Backends.PKCS11.Library == "" {
-			return fmt.Errorf("PKCS11 library is required when enabled")
+			return &errs.Message{Msg: "PKCS11 library is required when enabled"}
 		}
 	}
 	if c.Backends.AWSKMS != nil && c.Backends.AWSKMS.Enabled {
@@ -1108,18 +1430,18 @@ func (c *Config) Validate() error {
 	if c.Backends.Phone != nil && c.Backends.Phone.Enabled {
 		hasEnabledBackend = true
 		if c.Backends.Phone.Transport == "" {
-			return fmt.Errorf("phone backend transport is required when enabled (ble or tcp)")
+			return &errs.Message{Msg: "phone backend transport is required when enabled (ble or tcp)"}
 		}
 		validTransports := map[string]bool{
 			"ble": true, "tcp": true,
 		}
 		if !validTransports[strings.ToLower(c.Backends.Phone.Transport)] {
-			return fmt.Errorf("invalid phone backend transport: %s (must be ble or tcp)", c.Backends.Phone.Transport)
+			return &errs.Message{Msg: fmt.Sprintf("invalid phone backend transport: %s (must be ble or tcp)", c.Backends.Phone.Transport)}
 		}
 	}
 
 	if !hasEnabledBackend {
-		return fmt.Errorf("at least one backend must be enabled")
+		return &errs.Message{Msg: "at least one backend must be enabled"}
 	}
 
 	// Validate ACME configuration (no-op unless acme.enabled is true).
@@ -1134,24 +1456,24 @@ func (c *Config) Validate() error {
 			c.Cluster.ShardID = 1
 		}
 		if strings.ToLower(c.Storage.Backend) != "qrdb" {
-			return fmt.Errorf("cluster.enabled requires storage.backend \"qrdb\" (got %q)", c.Storage.Backend)
+			return &errs.Message{Msg: fmt.Sprintf("cluster.enabled requires storage.backend \"qrdb\" (got %q)", c.Storage.Backend)}
 		}
 		if c.Cluster.NodeID == 0 {
-			return fmt.Errorf("cluster.node_id is required and must be non-zero")
+			return &errs.Message{Msg: "cluster.node_id is required and must be non-zero"}
 		}
 		if c.Cluster.RaftAddress == "" {
-			return fmt.Errorf("cluster.raft_address is required")
+			return &errs.Message{Msg: "cluster.raft_address is required"}
 		}
 		members, err := c.Cluster.Members()
 		if err != nil {
 			return err
 		}
 		if len(members) == 0 {
-			return fmt.Errorf("cluster.peers must list at least this node (nodeID=address)")
+			return &errs.Message{Msg: "cluster.peers must list at least this node (nodeID=address)"}
 		}
 		if !c.Cluster.Join {
 			if _, ok := members[c.Cluster.NodeID]; !ok {
-				return fmt.Errorf("cluster.peers must include this node's own node_id (%d) when bootstrapping", c.Cluster.NodeID)
+				return &errs.Message{Msg: fmt.Sprintf("cluster.peers must include this node's own node_id (%d) when bootstrapping", c.Cluster.NodeID)}
 			}
 		}
 		// Raft mTLS is all-or-nothing: a partial configuration (some but not

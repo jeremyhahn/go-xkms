@@ -670,6 +670,39 @@ func TestBackend_ListKeys_WithFiles(t *testing.T) {
 	}
 }
 
+// TestBackend_ListKeys_ExternalTPM_NilConfig is the regression test for a crash
+// where a backend created via NewBackendWithTPM (config == nil, external TPM)
+// panicked in ListKeys on b.config.KeyDir. ListKeys must use the keyDir field
+// and degrade gracefully when it is unset, never dereferencing a nil config.
+func TestBackend_ListKeys_ExternalTPM_NilConfig(t *testing.T) {
+	// External-TPM backend with no key directory: must return empty, not panic.
+	b := &Backend{closed: false, externalTPM: true, config: nil, keyDir: ""}
+	keys, err := b.ListKeys(context.Background())
+	if err != nil {
+		t.Fatalf("ListKeys() error = %v", err)
+	}
+	if len(keys) != 0 {
+		t.Errorf("expected 0 keys when no keyDir is configured, got %d", len(keys))
+	}
+
+	// External-TPM backend WITH a key directory: must enumerate blobs.
+	tmpDir := t.TempDir()
+	for _, name := range []string{"alpha", "beta"} {
+		path := filepath.Join(tmpDir, name+store.FSEXT_PRIVATE_BLOB)
+		if err := os.WriteFile(path, []byte("blob"), 0600); err != nil {
+			t.Fatalf("failed to create test blob: %v", err)
+		}
+	}
+	b2 := &Backend{closed: false, externalTPM: true, config: nil, keyDir: tmpDir}
+	keys2, err := b2.ListKeys(context.Background())
+	if err != nil {
+		t.Fatalf("ListKeys() error = %v", err)
+	}
+	if len(keys2) != 2 {
+		t.Errorf("expected 2 keys from external-TPM keyDir, got %d", len(keys2))
+	}
+}
+
 func TestBackend_Accessors(t *testing.T) {
 	mockBackend := &mockKeyBackend{}
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}

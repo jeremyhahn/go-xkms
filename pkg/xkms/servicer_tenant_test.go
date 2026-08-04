@@ -52,7 +52,7 @@ func setupServiceWithRegistry(t *testing.T) *XKMSService {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	creds := seal.Credentials{Secret: "test-password"}
+	creds := seal.Credentials{Secret: []byte("test-password")}
 	err = barrier.Initialize(ctx, creds)
 	require.NoError(t, err)
 

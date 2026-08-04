@@ -403,7 +403,7 @@ func runFIDO2ProfileSet(cmd *cobra.Command, args []string) error {
 				continue
 			}
 			if !fido2ValidTransports[t] {
-				return fmt.Errorf("%w: %q", ErrFIDO2ProfileInvalidTransport, t)
+				return &DetailError{Err: ErrFIDO2ProfileInvalidTransport, Detail: fmt.Sprintf(": %q", t)}
 			}
 			transports = append(transports, t)
 		}

@@ -30,6 +30,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -581,14 +583,14 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 		go func(id int) {
 			signer, err := b.Signer(context.Background(), attrs)
 			if err != nil {
-				done <- fmt.Errorf("goroutine %d: Signer() failed: %w", id, err)
+				done <- &errs.Wrapped{Msg: fmt.Sprintf("goroutine %d: Signer() failed", id), Err: err}
 				return
 			}
 
 			digest := sha256.Sum256([]byte(fmt.Sprintf("message-%d", id)))
 			_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
 			if err != nil {
-				done <- fmt.Errorf("goroutine %d: Sign() failed: %w", id, err)
+				done <- &errs.Wrapped{Msg: fmt.Sprintf("goroutine %d: Sign() failed", id), Err: err}
 				return
 			}
 

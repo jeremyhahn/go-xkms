@@ -30,6 +30,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"golang.org/x/crypto/ocsp"
 )
 
@@ -141,13 +143,13 @@ func (o *OCSPResponder) parseRequest(requestBytes []byte) (*ocsp.Request, error)
 	}
 	req, err := ocsp.ParseRequest(requestBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOCSPRequestParseFailed, err)
+		return nil, &errs.Detail{Err: ErrOCSPRequestParseFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	if req.HashAlgorithm == 0 {
-		return nil, fmt.Errorf("%w: missing hash algorithm", ErrOCSPInvalidRequest)
+		return nil, &errs.Detail{Err: ErrOCSPInvalidRequest, Detail: "missing hash algorithm"}
 	}
 	if req.SerialNumber == nil {
-		return nil, fmt.Errorf("%w: missing serial number", ErrOCSPInvalidRequest)
+		return nil, &errs.Detail{Err: ErrOCSPInvalidRequest, Detail: "missing serial number"}
 	}
 	return req, nil
 }
@@ -172,12 +174,12 @@ func (o *OCSPResponder) createResponse(ctx context.Context, req *ocsp.Request) (
 	}
 	o.ca.mu.RUnlock()
 	if issuerCert == nil {
-		return nil, fmt.Errorf("%w: no issuing certificate", ErrOCSPResponseFailed)
+		return nil, &errs.Detail{Err: ErrOCSPResponseFailed, Detail: "no issuing certificate"}
 	}
 
 	signer, err := o.ca.Signer(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOCSPSigningFailed, err)
+		return nil, &errs.Detail{Err: ErrOCSPSigningFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	status, revocationTime, revocationReason, err := o.checkCertificateStatus(req.SerialNumber)
@@ -200,7 +202,7 @@ func (o *OCSPResponder) createResponse(ctx context.Context, req *ocsp.Request) (
 
 	responseBytes, err := ocsp.CreateResponse(issuerCert, issuerCert, template, signer)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOCSPResponseFailed, err)
+		return nil, &errs.Detail{Err: ErrOCSPResponseFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	o.cacheResponse(cacheKey, responseBytes)
@@ -232,7 +234,7 @@ func (o *OCSPResponder) checkCertificateStatus(serial *big.Int) (int, time.Time,
 		if errors.Is(err, ErrCRLNotFound) {
 			return ocsp.Good, time.Time{}, 0, nil
 		}
-		return ocsp.Unknown, time.Time{}, 0, fmt.Errorf("%w: %v", ErrOCSPStorageError, err)
+		return ocsp.Unknown, time.Time{}, 0, &errs.Detail{Err: ErrOCSPStorageError, Detail: fmt.Sprintf("%v", err)}
 	}
 	return ocsp.Revoked, rec.RevokedAt, rec.Reason, nil
 }
@@ -248,13 +250,13 @@ func (o *OCSPResponder) loadRevocationFromStore(serial *big.Int) (*persistedRevo
 		// store implementations.
 		keys, listErr := o.ca.objectStore.List(revocationKeyPrefix)
 		if listErr != nil {
-			return nil, fmt.Errorf("%w: %v", ErrOCSPStorageError, listErr)
+			return nil, &errs.Detail{Err: ErrOCSPStorageError, Detail: fmt.Sprintf("%v", listErr)}
 		}
 		for _, k := range keys {
 			if k == key {
 				// Key exists in listing but Get failed — surface the
 				// original Get error rather than pretending it's absent.
-				return nil, fmt.Errorf("%w: %v", ErrOCSPStorageError, err)
+				return nil, &errs.Detail{Err: ErrOCSPStorageError, Detail: fmt.Sprintf("%v", err)}
 			}
 		}
 		return nil, ErrCRLNotFound
@@ -263,11 +265,11 @@ func (o *OCSPResponder) loadRevocationFromStore(serial *big.Int) (*persistedRevo
 
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOCSPStorageError, err)
+		return nil, &errs.Detail{Err: ErrOCSPStorageError, Detail: fmt.Sprintf("%v", err)}
 	}
 	var rec persistedRevocation
 	if err := json.Unmarshal(data, &rec); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOCSPStorageError, err)
+		return nil, &errs.Detail{Err: ErrOCSPStorageError, Detail: fmt.Sprintf("%v", err)}
 	}
 	return &rec, nil
 }
@@ -326,7 +328,7 @@ func (o *OCSPResponder) VerifyOCSPResponse(responseBytes []byte) (*ocsp.Response
 	}
 	resp, err := ocsp.ParseResponse(responseBytes, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOCSPResponseFailed, err)
+		return nil, &errs.Detail{Err: ErrOCSPResponseFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	return resp, nil
 }
@@ -342,7 +344,7 @@ func CreateOCSPRequest(cert *x509.Certificate, issuer *x509.Certificate, opts *o
 	}
 	data, err := ocsp.CreateRequest(cert, issuer, opts)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOCSPRequestParseFailed, err)
+		return nil, &errs.Detail{Err: ErrOCSPRequestParseFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	return data, nil
 }

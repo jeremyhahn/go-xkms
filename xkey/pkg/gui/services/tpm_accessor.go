@@ -15,9 +15,10 @@ package services
 
 import (
 	"errors"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"sync"
 	"sync/atomic"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // ErrTPMShuttingDown indicates the TPM accessor has been shut down and is

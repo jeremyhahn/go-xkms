@@ -197,7 +197,7 @@ func runIDevIDShow(cmd *cobra.Command, args []string) error {
 	// Get IDevID attributes
 	idevidAttrs, err := tpm.IDevIDAttributes()
 	if err != nil {
-		return fmt.Errorf("%w: IDevID not found - create with 'tpm idevid create'", ErrKeyNotFound)
+		return &DetailError{Err: ErrKeyNotFound, Detail: ": IDevID not found - create with 'tpm idevid create'"}
 	}
 
 	info := &IDevIDInfo{
@@ -276,7 +276,7 @@ func runIDevIDCreate(cmd *cobra.Command, args []string) error {
 	case "rsa2048", "rsa-pss", "ecc256":
 		// Valid
 	default:
-		return fmt.Errorf("%w: %s", ErrInvalidIDevIDTemplate, idevidCreateTemplate)
+		return &DetailError{Err: ErrInvalidIDevIDTemplate, Detail: fmt.Sprintf(": %s", idevidCreateTemplate)}
 	}
 
 	tpm, err := openTPM()
@@ -288,7 +288,7 @@ func runIDevIDCreate(cmd *cobra.Command, args []string) error {
 	// Check if IDevID already exists
 	if !idevidCreateForce {
 		if _, err := tpm.IDevIDAttributes(); err == nil {
-			return fmt.Errorf("IDevID already exists - use --force to recreate")
+			return &MessageError{Msg: "IDevID already exists - use --force to recreate"}
 		}
 	}
 
@@ -301,14 +301,14 @@ func runIDevIDCreate(cmd *cobra.Command, args []string) error {
 	// Get IAK attributes for signing IDevID
 	iakAttrs, err := tpm.IAKAttributes()
 	if err != nil {
-		return fmt.Errorf("IAK not found - run 'tpm provision' first: %w", err)
+		return &WrappedError{Msg: "IAK not found - run 'tpm provision' first", Err: err}
 	}
 
 	// Create IDevID
 	fmt.Printf("Creating IDevID for %s (serial: %s)...\n", idevidModel, idevidSerial)
 	_, _, err = tpm.CreateIDevID(iakAttrs, ekCert, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create IDevID: %w", err)
+		return &WrappedError{Msg: "failed to create IDevID", Err: err}
 	}
 
 	fmt.Println("IDevID created successfully")
@@ -325,7 +325,7 @@ func runIDevIDExport(cmd *cobra.Command, args []string) error {
 	// Get IDevID certificate
 	idevidCert, err := tpm.IDevIDCertificate()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCertificateNotFound, err)
+		return &SentinelCauseError{Sentinel: ErrCertificateNotFound, Cause: err}
 	}
 
 	// Encode as PEM
@@ -342,7 +342,7 @@ func runIDevIDExport(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := os.WriteFile(idevidExportOutput, pemData, 0600); err != nil {
-		return fmt.Errorf("%w: %v", ErrExportFailed, err)
+		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
 	fmt.Printf("IDevID certificate exported to: %s\n", idevidExportOutput)
@@ -365,31 +365,31 @@ func runIDevIDCSR(cmd *cobra.Command, args []string) error {
 	// Get IAK attributes for signing
 	iakAttrs, err := tpm.IAKAttributes()
 	if err != nil {
-		return fmt.Errorf("IAK not found - run 'tpm provision' first: %w", err)
+		return &WrappedError{Msg: "IAK not found - run 'tpm provision' first", Err: err}
 	}
 
 	// Get IDevID attributes
 	idevidAttrs, err := tpm.IDevIDAttributes()
 	if err != nil {
-		return fmt.Errorf("IDevID not found - create with 'tpm idevid create' first: %w", err)
+		return &WrappedError{Msg: "IDevID not found - create with 'tpm idevid create' first", Err: err}
 	}
 
 	// Create TCG-CSR-IDEVID for IDevID
 	fmt.Println("Generating IDevID CSR...")
 	csr, err := tpm.CreateTCG_CSR_IDEVID(ekCert, iakAttrs, idevidAttrs)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCSRGenerationFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCSRGenerationFailed, Cause: err}
 	}
 
 	// Marshal CSR
 	csrBytes, err := csr.Marshal()
 	if err != nil {
-		return fmt.Errorf("failed to marshal CSR: %w", err)
+		return &WrappedError{Msg: "failed to marshal CSR", Err: err}
 	}
 
 	// Write CSR to file
 	if err := os.WriteFile(idevidCSROutput, csrBytes, 0600); err != nil {
-		return fmt.Errorf("%w: %v", ErrExportFailed, err)
+		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
 	fmt.Printf("IDevID CSR written to: %s\n", idevidCSROutput)

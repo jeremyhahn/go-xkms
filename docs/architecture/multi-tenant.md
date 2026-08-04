@@ -1,6 +1,8 @@
 # Multi-Tenant Architecture
 
-Go-xkms supports isolated, multi-tenant deployments where each tenant has independent data encryption, storage partitioning, and barrier management. This document covers the TenantDAOFactory pattern, barrier routing, and context propagation.
+Go-xkms supports isolated, multi-tenant deployments where each tenant has independent data encryption, storage partitioning, and barrier management. This document covers the TenantDAOFactory pattern, barrier routing, and context propagation. The daemon and embedded SDK node both use the shared `pkg/server.BuildTenantInfra` composer to wire per-tenant infrastructure.
+
+> For the per-tenant **isolation modes** (prefix / barrier / volume / raft), **entitlements**, **system-managed auto-unseal**, and **hardware-backed** per-tenant sealing (TPM 2.0 / PKCS#11 / cloud KMS), see [Per-Tenant Barrier Isolation → Isolation modes & hardware-backed composition](../seal/tenant-barriers.md#isolation-modes--hardware-backed-composition). That lifecycle is delegated to go-qrdb's `TenantService`; go-xkms contributes the hardware seal strategies and composes them via `sdk/go` (`NewHardwareStrategyRegistry` / `NewHardwareTenantService`).
 
 ## Tenant Isolation Model
 

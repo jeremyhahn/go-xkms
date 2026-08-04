@@ -130,6 +130,8 @@ package rand
 import (
 	"crypto/rand"
 	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // Mode specifies which RNG source to use.
@@ -308,7 +310,7 @@ func newResolver(cfg *Config) (Resolver, error) {
 	case ModePKCS11:
 		return newPKCS11Resolver(cfg.PKCS11Config)
 	default:
-		return nil, fmt.Errorf("unknown RNG mode: %s", mode)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unknown RNG mode: %s", mode)}
 	}
 }
 

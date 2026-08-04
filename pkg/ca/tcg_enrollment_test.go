@@ -28,6 +28,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	xkmstpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
@@ -509,10 +511,10 @@ func TestEnrollmentErrorWrapping(t *testing.T) {
 		t.Fatal("errors.Is should find ErrTCGCSRUnmarshalFailed in wrapped error")
 	}
 
-	// fmt.Errorf with %w wrapping (matches the pattern used in EnrollDevice)
-	fmtWrapped := fmt.Errorf("%w: %v", ErrTCGInvalidEKCert, errors.New("parse failed"))
+	// errs.Detail wrapping (matches the pattern used in EnrollDevice)
+	fmtWrapped := &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("%v", errors.New("parse failed"))}
 	if !errors.Is(fmtWrapped, ErrTCGInvalidEKCert) {
-		t.Fatal("errors.Is should find ErrTCGInvalidEKCert in fmt.Errorf wrapped error")
+		t.Fatal("errors.Is should find ErrTCGInvalidEKCert in errs.Detail wrapped error")
 	}
 }
 

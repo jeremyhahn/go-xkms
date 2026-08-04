@@ -17,6 +17,8 @@ export function IsPINSet():Promise<boolean>;
 
 export function ResetLockout(arg1:string):Promise<void>;
 
+export function SOPINSupported():Promise<boolean>;
+
 export function SetAuditLogger(arg1:audit.Logger):Promise<void>;
 
 export function SetBarrierService(arg1:services.BarrierService):Promise<void>;
@@ -28,6 +30,8 @@ export function SetPINService(arg1:pin.Service):Promise<void>;
 export function SetSOPIN(arg1:string,arg2:string):Promise<void>;
 
 export function SetUserPIN(arg1:string,arg2:string):Promise<void>;
+
+export function Strategy():Promise<string>;
 
 export function VerifyFIDO2Hash(arg1:Array<number>):Promise<boolean>;
 

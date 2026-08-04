@@ -114,8 +114,8 @@ func TestCaConfigFromIdentity_WithDefaultValidity_B11(t *testing.T) {
 	id := Identity{
 		Subject: Subject{CommonName: "cfg-from-id-b11", Organization: "Test"},
 		Valid:   10,
-		Keys:   DefaultKeyConfig(),
-		IsRoot: true,
+		Keys:    DefaultKeyConfig(),
+		IsRoot:  true,
 	}
 	cfg := caConfigFromIdentity(id, 730)
 	assert.Equal(t, 730, cfg.DefaultCertValidityDays)
@@ -128,8 +128,8 @@ func TestCaConfigFromIdentity_ZeroDefaultValidity_B11(t *testing.T) {
 	id := Identity{
 		Subject: Subject{CommonName: "cfg-from-id-zero-b11", Organization: "Test"},
 		Valid:   10,
-		Keys:   DefaultKeyConfig(),
-		IsRoot: true,
+		Keys:    DefaultKeyConfig(),
+		IsRoot:  true,
 	}
 	cfg := caConfigFromIdentity(id, 0)
 	assert.Equal(t, DefaultCertValidityDays, cfg.DefaultCertValidityDays)

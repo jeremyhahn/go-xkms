@@ -23,13 +23,14 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/stretchr/testify/assert"
@@ -228,7 +229,9 @@ func TestP5A_PINService_VerifySOPIN_FailurePath(t *testing.T) {
 }
 
 // TestP5A_PINService_GetLockoutStatus_NilStatus tests GetLockoutStatus when
-// the PINManager returns a nil LockoutStatus.
+// the PINManager returns a nil LockoutStatus. The service must translate the
+// backend's nil (software backend has no lockout) into a zero-value status so
+// the Wails binding never serializes JSON null to the frontend.
 func TestP5A_PINService_GetLockoutStatus_NilStatus(t *testing.T) {
 	mgr := &p5aMockPINBackend{
 		strategy:      qrdbsdk.PINStrategySoftware,
@@ -238,7 +241,9 @@ func TestP5A_PINService_GetLockoutStatus_NilStatus(t *testing.T) {
 
 	status, err := svc.GetLockoutStatus()
 	require.NoError(t, err)
-	assert.Nil(t, status)
+	require.NotNil(t, status)
+	assert.Zero(t, status.FailedAttempts)
+	assert.False(t, status.IsLocked)
 }
 
 // TestP5A_PINService_ResetLockout_SuccessWithMgr tests ResetLockout through the

@@ -51,7 +51,7 @@ func webAuthnRegistration(
 		DisplayName: displayName,
 		Role:        role,
 	}); err != nil {
-		return nil, fmt.Errorf("failed to create user: %w", err)
+		return nil, &WrappedError{Sentinel: ErrCreateUserFailed, Err: err}
 	}
 
 	// Begin the server-side registration ceremony.
@@ -60,13 +60,13 @@ func webAuthnRegistration(
 		DisplayName: displayName,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin registration: %w", err)
+		return nil, &WrappedError{Sentinel: ErrBeginRegistrationFailed, Err: err}
 	}
 
 	// Parse the server's PublicKeyCredentialCreationOptions.
 	var creation protocol.CredentialCreation
 	if err := json.Unmarshal([]byte(beginResp.OptionsJSON), &creation); err != nil {
-		return nil, fmt.Errorf("failed to parse registration options: %w", err)
+		return nil, &WrappedError{Sentinel: ErrParseRegistrationOptionsFailed, Err: err}
 	}
 
 	rpID := creation.Response.RelyingParty.ID
@@ -75,7 +75,7 @@ func webAuthnRegistration(
 
 	userID, err := decodeWebAuthnUserID(creation.Response.User.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode user handle: %w", err)
+		return nil, &WrappedError{Sentinel: ErrDecodeUserHandleFailed, Err: err}
 	}
 
 	if origin == "" {
@@ -99,7 +99,7 @@ func webAuthnRegistration(
 		Timeout:                 timeout,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to register credential: %w", err)
+		return nil, &WrappedError{Sentinel: ErrRegisterCredentialFailed, Err: err}
 	}
 
 	// Finish the server-side ceremony with the authenticator's attestation.
@@ -107,7 +107,7 @@ func webAuthnRegistration(
 		SessionID:       beginResp.SessionID,
 		AttestationJSON: string(att.PublicKeyCredentialJSON),
 	}); err != nil {
-		return nil, fmt.Errorf("failed to finish registration: %w", err)
+		return nil, &WrappedError{Sentinel: ErrFinishRegistrationFailed, Err: err}
 	}
 
 	return att, nil
@@ -125,7 +125,7 @@ func decodeWebAuthnUserID(id any) ([]byte, error) {
 	case nil:
 		return nil, nil
 	default:
-		return nil, fmt.Errorf("unexpected user handle type %T", id)
+		return nil, &UserHandleTypeError{Handle: id}
 	}
 }
 
@@ -173,14 +173,14 @@ Example:
 		// Connect to the xkms service.
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
@@ -191,7 +191,7 @@ Example:
 		if roleStr != "" {
 			r := Role(roleStr)
 			if !IsValidRole(r) {
-				handleError(fmt.Errorf("invalid role: %s", roleStr))
+				handleError(&WrappedDetailError{Sentinel: ErrInvalidRole, Detail: roleStr})
 				return
 			}
 			role = roleStr
@@ -199,7 +199,7 @@ Example:
 
 		listResp, err := cl.ListUsers(ctx)
 		if err != nil {
-			handleError(fmt.Errorf("failed to check user status: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCheckUserStatusFailed, Err: err})
 			return
 		}
 		firstUser := len(listResp.Users) == 0
@@ -219,7 +219,7 @@ Example:
 
 		handler, err := fido2.NewHandler(&fidoConfig, enumerator)
 		if err != nil {
-			handleError(fmt.Errorf("failed to create FIDO2 handler: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 			return
 		}
 		defer func() { _ = handler.Close() }()
@@ -309,14 +309,14 @@ Example:
 		// Connect to the xkms service.
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
@@ -327,7 +327,7 @@ Example:
 			Username: username,
 		})
 		if err != nil {
-			handleError(fmt.Errorf("failed to begin authentication: %w", err))
+			handleError(&WrappedError{Sentinel: ErrBeginAuthenticationFailed, Err: err})
 			return
 		}
 
@@ -335,7 +335,7 @@ Example:
 		// the challenge, relying-party ID, and the allowed credential IDs.
 		var assertionOpts protocol.CredentialAssertion
 		if err := json.Unmarshal([]byte(beginResp.OptionsJSON), &assertionOpts); err != nil {
-			handleError(fmt.Errorf("failed to parse authentication options: %w", err))
+			handleError(&WrappedError{Sentinel: ErrParseAuthenticationOptionsFailed, Err: err})
 			return
 		}
 
@@ -356,7 +356,7 @@ Example:
 
 		handler, err := fido2.NewHandler(&fidoConfig, enumerator)
 		if err != nil {
-			handleError(fmt.Errorf("failed to create FIDO2 handler: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 			return
 		}
 		defer func() { _ = handler.Close() }()
@@ -375,7 +375,7 @@ Example:
 			Timeout:                 timeout,
 		})
 		if err != nil {
-			handleError(fmt.Errorf("authentication failed: %w", err))
+			handleError(&WrappedError{Sentinel: ErrAuthenticationFailed, Err: err})
 			return
 		}
 
@@ -387,7 +387,7 @@ Example:
 			AssertionJSON: string(assertion.PublicKeyCredentialJSON),
 		})
 		if err != nil {
-			handleError(fmt.Errorf("failed to finish authentication: %w", err))
+			handleError(&WrappedError{Sentinel: ErrFinishAuthenticationFailed, Err: err})
 			return
 		}
 		if !finishResp.Success {
@@ -395,7 +395,7 @@ Example:
 			if msg == "" {
 				msg = "authentication was rejected by the server"
 			}
-			handleError(fmt.Errorf("authentication failed: %s", msg))
+			handleError(&WrappedDetailError{Sentinel: ErrAuthenticationFailed, Detail: msg})
 			return
 		}
 
@@ -431,21 +431,21 @@ var userListCmd = &cobra.Command{
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		resp, err := cl.ListUsers(ctx)
 		if err != nil {
-			handleError(fmt.Errorf("failed to list users: %w", err))
+			handleError(&WrappedError{Sentinel: ErrListUsersFailed, Err: err})
 			return
 		}
 		users := resp.Users
@@ -507,21 +507,21 @@ var userGetCmd = &cobra.Command{
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		resp, err := cl.GetUser(ctx, username)
 		if err != nil {
-			handleError(fmt.Errorf("failed to get user: %w", err))
+			handleError(&WrappedError{Sentinel: ErrGetUserFailed, Err: err})
 			return
 		}
 		u := resp.User
@@ -596,20 +596,20 @@ Note: You cannot delete the last administrator account.`,
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		if err := cl.DeleteUser(ctx, username); err != nil {
-			handleError(fmt.Errorf("failed to delete user: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDeleteUserFailed, Err: err})
 			return
 		}
 
@@ -640,20 +640,20 @@ var userDisableCmd = &cobra.Command{
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		if err := cl.DisableUser(ctx, username); err != nil {
-			handleError(fmt.Errorf("failed to disable user: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDisableUserFailed, Err: err})
 			return
 		}
 
@@ -685,20 +685,20 @@ var userEnableCmd = &cobra.Command{
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		if err := cl.EnableUser(ctx, username); err != nil {
-			handleError(fmt.Errorf("failed to enable user: %w", err))
+			handleError(&WrappedError{Sentinel: ErrEnableUserFailed, Err: err})
 			return
 		}
 
@@ -728,21 +728,21 @@ var userStatusCmd = &cobra.Command{
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		resp, err := cl.ListUsers(ctx)
 		if err != nil {
-			handleError(fmt.Errorf("failed to check user status: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCheckUserStatusFailed, Err: err})
 			return
 		}
 
@@ -802,27 +802,27 @@ Example:
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		resp, err := cl.ListUserCredentials(ctx, username)
 		if err != nil {
-			handleError(fmt.Errorf("failed to list credentials: %w", err))
+			handleError(&WrappedError{Sentinel: ErrListCredentialsFailed, Err: err})
 			return
 		}
 		creds := resp.Credentials
 
 		if len(creds) == 0 {
-			handleError(fmt.Errorf("user %s has no credentials", username))
+			handleError(&UserNoCredentialsError{Username: username})
 			return
 		}
 

@@ -1,0 +1,57 @@
+# Copyright (c) 2025 Jeremy Hahn
+# Copyright (c) 2025 Automate The Things, LLC
+#
+# This file is part of go-xkms.
+#
+# go-xkms is dual-licensed:
+#
+# 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+#    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+#
+# 2. Commercial License
+#    Contact licensing@automatethethings.com for commercial licensing options.
+
+# FIDO2 hardware-backend integration test suite.
+#
+# Reuses the e2e Dockerfile (which already provides swtpm, SoftHSM2, libfido2,
+# and the full Go + CGO toolchain) but overrides the entrypoint to run the Go
+# keybackend integration tests instead of Playwright. The test binary connects
+# directly to the swtpm process running inside the same container.
+
+services:
+  fido2-hardware-test:
+    build:
+      context: ../../..
+      dockerfile: xkey/test/e2e/Dockerfile
+    entrypoint: ["/workspace/xkey/test/integration/fido2-hardware-entrypoint.sh"]
+    volumes:
+      - ../../..:/workspace:cached
+      # Sibling module bind-mounts so go.mod replace directives resolve.
+      - ../../../../go-codec:/go-codec:cached
+      - ../../../../go-frost:/go-frost:cached
+      - ../../../../go-objstore:/go-objstore:cached
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
+      - ../../../../go-truststrap:/go-truststrap:cached
+      # Persist Go build and module caches across runs.
+      - fido2-hw-go-build:/root/.cache/go-build
+      - fido2-hw-go-mod:/root/go/pkg/mod
+    environment:
+      - CGO_ENABLED=1
+      - GOFLAGS=-buildvcs=false
+      - GONOSUMDB=*
+      - GONOSUMCHECK=*
+      - GOTOOLCHAIN=auto
+      # swtpm runs inside this container and is exposed as a unix-socket device;
+      # the entrypoint provisions it and exports TPM_DEVICE for the test.
+      # SoftHSM2 installed by the e2e Dockerfile via apt.
+      - PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+    working_dir: /workspace/xkey
+    # privileged is required for /dev/uhid access by the test build tags;
+    # the FIDO2 keybackend tests themselves do not use kernel gadget devices.
+    privileged: true
+
+volumes:
+  fido2-hw-go-build:
+  fido2-hw-go-mod:

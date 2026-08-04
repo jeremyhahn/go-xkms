@@ -28,6 +28,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/mocks"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -77,7 +79,7 @@ func (m *mockImportExportBackend) ExportKey(ctx context.Context, attrs *types.Ke
 	// Get the key from storage
 	key, ok := m.keys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 
 	// Serialize the key
@@ -94,7 +96,7 @@ func (m *mockImportExportBackend) ExportKey(ctx context.Context, attrs *types.Ke
 	case ed25519.PrivateKey:
 		keyBytes = []byte(k)
 	default:
-		return nil, fmt.Errorf("unsupported key type")
+		return nil, &errs.Message{Msg: "unsupported key type"}
 	}
 
 	// Create wrapped key material (in real implementation, this would be encrypted)
@@ -126,17 +128,17 @@ func (m *mockImportExportBackend) ImportKey(ctx context.Context, attrs *types.Ke
 	case x509.RSA:
 		key, err = x509.ParsePKCS1PrivateKey(wrapped.WrappedKey)
 		if err != nil {
-			return fmt.Errorf("failed to parse RSA key: %w", err)
+			return &errs.Wrapped{Msg: "failed to parse RSA key", Err: err}
 		}
 	case x509.ECDSA:
 		key, err = x509.ParseECPrivateKey(wrapped.WrappedKey)
 		if err != nil {
-			return fmt.Errorf("failed to parse ECDSA key: %w", err)
+			return &errs.Wrapped{Msg: "failed to parse ECDSA key", Err: err}
 		}
 	case x509.Ed25519:
 		key = ed25519.PrivateKey(wrapped.WrappedKey)
 	default:
-		return fmt.Errorf("unsupported key algorithm: %v", attrs.KeyAlgorithm)
+		return &errs.Message{Msg: fmt.Sprintf("unsupported key algorithm: %v", attrs.KeyAlgorithm)}
 	}
 
 	// Store the key
@@ -193,7 +195,7 @@ func (m *mockImportExportBackend) WrapKey(ctx context.Context, keyMaterial []byt
 
 // ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
 func (m *mockImportExportBackend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
-	return nil, fmt.Errorf("not supported for asymmetric keys")
+	return nil, &errs.Message{Msg: "not supported for asymmetric keys"}
 }
 
 // Reset clears all state
@@ -215,7 +217,7 @@ func (m *mockImportExportBackend) GetKey(ctx context.Context, attrs *types.KeyAt
 
 	key, ok := m.keys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 	return key, nil
 }
@@ -248,7 +250,7 @@ func (m *mockImportExportBackend) DeleteKey(ctx context.Context, attrs *types.Ke
 	defer m.mu.Unlock()
 
 	if _, ok := m.keys[attrs.CN]; !ok {
-		return fmt.Errorf("key not found: %s", attrs.CN)
+		return &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 	delete(m.keys, attrs.CN)
 	return nil
@@ -266,12 +268,12 @@ func (m *mockImportExportBackend) Signer(ctx context.Context, attrs *types.KeyAt
 
 	key, ok := m.keys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("key does not implement crypto.Signer")
+		return nil, &errs.Message{Msg: "key does not implement crypto.Signer"}
 	}
 	return signer, nil
 }
@@ -448,7 +450,7 @@ func TestMigrateKey_ExportFailure(t *testing.T) {
 
 	// Make export fail
 	source.ExportKeyFunc = func(*types.KeyAttributes, backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
-		return nil, fmt.Errorf("export failed")
+		return nil, &errs.Message{Msg: "export failed"}
 	}
 
 	key := generateTestKey(t, x509.RSA)
@@ -476,7 +478,7 @@ func TestMigrateKey_ImportFailure(t *testing.T) {
 
 	// Make import fail
 	dest.ImportKeyFunc = func(*types.KeyAttributes, *backend.WrappedKeyMaterial) error {
-		return fmt.Errorf("import failed")
+		return &errs.Message{Msg: "import failed"}
 	}
 
 	err := migrator.MigrateKey(context.Background(), attrs, nil)
@@ -650,7 +652,7 @@ func TestMigrateAll_StopOnError(t *testing.T) {
 	dest.ImportKeyFunc = func(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 		callCount++
 		if callCount == 2 {
-			return fmt.Errorf("import failed")
+			return &errs.Message{Msg: "import failed"}
 		}
 		var key crypto.PrivateKey
 		var err error
@@ -662,7 +664,7 @@ func TestMigrateAll_StopOnError(t *testing.T) {
 		case x509.Ed25519:
 			key = ed25519.PrivateKey(wrapped.WrappedKey)
 		default:
-			return fmt.Errorf("unsupported key algorithm")
+			return &errs.Message{Msg: "unsupported key algorithm"}
 		}
 		if err != nil {
 			return err
@@ -745,7 +747,7 @@ func TestMigrateAll_WithFailures(t *testing.T) {
 
 	dest.ImportKeyFunc = func(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 		if failKeys[attrs.CN] {
-			return fmt.Errorf("import failed for %s", attrs.CN)
+			return &errs.Message{Msg: fmt.Sprintf("import failed for %s", attrs.CN)}
 		}
 		var key crypto.PrivateKey
 		var err error
@@ -943,7 +945,7 @@ func TestValidateMigration_SignerFailure(t *testing.T) {
 
 	// Override signer to fail
 	dest.SignerFunc = func(*types.KeyAttributes) (crypto.Signer, error) {
-		return nil, fmt.Errorf("signer not available")
+		return nil, &errs.Message{Msg: "signer not available"}
 	}
 
 	result, err := migrator.ValidateMigration(context.Background(), attrs)
@@ -987,7 +989,7 @@ func (m *mockFailingSigner) Public() crypto.PublicKey {
 }
 
 func (m *mockFailingSigner) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
-	return nil, fmt.Errorf("sign operation failed")
+	return nil, &errs.Message{Msg: "sign operation failed"}
 }
 
 // TestFilterKeys tests key filtering logic
@@ -1395,7 +1397,7 @@ func TestImportKey_GetParametersFailure(t *testing.T) {
 	dest := newMockImportExportBackend()
 
 	dest.GetImportParametersFunc = func(*types.KeyAttributes, backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
-		return nil, fmt.Errorf("parameters not available")
+		return nil, &errs.Message{Msg: "parameters not available"}
 	}
 
 	attrs := &types.KeyAttributes{
@@ -1482,7 +1484,7 @@ func TestMigrateKeysSequential_WithStopOnError(t *testing.T) {
 	dest.ImportKeyFunc = func(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 		callCount++
 		if callCount == 2 {
-			return fmt.Errorf("import failed")
+			return &errs.Message{Msg: "import failed"}
 		}
 		var key crypto.PrivateKey
 		var err error
@@ -1577,7 +1579,7 @@ func TestMigrateKeysParallel_WithFailures(t *testing.T) {
 		mu.Unlock()
 
 		if shouldFail {
-			return fmt.Errorf("import failed for %s", attrs.CN)
+			return &errs.Message{Msg: fmt.Sprintf("import failed for %s", attrs.CN)}
 		}
 
 		var key crypto.PrivateKey
@@ -1615,7 +1617,7 @@ func TestMigrateAll_ListKeysError(t *testing.T) {
 	defer func() { _ = migrator.Close() }()
 
 	source.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
-		return nil, fmt.Errorf("list keys failed")
+		return nil, &errs.Message{Msg: "list keys failed"}
 	}
 
 	result, err := migrator.MigrateAll(context.Background(), nil, nil)
@@ -1630,7 +1632,7 @@ func TestMigrationPlan_ListKeysError(t *testing.T) {
 	defer func() { _ = migrator.Close() }()
 
 	source.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
-		return nil, fmt.Errorf("list keys failed")
+		return nil, &errs.Message{Msg: "list keys failed"}
 	}
 
 	plan, err := migrator.MigrationPlan(context.Background(), nil)

@@ -309,8 +309,8 @@ func TestVerify_NilCert(t *testing.T) {
 func TestCreateCSR_GenerateEd25519Key(t *testing.T) {
 	ca := setupTestCA(t)
 	req := &CertificateRequest{
-		Subject: Subject{CommonName: "csr-gen-ed25519-b5"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"csr-gen-ed25519-b5.local"}},
+		Subject:       Subject{CommonName: "csr-gen-ed25519-b5"},
+		SANS:          &SubjectAlternativeNames{DNS: []string{"csr-gen-ed25519-b5.local"}},
 		KeyAttributes: softwareKeyAttrsAlgo("csr-gen-ed25519-b5", x509.Ed25519),
 	}
 	csrPEM, err := ca.CreateCSR(context.Background(), req)
@@ -376,4 +376,3 @@ func TestOCSPHandleRequest_UnknownSerial(t *testing.T) {
 	// we exercise the code path regardless.
 	_, _ = resp.HandleRequest(context.Background(), reqBytes)
 }
-

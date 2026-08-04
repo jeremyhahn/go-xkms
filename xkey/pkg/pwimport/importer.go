@@ -81,7 +81,7 @@ func (i *Importer) Import(opts *ImportOptions) (*ImportResult, error) {
 	// Get the appropriate parser.
 	parser, ok := i.parsers[format]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFormat, format)
+		return nil, &DetailError{Err: ErrUnsupportedFormat, Detail: fmt.Sprintf(": %s", format)}
 	}
 
 	// Parse the file.
@@ -158,7 +158,7 @@ func (i *Importer) Preview(opts *ImportOptions) ([]*ParsedEntry, error) {
 	// Get the appropriate parser.
 	parser, ok := i.parsers[format]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFormat, format)
+		return nil, &DetailError{Err: ErrUnsupportedFormat, Detail: fmt.Sprintf(": %s", format)}
 	}
 
 	return parser.Parse(opts.FilePath, opts)

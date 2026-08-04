@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // PutIfAbsent validates the key, then delegates the atomic check-then-write to
@@ -27,7 +29,7 @@ import (
 // file permissions Put does (keys/* = 0600, certs/* = 0644).
 func (f *FileStorage) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
 	if err := validateStorageKey(key); err != nil {
-		return false, fmt.Errorf("file storage: invalid key %q: %w", key, err)
+		return false, &errs.Wrapped{Msg: fmt.Sprintf("file storage: invalid key %q", key), Err: err}
 	}
 	stored, err := f.backend.PutIfAbsent(ctx, key, value)
 	if err != nil {
@@ -44,7 +46,7 @@ func (f *FileStorage) PutIfAbsent(ctx context.Context, key string, value []byte)
 	if perm := filePermissionsForKey(key); perm != defaultPerms {
 		path := filepath.Join(f.rootDir, filepath.FromSlash(key))
 		if err := os.Chmod(path, perm); err != nil {
-			return true, fmt.Errorf("file storage: failed to set permissions for key %q: %w", key, err)
+			return true, &errs.Wrapped{Msg: fmt.Sprintf("file storage: failed to set permissions for key %q", key), Err: err}
 		}
 	}
 	return true, nil

@@ -18,6 +18,8 @@ import (
 	"crypto/rand"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -75,12 +77,12 @@ type chacha20poly1305AEAD struct {
 //	encrypted, err := cipher.Encrypt(plaintext, nil)
 func New(key []byte) (AEAD, error) {
 	if len(key) != chacha20poly1305.KeySize {
-		return nil, fmt.Errorf("invalid key size: %d bytes (must be 32 bytes)", len(key))
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid key size: %d bytes (must be 32 bytes)", len(key))}
 	}
 
 	aead, err := chacha20poly1305.New(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create ChaCha20-Poly1305 cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create ChaCha20-Poly1305 cipher", Err: err}
 	}
 
 	return &chacha20poly1305AEAD{
@@ -101,12 +103,12 @@ func New(key []byte) (AEAD, error) {
 // - You're implementing protocols like age or WireGuard
 func NewX(key []byte) (AEAD, error) {
 	if len(key) != chacha20poly1305.KeySize {
-		return nil, fmt.Errorf("invalid key size: %d bytes (must be 32 bytes)", len(key))
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid key size: %d bytes (must be 32 bytes)", len(key))}
 	}
 
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create XChaCha20-Poly1305 cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create XChaCha20-Poly1305 cipher", Err: err}
 	}
 
 	return &chacha20poly1305AEAD{
@@ -139,10 +141,10 @@ func (c *chacha20poly1305AEAD) Encrypt(plaintext []byte, opts *types.EncryptOpti
 		// Generate random nonce
 		nonce = make([]byte, nonceSize)
 		if _, err := rand.Read(nonce); err != nil {
-			return nil, fmt.Errorf("failed to generate nonce: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 		}
 	} else if len(nonce) != nonceSize {
-		return nil, fmt.Errorf("invalid nonce size: %d bytes (must be %d bytes)", len(nonce), nonceSize)
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: %d bytes (must be %d bytes)", len(nonce), nonceSize)}
 	}
 
 	// Encrypt and authenticate
@@ -153,7 +155,7 @@ func (c *chacha20poly1305AEAD) Encrypt(plaintext []byte, opts *types.EncryptOpti
 	// ChaCha20-Poly1305 appends the 16-byte tag to the ciphertext
 	tagSize := c.aead.Overhead()
 	if len(ciphertextWithTag) < tagSize {
-		return nil, fmt.Errorf("ciphertext too short: %d bytes", len(ciphertextWithTag))
+		return nil, &errs.Message{Msg: fmt.Sprintf("ciphertext too short: %d bytes", len(ciphertextWithTag))}
 	}
 
 	ciphertext := ciphertextWithTag[:len(ciphertextWithTag)-tagSize]
@@ -181,7 +183,7 @@ func (c *chacha20poly1305AEAD) Encrypt(plaintext []byte, opts *types.EncryptOpti
 // - Any tampering with ciphertext, tag, or additional data will be detected
 func (c *chacha20poly1305AEAD) Decrypt(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
 	if data == nil {
-		return nil, fmt.Errorf("encrypted data cannot be nil")
+		return nil, &errs.Message{Msg: "encrypted data cannot be nil"}
 	}
 
 	if opts == nil {
@@ -191,13 +193,13 @@ func (c *chacha20poly1305AEAD) Decrypt(data *types.EncryptedData, opts *types.De
 	// Validate nonce size
 	nonceSize := c.aead.NonceSize()
 	if len(data.Nonce) != nonceSize {
-		return nil, fmt.Errorf("invalid nonce size: %d bytes (must be %d bytes)", len(data.Nonce), nonceSize)
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: %d bytes (must be %d bytes)", len(data.Nonce), nonceSize)}
 	}
 
 	// Validate tag size
 	tagSize := c.aead.Overhead()
 	if len(data.Tag) != tagSize {
-		return nil, fmt.Errorf("invalid tag size: %d bytes (must be %d bytes)", len(data.Tag), tagSize)
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid tag size: %d bytes (must be %d bytes)", len(data.Tag), tagSize)}
 	}
 
 	// Concatenate ciphertext and tag for Open
@@ -208,7 +210,7 @@ func (c *chacha20poly1305AEAD) Decrypt(data *types.EncryptedData, opts *types.De
 	// Decrypt and verify
 	plaintext, err := c.aead.Open(nil, data.Nonce, ciphertextWithTag, opts.AdditionalData)
 	if err != nil {
-		return nil, fmt.Errorf("decryption failed (authentication error): %w", err)
+		return nil, &errs.Wrapped{Msg: "decryption failed (authentication error)", Err: err}
 	}
 
 	return plaintext, nil
@@ -230,7 +232,7 @@ func (c *chacha20poly1305AEAD) Overhead() int {
 func GenerateKey() ([]byte, error) {
 	key := make([]byte, chacha20poly1305.KeySize)
 	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("failed to generate key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 	return key, nil
 }

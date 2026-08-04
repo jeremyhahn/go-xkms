@@ -22,6 +22,8 @@ import (
 	"crypto/rand"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
@@ -54,7 +56,7 @@ func (k *pkcs11SymmetricKey) KeySize() int {
 // Raw returns an error because PKCS#11 keys cannot expose raw key material.
 // The key material is sealed in the HSM and can only be used through HSM operations.
 func (k *pkcs11SymmetricKey) Raw() ([]byte, error) {
-	return nil, fmt.Errorf("%w: PKCS#11 symmetric keys do not expose raw key material", backend.ErrNotSupported)
+	return nil, &errs.Detail{Err: backend.ErrNotSupported, Detail: "PKCS#11 symmetric keys do not expose raw key material"}
 }
 
 // pkcs11SymmetricEncrypter implements types.SymmetricEncrypter for PKCS#11 HSMs.
@@ -78,19 +80,19 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 	// STEP 1: Check bytes limit
 	if e.backend.tracker != nil {
 		if err := e.backend.tracker.IncrementBytes(label, int64(len(plaintext))); err != nil {
-			return nil, fmt.Errorf("AEAD safety check failed: %w", err)
+			return nil, &errs.Wrapped{Msg: "AEAD safety check failed", Err: err}
 		}
 	}
 
 	// Initialize PKCS#11 context if needed
 	if e.backend.p11ctx == nil {
-		return nil, fmt.Errorf("PKCS#11 context not initialized")
+		return nil, &errs.Message{Msg: "PKCS#11 context not initialized"}
 	}
 
 	// Get token slot
 	slots, err := e.backend.p11ctx.GetSlotList(true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get slot list: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get slot list", Err: err}
 	}
 	if len(slots) == 0 {
 		return nil, ErrTokenNotFound
@@ -104,7 +106,7 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 	// Open session
 	session, err := e.backend.p11ctx.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open session: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
 	defer e.backend.p11ctx.CloseSession(session)
 
@@ -112,7 +114,7 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 	// Note: We don't logout because C_Logout affects ALL sessions, not just this one
 	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, e.backend.config.PIN); err != nil {
 		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
-			return nil, fmt.Errorf("failed to login: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 	}
 	// DO NOT LOGOUT - C_Logout affects ALL sessions on this token
@@ -125,14 +127,14 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 	} else {
 		nonce = make([]byte, nonceSize)
 		if _, err := rand.Read(nonce); err != nil {
-			return nil, fmt.Errorf("failed to generate nonce: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 		}
 	}
 
 	// STEP 3: Check nonce uniqueness BEFORE encryption
 	if e.backend.tracker != nil {
 		if err := e.backend.tracker.CheckNonce(label, nonce); err != nil {
-			return nil, fmt.Errorf("AEAD safety check failed: %w", err)
+			return nil, &errs.Wrapped{Msg: "AEAD safety check failed", Err: err}
 		}
 	}
 
@@ -159,22 +161,22 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 	}
 
 	if err := e.backend.p11ctx.FindObjectsInit(session, template); err != nil {
-		return nil, fmt.Errorf("failed to init object search: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to init object search", Err: err}
 	}
 
 	handles, _, err := e.backend.p11ctx.FindObjects(session, 1)
 	if err != nil {
 		e.backend.p11ctx.FindObjectsFinal(session) // Clean up even on error
-		return nil, fmt.Errorf("failed to find objects: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find objects", Err: err}
 	}
 
 	// Must finalize BEFORE starting encryption operation
 	if err := e.backend.p11ctx.FindObjectsFinal(session); err != nil {
-		return nil, fmt.Errorf("failed to finalize object search: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to finalize object search", Err: err}
 	}
 
 	if len(handles) == 0 {
-		return nil, fmt.Errorf("key not found: %s", e.attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", e.attrs.CN)}
 	}
 
 	handle := handles[0]
@@ -186,14 +188,14 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 
 	// Initialize encryption
 	if err := e.backend.p11ctx.EncryptInit(session, mechanism, handle); err != nil {
-		return nil, fmt.Errorf("failed to initialize encryption: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to initialize encryption", Err: err}
 	}
 
 	// STEP 4: Perform encryption
 	// For GCM, the output will include the ciphertext + tag
 	ciphertext, err := e.backend.p11ctx.Encrypt(session, plaintext)
 	if err != nil {
-		return nil, fmt.Errorf("encryption failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "encryption failed", Err: err}
 	}
 
 	// GCM appends the tag to the ciphertext
@@ -201,7 +203,7 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 	// For GCM, even with empty plaintext, we should get at least the tag (16 bytes)
 	tagBytes := tagBits / 8 // Convert bits to bytes for slicing
 	if len(ciphertext) < tagBytes {
-		return nil, fmt.Errorf("ciphertext too short: got %d bytes, expected at least %d bytes (tag size)", len(ciphertext), tagBytes)
+		return nil, &errs.Message{Msg: fmt.Sprintf("ciphertext too short: got %d bytes, expected at least %d bytes (tag size)", len(ciphertext), tagBytes)}
 	}
 
 	tag := ciphertext[len(ciphertext)-tagBytes:]
@@ -231,13 +233,13 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 
 	// Initialize PKCS#11 context if needed
 	if e.backend.p11ctx == nil {
-		return nil, fmt.Errorf("PKCS#11 context not initialized")
+		return nil, &errs.Message{Msg: "PKCS#11 context not initialized"}
 	}
 
 	// Get token slot
 	slots, err := e.backend.p11ctx.GetSlotList(true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get slot list: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get slot list", Err: err}
 	}
 	if len(slots) == 0 {
 		return nil, ErrTokenNotFound
@@ -251,7 +253,7 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 	// Open session
 	session, err := e.backend.p11ctx.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open session: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
 	defer e.backend.p11ctx.CloseSession(session)
 
@@ -259,7 +261,7 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 	// Note: We don't logout because C_Logout affects ALL sessions, not just this one
 	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, e.backend.config.PIN); err != nil {
 		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
-			return nil, fmt.Errorf("failed to login: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 	}
 	// DO NOT LOGOUT - C_Logout affects ALL sessions on this token
@@ -278,22 +280,22 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 	}
 
 	if err := e.backend.p11ctx.FindObjectsInit(session, template); err != nil {
-		return nil, fmt.Errorf("failed to init object search: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to init object search", Err: err}
 	}
 
 	handles, _, err := e.backend.p11ctx.FindObjects(session, 1)
 	if err != nil {
 		e.backend.p11ctx.FindObjectsFinal(session) // Clean up even on error
-		return nil, fmt.Errorf("failed to find objects: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find objects", Err: err}
 	}
 
 	// Must finalize BEFORE starting decryption operation
 	if err := e.backend.p11ctx.FindObjectsFinal(session); err != nil {
-		return nil, fmt.Errorf("failed to finalize object search: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to finalize object search", Err: err}
 	}
 
 	if len(handles) == 0 {
-		return nil, fmt.Errorf("key not found: %s", e.attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", e.attrs.CN)}
 	}
 
 	handle := handles[0]
@@ -305,7 +307,7 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 
 	// Initialize decryption
 	if err := e.backend.p11ctx.DecryptInit(session, mechanism, handle); err != nil {
-		return nil, fmt.Errorf("failed to initialize decryption: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to initialize decryption", Err: err}
 	}
 
 	// Reconstruct full ciphertext with tag appended
@@ -314,7 +316,7 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 	// Decrypt the data
 	plaintext, err := e.backend.p11ctx.Decrypt(session, fullCiphertext)
 	if err != nil {
-		return nil, fmt.Errorf("decryption failed (authentication error): %w", err)
+		return nil, &errs.Wrapped{Msg: "decryption failed (authentication error)", Err: err}
 	}
 
 	return plaintext, nil
@@ -331,23 +333,23 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid attributes: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid attributes", Err: err}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: attributes specify asymmetric algorithm %s", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("attributes specify asymmetric algorithm %s", attrs.KeyAlgorithm)}
 	}
 
 	// Get key size from attributes
 	keySize := attrs.SymmetricAlgorithm.KeySize()
 	if keySize != 128 && keySize != 192 && keySize != 256 {
-		return nil, fmt.Errorf("%w: AES key size %d bits (only 128, 192, and 256 are supported)", backend.ErrInvalidAlgorithm, keySize)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("AES key size %d bits (only 128, 192, and 256 are supported)", keySize)}
 	}
 
 	// Generate the secret key on the HSM
 	handle, err := b.GenerateSecretKey(attrs, keySize)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate symmetric key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate symmetric key", Err: err}
 	}
 
 	// Initialize AEAD tracking options after successful key generation
@@ -377,22 +379,22 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid attributes: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid attributes", Err: err}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: attributes specify asymmetric algorithm %s", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("attributes specify asymmetric algorithm %s", attrs.KeyAlgorithm)}
 	}
 
 	// Find the secret key on the HSM
 	handle, err := b.FindSecretKey(attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find symmetric key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find symmetric key", Err: err}
 	}
 
 	keySize := attrs.SymmetricAlgorithm.KeySize()
 	if keySize == 0 {
-		return nil, fmt.Errorf("%w: cannot determine key size for algorithm %s", backend.ErrInvalidAlgorithm, attrs.SymmetricAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("cannot determine key size for algorithm %s", attrs.SymmetricAlgorithm)}
 	}
 
 	return &pkcs11SymmetricKey{
@@ -415,7 +417,7 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 	// Type assert to get the PKCS#11-specific key
 	pkcs11Key, ok := key.(*pkcs11SymmetricKey)
 	if !ok {
-		return nil, fmt.Errorf("unexpected key type")
+		return nil, &errs.Message{Msg: "unexpected key type"}
 	}
 
 	return &pkcs11SymmetricEncrypter{
@@ -441,13 +443,13 @@ func (e *softwareEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions
 	// Create AES cipher
 	block, err := aes.NewCipher(e.key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	// Create GCM mode
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// Generate or use provided nonce
@@ -457,7 +459,7 @@ func (e *softwareEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions
 	} else {
 		nonce = make([]byte, gcm.NonceSize())
 		if _, err := rand.Read(nonce); err != nil {
-			return nil, fmt.Errorf("failed to generate nonce: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 		}
 	}
 
@@ -486,13 +488,13 @@ func (e *softwareEncrypter) Decrypt(data *types.EncryptedData, opts *types.Decry
 	// Create AES cipher
 	block, err := aes.NewCipher(e.key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	// Create GCM mode
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// Reconstruct ciphertext with tag (GCM expects tag appended)
@@ -501,7 +503,7 @@ func (e *softwareEncrypter) Decrypt(data *types.EncryptedData, opts *types.Decry
 	// Decrypt and verify
 	plaintext, err := gcm.Open(nil, data.Nonce, fullCiphertext, opts.AdditionalData)
 	if err != nil {
-		return nil, fmt.Errorf("decryption failed (authentication error): %w", err)
+		return nil, &errs.Wrapped{Msg: "decryption failed (authentication error)", Err: err}
 	}
 
 	return plaintext, nil

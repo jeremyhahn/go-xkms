@@ -810,6 +810,11 @@ func (m *mockBackendsClient) BarrierGenerateRecoveryKeys(_ context.Context, _ *t
 	return nil, nil
 }
 
+// BarrierEnableEncryption enables barrier encryption.
+func (m *mockBackendsClient) BarrierEnableEncryption(_ context.Context, _ *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	return nil, nil
+}
+
 // BarrierRecoverWithKeys recovers the barrier using recovery keys.
 func (m *mockBackendsClient) BarrierRecoverWithKeys(_ context.Context, _ *transport.BarrierRecoverWithKeysRequest) error {
 	return nil
@@ -1023,6 +1028,18 @@ func (m *mockBackendsClient) TenantBarrierInit(_ context.Context, _ *transport.T
 
 func (m *mockBackendsClient) TenantBarrierUnseal(_ context.Context, _ *transport.TenantBarrierUnsealRequest) error {
 	return nil
+}
+
+func (m *mockBackendsClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return nil, nil
 }
 
 // InitCeremonyService stub implementations

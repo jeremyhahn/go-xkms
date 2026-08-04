@@ -24,6 +24,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -1569,30 +1571,30 @@ type MockFailingStorage struct {
 }
 
 func (m *MockFailingStorage) Get(_ context.Context, key string) ([]byte, error) {
-	return nil, fmt.Errorf("storage error: get failed")
+	return nil, &errs.Message{Msg: "storage error: get failed"}
 }
 
 func (m *MockFailingStorage) Put(_ context.Context, key string, value []byte) error {
 	if m.failOnPut {
-		return fmt.Errorf("storage error: put failed")
+		return &errs.Message{Msg: "storage error: put failed"}
 	}
 	return nil
 }
 
 func (m *MockFailingStorage) Delete(_ context.Context, key string) error {
 	if m.failOnDelete {
-		return fmt.Errorf("storage error: delete failed")
+		return &errs.Message{Msg: "storage error: delete failed"}
 	}
 	return nil
 }
 
 func (m *MockFailingStorage) List(_ context.Context, prefix string) ([]string, error) {
-	return nil, fmt.Errorf("storage error: list failed")
+	return nil, &errs.Message{Msg: "storage error: list failed"}
 }
 
 func (m *MockFailingStorage) Exists(_ context.Context, key string) (bool, error) {
 	if m.failOnExists {
-		return false, fmt.Errorf("storage error: exists check failed")
+		return false, &errs.Message{Msg: "storage error: exists check failed"}
 	}
 	return false, nil
 }
@@ -1602,7 +1604,7 @@ func (m *MockFailingStorage) Close() error {
 }
 
 func (m *MockFailingStorage) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
-	return fmt.Errorf("storage error: scan failed")
+	return &errs.Message{Msg: "storage error: scan failed"}
 }
 
 // TestDeleteKey_StorageError tests DeleteKey when storage returns error
@@ -3694,11 +3696,11 @@ func (m *MockFailingStorageClose) Exists(_ context.Context, key string) (bool, e
 }
 
 func (m *MockFailingStorageClose) Close() error {
-	return fmt.Errorf("storage close failed")
+	return &errs.Message{Msg: "storage close failed"}
 }
 
 func (m *MockFailingStorageClose) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
-	return fmt.Errorf("storage error: scan failed")
+	return &errs.Message{Msg: "storage error: scan failed"}
 }
 
 // TestExportKey_WrapKeyError tests ExportKey when WrapKey fails

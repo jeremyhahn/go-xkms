@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	vault "github.com/hashicorp/vault/api"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -65,7 +67,7 @@ type vaultDecrypter struct {
 // NewBackend creates a new Vault backend instance.
 func NewBackend(config *Config) (*Backend, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "config validation failed", Err: err}
 	}
 
 	// Create Vault client configuration
@@ -79,14 +81,14 @@ func NewBackend(config *Config) (*Backend, error) {
 			Insecure: true,
 		}
 		if err := vaultConfig.ConfigureTLS(tlsConfig); err != nil {
-			return nil, fmt.Errorf("failed to configure TLS: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to configure TLS", Err: err}
 		}
 	}
 
 	// Create Vault client
 	vaultClient, err := vault.NewClient(vaultConfig)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrVaultConnection, err)
+		return nil, &errs.Detail{Err: ErrVaultConnection, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	vaultClient.SetToken(config.Token)
@@ -113,7 +115,7 @@ func NewBackend(config *Config) (*Backend, error) {
 // NewBackendWithClient creates a new Vault backend with a custom client (for testing).
 func NewBackendWithClient(config *Config, client VaultClient) (*Backend, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "config validation failed", Err: err}
 	}
 
 	// Initialize tracker
@@ -156,7 +158,7 @@ func (b *Backend) Capabilities() types.Capabilities {
 // GenerateKey generates a new key in Vault's Transit engine.
 func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil || attrs.CN == "" {
-		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
 	keyName := b.sanitizeKeyName(attrs.CN)
@@ -179,7 +181,7 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 	logical := b.client.Logical()
 	_, err = logical.WriteWithContext(ctx, path, data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create key in vault: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create key in vault", Err: err}
 	}
 
 	// Store metadata
@@ -201,11 +203,11 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
-		return nil, fmt.Errorf("failed to store metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to store metadata", Err: err}
 	}
 
 	// Get and return the public key
@@ -215,13 +217,13 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 // GetKey retrieves an existing key from Vault.
 func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil || attrs.CN == "" {
-		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
 	// Load metadata to verify key exists
 	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	keyName := b.sanitizeKeyName(attrs.CN)
@@ -242,7 +244,7 @@ func (b *Backend) GetSignerByID(ctx context.Context, keyID string) (crypto.Signe
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("%w: key %s does not implement crypto.Signer", backend.ErrInvalidKeyType, keyID)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key %s does not implement crypto.Signer", keyID)}
 	}
 	return signer, nil
 }
@@ -260,7 +262,7 @@ func (b *Backend) GetDecrypterByID(ctx context.Context, keyID string) (crypto.De
 	}
 	decrypter, ok := key.(crypto.Decrypter)
 	if !ok {
-		return nil, fmt.Errorf("%w: key %s does not implement crypto.Decrypter", backend.ErrInvalidKeyType, keyID)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key %s does not implement crypto.Decrypter", keyID)}
 	}
 	return decrypter, nil
 }
@@ -268,7 +270,7 @@ func (b *Backend) GetDecrypterByID(ctx context.Context, keyID string) (crypto.De
 // DeleteKey removes a key from Vault and cleans up metadata.
 func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil || attrs.CN == "" {
-		return fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
 	keyName := b.sanitizeKeyName(attrs.CN)
@@ -289,12 +291,12 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 	path := fmt.Sprintf("%s/keys/%s", b.config.TransitPath, keyName)
 	_, err = logical.DeleteWithContext(ctx, path)
 	if err != nil {
-		return fmt.Errorf("failed to delete key from vault: %w", err)
+		return &errs.Wrapped{Msg: "failed to delete key from vault", Err: err}
 	}
 
 	// Delete metadata
 	if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil {
-		return fmt.Errorf("failed to delete metadata: %w", err)
+		return &errs.Wrapped{Msg: "failed to delete metadata", Err: err}
 	}
 
 	return nil
@@ -307,7 +309,7 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 	logical := b.client.Logical()
 	secret, err := logical.ListWithContext(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list keys from vault: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list keys from vault", Err: err}
 	}
 
 	if secret == nil || secret.Data == nil {
@@ -321,7 +323,7 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 
 	keys, ok := keysInterface.([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("%w: unexpected keys format", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "unexpected keys format"}
 	}
 
 	var result []*types.KeyAttributes
@@ -373,13 +375,13 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 // Signer returns a crypto.Signer for the specified key.
 func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	if attrs == nil || attrs.CN == "" {
-		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
 	// Verify key exists
 	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	keyName := b.sanitizeKeyName(attrs.CN)
@@ -399,13 +401,13 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 // Decrypter returns a crypto.Decrypter for the specified key.
 func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	if attrs == nil || attrs.CN == "" {
-		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
 	// Verify key exists
 	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	keyName := b.sanitizeKeyName(attrs.CN)
@@ -427,17 +429,17 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 // using the Decrypter interface.
 func (b *Backend) Encrypt(ctx context.Context, attrs *types.KeyAttributes, plaintext []byte) ([]byte, error) {
 	if attrs == nil || attrs.CN == "" {
-		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
 	if attrs.KeyAlgorithm != x509.RSA {
-		return nil, fmt.Errorf("%w: encrypt only supports RSA keys, got: %v", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("encrypt only supports RSA keys, got: %v", attrs.KeyAlgorithm)}
 	}
 
 	// Verify key exists
 	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	keyName := b.sanitizeKeyName(attrs.CN)
@@ -453,21 +455,21 @@ func (b *Backend) Encrypt(ctx context.Context, attrs *types.KeyAttributes, plain
 	logical := b.client.Logical()
 	secret, err := logical.WriteWithContext(ctx, path, data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt with vault: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to encrypt with vault", Err: err}
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf("%w: no ciphertext returned", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no ciphertext returned"}
 	}
 
 	ciphertextInterface, ok := secret.Data["ciphertext"]
 	if !ok {
-		return nil, fmt.Errorf("%w: no ciphertext in response", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no ciphertext in response"}
 	}
 
 	ciphertextStr, ok := ciphertextInterface.(string)
 	if !ok {
-		return nil, fmt.Errorf("%w: invalid ciphertext format", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid ciphertext format"}
 	}
 
 	// Vault returns ciphertext in "vault:v1:base64..." format
@@ -475,12 +477,12 @@ func (b *Backend) Encrypt(ctx context.Context, attrs *types.KeyAttributes, plain
 	// So we need to extract and decode it
 	parts := strings.Split(ciphertextStr, ":")
 	if len(parts) < 3 {
-		return nil, fmt.Errorf("%w: invalid ciphertext format", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid ciphertext format"}
 	}
 
 	ciphertext, err := base64.StdEncoding.DecodeString(parts[2])
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode ciphertext: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode ciphertext", Err: err}
 	}
 
 	return ciphertext, nil
@@ -489,7 +491,7 @@ func (b *Backend) Encrypt(ctx context.Context, attrs *types.KeyAttributes, plain
 // RotateKey creates a new version of the key in Vault.
 func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil || attrs.CN == "" {
-		return fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
 	keyName := b.sanitizeKeyName(attrs.CN)
@@ -499,7 +501,7 @@ func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) err
 	logical := b.client.Logical()
 	_, err := logical.WriteWithContext(ctx, path, nil)
 	if err != nil {
-		return fmt.Errorf("failed to rotate key in vault: %w", err)
+		return &errs.Wrapped{Msg: "failed to rotate key in vault", Err: err}
 	}
 
 	return nil
@@ -543,7 +545,7 @@ func (b *Backend) getVaultKeyType(attrs *types.KeyAttributes) (string, error) {
 		case 4096:
 			return "rsa-4096", nil
 		default:
-			return "", fmt.Errorf("%w: unsupported RSA key size: %d", backend.ErrInvalidAlgorithm, size)
+			return "", &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported RSA key size: %d", size)}
 		}
 	case x509.ECDSA:
 		if attrs.ECCAttributes == nil || attrs.ECCAttributes.Curve == nil {
@@ -558,12 +560,12 @@ func (b *Backend) getVaultKeyType(attrs *types.KeyAttributes) (string, error) {
 		case "P-521":
 			return "ecdsa-p521", nil
 		default:
-			return "", fmt.Errorf("%w: unsupported curve: %s", backend.ErrInvalidAlgorithm, curve.Params().Name)
+			return "", &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported curve: %s", curve.Params().Name)}
 		}
 	case x509.Ed25519:
 		return "ed25519", nil
 	default:
-		return "", fmt.Errorf("%w: %v", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+		return "", &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%v", attrs.KeyAlgorithm)}
 	}
 }
 
@@ -572,50 +574,50 @@ func (b *Backend) getPublicKey(ctx context.Context, keyName string, attrs *types
 	logical := b.client.Logical()
 	secret, err := logical.ReadWithContext(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read key from vault: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to read key from vault", Err: err}
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyName)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyName)}
 	}
 
 	// Get the latest key version
 	keysInterface, ok := secret.Data["keys"]
 	if !ok {
-		return nil, fmt.Errorf("%w: no keys data", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no keys data"}
 	}
 
 	keysMap, ok := keysInterface.(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("%w: invalid keys format", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid keys format"}
 	}
 
 	// Get latest version
 	latestVersionInterface, ok := secret.Data["latest_version"]
 	if !ok {
-		return nil, fmt.Errorf("%w: no latest_version", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no latest_version"}
 	}
 
 	latestVersion := fmt.Sprintf("%v", latestVersionInterface)
 	keyDataInterface, ok := keysMap[latestVersion]
 	if !ok {
-		return nil, fmt.Errorf("%w: version %s not found", ErrInvalidResponse, latestVersion)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: fmt.Sprintf("version %s not found", latestVersion)}
 	}
 
 	keyData, ok := keyDataInterface.(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("%w: invalid key data format", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid key data format"}
 	}
 
 	// Get public key in PEM format
 	publicKeyPEMInterface, ok := keyData["public_key"]
 	if !ok {
-		return nil, fmt.Errorf("%w: no public key in response", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no public key in response"}
 	}
 
 	publicKeyPEM, ok := publicKeyPEMInterface.(string)
 	if !ok {
-		return nil, fmt.Errorf("%w: invalid public key format", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid public key format"}
 	}
 
 	// Check if this is Ed25519 (Vault returns base64, not PEM for Ed25519)
@@ -625,10 +627,10 @@ func (b *Backend) getPublicKey(ctx context.Context, keyName string, attrs *types
 			// Ed25519 public key is returned as base64, not PEM
 			pubKeyBytes, err := base64.StdEncoding.DecodeString(publicKeyPEM)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decode ed25519 public key: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to decode ed25519 public key", Err: err}
 			}
 			if len(pubKeyBytes) != 32 {
-				return nil, fmt.Errorf("invalid ed25519 public key length: %d", len(pubKeyBytes))
+				return nil, &errs.Message{Msg: fmt.Sprintf("invalid ed25519 public key length: %d", len(pubKeyBytes))}
 			}
 			return ed25519.PublicKey(pubKeyBytes), nil
 		}
@@ -637,13 +639,13 @@ func (b *Backend) getPublicKey(ctx context.Context, keyName string, attrs *types
 	// Parse PEM for RSA and ECDSA keys
 	block, _ := pem.Decode([]byte(publicKeyPEM))
 	if block == nil {
-		return nil, fmt.Errorf("%w: failed to decode PEM", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "failed to decode PEM"}
 	}
 
 	// Parse public key
 	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
 	return pubKey, nil
@@ -665,7 +667,7 @@ func (b *Backend) getHashAlgorithm(attrs *types.KeyAttributes) (string, crypto.H
 	case crypto.SHA512:
 		vaultHash = "sha2-512"
 	default:
-		return "", 0, fmt.Errorf("%w: unsupported hash: %v", backend.ErrInvalidAlgorithm, hash)
+		return "", 0, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported hash: %v", hash)}
 	}
 
 	return vaultHash, hash, nil
@@ -712,33 +714,33 @@ func (s *vaultSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	logical := s.backend.client.Logical()
 	secret, err := logical.WriteWithContext(ctx, path, data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign with vault: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to sign with vault", Err: err}
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf("%w: no signature returned", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no signature returned"}
 	}
 
 	signatureInterface, ok := secret.Data["signature"]
 	if !ok {
-		return nil, fmt.Errorf("%w: no signature in response", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no signature in response"}
 	}
 
 	signatureStr, ok := signatureInterface.(string)
 	if !ok {
-		return nil, fmt.Errorf("%w: invalid signature format", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid signature format"}
 	}
 
 	// Vault signatures are in format "vault:v1:base64..."
 	// Extract the base64 portion
 	parts := strings.Split(signatureStr, ":")
 	if len(parts) < 3 {
-		return nil, fmt.Errorf("%w: invalid signature format", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid signature format"}
 	}
 
 	signature, err := base64.StdEncoding.DecodeString(parts[2])
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode signature: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode signature", Err: err}
 	}
 
 	return signature, nil
@@ -780,26 +782,26 @@ func (d *vaultDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.
 	logical := d.backend.client.Logical()
 	secret, err := logical.WriteWithContext(ctx, path, data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt with vault: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decrypt with vault", Err: err}
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf("%w: no plaintext returned", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no plaintext returned"}
 	}
 
 	plaintextInterface, ok := secret.Data["plaintext"]
 	if !ok {
-		return nil, fmt.Errorf("%w: no plaintext in response", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no plaintext in response"}
 	}
 
 	plaintextStr, ok := plaintextInterface.(string)
 	if !ok {
-		return nil, fmt.Errorf("%w: invalid plaintext format", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid plaintext format"}
 	}
 
 	plaintext, err := base64.StdEncoding.DecodeString(plaintextStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode plaintext: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode plaintext", Err: err}
 	}
 
 	return plaintext, nil

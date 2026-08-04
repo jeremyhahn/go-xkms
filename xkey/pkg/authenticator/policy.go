@@ -18,7 +18,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 )
 
 // PolicyFields are the SO-controlled fields within AuthenticatorState
@@ -84,7 +83,7 @@ func (pf *PolicyFields) Canonical() ([]byte, error) {
 	}
 	data, err := json.Marshal(pf)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPolicySignFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrPolicySignFailed, Cause: err}
 	}
 	return data, nil
 }
@@ -131,7 +130,7 @@ func (p *SoftwarePolicyProvider) Sign(canonical []byte) ([]byte, error) {
 	}
 	mac := hmac.New(sha256.New, p.key)
 	if _, err := mac.Write(canonical); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPolicySignFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrPolicySignFailed, Cause: err}
 	}
 	return mac.Sum(nil), nil
 }
@@ -145,7 +144,7 @@ func (p *SoftwarePolicyProvider) Verify(canonical, tag []byte) error {
 	}
 	mac := hmac.New(sha256.New, p.key)
 	if _, err := mac.Write(canonical); err != nil {
-		return fmt.Errorf("%w: %v", ErrPolicyVerifyFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPolicyVerifyFailed, Cause: err}
 	}
 	expected := mac.Sum(nil)
 	if !hmac.Equal(expected, tag) {

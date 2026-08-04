@@ -22,12 +22,15 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
 	"math/big"
 	"sync"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -104,19 +107,19 @@ func (r *realKeyVaultClient) GetPublicKey(ctx context.Context, name, version str
 
 	// Extract and encode public key
 	if resp.Key == nil {
-		return nil, fmt.Errorf("no key in response")
+		return nil, &errs.Message{Msg: "no key in response"}
 	}
 
 	// Convert JWK to crypto.PublicKey
 	pubKey, err := jwkToPublicKey(resp.Key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert JWK to public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to convert JWK to public key", Err: err}
 	}
 
 	// Marshal to PKIX format
 	derBytes, err := x509.MarshalPKIXPublicKey(pubKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal public key", Err: err}
 	}
 
 	return derBytes, nil
@@ -149,7 +152,7 @@ type Backend struct {
 // It initializes the Azure Key Vault client with the provided configuration.
 func NewBackend(config *Config) (*Backend, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "config validation failed", Err: err}
 	}
 
 	// Create default tracker if none provided
@@ -171,7 +174,7 @@ func NewBackend(config *Config) (*Backend, error) {
 // This is primarily used for testing with mock clients.
 func NewBackendWithClient(config *Config, client KeyVaultClient) (*Backend, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "config validation failed", Err: err}
 	}
 
 	// Create default tracker if none provided
@@ -225,13 +228,13 @@ func (b *Backend) initClient(ctx context.Context) error {
 			credOptions,
 		)
 		if err != nil {
-			return fmt.Errorf("failed to create client secret credential: %w", err)
+			return &errs.Wrapped{Msg: "failed to create client secret credential", Err: err}
 		}
 
 		// Create Azure Key Vault client with ClientSecretCredential
 		client, err = azkeys.NewClient(b.config.VaultURL, cred, nil)
 		if err != nil {
-			return fmt.Errorf("failed to create Azure Key Vault client: %w", err)
+			return &errs.Wrapped{Msg: "failed to create Azure Key Vault client", Err: err}
 		}
 	} else {
 		// Use DefaultAzureCredential for managed identity or other auth methods
@@ -240,13 +243,13 @@ func (b *Backend) initClient(ctx context.Context) error {
 		}
 		cred, err := azidentity.NewDefaultAzureCredential(credOptions)
 		if err != nil {
-			return fmt.Errorf("failed to create Azure credential: %w", err)
+			return &errs.Wrapped{Msg: "failed to create Azure credential", Err: err}
 		}
 
 		// Create Azure Key Vault client
 		client, err = azkeys.NewClient(b.config.VaultURL, cred, nil)
 		if err != nil {
-			return fmt.Errorf("failed to create Azure Key Vault client: %w", err)
+			return &errs.Wrapped{Msg: "failed to create Azure Key Vault client", Err: err}
 		}
 	}
 
@@ -272,7 +275,7 @@ func (b *Backend) Capabilities() types.Capabilities {
 // For Azure Key Vault, this retrieves the public key or metadata associated with the key.
 func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) ([]byte, error) {
 	if attrs == nil {
-		return nil, fmt.Errorf("attributes cannot be nil")
+		return nil, &errs.Message{Msg: "attributes cannot be nil"}
 	}
 
 	ctx := context.Background()
@@ -287,7 +290,7 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 	if extension == backend.FSEXT_PRIVATE_BLOB || extension == backend.FSEXT_PUBLIC_BLOB {
 		data, ok := b.metadata[attrs.CN]
 		if !ok {
-			return nil, fmt.Errorf("%w: %s", backend.ErrFileNotFound, attrs.CN)
+			return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 		}
 		return data, nil
 	}
@@ -296,19 +299,19 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 	if extension == backend.FSEXT_PUBLIC_PKCS1 || extension == backend.FSEXT_PUBLIC_PEM {
 		pubKey, err := b.client.GetPublicKey(ctx, attrs.CN, "")
 		if err != nil {
-			return nil, fmt.Errorf("%w: failed to get public key: %v", backend.ErrFileNotFound, err)
+			return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: fmt.Sprintf("failed to get public key: %v", err)}
 		}
 		return pubKey, nil
 	}
 
-	return nil, fmt.Errorf("%w: extension not supported for Azure Key Vault", backend.ErrInvalidExtension)
+	return nil, &errs.Detail{Err: backend.ErrInvalidExtension, Detail: "extension not supported for Azure Key Vault"}
 }
 
 // Save stores data for a key with the specified attributes and extension.
 // For Azure Key Vault, this creates a new key or stores metadata.
 func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.FSExtension, overwrite bool) error {
 	if attrs == nil {
-		return fmt.Errorf("attributes cannot be nil")
+		return &errs.Message{Msg: "attributes cannot be nil"}
 	}
 
 	ctx := context.Background()
@@ -322,7 +325,7 @@ func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.
 	// Check if metadata already exists
 	if !overwrite {
 		if _, exists := b.metadata[attrs.CN]; exists {
-			return fmt.Errorf("%w: %s", backend.ErrFileAlreadyExists, attrs.CN)
+			return &errs.Detail{Err: backend.ErrFileAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
 		}
 	}
 
@@ -336,7 +339,7 @@ func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.
 // For Azure Key Vault, this deletes the key and removes metadata.
 func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 	if attrs == nil {
-		return fmt.Errorf("attributes cannot be nil")
+		return &errs.Message{Msg: "attributes cannot be nil"}
 	}
 
 	ctx := context.Background()
@@ -381,7 +384,7 @@ func (b *Backend) Close() error {
 // This operation is idempotent - if the key already exists, it returns the existing key ID.
 func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 	if attrs == nil {
-		return "", fmt.Errorf("attributes cannot be nil")
+		return "", &errs.Message{Msg: "attributes cannot be nil"}
 	}
 
 	ctx := context.Background()
@@ -408,11 +411,11 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 	// Create the key
 	resp, err := b.client.CreateKey(ctx, attrs.CN, params, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create Azure Key Vault key: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to create Azure Key Vault key", Err: err}
 	}
 
 	if resp.Key == nil || resp.Key.KID == nil {
-		return "", fmt.Errorf("invalid response from Azure Key Vault")
+		return "", &errs.Message{Msg: "invalid response from Azure Key Vault"}
 	}
 
 	keyID := *resp.Key.KID
@@ -427,7 +430,7 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return string(keyID), fmt.Errorf("failed to marshal metadata: %w", err)
+		return string(keyID), &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	b.mu.Lock()
@@ -441,7 +444,7 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 // Note: This method uses default PKCS#1 v1.5 padding. For PSS signatures, use Signer() instead.
 func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte) ([]byte, error) {
 	if attrs == nil {
-		return nil, fmt.Errorf("attributes cannot be nil")
+		return nil, &errs.Message{Msg: "attributes cannot be nil"}
 	}
 
 	ctx := context.Background()
@@ -468,17 +471,43 @@ func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte) ([]byte, error
 	// Perform signing
 	resp, err := b.client.Sign(ctx, attrs.CN, "", params, nil)
 	if err != nil {
-		return nil, fmt.Errorf("Azure Key Vault sign operation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "Azure Key Vault sign operation failed", Err: err}
 	}
 
+	if attrs.KeyAlgorithm == x509.ECDSA {
+		return ecdsaResultToDER(resp.Result)
+	}
 	return resp.Result, nil
+}
+
+// ecdsaResultToDER normalizes an Azure Key Vault ECDSA signature to ASN.1 DER.
+// Azure returns ES256/384/512 signatures in IEEE-P1363 fixed-width r‖s form, but
+// the crypto.Signer contract (and therefore x509, SSH, and every other consumer)
+// requires ASN.1 DER. Input that is already DER is returned unchanged, so the
+// helper is safe regardless of the client's wire format.
+func ecdsaResultToDER(sig []byte) ([]byte, error) {
+	var probe struct{ R, S *big.Int }
+	if _, err := asn1.Unmarshal(sig, &probe); err == nil {
+		return sig, nil // already ASN.1 DER
+	}
+	if len(sig) == 0 || len(sig)%2 != 0 {
+		return nil, &errs.Message{Msg: fmt.Sprintf("azurekv: unexpected ECDSA signature length %d", len(sig))}
+	}
+	half := len(sig) / 2
+	r := new(big.Int).SetBytes(sig[:half])
+	s := new(big.Int).SetBytes(sig[half:])
+	der, err := asn1.Marshal(struct{ R, S *big.Int }{r, s})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "azurekv: encode ECDSA signature", Err: err}
+	}
+	return der, nil
 }
 
 // Verify verifies a signature using the Azure Key Vault key.
 // Note: This method uses default PKCS#1 v1.5 padding. For PSS verification, use local verification after Signer() instead.
 func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) error {
 	if attrs == nil {
-		return fmt.Errorf("attributes cannot be nil")
+		return &errs.Message{Msg: "attributes cannot be nil"}
 	}
 
 	ctx := context.Background()
@@ -506,7 +535,7 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 	// Perform verification
 	resp, err := b.client.Verify(ctx, attrs.CN, "", params, nil)
 	if err != nil {
-		return fmt.Errorf("Azure Key Vault verify operation failed: %w", err)
+		return &errs.Wrapped{Msg: "Azure Key Vault verify operation failed", Err: err}
 	}
 
 	if resp.Value == nil || !*resp.Value {
@@ -550,7 +579,7 @@ func (b *Backend) getKeyParameters(attrs *types.KeyAttributes) (azkeys.CreateKey
 		}
 
 	default:
-		return params, fmt.Errorf("%w: %s", ErrUnsupportedKeyType, attrs.KeyAlgorithm)
+		return params, &errs.Detail{Err: ErrUnsupportedKeyType, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
 	}
 
 	return params, nil
@@ -604,7 +633,7 @@ func (b *Backend) getSigningAlgorithm(attrs *types.KeyAttributes, opts crypto.Si
 		}
 		return azkeys.SignatureAlgorithmES256, nil // Default to ES256
 	default:
-		return "", fmt.Errorf("%w: %s", ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+		return "", &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
 	}
 }
 
@@ -623,7 +652,7 @@ func ptrKeyOp(op azkeys.KeyOperation) *azkeys.KeyOperation {
 // Returns the key ID of the created key, or an error if creation fails.
 func (b *Backend) CreateSecretKey(attrs *types.KeyAttributes, keySize int) (string, error) {
 	if attrs == nil {
-		return "", fmt.Errorf("attributes cannot be nil")
+		return "", &errs.Message{Msg: "attributes cannot be nil"}
 	}
 
 	ctx := context.Background()
@@ -659,11 +688,11 @@ func (b *Backend) CreateSecretKey(attrs *types.KeyAttributes, keySize int) (stri
 	// Create the key
 	resp, err := b.client.CreateKey(ctx, attrs.CN, params, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create symmetric key in Azure Key Vault: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to create symmetric key in Azure Key Vault", Err: err}
 	}
 
 	if resp.Key == nil || resp.Key.KID == nil {
-		return "", fmt.Errorf("invalid response from Azure Key Vault")
+		return "", &errs.Message{Msg: "invalid response from Azure Key Vault"}
 	}
 
 	keyID := *resp.Key.KID
@@ -679,7 +708,7 @@ func (b *Backend) CreateSecretKey(attrs *types.KeyAttributes, keySize int) (stri
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return string(keyID), fmt.Errorf("failed to marshal metadata: %w", err)
+		return string(keyID), &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	b.mu.Lock()
@@ -698,13 +727,13 @@ func (b *Backend) Type() types.BackendType {
 // For Azure Key Vault, this creates a new key and stores metadata.
 func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
-		return nil, fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "attributes cannot be nil"}
 	}
 
 	// Create the Azure Key Vault key
 	keyID, err := b.CreateKey(attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure Key Vault key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create Azure Key Vault key", Err: err}
 	}
 
 	// For Azure Key Vault, we don't return the actual private key material (it stays in the vault)
@@ -721,7 +750,7 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 // For Azure Key Vault, this verifies the key exists and returns a reference.
 func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs == nil {
-		return nil, fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "attributes cannot be nil"}
 	}
 
 	if err := b.initClient(ctx); err != nil {
@@ -734,13 +763,13 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	b.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	// Verify key exists in Azure Key Vault
 	_, err := b.client.GetKey(ctx, attrs.CN, "", nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to get key: %v", backend.ErrKeyNotFound, err)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
 	}
 
 	// Return nil for private key since it's not extractable from Azure Key Vault
@@ -761,7 +790,7 @@ func (b *Backend) GetSignerByID(keyID string) (crypto.Signer, error) {
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("%w: key %s does not implement crypto.Signer", backend.ErrInvalidKeyType, keyID)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key %s does not implement crypto.Signer", keyID)}
 	}
 	return signer, nil
 }
@@ -779,7 +808,7 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 	}
 	decrypter, ok := key.(crypto.Decrypter)
 	if !ok {
-		return nil, fmt.Errorf("%w: key %s does not implement crypto.Decrypter", backend.ErrInvalidKeyType, keyID)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key %s does not implement crypto.Decrypter", keyID)}
 	}
 	return decrypter, nil
 }
@@ -857,7 +886,7 @@ type azurekvDecrypter struct {
 // Signer returns a crypto.Signer for the key identified by attrs.
 func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	if attrs == nil {
-		return nil, fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "attributes cannot be nil"}
 	}
 
 	if err := b.initClient(ctx); err != nil {
@@ -867,13 +896,13 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	// Get the public key
 	pubKeyBytes, err := b.client.GetPublicKey(ctx, attrs.CN, "")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get public key", Err: err}
 	}
 
 	// Parse the public key from PEM
 	publicKey, err := parsePublicKey(pubKeyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
 	return &azurekvSigner{
@@ -886,12 +915,12 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 // Decrypter returns a crypto.Decrypter for the key identified by attrs.
 func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	if attrs == nil {
-		return nil, fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "attributes cannot be nil"}
 	}
 
 	// Only RSA keys support decryption in Azure Key Vault
 	if attrs.KeyAlgorithm != x509.RSA {
-		return nil, fmt.Errorf("%w: only RSA keys support decryption", backend.ErrInvalidAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: "only RSA keys support decryption"}
 	}
 
 	if err := b.initClient(ctx); err != nil {
@@ -901,13 +930,13 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 	// Get the public key
 	pubKeyBytes, err := b.client.GetPublicKey(ctx, attrs.CN, "")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get public key", Err: err}
 	}
 
 	// Parse the public key from PEM
 	publicKey, err := parsePublicKey(pubKeyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
 	return &azurekvDecrypter{
@@ -921,7 +950,7 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 // For Azure Key Vault, this uses the RotateKey API to create a new key version.
 func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil {
-		return fmt.Errorf("attributes cannot be nil")
+		return &errs.Message{Msg: "attributes cannot be nil"}
 	}
 
 	if err := b.initClient(ctx); err != nil {
@@ -931,7 +960,7 @@ func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) err
 	// Rotate the key using Azure Key Vault's RotateKey API
 	_, err := b.client.RotateKey(ctx, attrs.CN, nil)
 	if err != nil {
-		return fmt.Errorf("failed to rotate key: %w", err)
+		return &errs.Wrapped{Msg: "failed to rotate key", Err: err}
 	}
 
 	return nil
@@ -966,9 +995,14 @@ func (s *azurekvSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOp
 	// Perform signing
 	resp, err := s.backend.client.Sign(ctx, s.attrs.CN, "", params, nil)
 	if err != nil {
-		return nil, fmt.Errorf("Azure Key Vault sign operation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "Azure Key Vault sign operation failed", Err: err}
 	}
 
+	// Azure returns ECDSA signatures as IEEE-P1363 r‖s; crypto.Signer requires
+	// ASN.1 DER. Normalize so the key works as an x509/SSH signer.
+	if _, ok := s.publicKey.(*ecdsa.PublicKey); ok {
+		return ecdsaResultToDER(resp.Result)
+	}
 	return resp.Result, nil
 }
 
@@ -998,7 +1032,7 @@ func (d *azurekvDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypt
 		case crypto.SHA256:
 			algorithm = azkeys.EncryptionAlgorithmRSAOAEP256
 		default:
-			return nil, fmt.Errorf("unsupported OAEP hash algorithm: %v", oaepOpts.Hash)
+			return nil, &errs.Message{Msg: fmt.Sprintf("unsupported OAEP hash algorithm: %v", oaepOpts.Hash)}
 		}
 	} else if opts == nil {
 		// If opts is nil, use PKCS#1 v1.5 padding (legacy/compatibility mode)
@@ -1015,7 +1049,7 @@ func (d *azurekvDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypt
 	// Perform decryption
 	resp, err := d.backend.client.Decrypt(ctx, d.attrs.CN, "", params, nil)
 	if err != nil {
-		return nil, fmt.Errorf("Azure Key Vault decrypt operation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "Azure Key Vault decrypt operation failed", Err: err}
 	}
 
 	return resp.Result, nil
@@ -1024,19 +1058,19 @@ func (d *azurekvDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypt
 // jwkToPublicKey converts an Azure Key Vault JWK to a crypto.PublicKey
 func jwkToPublicKey(jwk *azkeys.JSONWebKey) (crypto.PublicKey, error) {
 	if jwk == nil {
-		return nil, fmt.Errorf("JWK is nil")
+		return nil, &errs.Message{Msg: "JWK is nil"}
 	}
 
 	// Check key type
 	if jwk.Kty == nil {
-		return nil, fmt.Errorf("key type is nil")
+		return nil, &errs.Message{Msg: "key type is nil"}
 	}
 
 	switch *jwk.Kty {
 	case azkeys.KeyTypeRSA, azkeys.KeyTypeRSAHSM:
 		// RSA key
 		if jwk.N == nil || jwk.E == nil {
-			return nil, fmt.Errorf("RSA key missing N or E")
+			return nil, &errs.Message{Msg: "RSA key missing N or E"}
 		}
 
 		// Convert modulus and exponent from base64url bytes to big.Int
@@ -1047,7 +1081,7 @@ func jwkToPublicKey(jwk *azkeys.JSONWebKey) (crypto.PublicKey, error) {
 		// E is typically 65537 (0x010001) which is 3 bytes
 		eInt := new(big.Int).SetBytes(jwk.E)
 		if !eInt.IsInt64() {
-			return nil, fmt.Errorf("RSA exponent too large")
+			return nil, &errs.Message{Msg: "RSA exponent too large"}
 		}
 		pubKey.E = int(eInt.Int64())
 
@@ -1056,7 +1090,7 @@ func jwkToPublicKey(jwk *azkeys.JSONWebKey) (crypto.PublicKey, error) {
 	case azkeys.KeyTypeEC, azkeys.KeyTypeECHSM:
 		// ECDSA key
 		if jwk.X == nil || jwk.Y == nil || jwk.Crv == nil {
-			return nil, fmt.Errorf("EC key missing X, Y, or Crv")
+			return nil, &errs.Message{Msg: "EC key missing X, Y, or Crv"}
 		}
 
 		var curve elliptic.Curve
@@ -1068,7 +1102,7 @@ func jwkToPublicKey(jwk *azkeys.JSONWebKey) (crypto.PublicKey, error) {
 		case azkeys.CurveNameP521:
 			curve = elliptic.P521()
 		default:
-			return nil, fmt.Errorf("unsupported curve: %v", *jwk.Crv)
+			return nil, &errs.Message{Msg: fmt.Sprintf("unsupported curve: %v", *jwk.Crv)}
 		}
 
 		pubKey := &ecdsa.PublicKey{
@@ -1080,7 +1114,7 @@ func jwkToPublicKey(jwk *azkeys.JSONWebKey) (crypto.PublicKey, error) {
 		return pubKey, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported key type: %v", *jwk.Kty)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %v", *jwk.Kty)}
 	}
 }
 
@@ -1095,7 +1129,7 @@ func parsePublicKey(pubKeyBytes []byte) (crypto.PublicKey, error) {
 	// Parse PKIX public key
 	publicKey, err := x509.ParsePKIXPublicKey(pubKeyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
 	return publicKey, nil

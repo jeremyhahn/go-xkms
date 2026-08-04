@@ -30,6 +30,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -84,7 +86,7 @@ func NewTestXKMSService() (*TestXKMSService, error) {
 	// Generate a random seal key
 	sealKey := make([]byte, 32)
 	if _, err := rand.Read(sealKey); err != nil {
-		return nil, fmt.Errorf("failed to generate seal key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate seal key", Err: err}
 	}
 
 	return &TestXKMSService{
@@ -140,14 +142,14 @@ func (s *TestXKMSService) GenerateKey(ctx context.Context, req *xkms.GenerateKey
 		}
 		privateKey, err := ecdsa.GenerateKey(curve, rand.Reader)
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate EC key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to generate EC key", Err: err}
 		}
 		key.privateKey = privateKey
 		key.publicKey = &privateKey.PublicKey
 
 		pubKeyBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal public key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to marshal public key", Err: err}
 		}
 		pubKeyPEM := pem.EncodeToMemory(&pem.Block{
 			Type:  "PUBLIC KEY",
@@ -164,7 +166,7 @@ func (s *TestXKMSService) GenerateKey(ctx context.Context, req *xkms.GenerateKey
 	case "symmetric", "aes", "aes256-gcm":
 		symKey := make([]byte, 32) // 256-bit key
 		if _, err := rand.Read(symKey); err != nil {
-			return nil, fmt.Errorf("failed to generate symmetric key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to generate symmetric key", Err: err}
 		}
 		key.symmetric = symKey
 		key.keyType = "symmetric"
@@ -175,7 +177,7 @@ func (s *TestXKMSService) GenerateKey(ctx context.Context, req *xkms.GenerateKey
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported key type: %s", req.KeyType)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %s", req.KeyType)}
 	}
 }
 
@@ -238,7 +240,7 @@ func (s *TestXKMSService) Sign(ctx context.Context, req *xkms.SignRequest) (*xkm
 	hash := sha256.Sum256(req.Data)
 	signature, err := ecdsa.SignASN1(rand.Reader, ecdsaKey, hash[:])
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to sign", Err: err}
 	}
 
 	return &xkms.SignResponse{Signature: signature}, nil
@@ -484,7 +486,7 @@ func (s *TestXKMSService) CreateUser(ctx context.Context, req *xkms.CreateUserRe
 	defer s.mu.Unlock()
 
 	if _, exists := s.users[req.Username]; exists {
-		return nil, fmt.Errorf("user %q already exists", req.Username)
+		return nil, &errs.Message{Msg: fmt.Sprintf("user %q already exists", req.Username)}
 	}
 
 	role := req.Role
@@ -612,14 +614,14 @@ func (s *TestXKMSService) BeginRegistration(ctx context.Context, req *xkms.Begin
 	// Generate a session ID for the lossless ceremony.
 	sessionBytes := make([]byte, 16)
 	if _, err := rand.Read(sessionBytes); err != nil {
-		return nil, fmt.Errorf("failed to generate session id: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate session id", Err: err}
 	}
 	sessionID := base64.RawURLEncoding.EncodeToString(sessionBytes)
 
 	// Generate challenge and embed it in JSON-marshaled WebAuthn options.
 	challenge := make([]byte, 32)
 	if _, err := rand.Read(challenge); err != nil {
-		return nil, fmt.Errorf("failed to generate challenge: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate challenge", Err: err}
 	}
 	optionsJSON := fmt.Sprintf(
 		`{"publicKey":{"challenge":%q,"rp":{"name":%q},"pubKeyCredParams":[{"type":"public-key","alg":-7},{"type":"public-key","alg":-257}]}}`,
@@ -681,7 +683,7 @@ func (s *TestXKMSService) BeginAuthentication(ctx context.Context, req *xkms.Beg
 	// Generate challenge
 	challenge := make([]byte, 32)
 	if _, err := rand.Read(challenge); err != nil {
-		return nil, fmt.Errorf("failed to generate challenge: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate challenge", Err: err}
 	}
 
 	// Get credential IDs
@@ -702,7 +704,7 @@ func (s *TestXKMSService) BeginAuthentication(ctx context.Context, req *xkms.Beg
 	}
 	optsJSON, err := json.Marshal(options)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal authentication options: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal authentication options", Err: err}
 	}
 
 	return &xkms.BeginAuthenticationResponse{
@@ -767,7 +769,7 @@ func (s *TestXKMSService) DeriveKey(ctx context.Context, req *xkms.DeriveKeyRequ
 	// In a real implementation, this would use proper KDF algorithms
 	derivedKey := make([]byte, req.KeyLength)
 	if _, err := rand.Read(derivedKey); err != nil {
-		return nil, fmt.Errorf("failed to generate derived key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate derived key", Err: err}
 	}
 
 	return &xkms.DeriveKeyResponse{
@@ -784,23 +786,23 @@ func (s *TestXKMSService) DeriveKeyECDH(ctx context.Context, req *xkms.DeriveKey
 	s.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("key not found: %s", req.KeyID)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", req.KeyID)}
 	}
 
 	ecKey, ok := key.privateKey.(*ecdsa.PrivateKey)
 	if !ok {
-		return nil, fmt.Errorf("key %s is not an ECDSA key", req.KeyID)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key %s is not an ECDSA key", req.KeyID)}
 	}
 
 	// Parse peer public key
 	peerPubKey, err := x509.ParsePKIXPublicKey(req.PeerPublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse peer public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse peer public key", Err: err}
 	}
 
 	peerECKey, ok := peerPubKey.(*ecdsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("peer public key is not an ECDSA key")
+		return nil, &errs.Message{Msg: "peer public key is not an ECDSA key"}
 	}
 
 	// Perform ECDH
@@ -827,15 +829,15 @@ func (s *TestXKMSService) ExportKeyMaterial(ctx context.Context, req *xkms.Expor
 	s.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("key not found: %s", req.KeyID)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", req.KeyID)}
 	}
 
 	if key.symmetric == nil {
-		return nil, fmt.Errorf("key %s is not a symmetric key", req.KeyID)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key %s is not a symmetric key", req.KeyID)}
 	}
 
 	if !key.exportable {
-		return nil, fmt.Errorf("key %s is not extractable", req.KeyID)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key %s is not extractable", req.KeyID)}
 	}
 
 	return &xkms.ExportKeyMaterialResponse{
@@ -993,6 +995,13 @@ func (s *TestXKMSService) BarrierUnsealWithShares(ctx context.Context, req *xkms
 // BarrierRekey re-encrypts the barrier with a new root key.
 func (s *TestXKMSService) BarrierRekey(_ context.Context, _ *xkms.BarrierRekeyRequest) (*xkms.BarrierRekeyResponse, error) {
 	return nil, nil
+}
+
+// BarrierEnableEncryption migrates a previously-unencrypted barrier to a keyed
+// one. The in-memory test service has no persistent barrier, so this is a
+// no-op that satisfies the transport.XKMSServicer interface.
+func (s *TestXKMSService) BarrierEnableEncryption(_ context.Context, _ *xkms.BarrierEnableEncryptionRequest) (*xkms.BarrierEnableEncryptionResponse, error) {
+	return &xkms.BarrierEnableEncryptionResponse{}, nil
 }
 
 // BarrierGenerateRecoveryKeys generates recovery keys.
@@ -1236,6 +1245,25 @@ func (s *TestXKMSService) TenantBarrierInit(ctx context.Context, req *xkms.Tenan
 // TenantBarrierUnseal unseals a per-tenant barrier.
 func (s *TestXKMSService) TenantBarrierUnseal(ctx context.Context, req *xkms.TenantBarrierUnsealRequest) error {
 	return ErrNotImplemented
+}
+
+// TenantBarrierStatus reports the state of a per-tenant barrier. The in-memory
+// test service does not model per-tenant barriers, so it returns an empty
+// status to satisfy the transport.XKMSServicer interface.
+func (s *TestXKMSService) TenantBarrierStatus(_ context.Context, _ string) (*xkms.TenantBarrierStatusResponse, error) {
+	return &xkms.TenantBarrierStatusResponse{}, nil
+}
+
+// UpdateTenantEntitlements updates a tenant's feature entitlements. No-op in the
+// in-memory test service; satisfies the transport.XKMSServicer interface.
+func (s *TestXKMSService) UpdateTenantEntitlements(_ context.Context, _ *xkms.UpdateTenantEntitlementsRequest) (*xkms.UpdateTenantEntitlementsResponse, error) {
+	return &xkms.UpdateTenantEntitlementsResponse{}, nil
+}
+
+// UpdateTenantQuotas updates a tenant's resource quotas. No-op in the in-memory
+// test service; satisfies the transport.XKMSServicer interface.
+func (s *TestXKMSService) UpdateTenantQuotas(_ context.Context, _ *xkms.UpdateTenantQuotasRequest) (*xkms.UpdateTenantQuotasResponse, error) {
+	return &xkms.UpdateTenantQuotasResponse{}, nil
 }
 
 // Init ceremony operations

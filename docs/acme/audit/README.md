@@ -64,7 +64,7 @@ The audit logger supports multiple serialization formats via go-codec:
 ```go
 import (
     "github.com/jeremyhahn/go-codec"
-    "github.com/jeremyhahn/go-trusted-ca/pkg/audit"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 )
 
 // Create codec for binary logging
@@ -77,7 +77,7 @@ logger, err := audit.NewFileAuditLoggerWithCodec(config, c)
 ### Usage
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/audit"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 
 // Create audit logger
 config := &audit.Config{

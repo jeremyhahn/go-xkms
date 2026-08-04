@@ -240,14 +240,14 @@ func (n *noCloseBackend) Close() error { return nil }
 func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 	tmpDir, err := os.MkdirTemp("", "fido2-tpm2-test-*")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp key dir: %w", err)
+		return nil, &WrappedError{Msg: "failed to create temp key dir", Err: err}
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	fsBackend, err := xkms.NewFileStorageBackend(tmpDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create file storage: %w", err)
+		return nil, &WrappedError{Msg: "failed to create file storage", Err: err}
 	}
 	keyBackend := xkms.NewFileBackend(logger, fsBackend)
 
@@ -266,27 +266,27 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 		Logger:  logger,
 	})
 	if err != nil && tpm == nil {
-		return nil, fmt.Errorf("failed to open TPM simulator: %w", err)
+		return nil, &WrappedError{Msg: "failed to open TPM simulator", Err: err}
 	}
 	if err != nil {
 		ekAttrs, ekErr := xkms.EKAttributesFromConfig(*tpmConfig.EK, nil, nil)
 		if ekErr != nil {
 			tpm.Close()
-			return nil, fmt.Errorf("failed to build EK attributes: %w", ekErr)
+			return nil, &WrappedError{Msg: "failed to build EK attributes", Err: ekErr}
 		}
 		if ekCreateErr := tpm.CreateEK(ekAttrs); ekCreateErr != nil {
 			tpm.Close()
-			return nil, fmt.Errorf("failed to create EK: %w", ekCreateErr)
+			return nil, &WrappedError{Msg: "failed to create EK", Err: ekCreateErr}
 		}
 		srkAttrs, srkErr := xkms.SRKAttributesFromConfig(*tpmConfig.SSRK, nil)
 		if srkErr != nil {
 			tpm.Close()
-			return nil, fmt.Errorf("failed to build SRK attributes: %w", srkErr)
+			return nil, &WrappedError{Msg: "failed to build SRK attributes", Err: srkErr}
 		}
 		srkAttrs.Parent = ekAttrs
 		if srkCreateErr := tpm.CreateSRK(srkAttrs); srkCreateErr != nil {
 			tpm.Close()
-			return nil, fmt.Errorf("failed to create SRK: %w", srkCreateErr)
+			return nil, &WrappedError{Msg: "failed to create SRK", Err: srkCreateErr}
 		}
 	}
 
@@ -297,7 +297,7 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 	})
 	if err != nil {
 		tpm.Close()
-		return nil, fmt.Errorf("failed to create TPM2 backend: %w", err)
+		return nil, &WrappedError{Msg: "failed to create TPM2 backend", Err: err}
 	}
 	return keybackend.NewBackendAdapter(provider, xkms.BackendTypeTPM2), nil
 }
@@ -328,11 +328,11 @@ func newPKCS11BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 		CertStorage: certStorage,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create PKCS#11 backend: %w", err)
+		return nil, &WrappedError{Msg: "failed to create PKCS#11 backend", Err: err}
 	}
 
 	if err := provider.Initialize(soPin, pin); err != nil {
-		return nil, fmt.Errorf("failed to initialize PKCS#11 token: %w", err)
+		return nil, &WrappedError{Msg: "failed to initialize PKCS#11 token", Err: err}
 	}
 
 	return keybackend.NewBackendAdapter(provider, xkms.BackendTypePKCS11), nil

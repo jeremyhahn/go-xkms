@@ -93,27 +93,27 @@ func Wipe(opts WipeOptions) error {
 	// Get file size
 	info, err := os.Stat(opts.Path)
 	if err != nil {
-		return fmt.Errorf("failed to stat file: %w", err)
+		return &WrappedError{Msg: "failed to stat file", Err: err}
 	}
 	size := info.Size()
 
 	// Open file for writing
 	f, err := os.OpenFile(opts.Path, os.O_WRONLY, 0600)
 	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
+		return &WrappedError{Msg: "failed to open file", Err: err}
 	}
 	defer func() { _ = f.Close() }()
 
 	// Perform wipe passes
 	for i, pattern := range patterns {
 		if err := wipePass(f, size, pattern); err != nil {
-			return fmt.Errorf("wipe pass %d failed: %w", i+1, err)
+			return &WrappedError{Msg: fmt.Sprintf("wipe pass %d failed", i+1), Err: err}
 		}
 	}
 
 	// Sync to ensure writes are flushed
 	if err := f.Sync(); err != nil {
-		return fmt.Errorf("failed to sync: %w", err)
+		return &WrappedError{Msg: "failed to sync", Err: err}
 	}
 
 	return nil
@@ -128,7 +128,7 @@ func wipePass(f *os.File, size int64, pattern WipePattern) error {
 
 	// Seek to beginning
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("failed to seek: %w", err)
+		return &WrappedError{Msg: "failed to seek", Err: err}
 	}
 
 	remaining := size
@@ -146,7 +146,7 @@ func wipePass(f *os.File, size int64, pattern WipePattern) error {
 		// Write buffer
 		n, err := f.Write(buffer[:writeSize])
 		if err != nil {
-			return fmt.Errorf("write error: %w", err)
+			return &WrappedError{Msg: "write error", Err: err}
 		}
 
 		remaining -= int64(n)
@@ -168,10 +168,10 @@ func fillBufferWithPattern(buf []byte, pattern WipePattern) error {
 		}
 	case PatternRandom:
 		if _, err := rand.Read(buf); err != nil {
-			return fmt.Errorf("failed to generate random data: %w", err)
+			return &WrappedError{Msg: "failed to generate random data", Err: err}
 		}
 	default:
-		return fmt.Errorf("unknown pattern: %d", pattern)
+		return &MessageError{Msg: fmt.Sprintf("unknown pattern: %d", pattern)}
 	}
 	return nil
 }

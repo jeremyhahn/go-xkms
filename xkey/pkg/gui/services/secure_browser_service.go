@@ -20,7 +20,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -184,7 +183,7 @@ func (s *SecureBrowserService) LaunchBrowserWithOptions(
 
 	certs, err := s.trustService.AllCertificates()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrSecureBrowserCertSync, err)
+		return nil, &SentinelCauseError{Sentinel: ErrSecureBrowserCertSync, Cause: err}
 	}
 	if len(certs) == 0 {
 		return nil, ErrSecureBrowserNoCerts
@@ -240,7 +239,7 @@ func (s *SecureBrowserService) LaunchBrowserWithOptions(
 			"family", string(family),
 			"error", err,
 		)
-		return nil, fmt.Errorf("%w: %w", ErrSecureBrowserLaunchFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrSecureBrowserLaunchFailed, Cause: err}
 	}
 
 	pid := 0
@@ -291,7 +290,7 @@ func (s *SecureBrowserService) DetectBrowsers() []BrowserInfo {
 func (s *SecureBrowserService) Rebuild() error {
 	certs, err := s.trustService.AllCertificates()
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserCertSync, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserCertSync, Cause: err}
 	}
 
 	// Rebuild both families. The hash is recorded per resolved target
@@ -363,15 +362,15 @@ func (s *SecureBrowserService) syncChrome(certs []*x509.Certificate) error {
 	nssdbDir, ok := s.targetNSSDBDir(nativemsg.BrowserChrome)
 	if !ok {
 		// Resolving the shared ~/.pki/nssdb path failed (no home dir).
-		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, ErrSecureBrowserHomeDir)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserNSSDB, Cause: ErrSecureBrowserHomeDir}
 	}
 	if err := nssdb.InitDir(nssdbDir); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserNSSDB, Cause: err}
 	}
 
 	writer, err := nssdb.NewWriter(nssdbDir)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserNSSDB, Cause: err}
 	}
 	defer func() { _ = writer.Close() }()
 
@@ -413,7 +412,7 @@ func (s *SecureBrowserService) syncChrome(certs []*x509.Certificate) error {
 func (s *SecureBrowserService) syncFirefox(certs []*x509.Certificate) error {
 	certsDir := s.firefoxCertsDir()
 	if err := os.MkdirAll(certsDir, 0o700); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserCertExport, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserCertExport, Cause: err}
 	}
 
 	// Remove old PEM files.
@@ -436,7 +435,7 @@ func (s *SecureBrowserService) syncFirefox(certs []*x509.Certificate) error {
 		}
 		pemData := pem.EncodeToMemory(block)
 		if err := os.WriteFile(pemPath, pemData, 0o600); err != nil {
-			return fmt.Errorf("%w: %w", ErrSecureBrowserCertExport, err)
+			return &SentinelCauseError{Sentinel: ErrSecureBrowserCertExport, Cause: err}
 		}
 		certPaths = append(certPaths, pemPath)
 	}
@@ -462,15 +461,15 @@ func (s *SecureBrowserService) syncFirefox(certs []*x509.Certificate) error {
 func (s *SecureBrowserService) injectFirefoxNSSDB(certs []*x509.Certificate) error {
 	nssdbDir := s.firefoxNSSDBDir()
 	if err := os.MkdirAll(nssdbDir, 0o700); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserNSSDB, Cause: err}
 	}
 	if err := nssdb.InitDir(nssdbDir); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserNSSDB, Cause: err}
 	}
 
 	writer, err := nssdb.NewWriter(nssdbDir)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserNSSDB, Cause: err}
 	}
 	defer func() { _ = writer.Close() }()
 
@@ -505,17 +504,17 @@ func (s *SecureBrowserService) writeFirefoxPolicies(certPaths []string) error {
 
 	data, err := json.MarshalIndent(policies, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserPolicyWrite, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserPolicyWrite, Cause: err}
 	}
 
 	policiesPath := s.firefoxPoliciesPath()
 	policiesDir := filepath.Dir(policiesPath)
 	if err := os.MkdirAll(policiesDir, 0o700); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserPolicyWrite, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserPolicyWrite, Cause: err}
 	}
 
 	if err := os.WriteFile(policiesPath, data, 0o600); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserPolicyWrite, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserPolicyWrite, Cause: err}
 	}
 
 	return nil
@@ -556,14 +555,14 @@ func (s *SecureBrowserService) buildLaunchArgs(
 			//   5. A `Default/Preferences` file with first-run keys set
 			//      to false suppresses opt-in prompts.
 			if mkErr := os.MkdirAll(filepath.Join(profileDir, "Default"), 0o700); mkErr != nil {
-				err = fmt.Errorf("%w: %w", ErrSecureBrowserLaunchFailed, mkErr)
+				err = &SentinelCauseError{Sentinel: ErrSecureBrowserLaunchFailed, Cause: mkErr}
 				return
 			}
 			// Sentinel file — empty, presence is the signal.
 			sentinelPath := filepath.Join(profileDir, "First Run")
 			if _, statErr := os.Stat(sentinelPath); os.IsNotExist(statErr) {
 				if writeErr := os.WriteFile(sentinelPath, []byte{}, 0o600); writeErr != nil {
-					err = fmt.Errorf("%w: %w", ErrSecureBrowserLaunchFailed, writeErr)
+					err = &SentinelCauseError{Sentinel: ErrSecureBrowserLaunchFailed, Cause: writeErr}
 					return
 				}
 			}
@@ -588,7 +587,7 @@ func (s *SecureBrowserService) buildLaunchArgs(
 					`"signin":{"allowed":false,"allowed_on_next_startup":false},` +
 					`"metrics_reporting_enabled":false}`)
 				if writeErr := os.WriteFile(masterPrefsPath, masterPrefs, 0o600); writeErr != nil {
-					err = fmt.Errorf("%w: %w", ErrSecureBrowserLaunchFailed, writeErr)
+					err = &SentinelCauseError{Sentinel: ErrSecureBrowserLaunchFailed, Cause: writeErr}
 					return
 				}
 			}
@@ -619,7 +618,7 @@ func (s *SecureBrowserService) buildLaunchArgs(
 		if mode == ProfileModeIsolated {
 			profileDir := filepath.Join(s.baseDir, "firefox", "profile")
 			if mkErr := os.MkdirAll(profileDir, 0o700); mkErr != nil {
-				err = fmt.Errorf("%w: %w", ErrSecureBrowserLaunchFailed, mkErr)
+				err = &SentinelCauseError{Sentinel: ErrSecureBrowserLaunchFailed, Cause: mkErr}
 				return
 			}
 			args = append(args, "--profile", profileDir)
@@ -748,7 +747,7 @@ func (s *SecureBrowserService) trustHashPath(family nativemsg.Browser) string {
 func (s *SecureBrowserService) readTrustHash(family nativemsg.Browser) (string, error) {
 	data, err := os.ReadFile(s.trustHashPath(family))
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrSecureBrowserHashRead, err)
+		return "", &SentinelCauseError{Sentinel: ErrSecureBrowserHashRead, Cause: err}
 	}
 	return strings.TrimSpace(string(data)), nil
 }
@@ -757,10 +756,10 @@ func (s *SecureBrowserService) readTrustHash(family nativemsg.Browser) (string, 
 // of the given family to disk.
 func (s *SecureBrowserService) writeTrustHash(family nativemsg.Browser, hash string) error {
 	if err := os.MkdirAll(s.baseDir, 0o700); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserHashWrite, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserHashWrite, Cause: err}
 	}
 	if err := os.WriteFile(s.trustHashPath(family), []byte(hash), 0o600); err != nil {
-		return fmt.Errorf("%w: %w", ErrSecureBrowserHashWrite, err)
+		return &SentinelCauseError{Sentinel: ErrSecureBrowserHashWrite, Cause: err}
 	}
 	return nil
 }

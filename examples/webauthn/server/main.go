@@ -45,6 +45,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
@@ -253,13 +255,13 @@ func generateTLSConfig() (*tls.Config, error) {
 	// Generate private key
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate private key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate private key", Err: err}
 	}
 
 	// Generate serial number
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate serial number: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate serial number", Err: err}
 	}
 
 	// Create certificate template
@@ -280,7 +282,7 @@ func generateTLSConfig() (*tls.Config, error) {
 	// Create certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create certificate", Err: err}
 	}
 
 	// Encode certificate to PEM
@@ -292,7 +294,7 @@ func generateTLSConfig() (*tls.Config, error) {
 	// Encode private key to PEM
 	keyDER, err := x509.MarshalECPrivateKey(privateKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal private key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal private key", Err: err}
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "EC PRIVATE KEY",
@@ -302,7 +304,7 @@ func generateTLSConfig() (*tls.Config, error) {
 	// Load certificate
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load key pair: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to load key pair", Err: err}
 	}
 
 	return &tls.Config{

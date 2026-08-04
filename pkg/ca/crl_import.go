@@ -25,6 +25,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // ImportDistributionCRLs downloads and stores every CRL listed in the given
@@ -59,33 +61,28 @@ func (ca *CA) ImportDistributionCRLs(cert *x509.Certificate) error {
 		// #nosec G107 - URL is from X.509 certificate CRLDP extension (issuer-controlled)
 		resp, err := http.Get(url)
 		if err != nil {
-			return fmt.Errorf("%w: failed to download CRL from %s: %v",
-				ErrStorageError, url, err)
+			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to download CRL from %s: %v", url, err)}
 		}
 		body, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			return fmt.Errorf("%w: failed to read CRL from %s: %v",
-				ErrStorageError, url, readErr)
+			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to read CRL from %s: %v", url, readErr)}
 		}
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("%w: CRL download %s returned status %d",
-				ErrStorageError, url, resp.StatusCode)
+			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("CRL download %s returned status %d", url, resp.StatusCode)}
 		}
 
 		// Validate the CRL parses and has an issuer.
 		crl, err := x509.ParseRevocationList(body)
 		if err != nil {
-			return fmt.Errorf("%w: invalid CRL from %s: %v",
-				ErrCRLGenerationFailed, url, err)
+			return &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("invalid CRL from %s: %v", url, err)}
 		}
 		if crl.Issuer.String() == "" {
-			return fmt.Errorf("%w: CRL from %s has empty issuer",
-				ErrCRLGenerationFailed, url)
+			return &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("CRL from %s has empty issuer", url)}
 		}
 
 		if err := ca.objectStore.Put(key, bytes.NewReader(body)); err != nil {
-			return fmt.Errorf("%w: failed to store CRL: %v", ErrStorageError, err)
+			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store CRL: %v", err)}
 		}
 	}
 	return nil

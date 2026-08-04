@@ -23,6 +23,8 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
@@ -179,7 +181,7 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 // signing request. This proves the CSR's private key is stored in hardware.
 func (s *XKMSService) verifyCSRAttestation(req *transport.SignCSRRequest) error {
 	if len(req.AttestationChain) == 0 {
-		return fmt.Errorf("%w: empty attestation chain", ErrAttestationVerificationFailed)
+		return &errs.Detail{Err: ErrAttestationVerificationFailed, Detail: "empty attestation chain"}
 	}
 
 	// Parse the attestation certificate chain.
@@ -187,8 +189,7 @@ func (s *XKMSService) verifyCSRAttestation(req *transport.SignCSRRequest) error 
 	for i, der := range req.AttestationChain {
 		cert, err := x509.ParseCertificate(der)
 		if err != nil {
-			return fmt.Errorf("%w: invalid certificate at index %d: %v",
-				ErrAttestationVerificationFailed, i, err)
+			return &errs.Detail{Err: ErrAttestationVerificationFailed, Detail: fmt.Sprintf("invalid certificate at index %d: %v", i, err)}
 		}
 		certs = append(certs, cert)
 	}
@@ -215,8 +216,7 @@ func (s *XKMSService) verifyCSRAttestation(req *transport.SignCSRRequest) error 
 				"subject", certs[i].Subject,
 				"issuer", certs[i].Issuer,
 				"error", err)
-			return fmt.Errorf("%w: chain link %d → %d: %v",
-				ErrAttestationVerificationFailed, i, i+1, err)
+			return &errs.Detail{Err: ErrAttestationVerificationFailed, Detail: fmt.Sprintf("chain link %d → %d: %v", i, i+1, err)}
 		}
 	}
 

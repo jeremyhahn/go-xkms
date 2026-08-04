@@ -107,19 +107,19 @@ func runUHIDSetup(_ *cobra.Command, _ []string) error {
 
 	// Step 1: Write udev rule.
 	if err := os.MkdirAll(filepath.Dir(uhidUdevRulePath), 0755); err != nil {
-		return fmt.Errorf("%w: %v", ErrUHIDSetupUdevDirFailed, err)
+		return &SentinelCauseError{Sentinel: ErrUHIDSetupUdevDirFailed, Cause: err}
 	}
 	if err := os.WriteFile(uhidUdevRulePath, []byte(uhidUdevRuleContent), 0644); err != nil {
-		return fmt.Errorf("%w: %v", ErrUHIDSetupUdevWriteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrUHIDSetupUdevWriteFailed, Cause: err}
 	}
 	fmt.Println("Created udev rule:", uhidUdevRulePath)
 
 	// Step 2: Ensure uhid module loads at boot.
 	if err := os.MkdirAll(filepath.Dir(uhidModuleLoadPath), 0755); err != nil {
-		return fmt.Errorf("%w: %v", ErrUHIDSetupModulesDirFailed, err)
+		return &SentinelCauseError{Sentinel: ErrUHIDSetupModulesDirFailed, Cause: err}
 	}
 	if err := os.WriteFile(uhidModuleLoadPath, []byte(uhidModuleLoadContent), 0644); err != nil {
-		return fmt.Errorf("%w: %v", ErrUHIDSetupModulesWriteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrUHIDSetupModulesWriteFailed, Cause: err}
 	}
 	fmt.Println("Created module load config:", uhidModuleLoadPath)
 
@@ -132,10 +132,10 @@ func runUHIDSetup(_ *cobra.Command, _ []string) error {
 
 	// Step 4: Reload udev rules and trigger device rescan.
 	if err := exec.Command("udevadm", "control", "--reload-rules").Run(); err != nil { // #nosec G204
-		return fmt.Errorf("%w: %v", ErrUHIDSetupUdevReloadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrUHIDSetupUdevReloadFailed, Cause: err}
 	}
 	if err := exec.Command("udevadm", "trigger", "--subsystem-match=misc").Run(); err != nil { // #nosec G204
-		return fmt.Errorf("%w: %v", ErrUHIDSetupUdevTriggerFailed, err)
+		return &SentinelCauseError{Sentinel: ErrUHIDSetupUdevTriggerFailed, Cause: err}
 	}
 	fmt.Println("Reloaded udev rules and triggered device rescan")
 
@@ -145,7 +145,7 @@ func runUHIDSetup(_ *cobra.Command, _ []string) error {
 	if callingUser != "" && callingUser != "root" {
 		if !userInGroup(callingUser, "input") {
 			if err := exec.Command("usermod", "-aG", "input", callingUser).Run(); err != nil { // #nosec G204
-				return fmt.Errorf("%w: user %s: %v", ErrUHIDSetupUserAddFailed, callingUser, err)
+				return &DetailError{Err: ErrUHIDSetupUserAddFailed, Detail: fmt.Sprintf(": user %s: %v", callingUser, err)}
 			}
 			fmt.Printf("Added user %q to input group (session restart required for group membership)\n", callingUser)
 		} else {

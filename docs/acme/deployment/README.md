@@ -1,6 +1,6 @@
 # Deployment Guide
 
-Comprehensive deployment documentation for go-trusted-ca ACME server.
+Comprehensive deployment documentation for go-xkms ACME server.
 
 ## Deployment Options
 
@@ -130,7 +130,7 @@ make docker-build
 # Run container
 docker run -d -p 8080:8080 \
   -v $(pwd)/data:/var/lib/trusted-acme \
-  go-trusted-ca:latest
+  go-xkms:latest
 ```
 
 ### Option 2: Binary

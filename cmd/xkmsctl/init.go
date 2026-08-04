@@ -193,7 +193,7 @@ func signNonce(nonce []byte, key crypto.PrivateKey) ([]byte, error) {
 		hash := sha256.Sum256(nonce)
 		sig, err := ecdsa.SignASN1(rand.Reader, k, hash[:])
 		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrNonceSignFailed, err)
+			return nil, &WrappedError{Sentinel: ErrNonceSignFailed, Err: err}
 		}
 		return sig, nil
 
@@ -201,7 +201,7 @@ func signNonce(nonce []byte, key crypto.PrivateKey) ([]byte, error) {
 		hash := sha256.Sum256(nonce)
 		sig, err := rsa.SignPKCS1v15(rand.Reader, k, crypto.SHA256, hash[:])
 		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrNonceSignFailed, err)
+			return nil, &WrappedError{Sentinel: ErrNonceSignFailed, Err: err}
 		}
 		return sig, nil
 
@@ -210,7 +210,7 @@ func signNonce(nonce []byte, key crypto.PrivateKey) ([]byte, error) {
 		return sig, nil
 
 	default:
-		return nil, fmt.Errorf("%w: %T", ErrUnsupportedKeyType, key)
+		return nil, &WrappedDetailError{Sentinel: ErrUnsupportedKeyType, Detail: fmt.Sprintf("%T", key)}
 	}
 }
 
@@ -221,7 +221,7 @@ func checkServerResponse(resp *http.Response) ([]byte, error) {
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to read response body: %w", ErrHTTPRequestFailed, err)
+		return nil, &WrappedDetailError{Sentinel: ErrHTTPRequestFailed, Detail: "failed to read response body", Err: err}
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -231,10 +231,10 @@ func checkServerResponse(resp *http.Response) ([]byte, error) {
 	// Try to extract a server error message
 	var serverErr serverErrorResponse
 	if json.Unmarshal(respBody, &serverErr) == nil && serverErr.Error != "" {
-		return nil, fmt.Errorf("%w: HTTP %d: %s", ErrServerResponseError, resp.StatusCode, serverErr.Error)
+		return nil, &WrappedDetailError{Sentinel: ErrServerResponseError, Detail: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, serverErr.Error)}
 	}
 
-	return nil, fmt.Errorf("%w: HTTP %d", ErrServerResponseError, resp.StatusCode)
+	return nil, &WrappedDetailError{Sentinel: ErrServerResponseError, Detail: fmt.Sprintf("HTTP %d", resp.StatusCode)}
 }
 
 // createInitHTTPClient creates the appropriate HTTP client based on flags.
@@ -254,7 +254,7 @@ func createInitHTTPClient(cfg *Config, requireSPKI bool) (*http.Client, error) {
 
 	// mTLS client
 	if cfg.TLSCert == "" || cfg.TLSKey == "" {
-		return nil, fmt.Errorf("%w: --tls-cert and --tls-key are required for mTLS", ErrCertFileRead)
+		return nil, &WrappedDetailError{Sentinel: ErrCertFileRead, Detail: "--tls-cert and --tls-key are required for mTLS"}
 	}
 	return newMTLSHTTPClient(cfg.TLSCert, cfg.TLSKey, cfg.TLSCACert)
 }
@@ -269,7 +269,7 @@ func runInitStatus(cmd *cobra.Command, args []string) error {
 	endpoint := fmt.Sprintf("%s/api/v1/init/status", globalConfig.Server)
 	resp, err := client.Get(endpoint)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrHTTPRequestFailed, err)
+		return &WrappedError{Sentinel: ErrHTTPRequestFailed, Err: err}
 	}
 
 	respBody, err := checkServerResponse(resp)
@@ -279,7 +279,7 @@ func runInitStatus(cmd *cobra.Command, args []string) error {
 
 	var status initStatusResponse
 	if err := json.Unmarshal(respBody, &status); err != nil {
-		return fmt.Errorf("%w: %w", ErrJSONParseFailed, err)
+		return &WrappedError{Sentinel: ErrJSONParseFailed, Err: err}
 	}
 
 	if globalConfig.OutputFormat == "json" {
@@ -315,13 +315,13 @@ func runClaimCert(cmd *cobra.Command, args []string) error {
 	beginReq := claimCertBeginRequest{Username: claimCertUsername}
 	beginBody, err := json.Marshal(beginReq)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrJSONMarshalFailed, err)
+		return &WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err}
 	}
 
 	endpoint := fmt.Sprintf("%s/api/v1/init/claim-cert/begin", globalConfig.Server)
 	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(beginBody))
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrHTTPRequestFailed, err)
+		return &WrappedError{Sentinel: ErrHTTPRequestFailed, Err: err}
 	}
 
 	respBody, err := checkServerResponse(resp)
@@ -331,13 +331,13 @@ func runClaimCert(cmd *cobra.Command, args []string) error {
 
 	var beginResp claimCertBeginResponse
 	if err := json.Unmarshal(respBody, &beginResp); err != nil {
-		return fmt.Errorf("%w: %w", ErrJSONParseFailed, err)
+		return &WrappedError{Sentinel: ErrJSONParseFailed, Err: err}
 	}
 
 	// Step 2: Generate keypair and sign nonce
 	nonce, err := hex.DecodeString(beginResp.Nonce)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrNonceDecode, err)
+		return &WrappedError{Sentinel: ErrNonceDecode, Err: err}
 	}
 
 	pubKey, privKey, err := generateNoiseKeyPair()
@@ -360,13 +360,13 @@ func runClaimCert(cmd *cobra.Command, args []string) error {
 
 	completeBody, err := json.Marshal(completeReq)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrJSONMarshalFailed, err)
+		return &WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err}
 	}
 
 	completeEndpoint := fmt.Sprintf("%s/api/v1/init/claim-cert/complete", globalConfig.Server)
 	completeResp, err := client.Post(completeEndpoint, "application/json", bytes.NewReader(completeBody))
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrHTTPRequestFailed, err)
+		return &WrappedError{Sentinel: ErrHTTPRequestFailed, Err: err}
 	}
 
 	completeRespBody, err := checkServerResponse(completeResp)
@@ -376,18 +376,18 @@ func runClaimCert(cmd *cobra.Command, args []string) error {
 
 	var completeResp2 claimCertCompleteResponse
 	if err := json.Unmarshal(completeRespBody, &completeResp2); err != nil {
-		return fmt.Errorf("%w: %w", ErrJSONParseFailed, err)
+		return &WrappedError{Sentinel: ErrJSONParseFailed, Err: err}
 	}
 
 	// Write certificate to output file if specified, otherwise print to stdout
 	certPEM, err := base64.StdEncoding.DecodeString(completeResp2.Certificate)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrBase64Decode, err)
+		return &WrappedError{Sentinel: ErrBase64Decode, Err: err}
 	}
 
 	if claimCertOutput != "" {
 		if err := os.WriteFile(claimCertOutput, certPEM, 0600); err != nil {
-			return fmt.Errorf("%w: %w", ErrCertFileWrite, err)
+			return &WrappedError{Sentinel: ErrCertFileWrite, Err: err}
 		}
 		fmt.Printf("Certificate written to %s\n", claimCertOutput)
 	} else {
@@ -423,13 +423,13 @@ func runClaimShare(cmd *cobra.Command, args []string) error {
 	beginReq := claimShareBeginRequest{Username: claimShareUsername}
 	beginBody, err := json.Marshal(beginReq)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrJSONMarshalFailed, err)
+		return &WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err}
 	}
 
 	endpoint := fmt.Sprintf("%s/api/v1/init/claim-share/begin", globalConfig.Server)
 	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(beginBody))
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrHTTPRequestFailed, err)
+		return &WrappedError{Sentinel: ErrHTTPRequestFailed, Err: err}
 	}
 
 	respBody, err := checkServerResponse(resp)
@@ -439,13 +439,13 @@ func runClaimShare(cmd *cobra.Command, args []string) error {
 
 	var beginResp claimShareBeginResponse
 	if err := json.Unmarshal(respBody, &beginResp); err != nil {
-		return fmt.Errorf("%w: %w", ErrJSONParseFailed, err)
+		return &WrappedError{Sentinel: ErrJSONParseFailed, Err: err}
 	}
 
 	// Step 2: Generate keypair and sign nonce
 	nonce, err := hex.DecodeString(beginResp.Nonce)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrNonceDecode, err)
+		return &WrappedError{Sentinel: ErrNonceDecode, Err: err}
 	}
 
 	pubKey, privKey, err := generateNoiseKeyPair()
@@ -468,13 +468,13 @@ func runClaimShare(cmd *cobra.Command, args []string) error {
 
 	completeBody, err := json.Marshal(completeReq)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrJSONMarshalFailed, err)
+		return &WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err}
 	}
 
 	completeEndpoint := fmt.Sprintf("%s/api/v1/init/claim-share/complete", globalConfig.Server)
 	completeResp, err := client.Post(completeEndpoint, "application/json", bytes.NewReader(completeBody))
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrHTTPRequestFailed, err)
+		return &WrappedError{Sentinel: ErrHTTPRequestFailed, Err: err}
 	}
 
 	completeRespBody, err := checkServerResponse(completeResp)
@@ -484,18 +484,18 @@ func runClaimShare(cmd *cobra.Command, args []string) error {
 
 	var completeResp2 claimShareCompleteResponse
 	if err := json.Unmarshal(completeRespBody, &completeResp2); err != nil {
-		return fmt.Errorf("%w: %w", ErrJSONParseFailed, err)
+		return &WrappedError{Sentinel: ErrJSONParseFailed, Err: err}
 	}
 
 	// Write share to output file if specified, otherwise print to stdout
 	sharePEM, err := base64.StdEncoding.DecodeString(completeResp2.Share)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrBase64Decode, err)
+		return &WrappedError{Sentinel: ErrBase64Decode, Err: err}
 	}
 
 	if claimShareOutput != "" {
 		if err := os.WriteFile(claimShareOutput, sharePEM, 0600); err != nil {
-			return fmt.Errorf("%w: %w", ErrShareFileWrite, err)
+			return &WrappedError{Sentinel: ErrShareFileWrite, Err: err}
 		}
 		fmt.Printf("Share %d/%d written to %s\n", completeResp2.ShareIndex, completeResp2.Threshold, claimShareOutput)
 	} else {
@@ -527,7 +527,7 @@ func runInitSignCSR(cmd *cobra.Command, args []string) error {
 	// Read the CSR file.
 	csrPEM, err := os.ReadFile(signCSRFile)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCertFileRead, err)
+		return &WrappedError{Sentinel: ErrCertFileRead, Err: err}
 	}
 
 	// Create the HTTP client (mTLS for authenticated operations).
@@ -546,13 +546,13 @@ func runInitSignCSR(cmd *cobra.Command, args []string) error {
 
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrJSONMarshalFailed, err)
+		return &WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err}
 	}
 
 	endpoint := fmt.Sprintf("%s/api/v1/init/sign-csr", globalConfig.Server)
 	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(bodyBytes))
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrHTTPRequestFailed, err)
+		return &WrappedError{Sentinel: ErrHTTPRequestFailed, Err: err}
 	}
 
 	respBody, err := checkServerResponse(resp)
@@ -562,13 +562,13 @@ func runInitSignCSR(cmd *cobra.Command, args []string) error {
 
 	var signResp signCSRInitResponse
 	if err := json.Unmarshal(respBody, &signResp); err != nil {
-		return fmt.Errorf("%w: %w", ErrJSONParseFailed, err)
+		return &WrappedError{Sentinel: ErrJSONParseFailed, Err: err}
 	}
 
 	// Write the signed certificate.
 	if signCSROutput != "" {
 		if err := os.WriteFile(signCSROutput, []byte(signResp.CertPEM), 0600); err != nil {
-			return fmt.Errorf("%w: %w", ErrCertFileWrite, err)
+			return &WrappedError{Sentinel: ErrCertFileWrite, Err: err}
 		}
 		fmt.Printf("Signed certificate written to %s\n", signCSROutput)
 	} else {
@@ -585,12 +585,12 @@ func runInitSignCSR(cmd *cobra.Command, args []string) error {
 func generateNoiseKeyPair() ([]byte, crypto.PrivateKey, error) {
 	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", ErrKeyGenFailed, err)
+		return nil, nil, &WrappedError{Sentinel: ErrKeyGenFailed, Err: err}
 	}
 
 	pubKey, err := x509.MarshalPKIXPublicKey(&privKey.PublicKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", ErrPubKeyMarshalFailed, err)
+		return nil, nil, &WrappedError{Sentinel: ErrPubKeyMarshalFailed, Err: err}
 	}
 
 	return pubKey, privKey, nil
@@ -609,7 +609,7 @@ func newSPKIHTTPClient(pin string) *http.Client {
 func newMTLSHTTPClient(certFile, keyFile, caFile string) (*http.Client, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCertFileRead, err)
+		return nil, &WrappedError{Sentinel: ErrCertFileRead, Err: err}
 	}
 
 	tlsConfig := &tls.Config{
@@ -621,7 +621,7 @@ func newMTLSHTTPClient(certFile, keyFile, caFile string) (*http.Client, error) {
 	if caFile != "" {
 		caPEM, err := os.ReadFile(caFile)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrCertFileRead, err)
+			return nil, &WrappedError{Sentinel: ErrCertFileRead, Err: err}
 		}
 
 		caPool := x509.NewCertPool()
@@ -645,14 +645,14 @@ func doInitRequest(client *http.Client, method, url string, body interface{}) (*
 	if body != nil {
 		bodyBytes, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrJSONMarshalFailed, err)
+			return nil, &WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err}
 		}
 		bodyReader = bytes.NewReader(bodyBytes)
 	}
 
 	req, err := http.NewRequest(method, url, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrHTTPRequestFailed, err)
+		return nil, &WrappedError{Sentinel: ErrHTTPRequestFailed, Err: err}
 	}
 
 	if body != nil {
@@ -666,7 +666,7 @@ func doInitRequest(client *http.Client, method, url string, body interface{}) (*
 func outputJSON(v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrJSONMarshalFailed, err)
+		return &WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err}
 	}
 	fmt.Println(string(data))
 	return nil

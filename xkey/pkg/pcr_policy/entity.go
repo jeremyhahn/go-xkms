@@ -20,14 +20,21 @@ import "time"
 
 // PCRPolicyEntity is the DAO entity representation of a named PCR policy.
 // It implements the go-qrdb Entity interface for persistent storage.
+//
+// Description and IsPlatformPolicy are additive fields used by the xkey GUI
+// (pkg/gui/services.TPMService) to preserve its richer PCRPolicy DTO across
+// the unified store; policies created by the CLI leave them at their zero
+// values.
 type PCRPolicyEntity struct {
-	ID         uint64          `json:"id"`
-	Name       string          `json:"name" index:"unique"`
-	Bank       string          `json:"bank"`
-	PCRs       map[uint][]byte `json:"pcrs"`
-	AutoUnseal bool            `json:"auto_unseal" index:"true"`
-	CreatedAt  time.Time       `json:"created_at"`
-	UpdatedAt  time.Time       `json:"updated_at"`
+	ID               uint64          `json:"id"`
+	Name             string          `json:"name" index:"unique"`
+	Description      string          `json:"description,omitempty"`
+	Bank             string          `json:"bank"`
+	PCRs             map[uint][]byte `json:"pcrs"`
+	AutoUnseal       bool            `json:"auto_unseal" index:"true"`
+	IsPlatformPolicy bool            `json:"is_platform_policy,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
 // EntityID returns the entity's unique identifier.

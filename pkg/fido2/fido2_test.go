@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -625,11 +627,11 @@ func TestHandler_SelectDevice_EnumerateError(t *testing.T) {
 type MockErrorEnumerator struct{}
 
 func (e *MockErrorEnumerator) Enumerate(vendorID, productID uint16) ([]HIDDevice, error) {
-	return nil, fmt.Errorf("enumerate error")
+	return nil, &errs.Message{Msg: "enumerate error"}
 }
 
 func (e *MockErrorEnumerator) Open(path string) (HIDDevice, error) {
-	return nil, fmt.Errorf("open error")
+	return nil, &errs.Message{Msg: "open error"}
 }
 
 func TestHandler_SelectDevice_AllFilteredOut(t *testing.T) {

@@ -221,7 +221,7 @@ func (c *ConfigFS) Bind(ctx context.Context) error {
 
 	udcPath := filepath.Join(c.gadgDir, "UDC")
 	if err := c.fs.WriteFile(udcPath, []byte(udc), 0644); err != nil {
-		return NewGadgetError("Bind", fmt.Errorf("%w: %v", ErrConfigFSNotAvailable, err))
+		return NewGadgetError("Bind", &SentinelCauseError{Sentinel: ErrConfigFSNotAvailable, Cause: err})
 	}
 
 	c.bound.Store(true)
@@ -317,7 +317,7 @@ func (c *ConfigFS) IsBound() bool {
 func (c *ConfigFS) checkNotExists() error {
 	entries, err := c.fs.ReadDir(c.config.ConfigFSPath)
 	if err != nil {
-		return NewGadgetError("Create", fmt.Errorf("%w: %v", ErrConfigFSNotAvailable, err))
+		return NewGadgetError("Create", &SentinelCauseError{Sentinel: ErrConfigFSNotAvailable, Cause: err})
 	}
 	for _, entry := range entries {
 		if entry.Name() == c.config.Name {
@@ -462,7 +462,7 @@ func (c *ConfigFS) writeHIDAttributes(funcDir string) error {
 func (c *ConfigFS) detectUDC() (string, error) {
 	entries, err := c.fs.ReadDir(udcSysPath)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrUDCNotFound, err)
+		return "", &SentinelCauseError{Sentinel: ErrUDCNotFound, Cause: err}
 	}
 	if len(entries) == 0 {
 		return "", ErrUDCNotFound

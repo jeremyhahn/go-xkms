@@ -96,17 +96,41 @@ func TestBackend_VerifyAuth_BackendClosed(t *testing.T) {
 	}
 }
 
-func TestBackend_VerifyAuth_TPMError(t *testing.T) {
-	tpmErr := errors.New("tpm2: auth verification failed")
-	mock := &authMockTPM{verifyAuthErr: tpmErr}
+func TestBackend_VerifyAuth_WrongPIN(t *testing.T) {
+	// A genuine authorization failure (wrong PIN) surfaces from the TPM as
+	// pkgtpm2.ErrAuthFailed and must be reported as ErrAuthVerifyFailed.
+	mock := &authMockTPM{verifyAuthErr: pkgtpm2.ErrAuthFailed}
 	b := newAuthTestBackend(mock)
 
 	err := b.VerifyAuth("wrong-pin")
 	if err == nil {
-		t.Fatal("VerifyAuth should fail when TPM returns error")
+		t.Fatal("VerifyAuth should fail on wrong PIN")
 	}
 	if !errors.Is(err, ErrAuthVerifyFailed) {
 		t.Fatalf("expected ErrAuthVerifyFailed, got: %v", err)
+	}
+	if !errors.Is(err, pkgtpm2.ErrAuthFailed) {
+		t.Fatalf("expected wrapped ErrAuthFailed, got: %v", err)
+	}
+}
+
+func TestBackend_VerifyAuth_NonAuthTPMError(t *testing.T) {
+	// A non-authorization TPM fault (e.g. a malformed probe or transport
+	// error) must NOT be reported as an invalid PIN. It surfaces as
+	// ErrAuthProbeFailed so callers can distinguish it from a wrong PIN.
+	tpmErr := errors.New("tpm2: TPM_RC_ATTRIBUTES")
+	mock := &authMockTPM{verifyAuthErr: tpmErr}
+	b := newAuthTestBackend(mock)
+
+	err := b.VerifyAuth("123456")
+	if err == nil {
+		t.Fatal("VerifyAuth should fail when TPM returns a fault")
+	}
+	if !errors.Is(err, ErrAuthProbeFailed) {
+		t.Fatalf("expected ErrAuthProbeFailed, got: %v", err)
+	}
+	if errors.Is(err, ErrAuthVerifyFailed) {
+		t.Fatalf("non-auth fault must not be reported as ErrAuthVerifyFailed: %v", err)
 	}
 	if !errors.Is(err, tpmErr) {
 		t.Fatalf("expected wrapped tpm error, got: %v", err)

@@ -18,6 +18,8 @@ import (
 	"crypto/x509"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -100,18 +102,78 @@ type Identity struct {
 	// MaxPathLengthZero indicates whether MaxPathLength should be set to 0
 	// (as opposed to being absent from the certificate).
 	MaxPathLengthZero bool `yaml:"max-path-length-zero,omitempty" json:"max_path_length_zero,omitempty" mapstructure:"max-path-length-zero"`
+
+	// Keystores holds per-backend configuration for this identity's keys.
+	// When nil, the legacy single-keystore path (KeystoreType) is used.
+	// When set, callers can build a per-StoreType backend map (via
+	// Params.BackendForStore) and route each key in Keys[*] to the backend
+	// matching its StoreType. Optional, additive: nil means no behavior change.
+	Keystores *CAKeystoresConfig `yaml:"keystores,omitempty" json:"keystores,omitempty" mapstructure:"keystores"`
+}
+
+// =============================================================================
+// Per-Identity Keystore Configuration
+// =============================================================================
+//
+// These types describe the "keystores:" block that the platform YAML already
+// declares per CA identity. They are additive and optional; a nil
+// CAKeystoresConfig (or nil sub-field) selects the legacy single-keystore path.
+
+// CAKeystoreSoftwareConfig carries per-identity configuration for the
+// software (PKCS#8) backend.
+type CAKeystoreSoftwareConfig struct {
+	// PlatformPolicy enables TPM platform policy binding for software keys
+	// that are encrypted-at-rest under a TPM SRK.
+	PlatformPolicy bool `yaml:"platform-policy" json:"platform_policy" mapstructure:"platform-policy"`
+
+	// Password is the passphrase used to protect software CA keys at rest
+	// (encrypted PKCS#8). When non-empty it is applied as the fallback
+	// key-level password for any key in this identity whose KeyConfig.Password
+	// is empty. Operators SHOULD source this from a secrets manager or the
+	// node's PIN backend rather than embedding it directly in YAML.
+	Password string `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
+}
+
+// CAKeystoreTPM2Config carries per-identity configuration for the tpm2 backend.
+// Mirrors tpm2.PlatformSRKConfig but lives in pkg/ca so the CA package keeps
+// zero dependency on pkg/tpm2.
+type CAKeystoreTPM2Config struct {
+	// SRKHandle is the persistent TPM handle for the SRK used to wrap CA keys
+	// (e.g. 0x81000001).
+	SRKHandle uint32 `yaml:"srk-handle" json:"srk_handle" mapstructure:"srk-handle"`
+	// SRKAuth is a KMS URI resolving to the SRK password (e.g.
+	// "kms://ca/root/tpm2/srk-auth?ensure=true&len=32&enc=base64").
+	SRKAuth string `yaml:"srk-auth,omitempty" json:"srk_auth,omitempty" mapstructure:"srk-auth"`
+	// PlatformPolicy enables PCR-bound platform policy on TPM CA keys.
+	PlatformPolicy bool `yaml:"platform-policy" json:"platform_policy" mapstructure:"platform-policy"`
+}
+
+// CAKeystorePKCS11Config carries per-identity configuration for PKCS#11 backends.
+type CAKeystorePKCS11Config struct {
+	Pin    string `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
+	Slot   int    `yaml:"slot,omitempty" json:"slot,omitempty" mapstructure:"slot"`
+	Module string `yaml:"module,omitempty" json:"module,omitempty" mapstructure:"module"`
+}
+
+// CAKeystoresConfig holds per-backend keystore configuration for one CA
+// identity. Each field corresponds to a well-known store type; nil fields are
+// ignored. This maps to the "keystores:" block in the platform YAML config.
+type CAKeystoresConfig struct {
+	Software *CAKeystoreSoftwareConfig `yaml:"software,omitempty" json:"software,omitempty" mapstructure:"software"`
+	TPM2     *CAKeystoreTPM2Config     `yaml:"tpm2,omitempty" json:"tpm2,omitempty" mapstructure:"tpm2"`
+	PKCS11   *CAKeystorePKCS11Config   `yaml:"pkcs11,omitempty" json:"pkcs11,omitempty" mapstructure:"pkcs11"`
 }
 
 // Validate checks that the Identity configuration is valid.
 func (id *Identity) Validate() error {
 	if id.Subject.CommonName == "" {
-		return fmt.Errorf("%w: common name is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "common name is required"}
 	}
 	if id.Valid <= 0 {
-		return fmt.Errorf("%w: validity period must be positive", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "validity period must be positive"}
 	}
 	if len(id.Keys) == 0 {
-		return fmt.Errorf("%w: %w", ErrInvalidConfig, ErrNoKeysConfigured)
+		return &errs.Joined{Lead: ErrInvalidConfig, Cause: ErrNoKeysConfigured}
 	}
 	return nil
 }
@@ -174,29 +236,69 @@ type MultiIdentityCAConfig struct {
 	// HomeDir is the base directory for CA storage
 	// Keys and certificates are stored relative to this path
 	HomeDir string `yaml:"home-dir" json:"home_dir" mapstructure:"home-dir"`
+
+	// RequireKeyPassword is an opt-in operator knob that forces every
+	// software-backed CA key to carry a non-empty password, ensuring the
+	// key is persisted as encrypted PKCS#8. The default is false: an empty
+	// password is permitted and the key is written as plaintext PKCS#8 —
+	// this is the correct posture when the filesystem or volume already
+	// provides equivalent protection, or for ephemeral/development setups.
+	//
+	// Set to true only when you want the CA itself to reject empty passwords
+	// at key-generation time with ErrKeyPasswordRequired, before any I/O
+	// occurs. The low-level pkcs8 backend's AllowPlaintextKeys knob remains
+	// an independent, lower-level control for callers that use the raw
+	// pkcs8.PKCS8Backend directly.
+	RequireKeyPassword bool `yaml:"require-key-password" json:"require_key_password" mapstructure:"require-key-password"`
 }
 
 // Validate checks that the configuration is valid.
 func (c *MultiIdentityCAConfig) Validate() error {
 	if len(c.Identity) == 0 {
-		return fmt.Errorf("%w: at least one identity is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "at least one identity is required"}
 	}
 
 	// First identity must be root CA
 	if !c.Identity[0].IsRoot {
-		return fmt.Errorf("%w: first identity must be root CA (IsRoot=true)", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "first identity must be root CA (IsRoot=true)"}
 	}
 
 	// Validate each identity
 	for i, id := range c.Identity {
 		if err := id.Validate(); err != nil {
-			return fmt.Errorf("%w: identity[%d] validation failed: %w", ErrInvalidConfig, i, err)
+			return &errs.Joined{Lead: ErrInvalidConfig, Detail: fmt.Sprintf("identity[%d] validation failed", i), Cause: err}
+		}
+	}
+
+	// A non-empty ParentCA must name the root or an EARLIER identity in the
+	// list (issuers are created in list order, so forward references cannot
+	// be signed). The root itself must not reference a parent.
+	if c.Identity[0].ParentCA != "" {
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "root identity must not set parent-ca"}
+	}
+	for i := 1; i < len(c.Identity); i++ {
+		parent := c.Identity[i].ParentCA
+		if parent == "" {
+			continue
+		}
+		known := false
+		for j := 0; j < i; j++ {
+			if c.Identity[j].Subject.CommonName == parent {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return &errs.Joined{Lead: ErrInvalidConfig, Cause: &ErrUnknownParentCA{
+				Identity: c.Identity[i].Subject.CommonName,
+				ParentCA: parent,
+			}}
 		}
 	}
 
 	// SelectedCA must be valid
 	if c.SelectedCA < 0 || c.SelectedCA >= len(c.Identity) {
-		return fmt.Errorf("%w: selected CA index %d is out of range", ErrInvalidConfig, c.SelectedCA)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: fmt.Sprintf("selected CA index %d is out of range", c.SelectedCA)}
 	}
 
 	return nil
@@ -245,7 +347,10 @@ func (c *MultiIdentityCAConfig) GetDefaultValidityDays() int {
 // =============================================================================
 
 // DefaultMultiIdentityCAConfig returns a default configuration with
-// a single root CA identity.
+// a single root CA identity. RequireKeyPassword defaults to false:
+// an empty key password is allowed and results in a plaintext PKCS#8
+// key. Set RequireKeyPassword to true when operators must supply an
+// explicit password for every CA signing key.
 func DefaultMultiIdentityCAConfig() *MultiIdentityCAConfig {
 	return &MultiIdentityCAConfig{
 		Identity: []Identity{
@@ -264,11 +369,12 @@ func DefaultMultiIdentityCAConfig() *MultiIdentityCAConfig {
 		},
 		SelectedCA:          0,
 		DefaultValidityDays: DefaultCertValidityDays,
+		RequireKeyPassword:  false,
 	}
 }
 
 // DefaultMultiIdentityCAConfigWithIntermediate returns a default configuration
-// with a root CA and one intermediate CA.
+// with a root CA and one intermediate CA. RequireKeyPassword defaults to false.
 func DefaultMultiIdentityCAConfigWithIntermediate() *MultiIdentityCAConfig {
 	return &MultiIdentityCAConfig{
 		Identity: []Identity{
@@ -290,16 +396,22 @@ func DefaultMultiIdentityCAConfigWithIntermediate() *MultiIdentityCAConfig {
 					Organization: "Organization",
 					Country:      "US",
 				},
-				Valid:             DefaultIntermediateValidityYears,
-				Keys:              DefaultKeyConfig(),
-				KeystoreType:      types.StoreSoftware,
-				IsRoot:            false,
-				ParentCA:          "Root CA",
+				Valid:        DefaultIntermediateValidityYears,
+				Keys:         DefaultKeyConfig(),
+				KeystoreType: types.StoreSoftware,
+				IsRoot:       false,
+				// ParentCA deliberately unset: with a single intermediate the
+				// sequential default (signed by the previous identity — the
+				// root) yields the identical topology, and a hardcoded name
+				// here would go stale the moment a caller renames the root's
+				// CommonName. Multi-intermediate (sibling) hierarchies set
+				// ParentCA explicitly per identity.
 				MaxPathLengthZero: true,
 			},
 		},
 		SelectedCA:          1, // Use intermediate for issuing
 		DefaultValidityDays: DefaultCertValidityDays,
+		RequireKeyPassword:  false,
 	}
 }
 
@@ -439,6 +551,13 @@ func (b *ConfigBuilder) Build() (*MultiIdentityCAConfig, error) {
 // Returns nil if the identity has no keys configured.
 // IMPORTANT: This method sets the CN from the Identity's Subject.CommonName
 // to ensure keys are stored with the correct identifier.
+//
+// Password precedence (highest to lowest):
+//  1. KeyConfig.Password — per-key password set directly on the key entry
+//  2. Keystores.Software.Password — identity-wide software keystore password
+//
+// Both are wired through types.KeyAttributesFromConfig so that the pkcs8
+// backend writes encrypted-at-rest PKCS#8 when a password is present.
 func (id *Identity) ToKeyAttributes() (*types.KeyAttributes, error) {
 	if len(id.Keys) == 0 {
 		return nil, ErrNoKeysConfigured
@@ -450,6 +569,16 @@ func (id *Identity) ToKeyAttributes() (*types.KeyAttributes, error) {
 	// CRITICAL: Set the CN from the Identity's Subject, not from the KeyConfig
 	// This ensures keys are stored and retrieved using the certificate's CommonName
 	attrs.CN = id.Subject.CommonName
+
+	// Apply identity-level software keystore password as fallback when the
+	// per-key password was not set (Password is nil after KeyAttributesFromConfig).
+	if attrs.Password == nil &&
+		id.Keystores != nil &&
+		id.Keystores.Software != nil &&
+		id.Keystores.Software.Password != "" {
+		attrs.Password = types.NewPasswordFromString(id.Keystores.Software.Password)
+	}
+
 	return attrs, nil
 }
 
@@ -498,7 +627,7 @@ func (id *Identity) GetSignatureAlgorithm() (x509.SignatureAlgorithm, error) {
 	case x509.Ed25519:
 		return x509.PureEd25519, nil
 	default:
-		return x509.UnknownSignatureAlgorithm, fmt.Errorf("%w: %s", ErrInvalidKeyAlgorithm, keyAlgo)
+		return x509.UnknownSignatureAlgorithm, &errs.Detail{Err: ErrInvalidKeyAlgorithm, Detail: fmt.Sprintf("%s", keyAlgo)}
 	}
 }
 

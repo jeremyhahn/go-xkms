@@ -31,6 +31,13 @@
 // A consumer calls Callback(ctx, store, scope, owner) to obtain an
 // ssh.HostKeyCallback, installs it on an ssh.ClientConfig, and dials.
 // On first contact with an unpinned host the callback returns a typed
-// error — pinning is an explicit operator action via Store.Add, never
-// a silent trust-on-first-use.
+// error — pinning is an explicit operator action via Store.Add.
+//
+// Callers that want trust-on-first-use instead use
+// CallbackWithConfirm(ctx, store, scope, owner, confirm): it behaves
+// exactly like Callback, except an unpinned host is offered to a
+// Confirmer (an operator prompt or an automated accept-new policy)
+// instead of being rejected outright. A conflicting pin still hard-fails
+// without ever reaching the Confirmer — TOFU covers absence, never a
+// mismatch.
 package known_hosts

@@ -211,6 +211,10 @@ func (s *errorKeystoreServer) BarrierGenerateRecoveryKeys(_ context.Context, _ *
 	return nil, status.Error(codes.Internal, "barrier gen recovery failed")
 }
 
+func (s *errorKeystoreServer) BarrierEnableEncryption(_ context.Context, _ *pb.BarrierEnableEncryptionRequest) (*pb.BarrierEnableEncryptionResponse, error) {
+	return nil, status.Error(codes.Internal, "barrier enable encryption failed")
+}
+
 func (s *errorKeystoreServer) BarrierRecoverWithKeys(_ context.Context, _ *pb.BarrierRecoverWithKeysRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Internal, "barrier recover failed")
 }

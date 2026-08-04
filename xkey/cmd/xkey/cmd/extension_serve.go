@@ -87,7 +87,13 @@ Examples:
   xkey extension serve --no-barrier --no-auth
 
   # Disable extension pairing verification (testing only)
-  xkey extension serve --no-barrier --no-pairing`,
+  xkey extension serve --no-barrier --no-pairing
+
+  # Unseal a tpm2-strategy barrier against a specific device or the
+  # in-process simulator (device selection follows the same
+  # --tpm-device/--tpm-simulator/TPM_DEVICE_PATH priority as "xkey barrier")
+  xkey extension serve --tpm-device /dev/tpm0
+  xkey extension serve --tpm-simulator`,
 	RunE: runExtensionServe,
 }
 
@@ -104,6 +110,10 @@ func init() {
 	extensionServeCmd.Flags().String("pin-state", "", "PIN state directory path")
 	extensionServeCmd.Flags().Bool("no-auth", false, "Disable CTAP2 authentication for autofill (credentials returned without PIN/touch)")
 	extensionServeCmd.Flags().Bool("no-pairing", false, "Disable extension identity verification (testing only)")
+	extensionServeCmd.Flags().String("tpm-device", "",
+		"TPM device path for the tpm2 barrier strategy (default: $TPM_DEVICE_PATH or /dev/tpmrm0)")
+	extensionServeCmd.Flags().Bool("tpm-simulator", false,
+		"Use the in-process TPM simulator instead of a hardware device (requires a simulator build)")
 }
 
 // runExtensionServe is the entry point for the headless IPC server command.
@@ -111,7 +121,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	// 1. Resolve xKey home directory.
 	home, err := xhome.Resolve()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrServeHomeResolveFailed, err)
+		return &SentinelCauseError{Sentinel: ErrServeHomeResolveFailed, Cause: err}
 	}
 
 	// 2. Create logger.
@@ -129,7 +139,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	// 3. Ensure data directory exists.
 	dataDir, err := home.EnsureDataDir()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrServeHomeResolveFailed, err)
+		return &SentinelCauseError{Sentinel: ErrServeHomeResolveFailed, Cause: err}
 	}
 
 	// 4. Create services with nil stores (wired after barrier unseal).
@@ -153,7 +163,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	if noBarrier {
 		logger.Warn("running without barrier encryption (no-barrier mode)")
 		if err := initPlainStores(dataDir, passwordSvc, oathSvc); err != nil {
-			return fmt.Errorf("%w: %v", ErrServeStoreInitFailed, err)
+			return &SentinelCauseError{Sentinel: ErrServeStoreInitFailed, Cause: err}
 		}
 	} else {
 		// Register post-unseal hook to wire encrypted stores.
@@ -170,14 +180,14 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 			}
 			logger.Info("barrier not initialized, initializing with software strategy")
 			if err := barrierSvc.Initialize(password, string(xkms.StrategyPassphrase)); err != nil {
-				return fmt.Errorf("%w: %v", ErrServeBarrierUnsealFailed, err)
+				return &SentinelCauseError{Sentinel: ErrServeBarrierUnsealFailed, Cause: err}
 			}
 		} else {
 			// Read the stored root key to determine which strategy was used
 			// to seal the barrier. This drives which backend to initialize.
 			strategy, err := readBarrierStrategy(dataDir)
 			if err != nil {
-				return fmt.Errorf("%w: %v", ErrServeStrategyReadFailed, err)
+				return &SentinelCauseError{Sentinel: ErrServeStrategyReadFailed, Cause: err}
 			}
 
 			logger.Info("barrier strategy detected from root key",
@@ -191,26 +201,28 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 					return pwErr
 				}
 				if err := barrierSvc.Unseal(password, string(strategy)); err != nil {
-					return fmt.Errorf("%w: %v", ErrServeBarrierUnsealFailed, err)
+					return &SentinelCauseError{Sentinel: ErrServeBarrierUnsealFailed, Cause: err}
 				}
 
 			case xkms.StrategyTPM2:
 				// TPM2 strategy: open the TPM and register it, then unseal
 				// without a password (the hardware protects the root key).
-				sealer, closer := probeTPMSealer(logger, dataDir)
+				tpmDevice, _ := cmd.Flags().GetString("tpm-device")
+				tpmSimulator, _ := cmd.Flags().GetBool("tpm-simulator")
+				sealer, closer := probeTPMSealer(logger, dataDir, tpmDevice, tpmSimulator)
 				if sealer == nil {
-					return fmt.Errorf("%w: TPM device required for tpm2 barrier strategy", ErrServeTPMOpenFailed)
+					return &DetailError{Err: ErrServeTPMOpenFailed, Detail: ": TPM device required for tpm2 barrier strategy"}
 				}
 				tpmCloser = closer
 				barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return sealer })
 
 				if err := barrierSvc.Unseal("", string(strategy)); err != nil {
-					return fmt.Errorf("%w: %v", ErrServeBarrierUnsealFailed, err)
+					return &SentinelCauseError{Sentinel: ErrServeBarrierUnsealFailed, Cause: err}
 				}
 
 			default:
 				// Cloud KMS, PKCS#11, Shamir, etc. -- not yet supported in headless mode.
-				return fmt.Errorf("%w: %s", ErrServeStrategyUnsupported, strategy)
+				return &DetailError{Err: ErrServeStrategyUnsupported, Detail: fmt.Sprintf(": %s", strategy)}
 			}
 		}
 
@@ -228,18 +240,18 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 		pinDir = filepath.Join(dataDir, "pin")
 	}
 	if err := os.MkdirAll(pinDir, 0700); err != nil {
-		return fmt.Errorf("%w: %v", ErrServePINManagerInitFailed, err)
+		return &SentinelCauseError{Sentinel: ErrServePINManagerInitFailed, Cause: err}
 	}
 	fileStore, err := xkms.NewFileStorageBackend(pinDir)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrServePINManagerInitFailed, err)
+		return &SentinelCauseError{Sentinel: ErrServePINManagerInitFailed, Cause: err}
 	}
 	// Wrap the file storage in the PIN adapter so the qrdb software backend
 	// observes the canonical pin.ErrNotFound on a fresh install rather than
 	// xkey's storage.ErrNotFound (which it would treat as a load failure).
 	pinStore, err := xkms.NewPINStoreAdapter(fileStore)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrServePINManagerInitFailed, err)
+		return &SentinelCauseError{Sentinel: ErrServePINManagerInitFailed, Cause: err}
 	}
 	hashConfig := qrdbsdk.AutoDetectHashConfig()
 	if epDir := config.ConfigDir(); epDir != "" && config.IsEnterpriseMode(epDir) {
@@ -251,7 +263,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	}
 	pinBackend, err := qrdbsdk.NewSoftwareBackend(pinStore, hashConfig)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrServePINManagerInitFailed, err)
+		return &SentinelCauseError{Sentinel: ErrServePINManagerInitFailed, Cause: err}
 	}
 	pinBackendSvc := qrdbsdk.NewPINService(pinBackend, logger)
 	pinSvc.SetPINService(pinBackendSvc)
@@ -283,7 +295,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 
 	// 8. Enable the autofill service.
 	if err := autofillSvc.SetEnabled(true); err != nil {
-		return fmt.Errorf("%w: %v", ErrServeIPCStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrServeIPCStartFailed, Cause: err}
 	}
 
 	// 8a. Configure CTAP2 authentication.
@@ -299,7 +311,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 		if loadErr == nil {
 			pol := ucfg.Policy
 			if !pol.ExtensionEnabled {
-				return fmt.Errorf("%w: browser extension disabled by enterprise policy", ErrServeIPCStartFailed)
+				return &DetailError{Err: ErrServeIPCStartFailed, Detail: ": browser extension disabled by enterprise policy"}
 			}
 			if pol.ExtensionRequirePairing && noPairing {
 				logger.Warn("enterprise policy requires pairing, ignoring --no-pairing flag")
@@ -385,7 +397,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 
 	server, err := ipc.NewServer(socketPath, handler, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrServeIPCStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrServeIPCStartFailed, Cause: err}
 	}
 
 	logger.Info("IPC server listening",
@@ -440,7 +452,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 func initHeadlessAuthenticator(backend xkms.StorageBackend, pinSvc *services.PINService, logger *slog.Logger) (*authenticator.Authenticator, error) {
 	store, err := authenticator.NewBackendStorage(backend, "fido2/xkey/")
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrServeAuthenticatorInitFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrServeAuthenticatorInitFailed, Cause: err}
 	}
 
 	auth, err := authenticator.NewAuthenticator(&authenticator.Config{
@@ -454,7 +466,7 @@ func initHeadlessAuthenticator(backend xkms.StorageBackend, pinSvc *services.PIN
 		Logger:                     logger,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrServeAuthenticatorInitFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrServeAuthenticatorInitFailed, Cause: err}
 	}
 
 	auth.SetPINVerifier(pinSvc)
@@ -472,7 +484,7 @@ func createServeLogger(cmd *cobra.Command) (*slog.Logger, io.Closer, error) {
 	if logFile != "" {
 		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%w: %v", ErrServeLogFileOpenFailed, err)
+			return nil, nil, &SentinelCauseError{Sentinel: ErrServeLogFileOpenFailed, Cause: err}
 		}
 		handler := slog.NewJSONHandler(f, &slog.HandlerOptions{Level: level})
 		return slog.New(handler), f, nil
@@ -508,7 +520,7 @@ func resolveBarrierPassword(cmd *cobra.Command) (string, error) {
 	if file, _ := cmd.Flags().GetString("barrier-password-file"); file != "" {
 		data, err := os.ReadFile(file)
 		if err != nil {
-			return "", fmt.Errorf("%w: %v", ErrServeBarrierPasswordRequired, err)
+			return "", &SentinelCauseError{Sentinel: ErrServeBarrierPasswordRequired, Cause: err}
 		}
 		pw := strings.SplitN(string(data), "\n", 2)[0]
 		return strings.TrimSpace(pw), nil
@@ -525,7 +537,7 @@ func resolveBarrierPassword(cmd *cobra.Command) (string, error) {
 		pwBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
 		if err != nil {
-			return "", fmt.Errorf("%w: %v", ErrServeBarrierPasswordRequired, err)
+			return "", &SentinelCauseError{Sentinel: ErrServeBarrierPasswordRequired, Cause: err}
 		}
 		return string(pwBytes), nil
 	}
@@ -695,7 +707,7 @@ func readBarrierStrategy(dataDir string) (xkms.StrategyID, error) {
 	rootKeyPath := filepath.Join(dataDir, "barrier", "root_key")
 	data, err := os.ReadFile(rootKeyPath)
 	if err != nil {
-		return "", fmt.Errorf("read root key: %w", err)
+		return "", &WrappedError{Msg: "read root key", Err: err}
 	}
 
 	// Parse only the strategy field to minimize exposure to the sealed blob.
@@ -703,7 +715,7 @@ func readBarrierStrategy(dataDir string) (xkms.StrategyID, error) {
 		Strategy xkms.StrategyID `json:"strategy"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
-		return "", fmt.Errorf("parse root key: %w", err)
+		return "", &WrappedError{Msg: "parse root key", Err: err}
 	}
 	if envelope.Strategy == "" {
 		return "", errors.New("root key missing strategy field")
@@ -711,15 +723,40 @@ func readBarrierStrategy(dataDir string) (xkms.StrategyID, error) {
 	return envelope.Strategy, nil
 }
 
-// probeTPMSealer attempts to open the system TPM for barrier unsealing.
-// Returns (sealer, closer) if the TPM is available, or (nil, nil) if not.
-// The caller must close the returned io.Closer when the TPM is no longer needed.
-func probeTPMSealer(logger *slog.Logger, dataDir string) (xkms.Sealer, io.Closer) {
-	const tpmDevice = "/dev/tpmrm0"
-	if _, err := os.Stat(tpmDevice); err != nil {
-		logger.Debug("TPM device not found, barrier TPM2 strategy unavailable",
-			"device", tpmDevice)
-		return nil, nil
+// defaultBarrierTPMDevice is the TPM device path used when no --tpm-device flag
+// or TPM_DEVICE_PATH environment variable is supplied.
+const defaultBarrierTPMDevice = "/dev/tpmrm0"
+
+// resolveTPMDevice resolves the TPM device path for the tpm2 barrier
+// strategy. Priority: explicit device (e.g. a --tpm-device flag value) >
+// TPM_DEVICE_PATH environment variable (matches the server-side behavior
+// in pkg/config) > defaultBarrierTPMDevice.
+func resolveTPMDevice(device string) string {
+	if device != "" {
+		return device
+	}
+	if envDevice := os.Getenv("TPM_DEVICE_PATH"); envDevice != "" {
+		return envDevice
+	}
+	return defaultBarrierTPMDevice
+}
+
+// probeTPMSealer attempts to open a TPM for barrier unsealing, either the
+// hardware device at the resolved path or the in-process simulator when
+// useSimulator is true. Returns (sealer, closer) if the TPM is available,
+// or (nil, nil) if not. The caller must close the returned io.Closer when
+// the TPM is no longer needed.
+func probeTPMSealer(logger *slog.Logger, dataDir, device string, useSimulator bool) (xkms.Sealer, io.Closer) {
+	resolvedDevice := resolveTPMDevice(device)
+
+	// The simulator has no backing device file to stat; only hardware mode
+	// requires the device to be present before attempting to open it.
+	if !useSimulator {
+		if _, err := os.Stat(resolvedDevice); err != nil {
+			logger.Debug("TPM device not found, barrier TPM2 strategy unavailable",
+				"device", resolvedDevice)
+			return nil, nil
+		}
 	}
 
 	tpmDataDir := filepath.Join(dataDir, "tpm")
@@ -730,8 +767,8 @@ func probeTPMSealer(logger *slog.Logger, dataDir string) (xkms.Sealer, io.Closer
 	}
 
 	cfg := xkms.DefaultTPMConfig
-	cfg.Device = tpmDevice
-	cfg.UseSimulator = false
+	cfg.Device = resolvedDevice
+	cfg.UseSimulator = useSimulator
 
 	tpm, err := xkms.NewTPM2(&xkms.TPMParams{
 		Logger:    logger,
@@ -740,6 +777,14 @@ func probeTPMSealer(logger *slog.Logger, dataDir string) (xkms.Sealer, io.Closer
 		Backend:   factory.KeyBackend(),
 	})
 	if err != nil {
+		// ErrTPMNotInitialized only means the EK/IDevID provisioning workflow
+		// has not run; the returned tpm still has a live transport and can
+		// seal/unseal via its SRK (see TPM2.CanSeal and defaultSealKeyAttributes'
+		// SSRK fallback), exactly as openTPMForProvisioning already tolerates
+		// this same sentinel for the `tpm provision` command.
+		if errors.Is(err, xkms.ErrTPMNotInitialized) && tpm != nil {
+			return tpm, tpm
+		}
 		logger.Warn("failed to open TPM", "error", err)
 		_ = factory.Close()
 		return nil, nil

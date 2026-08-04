@@ -160,7 +160,7 @@ func familyForBrowser(browser Browser) (browserFamily, error) {
 	case BrowserFirefox:
 		return familyFirefox, nil
 	default:
-		return 0, fmt.Errorf("%w: unsupported browser %q", ErrInvalidManifest, browser)
+		return 0, &DetailError{Err: ErrInvalidManifest, Detail: fmt.Sprintf(": unsupported browser %q", browser)}
 	}
 }
 
@@ -176,7 +176,7 @@ func browsersForFamily(browser Browser) ([]knownBrowser, error) {
 	case familyFirefox:
 		return firefoxBrowsers, nil
 	default:
-		return nil, fmt.Errorf("%w: unsupported browser %q", ErrInvalidManifest, browser)
+		return nil, &DetailError{Err: ErrInvalidManifest, Detail: fmt.Sprintf(": unsupported browser %q", browser)}
 	}
 }
 
@@ -207,7 +207,7 @@ func isBrowserInstalled(kb knownBrowser, home string) bool {
 func GenerateManifest(browser Browser, xkeyBinaryPath string) (*Manifest, error) {
 	absPath, err := filepath.Abs(xkeyBinaryPath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid binary path: %v", ErrInvalidManifest, err)
+		return nil, &DetailError{Err: ErrInvalidManifest, Detail: fmt.Sprintf(": invalid binary path: %v", err)}
 	}
 
 	m := &Manifest{
@@ -227,7 +227,7 @@ func GenerateManifest(browser Browser, xkeyBinaryPath string) (*Manifest, error)
 	case BrowserFirefox:
 		m.AllowedExtensions = []string{FirefoxExtensionID}
 	default:
-		return nil, fmt.Errorf("%w: unsupported browser %q", ErrInvalidManifest, browser)
+		return nil, &DetailError{Err: ErrInvalidManifest, Detail: fmt.Sprintf(": unsupported browser %q", browser)}
 	}
 
 	return m, nil
@@ -240,7 +240,7 @@ func GenerateManifest(browser Browser, xkeyBinaryPath string) (*Manifest, error)
 func ManifestPath(browser Browser) (string, error) {
 	home, err := homeDirFunc()
 	if err != nil {
-		return "", fmt.Errorf("%w: cannot determine home directory: %v", ErrManifestInstall, err)
+		return "", &DetailError{Err: ErrManifestInstall, Detail: fmt.Sprintf(": cannot determine home directory: %v", err)}
 	}
 
 	browsers, lookupErr := browsersForFamily(browser)
@@ -259,7 +259,7 @@ func ManifestPath(browser Browser) (string, error) {
 func ManifestPaths(browser Browser) ([]string, error) {
 	home, err := homeDirFunc()
 	if err != nil {
-		return nil, fmt.Errorf("%w: cannot determine home directory: %v", ErrManifestInstall, err)
+		return nil, &DetailError{Err: ErrManifestInstall, Detail: fmt.Sprintf(": cannot determine home directory: %v", err)}
 	}
 
 	browsers, lookupErr := browsersForFamily(browser)
@@ -289,7 +289,7 @@ func InstallManifest(browser Browser, xkeyBinaryPath string) error {
 func installFamilyManifests(browser Browser, xkeyBinaryPath string) error {
 	home, err := homeDirFunc()
 	if err != nil {
-		return fmt.Errorf("%w: cannot determine home directory: %v", ErrManifestInstall, err)
+		return &DetailError{Err: ErrManifestInstall, Detail: fmt.Sprintf(": cannot determine home directory: %v", err)}
 	}
 
 	m, err := GenerateManifest(browser, xkeyBinaryPath)
@@ -299,7 +299,7 @@ func installFamilyManifests(browser Browser, xkeyBinaryPath string) error {
 
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w: cannot marshal manifest: %v", ErrManifestInstall, err)
+		return &DetailError{Err: ErrManifestInstall, Detail: fmt.Sprintf(": cannot marshal manifest: %v", err)}
 	}
 
 	browsers, lookupErr := browsersForFamily(browser)
@@ -315,11 +315,11 @@ func installFamilyManifests(browser Browser, xkeyBinaryPath string) error {
 			continue // browser not installed, skip
 		}
 		if mkdirErr := os.MkdirAll(dir, manifestDirMode); mkdirErr != nil {
-			return fmt.Errorf("%w: cannot create directory %q: %v", ErrManifestInstall, dir, mkdirErr)
+			return &DetailError{Err: ErrManifestInstall, Detail: fmt.Sprintf(": cannot create directory %q: %v", dir, mkdirErr)}
 		}
 		manifestPath := filepath.Join(dir, manifestFileName)
 		if writeErr := os.WriteFile(manifestPath, data, manifestFileMode); writeErr != nil {
-			return fmt.Errorf("%w: cannot write manifest to %q: %v", ErrManifestInstall, manifestPath, writeErr)
+			return &DetailError{Err: ErrManifestInstall, Detail: fmt.Sprintf(": cannot write manifest to %q: %v", manifestPath, writeErr)}
 		}
 		installed++
 	}
@@ -329,11 +329,11 @@ func installFamilyManifests(browser Browser, xkeyBinaryPath string) error {
 		// path so the manifest is ready when the browser is installed later.
 		dir := browserDir(browsers[0], home)
 		if mkdirErr := os.MkdirAll(dir, manifestDirMode); mkdirErr != nil {
-			return fmt.Errorf("%w: cannot create directory %q: %v", ErrManifestInstall, dir, mkdirErr)
+			return &DetailError{Err: ErrManifestInstall, Detail: fmt.Sprintf(": cannot create directory %q: %v", dir, mkdirErr)}
 		}
 		manifestPath := filepath.Join(dir, manifestFileName)
 		if writeErr := os.WriteFile(manifestPath, data, manifestFileMode); writeErr != nil {
-			return fmt.Errorf("%w: cannot write manifest to %q: %v", ErrManifestInstall, manifestPath, writeErr)
+			return &DetailError{Err: ErrManifestInstall, Detail: fmt.Sprintf(": cannot write manifest to %q: %v", manifestPath, writeErr)}
 		}
 	}
 
@@ -353,7 +353,7 @@ func UninstallManifest(browser Browser) error {
 func uninstallFamilyManifests(browser Browser) error {
 	home, err := homeDirFunc()
 	if err != nil {
-		return fmt.Errorf("%w: cannot determine home directory: %v", ErrManifestInstall, err)
+		return &DetailError{Err: ErrManifestInstall, Detail: fmt.Sprintf(": cannot determine home directory: %v", err)}
 	}
 
 	browsers, lookupErr := browsersForFamily(browser)
@@ -373,13 +373,13 @@ func uninstallFamilyManifests(browser Browser) error {
 			if os.IsNotExist(removeErr) {
 				continue
 			}
-			return fmt.Errorf("%w: cannot remove manifest at %q: %v", ErrManifestInstall, manifestPath, removeErr)
+			return &DetailError{Err: ErrManifestInstall, Detail: fmt.Sprintf(": cannot remove manifest at %q: %v", manifestPath, removeErr)}
 		}
 		removed++
 	}
 
 	if removed == 0 {
-		return fmt.Errorf("%w: no %s manifests found", ErrManifestNotFound, familyName)
+		return &DetailError{Err: ErrManifestNotFound, Detail: fmt.Sprintf(": no %s manifests found", familyName)}
 	}
 
 	return nil

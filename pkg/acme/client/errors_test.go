@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,10 +16,11 @@ package client
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 func TestErrorTypeConstants(t *testing.T) {
@@ -660,7 +661,7 @@ func TestGetACMEError(t *testing.T) {
 		},
 		{
 			name:        "wrapped ACME error",
-			err:         fmt.Errorf("wrapped: %w", &ACMEError{Type: ErrTypeBadNonce}),
+			err:         &errs.Wrapped{Msg: "wrapped", Err: &ACMEError{Type: ErrTypeBadNonce}},
 			shouldExist: true,
 		},
 		{
@@ -701,7 +702,7 @@ func TestIsACMEError(t *testing.T) {
 		},
 		{
 			name:     "wrapped ACME error",
-			err:      fmt.Errorf("context: %w", &ACMEError{Type: ErrTypeBadNonce}),
+			err:      &errs.Wrapped{Msg: "context", Err: &ACMEError{Type: ErrTypeBadNonce}},
 			expected: true,
 		},
 		{
@@ -820,8 +821,8 @@ func TestWrappedACMEErrorMatching(t *testing.T) {
 		Detail: "original error",
 	}
 
-	wrappedOnce := fmt.Errorf("context: %w", originalErr)
-	wrappedTwice := fmt.Errorf("more context: %w", wrappedOnce)
+	wrappedOnce := &errs.Wrapped{Msg: "context", Err: originalErr}
+	wrappedTwice := &errs.Wrapped{Msg: "more context", Err: wrappedOnce}
 
 	t.Run("errors.Is with wrapped error", func(t *testing.T) {
 		if !errors.Is(wrappedTwice, originalErr) {

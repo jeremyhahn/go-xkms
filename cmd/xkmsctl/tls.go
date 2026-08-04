@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -57,7 +56,7 @@ func getTLSCertLocal(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm
 	// Create backend
 	be, err := cfg.CreateBackend()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create backend: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateBackendFailed, Err: err})
 		return
 	}
 	defer func() { _ = be.Close() }()
@@ -65,28 +64,28 @@ func getTLSCertLocal(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm
 	// Create certificate storage
 	certStorage, err := cfg.CreateCertStorage()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create cert storage: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateCertStorageFailed, Err: err})
 		return
 	}
 
 	// Build key attributes
 	attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, false)
 	if err != nil {
-		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		handleError(&WrappedError{Sentinel: ErrInvalidKeyParameters, Err: err})
 		return
 	}
 
 	// Get the private key
 	key, err := be.GetKey(context.Background(), attrs)
 	if err != nil {
-		handleError(fmt.Errorf("failed to get key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGetKeyFailed, Err: err})
 		return
 	}
 
 	// Get the certificate
 	cert, err := certStorage.GetCert(context.Background(), keyID)
 	if err != nil {
-		handleError(fmt.Errorf("failed to get certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGetCertificateFailed, Err: err})
 		return
 	}
 

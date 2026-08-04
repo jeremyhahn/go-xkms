@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -78,7 +80,7 @@ func (s *Signer) Sign(key crypto.PrivateKey, claims jwt.Claims) (string, error) 
 func (s *Signer) SignWithAlgorithm(key crypto.PrivateKey, claims jwt.Claims, alg Algorithm) (string, error) {
 	method := jwt.GetSigningMethod(string(alg))
 	if method == nil {
-		return "", fmt.Errorf("unsupported algorithm: %s", alg)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported algorithm: %s", alg)}
 	}
 
 	token := jwt.NewWithClaims(method, claims)
@@ -99,7 +101,7 @@ func (s *Signer) SignWithKID(key crypto.PrivateKey, claims jwt.Claims, kid strin
 
 	method := jwt.GetSigningMethod(string(alg))
 	if method == nil {
-		return "", fmt.Errorf("unsupported algorithm: %s", alg)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported algorithm: %s", alg)}
 	}
 
 	token := jwt.NewWithClaims(method, claims)
@@ -156,7 +158,7 @@ func (v *Verifier) VerifyWithOptions(tokenString string, publicKey crypto.Public
 		return publicKey, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse token: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse token", Err: err}
 	}
 
 	// Additional validation if options provided
@@ -173,13 +175,13 @@ func (v *Verifier) VerifyWithOptions(tokenString string, publicKey crypto.Public
 func (v *Verifier) validateWithOptions(token *jwt.Token, opts *VerifyOptions) error {
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return fmt.Errorf("invalid claims type")
+		return &errs.Message{Msg: "invalid claims type"}
 	}
 
 	if opts.ValidateIssuer {
 		iss, ok := claims["iss"].(string)
 		if !ok || iss != opts.ExpectedIssuer {
-			return fmt.Errorf("invalid issuer: expected %s, got %s", opts.ExpectedIssuer, iss)
+			return &errs.Message{Msg: fmt.Sprintf("invalid issuer: expected %s, got %s", opts.ExpectedIssuer, iss)}
 		}
 	}
 
@@ -189,7 +191,7 @@ func (v *Verifier) validateWithOptions(token *jwt.Token, opts *VerifyOptions) er
 		switch v := aud.(type) {
 		case string:
 			if v != opts.ExpectedAudience {
-				return fmt.Errorf("invalid audience: expected %s, got %s", opts.ExpectedAudience, v)
+				return &errs.Message{Msg: fmt.Sprintf("invalid audience: expected %s, got %s", opts.ExpectedAudience, v)}
 			}
 		case []interface{}:
 			found := false
@@ -200,10 +202,10 @@ func (v *Verifier) validateWithOptions(token *jwt.Token, opts *VerifyOptions) er
 				}
 			}
 			if !found {
-				return fmt.Errorf("invalid audience: %s not found in %v", opts.ExpectedAudience, v)
+				return &errs.Message{Msg: fmt.Sprintf("invalid audience: %s not found in %v", opts.ExpectedAudience, v)}
 			}
 		default:
-			return fmt.Errorf("invalid audience format")
+			return &errs.Message{Msg: "invalid audience format"}
 		}
 	}
 
@@ -225,7 +227,7 @@ func ExtractKID(tokenString string) (string, error) {
 	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
 	token, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{})
 	if err != nil {
-		return "", fmt.Errorf("failed to parse token: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to parse token", Err: err}
 	}
 
 	kid, ok := token.Header["kid"].(string)
@@ -247,7 +249,7 @@ func signingMethodFromKey(key crypto.PrivateKey) (Algorithm, error) {
 	case ed25519.PrivateKey:
 		return EdDSA, nil
 	default:
-		return "", fmt.Errorf("unsupported key type: %T", key)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported key type: %T", key)}
 	}
 }
 
@@ -261,7 +263,7 @@ func signingMethodFromECDSA(key *ecdsa.PrivateKey) (Algorithm, error) {
 	case elliptic.P521():
 		return ES512, nil
 	default:
-		return "", fmt.Errorf("unsupported ECDSA curve: %s", key.Curve.Params().Name)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported ECDSA curve: %s", key.Curve.Params().Name)}
 	}
 }
 
@@ -281,6 +283,6 @@ func ParseAlgorithm(alg string) (Algorithm, error) {
 	case EdDSA:
 		return EdDSA, nil
 	default:
-		return "", fmt.Errorf("unsupported algorithm: %s", alg)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported algorithm: %s", alg)}
 	}
 }

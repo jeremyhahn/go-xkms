@@ -17,14 +17,15 @@ package mcp
 
 import (
 	"context"
-	"fmt"
 	"strings"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // routeFrostMethods returns an error for FROST methods when not compiled with frost tag
 func (s *Server) routeFrostMethods(ctx context.Context, req *JSONRPCRequest) (interface{}, error, bool) {
 	if strings.HasPrefix(req.Method, "frost.") {
-		return nil, fmt.Errorf("FROST support not compiled - rebuild with '-tags frost'"), true
+		return nil, &errs.Message{Msg: "FROST support not compiled - rebuild with '-tags frost'"}, true
 	}
 	return nil, nil, false
 }

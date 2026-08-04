@@ -72,6 +72,15 @@ var (
 	// SRK cannot be evicted. This typically happens when the TPM owner
 	// hierarchy has auth from a prior installation that is unknown.
 	ErrPlatformKeyStoreEvictSRK = errors.New("tpm2: platform key store failed to evict existing SRK (owner hierarchy auth unknown; clear TPM or provide correct SO PIN)")
+
+	// ErrPlatformSRKAlreadyEnrolled is returned by EnrollPlatformSRK when the
+	// Platform SRK auth is already in a known-good state (IsAuthReady), so a
+	// first-boot enrollment must not run again.
+	ErrPlatformSRKAlreadyEnrolled = errors.New("tpm2: platform SRK already enrolled")
+
+	// ErrPlatformSRKEnrollEmptyPIN is returned by EnrollPlatformSRK when the
+	// supplied user PIN is empty. First-boot enrollment must bind a real PIN.
+	ErrPlatformSRKEnrollEmptyPIN = errors.New("tpm2: platform SRK enrollment requires a non-empty user PIN")
 )
 
 // tpmRCNVDefined is TPM_RC_NV_DEFINED (0x14c), indicating the persistent
@@ -214,6 +223,32 @@ func (pks *PlatformKeyStore) Initialize(soPIN, userPIN string) error {
 	pks.logger.Info("platform key store initialized",
 		slog.Bool("platform_policy", pks.PlatformPolicyEnabled()))
 
+	return nil
+}
+
+// EnrollPlatformSRK performs a deliberate one-shot first-boot enrollment of the
+// Platform SRK, binding the operator-supplied userPIN as its authorization
+// value so the TPM2 PIN backend works end-to-end on subsequent boots.
+//
+// It is idempotent: when the SRK auth is already in a known-good state
+// (IsAuthReady), it returns ErrPlatformSRKAlreadyEnrolled so a daemon can skip
+// enrollment on every boot after the first without treating it as a failure.
+// An empty userPIN is rejected with ErrPlatformSRKEnrollEmptyPIN.
+//
+// Enrollment reuses the existing Initialize/ensureSRKAuth machinery; it adds no
+// new TPM primitives. The TPM SO-PIN concept is unused by the TPM2 backend, so
+// an empty SO PIN is passed through.
+func (pks *PlatformKeyStore) EnrollPlatformSRK(userPIN string) error {
+	if userPIN == "" {
+		return ErrPlatformSRKEnrollEmptyPIN
+	}
+	if pks.IsAuthReady() {
+		return ErrPlatformSRKAlreadyEnrolled
+	}
+	if err := pks.Initialize("", userPIN); err != nil {
+		return err
+	}
+	pks.logger.Info("platform SRK enrolled at first boot")
 	return nil
 }
 
@@ -362,6 +397,12 @@ func (pks *PlatformKeyStore) PlatformPolicyEnabled() bool {
 // VerifyAuth verifies the user PIN against the PlatformSRK's password auth.
 // Uses TPM2_Create as a parent auth check: creating a minimal child object
 // under the SRK succeeds only when the correct auth value is provided.
+//
+// Only a genuine authorization failure (a wrong PIN) is reported as
+// ErrAuthFailed. Any other TPM fault (e.g. a malformed probe surfacing as
+// TPM_RC_ATTRIBUTES, a missing handle, or a transport error) is returned
+// verbatim so it is NOT misreported as an invalid PIN — masking such errors
+// previously hid the invalid auth-probe template bug.
 func (pks *PlatformKeyStore) VerifyAuth(userPIN string) error {
 	if !pks.initialized.Load() {
 		return ErrPlatformKeyStoreNotInitialized
@@ -370,10 +411,14 @@ func (pks *PlatformKeyStore) VerifyAuth(userPIN string) error {
 		return ErrPlatformKeyStoreNoSRKHandle
 	}
 
-	if err := pks.tpm.VerifyAuth(pks.srkAttrs.TPMAttributes.Handle, []byte(userPIN)); err != nil {
+	err := pks.tpm.VerifyAuth(pks.srkAttrs.TPMAttributes.Handle, []byte(userPIN))
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrAuthFailed) || isTPMAuthError(err) {
 		return ErrAuthFailed
 	}
-	return nil
+	return err
 }
 
 // ChangeAuth changes the PlatformSRK's password auth (user PIN change).
@@ -444,6 +489,16 @@ func (pks *PlatformKeyStore) SetAuthReady(ready bool) {
 // buildSRKAttrsFromConfig creates SRK key attributes from the TPM Config.
 // It uses the PlatformSRKConfig.SRKHandle if set, otherwise falls back to the
 // default tpSRKIndex (0x81000002).
+//
+// The Platform SRK is the object whose authorization value IS the user PIN.
+// For failed PIN guesses to trip the TPM's dictionary-attack (DA) protection,
+// this object MUST have its NoDA attribute cleared: the standard SRK templates
+// set NoDA=true (appropriate for a generic storage parent that is never the
+// auth target), which leaves PIN brute-forcing unthrottled despite the lockout
+// plumbing. Clearing NoDA on the PIN-verification SRK — and only on it; the
+// seal SSRK at a different handle is unaffected — makes each wrong PIN
+// increment the DA counter toward hardware lockout while a correct PIN still
+// authorizes normally.
 func buildSRKAttrsFromConfig(config *Config) (*types.KeyAttributes, error) {
 	var srkHandle uint32
 
@@ -457,11 +512,16 @@ func buildSRKAttrsFromConfig(config *Config) (*types.KeyAttributes, error) {
 	if config.SSRK != nil {
 		cfg := *config.SSRK
 		cfg.Handle = srkHandle
-		return SRKAttributesFromConfig(cfg, nil)
+		attrs, err := SRKAttributesFromConfig(cfg, nil)
+		if err != nil {
+			return nil, err
+		}
+		enableDAOnSRK(attrs)
+		return attrs, nil
 	}
 
 	// Minimal SRK attributes from keystore config
-	return &types.KeyAttributes{
+	attrs := &types.KeyAttributes{
 		CN:        "srk",
 		KeyType:   types.KeyTypeStorage,
 		StoreType: types.StoreTPM2,
@@ -469,6 +529,26 @@ func buildSRKAttrsFromConfig(config *Config) (*types.KeyAttributes, error) {
 			Handle:     tpm2.TPMHandle(srkHandle),
 			HandleType: tpm2.TPMHTPersistent,
 			Hierarchy:  tpm2.TPMHandle(tpm2.TPMRHOwner),
+			Template:   rsaSRKTemplateWithDA(),
 		},
-	}, nil
+	}
+	return attrs, nil
+}
+
+// rsaSRKTemplateWithDA returns the RSA SRK template with DA protection enabled
+// (NoDA cleared) so that authorization failures against the PIN SRK increment
+// the TPM dictionary-attack counter.
+func rsaSRKTemplateWithDA() tpm2.TPMTPublic {
+	tmpl := tpm2.RSASRKTemplate
+	tmpl.ObjectAttributes.NoDA = false
+	return tmpl
+}
+
+// enableDAOnSRK clears the NoDA attribute on the SRK template so wrong-PIN
+// authorization failures trip TPM dictionary-attack protection.
+func enableDAOnSRK(attrs *types.KeyAttributes) {
+	if attrs == nil || attrs.TPMAttributes == nil {
+		return
+	}
+	attrs.TPMAttributes.Template.ObjectAttributes.NoDA = false
 }

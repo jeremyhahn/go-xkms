@@ -15,6 +15,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -25,10 +26,48 @@ import (
 
 // PINStatusInfo describes the current PIN state for the frontend.
 type PINStatusInfo struct {
-	SOPINSet    bool   `json:"so_pin_set"`
-	UserPINSet  bool   `json:"user_pin_set"`
-	Initialized bool   `json:"initialized"`
-	Strategy    string `json:"strategy"`
+	SOPINSet       bool   `json:"so_pin_set"`
+	UserPINSet     bool   `json:"user_pin_set"`
+	Initialized    bool   `json:"initialized"`
+	Strategy       string `json:"strategy"`
+	SOPINSupported bool   `json:"so_pin_supported"`
+}
+
+// sopinCapableStrategies is the single, authoritative map of which PIN
+// strategies persist an independent Security Officer PIN, separate from
+// the string comparisons that used to be scattered across the setup
+// wizard and Settings UI. The tpm2 strategy binds all authorization to
+// the PlatformSRK auth value (see pkg/pintpm2.TPM2Backend); its
+// SetSOPIN/ChangeSOPIN/VerifySOPIN methods always return
+// qrdbsdk.ErrPINNotSet by design, so it is listed as unsupported here.
+var sopinCapableStrategies = map[qrdbsdk.PINStrategyID]bool{
+	qrdbsdk.PINStrategySoftware: true,
+	qrdbsdk.PINStrategyTPM2:     false,
+	qrdbsdk.PINStrategyPKCS11:   true,
+}
+
+// sopinSupported reports whether the given PIN strategy supports a
+// separate Security Officer PIN. Strategies not present in
+// sopinCapableStrategies default to true (fail open) so that a future
+// strategy added without updating this map behaves like the historical
+// default rather than silently disabling SO PIN management.
+func sopinSupported(strategy qrdbsdk.PINStrategyID) bool {
+	supported, known := sopinCapableStrategies[strategy]
+	if !known {
+		return true
+	}
+	return supported
+}
+
+// mapSOPINUnsupportedErr rewrites qrdbsdk.ErrPINNotSet into the clearer
+// ErrSOPINNotSupported when the given strategy does not support a
+// separate SO PIN. Errors unrelated to that condition (invalid PIN,
+// wrong length, storage failures, etc.) pass through unchanged.
+func mapSOPINUnsupportedErr(err error, strategy qrdbsdk.PINStrategyID) error {
+	if errors.Is(err, qrdbsdk.ErrPINNotSet) && !sopinSupported(strategy) {
+		return ErrSOPINNotSupported
+	}
+	return err
 }
 
 // PINService exposes PIN management to the frontend. It is a thin wrapper
@@ -85,6 +124,32 @@ func (s *PINService) getPINService() (*qrdbsdk.PINService, error) {
 	return svc, nil
 }
 
+// Strategy returns the identifier of the active PIN backend strategy, or
+// the empty string if no PIN service has been wired yet.
+func (s *PINService) Strategy() string {
+	svc := s.pinSvc.Load()
+	if svc == nil {
+		return ""
+	}
+	return string(svc.Strategy())
+}
+
+// SOPINSupported reports whether the active PIN backend supports a
+// separate Security Officer PIN, independent from the User PIN. It is
+// false for the tpm2 strategy, whose PlatformSRK auth model has no SO
+// PIN concept. Callers (the setup wizard, Settings PIN Management) use
+// this to skip SO PIN provisioning UI/flows entirely rather than
+// surfacing a raw "PIN not set" failure. When no PIN service has been
+// wired yet, it defaults to true so callers behave as they did before
+// this capability existed.
+func (s *PINService) SOPINSupported() bool {
+	svc := s.pinSvc.Load()
+	if svc == nil {
+		return true
+	}
+	return sopinSupported(svc.Strategy())
+}
+
 // getAuditLogger returns the audit logger, or nil if not configured.
 func (s *PINService) getAuditLogger() audit.Logger {
 	ptr := s.auditLog.Load()
@@ -100,7 +165,7 @@ func (s *PINService) GetPINStatus() (result *PINStatusInfo, retErr error) {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetPINStatus", "recover", r)
 			result = nil
-			retErr = fmt.Errorf("pin_service: panic in GetPINStatus: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("pin_service: panic in GetPINStatus: %v", r)}
 		}
 	}()
 
@@ -110,10 +175,11 @@ func (s *PINService) GetPINStatus() (result *PINStatusInfo, retErr error) {
 	}
 
 	return &PINStatusInfo{
-		SOPINSet:    svc.SOPINSet(),
-		UserPINSet:  svc.UserPINSet(),
-		Initialized: svc.IsInitialized(),
-		Strategy:    string(svc.Strategy()),
+		SOPINSet:       svc.SOPINSet(),
+		UserPINSet:     svc.UserPINSet(),
+		Initialized:    svc.IsInitialized(),
+		Strategy:       string(svc.Strategy()),
+		SOPINSupported: sopinSupported(svc.Strategy()),
 	}, nil
 }
 
@@ -122,7 +188,7 @@ func (s *PINService) SetSOPIN(currentSOPIN, newSOPIN string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in SetSOPIN", "recover", r)
-			retErr = fmt.Errorf("pin_service: panic in SetSOPIN: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("pin_service: panic in SetSOPIN: %v", r)}
 		}
 	}()
 
@@ -132,6 +198,7 @@ func (s *PINService) SetSOPIN(currentSOPIN, newSOPIN string) (retErr error) {
 	}
 
 	if err := svc.SetSOPIN(currentSOPIN, newSOPIN); err != nil {
+		err = mapSOPINUnsupportedErr(err, svc.Strategy())
 		s.logPINOperation(audit.OpSOPINFailed, false, err, map[string]any{
 			"operation": "set",
 		})
@@ -151,7 +218,7 @@ func (s *PINService) SetUserPIN(soPIN, newUserPIN string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in SetUserPIN", "recover", r)
-			retErr = fmt.Errorf("pin_service: panic in SetUserPIN: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("pin_service: panic in SetUserPIN: %v", r)}
 		}
 	}()
 
@@ -180,7 +247,7 @@ func (s *PINService) ChangeSOPIN(currentSOPIN, newSOPIN string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ChangeSOPIN", "recover", r)
-			retErr = fmt.Errorf("pin_service: panic in ChangeSOPIN: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("pin_service: panic in ChangeSOPIN: %v", r)}
 		}
 	}()
 
@@ -190,6 +257,7 @@ func (s *PINService) ChangeSOPIN(currentSOPIN, newSOPIN string) (retErr error) {
 	}
 
 	if err := svc.ChangeSOPIN(currentSOPIN, newSOPIN); err != nil {
+		err = mapSOPINUnsupportedErr(err, svc.Strategy())
 		s.logPINOperation(audit.OpSOPINFailed, false, err, map[string]any{
 			"operation": "change",
 		})
@@ -208,7 +276,7 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ChangeUserPIN", "recover", r)
-			retErr = fmt.Errorf("pin_service: panic in ChangeUserPIN: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("pin_service: panic in ChangeUserPIN: %v", r)}
 		}
 	}()
 
@@ -255,7 +323,7 @@ func (s *PINService) VerifyUserPIN(userPIN string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in VerifyUserPIN", "recover", r)
-			retErr = fmt.Errorf("pin_service: panic in VerifyUserPIN: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("pin_service: panic in VerifyUserPIN: %v", r)}
 		}
 	}()
 
@@ -299,7 +367,7 @@ func (s *PINService) VerifySOPIN(soPIN string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in VerifySOPIN", "recover", r)
-			retErr = fmt.Errorf("pin_service: panic in VerifySOPIN: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("pin_service: panic in VerifySOPIN: %v", r)}
 		}
 	}()
 
@@ -310,6 +378,7 @@ func (s *PINService) VerifySOPIN(soPIN string) (retErr error) {
 	}
 
 	if err := svc.VerifySOPIN(soPIN); err != nil {
+		err = mapSOPINUnsupportedErr(err, svc.Strategy())
 		s.logPINOperation(audit.OpSOPINFailed, false, err, map[string]any{
 			"type": "so_pin",
 		})
@@ -328,7 +397,7 @@ func (s *PINService) GetLockoutStatus() (result *qrdbsdk.PINLockoutStatus, retEr
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetLockoutStatus", "recover", r)
 			result = nil
-			retErr = fmt.Errorf("pin_service: panic in GetLockoutStatus: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("pin_service: panic in GetLockoutStatus: %v", r)}
 		}
 	}()
 
@@ -337,7 +406,13 @@ func (s *PINService) GetLockoutStatus() (result *qrdbsdk.PINLockoutStatus, retEr
 		return nil, err
 	}
 
-	return svc.GetLockoutStatus(), nil
+	status := svc.GetLockoutStatus()
+	if status == nil {
+		// Software backend returns nil (no native lockout). Return a zero-value
+		// struct so the frontend always receives a defined object instead of null.
+		status = &qrdbsdk.PINLockoutStatus{}
+	}
+	return status, nil
 }
 
 // ResetLockout resets the lockout counter using SO PIN authorization.
@@ -345,7 +420,7 @@ func (s *PINService) ResetLockout(soPIN string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ResetLockout", "recover", r)
-			retErr = fmt.Errorf("pin_service: panic in ResetLockout: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("pin_service: panic in ResetLockout: %v", r)}
 		}
 	}()
 

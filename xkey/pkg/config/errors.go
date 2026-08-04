@@ -58,3 +58,21 @@ var (
 	// ErrPolicyVersionMismatch is returned when the policy version does not match the HMAC version.
 	ErrPolicyVersionMismatch = errors.New("config: policy version does not match HMAC version")
 )
+
+// DetailError appends detail text directly after a wrapped error while
+// preserving errors.Is / errors.As matching of the wrapped error through
+// Unwrap. The detail text carries its own leading separator.
+type DetailError struct {
+	Err    error
+	Detail string
+}
+
+// Error implements the error interface.
+func (e *DetailError) Error() string {
+	return e.Err.Error() + e.Detail
+}
+
+// Unwrap returns the wrapped cause.
+func (e *DetailError) Unwrap() error {
+	return e.Err
+}

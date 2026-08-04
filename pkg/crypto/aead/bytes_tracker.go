@@ -16,6 +16,8 @@ package aead
 import (
 	"fmt"
 	"sync/atomic"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 const (
@@ -89,7 +91,7 @@ func NewBytesTracker(enabled bool, limit int64) *BytesTracker {
 //	plaintext := []byte("sensitive data")
 //	if err := tracker.CheckAndIncrementBytes(int64(len(plaintext))); err != nil {
 //	    // Limit exceeded - rotate key
-//	    return fmt.Errorf("key rotation required: %w", err)
+//	    return &errs.Wrapped{Msg: "key rotation required", Err: err}
 //	}
 //	// Safe to encrypt
 //	ciphertext, err := encrypt(plaintext)
@@ -105,8 +107,7 @@ func (bt *BytesTracker) CheckAndIncrementBytes(numBytes int64) error {
 	if newTotal > bt.limit {
 		// Rollback the increment - we don't want to count failed operations
 		bt.bytesEncrypted.Add(-numBytes)
-		return fmt.Errorf("AEAD key usage limit exceeded: encrypted %d bytes, limit %d bytes (exceeded by %d bytes)",
-			newTotal-numBytes, bt.limit, newTotal-bt.limit)
+		return &errs.Message{Msg: fmt.Sprintf("AEAD key usage limit exceeded: encrypted %d bytes, limit %d bytes (exceeded by %d bytes)", newTotal-numBytes, bt.limit, newTotal-bt.limit)}
 	}
 
 	return nil

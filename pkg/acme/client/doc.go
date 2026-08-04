@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package trustedca provides a library entry point for go-trusted-ca.
+// Package trustedca provides a library entry point for the go-xkms ACME Certificate Authority.
 //
-// go-trusted-ca is an ACME RFC-8555 compliant Certificate Authority with support
+// It is an ACME RFC-8555 compliant Certificate Authority with support
 // for Trusted Computing specifications and multi-tenancy via QRDB.
 //
 // # Quick Start
@@ -53,7 +53,7 @@
 //	// Parent application creates QRDB service
 //	db, _ := qrdb.New(qrdbConfig)
 //
-//	// Pass to go-trusted-ca
+//	// Pass to TrustedCA
 //	tca, err := trustedca.New(
 //	    trustedca.WithQRDB(db),
 //	    trustedca.WithCA(myCA),
@@ -63,7 +63,7 @@
 //
 // # Supported Challenge Types
 //
-// go-trusted-ca supports the following ACME challenge types:
+// TrustedCA supports the following ACME challenge types:
 //   - http-01: HTTP challenge (RFC 8555)
 //   - dns-01: DNS challenge (RFC 8555)
 //   - device-attest-01: TPM device attestation

@@ -1204,6 +1204,10 @@ func (m *mockXKMSService) BarrierGenerateRecoveryKeys(ctx context.Context, req *
 	return nil, nil
 }
 
+func (m *mockXKMSService) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	return nil, nil
+}
+
 func (m *mockXKMSService) BarrierRecoverWithKeys(ctx context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
 	return nil
 }
@@ -1288,6 +1292,18 @@ func (m *mockXKMSService) TenantBarrierInit(ctx context.Context, req *transport.
 
 func (m *mockXKMSService) TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error {
 	return nil
+}
+
+func (m *mockXKMSService) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return nil, nil
 }
 
 // InitCeremonyService methods

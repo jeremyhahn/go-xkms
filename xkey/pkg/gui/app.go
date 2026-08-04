@@ -40,6 +40,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
@@ -53,7 +54,9 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
+	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/sshstore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
@@ -107,6 +110,11 @@ type App struct {
 	adminService             *services.AdminService
 	connectionService        *services.ConnectionService
 	keyService               *services.KeyService
+	sshService               *services.SSHService
+	sshProfileService        *services.SSHProfileService
+	sshConnectService        *services.SSHConnectService
+	sshConsoleService        *services.SSHConsoleService
+	sshLocalService          *services.SSHLocalService
 	storageService           *services.StorageService
 	notificationService      *services.NotificationService
 	sealService              *services.SealService
@@ -198,6 +206,13 @@ type App struct {
 
 	// dataDir stores the initialized data directory path for getTPM and shutdown.
 	dataDir string
+
+	// dataDirInit records that initializeDataDir has fully opened the
+	// data-directory stores. The pre-unseal startup path resolves and sets
+	// dataDir (so the PIN service can find data/pin/) WITHOUT opening the
+	// barrier-backed stores, so dataDir alone must not be used as the
+	// already-initialized guard.
+	dataDirInit bool
 
 	// configDirPath caches the resolved config directory (~/.config/xkey/).
 	configDirPath string
@@ -377,6 +392,7 @@ func (a *App) populateBackendRegistry() {
 				backendregistry.CapEncryption: true,
 				backendregistry.CapPasswords:  true,
 				backendregistry.CapPIV:        true,
+				backendregistry.CapSSH:        true,
 			},
 			Metadata: map[string]string{
 				"address":  rb.Address,
@@ -440,6 +456,9 @@ func defaultCapabilities(cat backendregistry.BackendCategory) map[backendregistr
 	caps := map[backendregistry.Capability]bool{
 		backendregistry.CapSigning:    true,
 		backendregistry.CapEncryption: true,
+		// Every signing-capable backend can mint SSH keys (ed25519/ecdsa/rsa),
+		// so SSH capability tracks signing capability.
+		backendregistry.CapSSH: true,
 	}
 	switch cat {
 	case backendregistry.CategorySoftware:
@@ -687,13 +706,17 @@ func (a *App) openStore(dir string) (xkmssdk.StorageBackend, error) {
 }
 
 func (a *App) initializeDataDir() error {
-	if a.dataDir != "" {
+	if a.dataDirInit {
 		return ErrDataDirAlreadyInit
 	}
 
-	dir, err := dataDir()
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDataDirInit, err)
+	dir := a.dataDir
+	if dir == "" {
+		var err error
+		dir, err = dataDir()
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrDataDirInit, Cause: err}
+		}
 	}
 	a.dataDir = dir
 
@@ -860,6 +883,37 @@ func (a *App) initializeDataDir() error {
 	// Wire TPM data directory for handle descriptions and CA storage.
 	a.tpmService.SetDataDir(dir)
 
+	// PCR policy store — always a plain file-backed store (never routed
+	// through the barrier), because BarrierAutoUnsealService must be able to
+	// read the auto-unseal policy BEFORE the barrier is unsealed. This is the
+	// same canonical pcrpolicy.DAOStore used by the CLI (xkey policy ...),
+	// unifying GUI/CLI/auto-unseal onto one PCR policy store.
+	pcrPolicyBackend, ppErr := a.openStore(filepath.Join(dir, "pcr_policies"))
+	if ppErr != nil {
+		a.log.Warn("failed to create PCR policy storage backend", "error", ppErr)
+	} else {
+		pcrKVStore, kvErr := xkmssdk.NewKVStoreAdapter(pcrPolicyBackend)
+		if kvErr != nil {
+			a.log.Warn("failed to create PCR policy kv adapter", "error", kvErr)
+		} else {
+			pcrPolicyStore, storeErr := pcrpolicy.NewDAOStore(pcrKVStore)
+			if storeErr != nil {
+				a.log.Warn("failed to create PCR policy store", "error", storeErr)
+			} else {
+				// SetPolicyStore performs a one-time silent migration of any
+				// legacy pcr_policies.json into the store on first call.
+				// Nil guards: tests exercise initializeDataDir on a partially
+				// constructed App without these services wired.
+				if a.tpmService != nil {
+					a.tpmService.SetPolicyStore(pcrPolicyStore)
+				}
+				if a.barrierAutoUnsealService != nil {
+					a.barrierAutoUnsealService.SetPolicyStore(pcrPolicyStore)
+				}
+			}
+		}
+	}
+
 	// OIDC storage — encrypted via barrier or plain file fallback.
 	if barrierBackend != nil {
 		if oidcErr := a.oidcService.SetBackend(barrierBackend, "oidc/"); oidcErr != nil {
@@ -950,6 +1004,16 @@ func (a *App) initializeDataDir() error {
 		}
 	}
 
+	// Wire the SSH services: build an embedded SSH client whose key
+	// generation and signing are delegated to the user-selected crypto
+	// backend (software / tpm2 / pkcs11 / cloud). For hardware backends the
+	// private key never leaves the device. SSH metadata lives in the shared
+	// SSH store (xkey/pkg/sshstore) — barrier-routed and encrypted at rest
+	// when the barrier is active, otherwise a plain engine store rooted at
+	// dataDir/ssh. Wired here (not in NewApp) so the barrier decision and
+	// the resolved data directory are both known.
+	a.initializeSSHServices(dir, barrierBackend)
+
 	// Migrate old barrier data from config dir to data dir.
 	a.migrateBarrierData()
 
@@ -981,9 +1045,99 @@ func (a *App) initializeDataDir() error {
 		}
 	}
 
+	a.dataDirInit = true
 	a.log.Info("data directory initialized", "dir", dir,
 		"barrier_active", barrierBackend != nil)
 	return nil
+}
+
+// initializeSSHServices wires the SSH key, profile, connect, console, and
+// local services over the shared SSH store (xkey/pkg/sshstore). When the
+// barrier is active the store is barrier-routed (encrypted at rest) and any
+// legacy plaintext store under dir/ssh is migrated once; otherwise a plain
+// engine store rooted at dir/ssh is used.
+//
+// All five ssh*Service fields are unconditionally constructed in NewApp
+// (the only production App constructor), so they are never nil here.
+// Test harnesses that build an App composite literal directly must
+// populate them (see init_data_dir_test.go).
+func (a *App) initializeSSHServices(dir string, barrierBackend xkmssdk.StorageBackend) {
+	a.sshLocalService.SetLogger(a.log)
+
+	sshStorage, sshStoreErr := sshstore.ResolveBackend(dir, a.storageEngineKind(), barrierBackend)
+	if sshStoreErr != nil {
+		a.log.Warn("SSH service disabled: failed to open ssh store", "error", sshStoreErr)
+		return
+	}
+	if barrierBackend != nil {
+		if merr := sshstore.MigrateLegacyStores(context.Background(), dir, sshStorage); merr != nil {
+			a.log.Warn("SSH store: legacy migration failed", "error", merr)
+		}
+	}
+
+	provider, perr := sshclient.NewBackendProvider(func(_ context.Context, backendID string) (xkmssdk.KeyProvider, error) {
+		b, gerr := xkmssdk.GetBackend(backendID)
+		if gerr != nil {
+			return nil, gerr
+		}
+		return b.KeyProvider(), nil
+	})
+	if perr != nil {
+		a.log.Warn("SSH service disabled: failed to build backend provider", "error", perr)
+		return
+	}
+
+	sshEmbedded, cerr := sshclient.NewEmbedded(sshclient.EmbeddedOptions{
+		Backend:         sshStorage,
+		BackendProvider: provider,
+	})
+	if cerr != nil {
+		a.log.Warn("SSH service disabled: failed to build embedded client", "error", cerr)
+		return
+	}
+
+	a.sshService.SetEmbeddedClient(sshEmbedded)
+	a.sshService.SetRegistry(a.backendRegistry)
+	a.sshService.SetAuditLogger(a.auditStore)
+	a.sshService.SetLogger(a.log)
+	a.log.Info("SSH service initialized", "barrier_routed", barrierBackend != nil)
+
+	// SSH connection profiles (folder hierarchy) share the SSH storage.
+	if profileStore, pserr := sshclient.NewProfileStore(sshStorage); pserr != nil {
+		a.log.Warn("SSH profiles disabled: failed to build profile store", "error", pserr)
+	} else {
+		a.sshProfileService.SetStore(profileStore)
+	}
+
+	// SSH connection launcher: serves the chosen key over an in-process
+	// agent and seeds/syncs host-key pins for the system ssh client.
+	hostKeyStore, hkerr := sshclient.NewHostKeyStore(sshStorage)
+	if hkerr != nil {
+		a.log.Warn("SSH connect disabled: failed to build host-key store", "error", hkerr)
+		return
+	}
+	a.sshConnectService.SetSSHClient(sshEmbedded)
+	a.sshConnectService.SetHostKeyStore(hostKeyStore)
+	a.sshConnectService.SetProfileService(a.sshProfileService)
+	a.sshConnectService.SetLogger(a.log)
+	a.log.Info("SSH connect service initialized")
+
+	// Embedded (in-browser) console: a loopback WebSocket server bridging
+	// xterm.js to an interactive SSH PTY via the SDK console handler.
+	// Reuses the same key signer + host-key store.
+	a.sshConsoleService.SetSSHClient(sshEmbedded)
+	a.sshConsoleService.SetHostKeyStore(hostKeyStore)
+	a.sshConsoleService.SetProfileService(a.sshProfileService)
+	a.sshConsoleService.SetLogger(a.log)
+
+	// Persisted console sessions (opt-in per session) share the SSH storage;
+	// memory-only sessions never touch this store.
+	if sessionStore, sserr := sshclient.NewConsoleSessionStore(sshStorage); sserr != nil {
+		a.log.Warn("SSH persistent sessions disabled: failed to build session store", "error", sserr)
+	} else {
+		a.sshConsoleService.SetSessionStore(sessionStore)
+	}
+	a.log.Info("SSH console service initialized")
 }
 
 // initializeAuthenticator creates a shared FIDO2 authenticator instance and
@@ -1039,6 +1193,35 @@ func (a *App) initializeAuthenticator() {
 		}
 		composite.Register(xkmssdk.BackendTypeTPM2, backend)
 		a.log.Info("FIDO2 TPM2 key backend registered")
+	}
+
+	// Register configured cloud KMS backends (AWS/GCP/Azure) as FIDO2 key
+	// backends. Cloud KeyProviders satisfy the same KeyProvider contract, so
+	// BackendAdapter exposes them for FIDO2 credential creation and signing
+	// exactly like software and TPM. Only backends that are actually configured
+	// (GetBackend succeeds) register; the rest are skipped silently, so an
+	// install with no cloud credentials is unaffected.
+	cloudFIDO2Backends := []struct {
+		name string
+		bt   xkmssdk.BackendType
+	}{
+		{"awskms", xkmssdk.BackendTypeAWSKMS},
+		{"gcpkms", xkmssdk.BackendTypeGCPKMS},
+		{"azurekv", xkmssdk.BackendTypeAzureKV},
+	}
+	for _, cb := range cloudFIDO2Backends {
+		cloudBackend, cloudErr := xkmssdk.GetBackend(cb.name)
+		if cloudErr != nil {
+			continue
+		}
+		adapter := keybackend.NewBackendAdapter(cloudBackend.KeyProvider(), cb.bt)
+		adapter.SetLogger(a.log)
+		var backend keybackend.FIDO2KeyBackend = adapter
+		if autoUVProvider != nil {
+			backend = keybackend.NewAutoUVBackend(adapter, autoUVProvider)
+		}
+		composite.Register(cb.bt, backend)
+		a.log.Info("FIDO2 cloud key backend registered", "backend", cb.name)
 	}
 
 	a.log.Info("FIDO2 composite key backend initialized",
@@ -1722,6 +1905,11 @@ func NewApp(cfg *GUIConfig) *App {
 		shutdownDone:             make(chan struct{}),
 		appService:               appSvc,
 		phoneService:             services.NewPhoneService(),
+		sshService:               services.NewSSHService(nil),
+		sshProfileService:        services.NewSSHProfileService(nil),
+		sshConnectService:        services.NewSSHConnectService(),
+		sshConsoleService:        services.NewSSHConsoleService(),
+		sshLocalService:          services.NewSSHLocalService(),
 		fido2Service:             services.NewFIDO2Service(nil),
 		fido2DeviceService:       fido2DeviceSvc,
 		oathService:              oathSvc,
@@ -1784,6 +1972,7 @@ func NewApp(cfg *GUIConfig) *App {
 	tpmSvc.SetTPMAccessor(tpmAccessor)
 	sealSvc.SetTPMAccessor(tpmAccessor)
 	platformPolicySvc.SetTPMAccessor(tpmAccessor)
+	barrierAutoUnsealSvc.SetTPMAccessor(tpmAccessor)
 
 	// Apply persisted sealer backend selection (overrides auto-select).
 	if cfg.SealerBackend != "" {
@@ -1887,6 +2076,11 @@ func NewApp(cfg *GUIConfig) *App {
 	sealProtSvc.SetAuditLogger(auditStore)
 	appSvc.SetAuditLogger(auditStore)
 
+	// SSH services are wired in initializeDataDir() (via
+	// initializeSSHServices) once the data directory and barrier decision
+	// are known — wiring them here would race the barrier unseal and root
+	// the store at the process working directory.
+
 	// Wire audit store to AdminService for admin audit queries.
 	a.adminService.SetAuditStore(auditStore)
 
@@ -1896,6 +2090,7 @@ func NewApp(cfg *GUIConfig) *App {
 	adminSvc.SetTPMStatusProvider(a.tpmService)
 	adminSvc.SetPhoneStatusProvider(a.phoneService)
 	adminSvc.SetPKCS11Tester(a.pkcs11Service)
+	adminSvc.SetBackendKeyLister(a.keyService)
 	a.pkcs11Service.SetRegistry(a.backendRegistry)
 	a.pkcs11Service.SetConnectHook(func(moduleID, libraryPath string, slotID uint, userPIN, soPin, tokenLabel string) {
 		// Dynamically register the connected PKCS#11 token as an xkms backend
@@ -2381,6 +2576,11 @@ func (a *App) Run() error {
 		a.appService,
 		a.phoneService,
 		a.fido2Service,
+		a.sshService,
+		a.sshProfileService,
+		a.sshConnectService,
+		a.sshConsoleService,
+		a.sshLocalService,
 		a.fido2DeviceService,
 		a.oathService,
 		a.staticPWService,
@@ -2491,6 +2691,10 @@ func (a *App) startup(ctx context.Context) {
 	a.adminService.SetContext(ctx)
 	a.connectionService.SetContext(ctx)
 	a.keyService.SetContext(ctx)
+	a.sshService.SetContext(ctx)
+	a.sshProfileService.SetContext(ctx)
+	a.sshConnectService.SetContext(ctx)
+	a.sshConsoleService.SetContext(ctx)
 	a.storageService.SetContext(ctx)
 	a.notificationService.SetContext(ctx)
 	a.sealService.SetContext(ctx)
@@ -3189,6 +3393,15 @@ func (a *App) shutdown(ctx context.Context) {
 		a.log.Info("xKey GUI shutting down")
 		a.running.Store(false)
 
+		// Tear down any live SSH connection agents (syncs first-contact pins).
+		if a.sshConnectService != nil {
+			a.sshConnectService.StopAll()
+		}
+		// Stop the embedded console loopback server.
+		if a.sshConsoleService != nil {
+			a.sshConsoleService.Shutdown()
+		}
+
 		// Each step has its own timeout to prevent any single operation
 		// from blocking the entire shutdown sequence.
 
@@ -3482,18 +3695,16 @@ func detectEKHandle(log *slog.Logger, device string) uint32 {
 }
 
 // loadTPMConfig loads TPM configuration from the xKey config file.
-// Uses the unified xhome path resolution to locate config.yaml.
-// Falls back to DefaultConfig if no config file is found.
+// It reads the SAME unified config (config.ConfigPath() -> ~/.config/xkey/
+// xkey.yaml) that config.Load() uses for backends, so the global/platform TPM
+// and the tpm2 backend share one source of truth. Previously this read the
+// legacy xhome config.yaml, which diverged from the unified xkey.yaml and
+// silently fell back to the /dev/tpmrm0 default even when a `tpm:` section was
+// configured. Falls back to DefaultConfig if no config file is found.
 func loadTPMConfig(logger *slog.Logger) xkmssdk.TPMConfig {
 	cfg := xkmssdk.DefaultTPMConfig
 
-	h, err := xhome.Resolve()
-	if err != nil {
-		logger.Debug("cannot resolve xKey home for config, using defaults", "error", err)
-		return cfg
-	}
-
-	configPath := h.ConfigPath()
+	configPath := config.ConfigPath()
 	if _, err := os.Stat(configPath); err != nil {
 		logger.Debug("no config file found, using TPM defaults", "path", configPath)
 		return cfg

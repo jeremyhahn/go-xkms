@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"os"
 	"sync"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // autoResolver automatically selects the best available RNG source.
@@ -148,10 +150,10 @@ func (a *autoResolver) Close() error {
 
 	// Return the first error encountered, if any
 	if primaryErr != nil {
-		return fmt.Errorf("primary resolver close failed: %w", primaryErr)
+		return &errs.Wrapped{Msg: "primary resolver close failed", Err: primaryErr}
 	}
 	if fallbackErr != nil {
-		return fmt.Errorf("fallback resolver close failed: %w", fallbackErr)
+		return &errs.Wrapped{Msg: "fallback resolver close failed", Err: fallbackErr}
 	}
 
 	return nil

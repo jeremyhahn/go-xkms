@@ -1,6 +1,6 @@
 # Docker Deployment
 
-Deploy go-trusted-ca ACME server using Docker containers.
+Deploy go-xkms ACME server using Docker containers.
 
 ## Building the Image
 
@@ -8,14 +8,14 @@ Deploy go-trusted-ca ACME server using Docker containers.
 
 ```bash
 # Clone repository
-git clone https://github.com/jeremyhahn/go-trusted-ca.git
-cd go-trusted-ca
+git clone https://github.com/jeremyhahn/go-xkms.git
+cd go-xkms
 
 # Build image
 make docker-build
 
 # Or build directly
-docker build -t go-trusted-ca:latest .
+docker build -t go-xkms:latest .
 ```
 
 ### Multi-Architecture Build
@@ -24,7 +24,7 @@ docker build -t go-trusted-ca:latest .
 # Build for multiple architectures
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t go-trusted-ca:latest \
+  -t go-xkms:latest \
   --push .
 ```
 
@@ -66,7 +66,7 @@ FROM alpine:3.21
 docker run -d \
   --name trusted-ca \
   -p 8080:8080 \
-  go-trusted-ca:latest
+  go-xkms:latest
 ```
 
 ### With Persistent Storage
@@ -80,7 +80,7 @@ docker run -d \
   --name trusted-ca \
   -p 8080:8080 \
   -v $(pwd)/trusted-ca-data:/var/lib/trusted-acme \
-  go-trusted-ca:latest
+  go-xkms:latest
 ```
 
 ### With Custom Configuration
@@ -121,7 +121,7 @@ docker run -d \
   -p 8080:8080 \
   -v $(pwd)/config.yaml:/etc/trusted-acme/config.yaml:ro \
   -v $(pwd)/trusted-ca-data:/var/lib/trusted-acme \
-  go-trusted-ca:latest \
+  go-xkms:latest \
   --config /etc/trusted-acme/config.yaml
 ```
 
@@ -134,7 +134,7 @@ docker run -d \
 version: '3.8'
 services:
   acme-server:
-    image: go-trusted-ca:latest
+    image: go-xkms:latest
     container_name: trusted-ca
     ports:
       - "8080:8080"
@@ -162,7 +162,7 @@ volumes:
 version: '3.8'
 services:
   acme-server:
-    image: go-trusted-ca:latest
+    image: go-xkms:latest
     container_name: trusted-ca
     ports:
       - "8080:8080"
@@ -217,7 +217,7 @@ services:
       - letsencrypt:/letsencrypt
 
   acme-server:
-    image: go-trusted-ca:latest
+    image: go-xkms:latest
     container_name: trusted-ca
     volumes:
       - ./config.yaml:/etc/trusted-acme/config.yaml:ro
@@ -320,7 +320,7 @@ For production deployments with a load balancer:
 
 ```bash
 # Pull new image
-docker pull go-trusted-ca:latest
+docker pull go-xkms:latest
 
 # Start new container
 docker run -d \
@@ -328,7 +328,7 @@ docker run -d \
   -p 8081:8080 \
   -v $(pwd)/config.yaml:/etc/trusted-acme/config.yaml:ro \
   -v acme-data:/var/lib/trusted-acme \
-  go-trusted-ca:latest \
+  go-xkms:latest \
   --config /etc/trusted-acme/config.yaml
 
 # Wait for health check
@@ -384,7 +384,7 @@ docker run -d \
   -p 8080:8080 \
   -v $(pwd)/config.yaml:/etc/trusted-acme/config.yaml:ro \
   -v acme-data:/var/lib/trusted-acme \
-  go-trusted-ca:latest
+  go-xkms:latest
 ```
 
 ### Resource Limits
@@ -397,7 +397,7 @@ docker run -d \
   --pids-limit=100 \
   -p 8080:8080 \
   -v acme-data:/var/lib/trusted-acme \
-  go-trusted-ca:latest
+  go-xkms:latest
 ```
 
 ### Network Isolation
@@ -411,7 +411,7 @@ docker run -d \
   --name trusted-ca \
   --network trusted-ca-net \
   -p 8080:8080 \
-  go-trusted-ca:latest
+  go-xkms:latest
 ```
 
 ## Troubleshooting

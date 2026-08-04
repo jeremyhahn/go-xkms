@@ -42,6 +42,7 @@ func init() {
 //   - "key_ring_id" (string): Key ring identifier (required)
 //   - "credentials_file" (string): Path to service account JSON key file (optional)
 //   - "endpoint" (string): Custom KMS API endpoint (optional)
+//   - "insecure" (bool): Plaintext, unauthenticated connection for local emulators (optional, requires "endpoint")
 func newGCPKMSKeyProvider(config map[string]interface{}) (types.KeyProvider, error) {
 	gcpConfig := &gcpkms.Config{
 		KeyStorage: storage.New(),
@@ -61,6 +62,9 @@ func newGCPKMSKeyProvider(config map[string]interface{}) (types.KeyProvider, err
 	}
 	if endpoint, ok := config["endpoint"].(string); ok {
 		gcpConfig.Endpoint = endpoint
+	}
+	if insecureConn, ok := config["insecure"].(bool); ok {
+		gcpConfig.Insecure = insecureConn
 	}
 
 	return gcpkms.NewBackend(context.Background(), gcpConfig)

@@ -32,6 +32,8 @@ import (
 	"crypto"
 	"crypto/x509"
 	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // AttestationStatement contains cryptographic evidence that a key was generated
@@ -238,27 +240,27 @@ func (stmt *AttestationStatement) String() string {
 // Validate checks if the attestation statement is well-formed.
 func (stmt *AttestationStatement) Validate() error {
 	if stmt.Format == "" {
-		return fmt.Errorf("attestation format is required")
+		return &errs.Message{Msg: "attestation format is required"}
 	}
 
 	if stmt.AttestingKeyPublic == nil {
-		return fmt.Errorf("attesting key public is required")
+		return &errs.Message{Msg: "attesting key public is required"}
 	}
 
 	if len(stmt.Signature) == 0 {
-		return fmt.Errorf("signature is required")
+		return &errs.Message{Msg: "signature is required"}
 	}
 
 	if stmt.AttestedKeyPublic == nil {
-		return fmt.Errorf("attested key public is required")
+		return &errs.Message{Msg: "attested key public is required"}
 	}
 
 	if len(stmt.CertificateChain) == 0 {
-		return fmt.Errorf("certificate chain is required")
+		return &errs.Message{Msg: "certificate chain is required"}
 	}
 
 	if stmt.SignatureAlgorithm == x509.UnknownSignatureAlgorithm {
-		return fmt.Errorf("signature algorithm is required")
+		return &errs.Message{Msg: "signature algorithm is required"}
 	}
 
 	return nil
@@ -267,11 +269,11 @@ func (stmt *AttestationStatement) Validate() error {
 // VerifyOptions validation
 func (opts *VerifyOptions) Validate() error {
 	if opts == nil {
-		return fmt.Errorf("verify options cannot be nil")
+		return &errs.Message{Msg: "verify options cannot be nil"}
 	}
 
 	if opts.FreshnessWindow < 0 {
-		return fmt.Errorf("freshness window cannot be negative")
+		return &errs.Message{Msg: "freshness window cannot be negative"}
 	}
 
 	if opts.FreshnessWindow == 0 && opts.CheckFreshness {

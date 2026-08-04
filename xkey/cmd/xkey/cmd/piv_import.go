@@ -161,7 +161,7 @@ func loadCertificateFromFile(path string) (*x509.Certificate, error) {
 	block, _ := pem.Decode(data)
 	if block != nil {
 		if block.Type != "CERTIFICATE" {
-			return nil, fmt.Errorf("%w: invalid PEM block type: %s", ErrPIVCertParseFailed, block.Type)
+			return nil, &DetailError{Err: ErrPIVCertParseFailed, Detail: fmt.Sprintf(": invalid PEM block type: %s", block.Type)}
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {

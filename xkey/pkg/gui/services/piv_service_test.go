@@ -22,11 +22,13 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"math/big"
 	"testing"
 	"time"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/stretchr/testify/assert"
@@ -314,6 +316,9 @@ func (m *mockPIVClient) BarrierHasRecoveryKeys(_ context.Context) (*transport.Ba
 	return nil, errMockNotImplemented
 }
 func (m *mockPIVClient) BarrierGenerateRootToken(_ context.Context, _ *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
+	return nil, errMockNotImplemented
+}
+func (m *mockPIVClient) BarrierEnableEncryption(_ context.Context, _ *pkgtransport.BarrierEnableEncryptionRequest) (*pkgtransport.BarrierEnableEncryptionResponse, error) {
 	return nil, errMockNotImplemented
 }
 
@@ -1467,6 +1472,15 @@ func (m *mockPIVClient) TenantBarrierInit(_ context.Context, _ *transport.Tenant
 }
 func (m *mockPIVClient) TenantBarrierUnseal(_ context.Context, _ *transport.TenantBarrierUnsealRequest) error {
 	return errMockNotImplemented
+}
+func (m *mockPIVClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
+	return &transport.TenantBarrierStatusResponse{}, nil
+}
+func (m *mockPIVClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	return nil, nil
+}
+func (m *mockPIVClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return nil, nil
 }
 
 // InitCeremonyService stub implementations

@@ -791,3 +791,44 @@ func TestDeserialize_InvalidJSON(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, key)
 }
+
+// ========================================================================
+// Test KeyAttributesFromConfig password wiring
+// ========================================================================
+
+// TestKeyAttributesFromConfig_PasswordWired verifies that a non-empty
+// KeyConfig.Password is propagated to KeyAttributes.Password so that the
+// pkcs8 backend receives the password and writes encrypted-at-rest PKCS#8.
+func TestKeyAttributesFromConfig_PasswordWired(t *testing.T) {
+	config := &KeyConfig{
+		CN:           "test-ca",
+		KeyAlgorithm: AlgorithmECDSA,
+		Hash:         HashSHA256,
+		StoreType:    StoreSoftware,
+		ECCConfig:    &ECCConfig{Curve: CurveP256},
+		Password:     "at-rest-passphrase",
+	}
+
+	attrs, err := KeyAttributesFromConfig(config)
+	require.NoError(t, err)
+	assert.NotNil(t, attrs.Password, "Password must not be nil when KeyConfig.Password is set")
+	assert.Equal(t, "at-rest-passphrase", string(attrs.Password.Bytes()))
+}
+
+// TestKeyAttributesFromConfig_EmptyPasswordLeavesNil verifies that an empty
+// KeyConfig.Password leaves attrs.Password nil, allowing the pkcs8 backend's
+// AllowPlaintextKeys policy to enforce the fail-closed default.
+func TestKeyAttributesFromConfig_EmptyPasswordLeavesNil(t *testing.T) {
+	config := &KeyConfig{
+		CN:           "test-ca",
+		KeyAlgorithm: AlgorithmECDSA,
+		Hash:         HashSHA256,
+		StoreType:    StoreSoftware,
+		ECCConfig:    &ECCConfig{Curve: CurveP256},
+		Password:     "", // empty — must NOT create a Password object
+	}
+
+	attrs, err := KeyAttributesFromConfig(config)
+	require.NoError(t, err)
+	assert.Nil(t, attrs.Password, "Password must be nil when KeyConfig.Password is empty")
+}

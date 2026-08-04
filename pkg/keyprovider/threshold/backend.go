@@ -25,6 +25,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -62,7 +64,7 @@ type ThresholdBackend struct {
 //	defer backend.Close()
 func NewBackend(config *Config) (*ThresholdBackend, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid threshold config: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid threshold config", Err: err}
 	}
 
 	return &ThresholdBackend{
@@ -118,7 +120,7 @@ func (b *ThresholdBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttr
 
 	// Validate threshold attributes
 	if err := attrs.ThresholdAttributes.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid threshold attributes: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid threshold attributes", Err: err}
 	}
 
 	// Generate the underlying key based on algorithm
@@ -137,17 +139,17 @@ func (b *ThresholdBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttr
 		case x509.Ed25519:
 			privateKey, err = b.generateEd25519Key(attrs)
 		default:
-			return nil, fmt.Errorf("%w: %s", ErrInvalidKeyType, attrs.KeyAlgorithm)
+			return nil, &errs.Detail{Err: ErrInvalidKeyType, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
 		}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 
 	// Split the key using Shamir Secret Sharing
 	if err := b.splitAndStoreKey(ctx, attrs, privateKey); err != nil {
-		return nil, fmt.Errorf("failed to split key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to split key", Err: err}
 	}
 
 	// Return a threshold signer/decrypter wrapper (doesn't expose raw key)
@@ -167,7 +169,7 @@ func (b *ThresholdBackend) GetKey(ctx context.Context, attrs *types.KeyAttribute
 
 	// For now, we'll return an error since we need distributed coordination
 	// In a full implementation, this would return a ThresholdSigner
-	return nil, fmt.Errorf("%w: GetKey requires distributed coordination", ErrNotImplemented)
+	return nil, &errs.Detail{Err: ErrNotImplemented, Detail: "GetKey requires distributed coordination"}
 }
 
 // DeleteKey removes a threshold key and all its shares.
@@ -196,7 +198,7 @@ func (b *ThresholdBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttrib
 	// Delete metadata
 	metadataKey := fmt.Sprintf("threshold/metadata/%s", keyID)
 	if err := b.config.KeyStorage.Delete(ctx, metadataKey); err != nil {
-		return fmt.Errorf("failed to delete key metadata: %w", err)
+		return &errs.Wrapped{Msg: "failed to delete key metadata", Err: err}
 	}
 
 	// Remove from cache
@@ -219,7 +221,7 @@ func (b *ThresholdBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes
 	// List all metadata entries
 	metadataKeys, err := b.config.KeyStorage.List(ctx, "threshold/metadata/")
 	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
 
 	var keys []*types.KeyAttributes
@@ -261,7 +263,7 @@ func (b *ThresholdBackend) Signer(ctx context.Context, attrs *types.KeyAttribute
 	if err != nil || share == nil {
 		share, err = b.loadAnyShare(ctx, attrs)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load any share: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to load any share", Err: err}
 		}
 	}
 
@@ -282,7 +284,7 @@ func (b *ThresholdBackend) Decrypter(ctx context.Context, attrs *types.KeyAttrib
 	}
 	b.mu.RUnlock()
 
-	return nil, fmt.Errorf("%w: Decrypter", ErrNotImplemented)
+	return nil, &errs.Detail{Err: ErrNotImplemented, Detail: "Decrypter"}
 }
 
 // RotateKey rotates a threshold key.
@@ -294,7 +296,7 @@ func (b *ThresholdBackend) RotateKey(ctx context.Context, attrs *types.KeyAttrib
 	}
 	b.mu.RUnlock()
 
-	return fmt.Errorf("%w: RotateKey", ErrNotImplemented)
+	return &errs.Detail{Err: ErrNotImplemented, Detail: "RotateKey"}
 }
 
 // Close releases any resources held by the backend.
@@ -324,11 +326,11 @@ func (b *ThresholdBackend) getKeyID(attrs *types.KeyAttributes) string {
 // generateRSAKey generates a new RSA key.
 func (b *ThresholdBackend) generateRSAKey(attrs *types.KeyAttributes) (*rsa.PrivateKey, error) {
 	if attrs.RSAAttributes == nil {
-		return nil, fmt.Errorf("RSA attributes required for RSA key generation")
+		return nil, &errs.Message{Msg: "RSA attributes required for RSA key generation"}
 	}
 
 	if attrs.RSAAttributes.KeySize < 2048 {
-		return nil, fmt.Errorf("RSA key size must be at least 2048 bits")
+		return nil, &errs.Message{Msg: "RSA key size must be at least 2048 bits"}
 	}
 
 	return rsa.GenerateKey(rand.Reader, attrs.RSAAttributes.KeySize)
@@ -337,11 +339,11 @@ func (b *ThresholdBackend) generateRSAKey(attrs *types.KeyAttributes) (*rsa.Priv
 // generateECDSAKey generates a new ECDSA key.
 func (b *ThresholdBackend) generateECDSAKey(attrs *types.KeyAttributes) (*ecdsa.PrivateKey, error) {
 	if attrs.ECCAttributes == nil {
-		return nil, fmt.Errorf("ECC attributes required for ECDSA key generation")
+		return nil, &errs.Message{Msg: "ECC attributes required for ECDSA key generation"}
 	}
 
 	if attrs.ECCAttributes.Curve == nil {
-		return nil, fmt.Errorf("curve is required for ECDSA key generation")
+		return nil, &errs.Message{Msg: "curve is required for ECDSA key generation"}
 	}
 
 	return ecdsa.GenerateKey(attrs.ECCAttributes.Curve, rand.Reader)
@@ -358,7 +360,7 @@ func (b *ThresholdBackend) splitAndStoreKey(ctx context.Context, attrs *types.Ke
 	// Marshal the private key to bytes
 	keyBytes, err := b.marshalPrivateKey(privateKey)
 	if err != nil {
-		return fmt.Errorf("failed to marshal private key: %w", err)
+		return &errs.Wrapped{Msg: "failed to marshal private key", Err: err}
 	}
 
 	// Split using Shamir Secret Sharing
@@ -367,7 +369,7 @@ func (b *ThresholdBackend) splitAndStoreKey(ctx context.Context, attrs *types.Ke
 
 	shares, err := qrdbsdk.ShamirSplit(keyBytes, threshold, total)
 	if err != nil {
-		return fmt.Errorf("failed to split key: %w", err)
+		return &errs.Wrapped{Msg: "failed to split key", Err: err}
 	}
 
 	// Store each share
@@ -375,12 +377,12 @@ func (b *ThresholdBackend) splitAndStoreKey(ctx context.Context, attrs *types.Ke
 	for i, share := range shares {
 		shareData, err := json.Marshal(share)
 		if err != nil {
-			return fmt.Errorf("failed to marshal share %d: %w", i, err)
+			return &errs.Wrapped{Msg: fmt.Sprintf("failed to marshal share %d", i), Err: err}
 		}
 
 		shareKey := fmt.Sprintf("threshold/shares/%s/share-%d", keyID, share.Index)
 		if err := b.config.ShareStorage.Put(ctx, shareKey, shareData); err != nil {
-			return fmt.Errorf("failed to store share %d: %w", i, err)
+			return &errs.Wrapped{Msg: fmt.Sprintf("failed to store share %d", i), Err: err}
 		}
 	}
 
@@ -396,11 +398,11 @@ func (b *ThresholdBackend) splitAndStoreKey(ctx context.Context, attrs *types.Ke
 	}
 	metadataBytes, err := json.Marshal(attrs) //nolint:staticcheck // SA1026: SessionCloser is cleared in copy before marshaling
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	if err := b.config.KeyStorage.Put(ctx, metadataKey, metadataBytes); err != nil {
-		return fmt.Errorf("failed to store metadata: %w", err)
+		return &errs.Wrapped{Msg: "failed to store metadata", Err: err}
 	}
 
 	// Cache this node's share if applicable
@@ -434,12 +436,12 @@ func (b *ThresholdBackend) loadShare(ctx context.Context, attrs *types.KeyAttrib
 
 	var share qrdbsdk.ShamirShare
 	if err := json.Unmarshal(data, &share); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal share: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to unmarshal share", Err: err}
 	}
 
 	// Validate share
 	if err := share.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidShare, err)
+		return nil, &errs.Detail{Err: ErrInvalidShare, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Update cache
@@ -454,7 +456,7 @@ func (b *ThresholdBackend) loadShare(ctx context.Context, attrs *types.KeyAttrib
 // This is useful when the local share isn't available but we still need to reconstruct the key.
 func (b *ThresholdBackend) loadAnyShare(ctx context.Context, attrs *types.KeyAttributes) (*qrdbsdk.ShamirShare, error) {
 	if attrs.ThresholdAttributes == nil {
-		return nil, fmt.Errorf("threshold attributes required")
+		return nil, &errs.Message{Msg: "threshold attributes required"}
 	}
 
 	keyID := b.getKeyID(attrs)
@@ -485,7 +487,7 @@ func (b *ThresholdBackend) loadAnyShare(ctx context.Context, attrs *types.KeyAtt
 		return &share, nil
 	}
 
-	return nil, fmt.Errorf("no valid shares found for key %s", keyID)
+	return nil, &errs.Message{Msg: fmt.Sprintf("no valid shares found for key %s", keyID)}
 }
 
 // marshalPrivateKey converts a private key to bytes.
@@ -507,6 +509,6 @@ func (b *ThresholdBackend) marshalPrivateKey(privateKey crypto.PrivateKey) ([]by
 	case ed25519.PrivateKey:
 		return []byte(key), nil
 	default:
-		return nil, fmt.Errorf("unsupported key type: %T", privateKey)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %T", privateKey)}
 	}
 }

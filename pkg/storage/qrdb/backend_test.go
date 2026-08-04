@@ -16,10 +16,11 @@ package qrdb
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -487,7 +488,7 @@ func TestBackendError_Unwrap_ReturnsUnderlyingError(t *testing.T) {
 
 func TestBackendError_Unwrap_ErrorsIs(t *testing.T) {
 	sentinel := errors.New("sentinel")
-	e := &BackendError{Op: "scan", Key: "prefix/", Err: fmt.Errorf("wrapped: %w", sentinel)}
+	e := &BackendError{Op: "scan", Key: "prefix/", Err: &errs.Wrapped{Msg: "wrapped", Err: sentinel}}
 
 	assert.ErrorIs(t, e, sentinel,
 		"errors.Is should unwrap through BackendError to reach the sentinel")

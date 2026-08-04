@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -148,7 +148,7 @@ type CeremonyService interface {
 	ClaimShare(ctx context.Context, req *ClaimShareRequest) (*ClaimShareResponse, error)
 	// SignCSR submits a CSR for signing during or after the ceremony.
 	SignCSR(ctx context.Context, req *SignCSRRequest) (*SignCSRResponse, error)
-	// CAAdapter returns the CeremonyCA adapter that bridges go-trusted-ca's CA to
+	// CAAdapter returns the CeremonyCA adapter that bridges go-xkms's CA to
 	// go-qrdb's CeremonyCA interface. Returns nil when no CA was provided.
 	// Use this to configure the embedded QRDB transport via embedded.WithCeremonyCA.
 	CAAdapter() qrdbsdk.CeremonyCA
@@ -194,7 +194,7 @@ func NewCeremonyService(
 	return svc
 }
 
-// CAAdapter returns the CeremonyCA adapter that bridges go-trusted-ca's CA to
+// CAAdapter returns the CeremonyCA adapter that bridges go-xkms's CA to
 // go-qrdb's CeremonyCA interface. Returns nil when no CA was provided or the CA
 // does not expose an underlying TrustedCA.
 func (s *ceremonyService) CAAdapter() qrdbsdk.CeremonyCA {

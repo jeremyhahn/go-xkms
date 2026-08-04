@@ -1277,9 +1277,6 @@ func TestIDevIDWithValidKeyBytes(t *testing.T) {
 			logger: logger,
 			idevidAttrs: &types.KeyAttributes{
 				CN: "idevid-test",
-			},
-			iakAttrs: &types.KeyAttributes{
-				CN: "iak-test",
 				TPMAttributes: &types.TPMAttributes{
 					PublicKeyBytes: pubKeyBytes,
 				},
@@ -1312,9 +1309,6 @@ func TestIDevIDWithValidKeyBytes(t *testing.T) {
 			logger: logger,
 			idevidAttrs: &types.KeyAttributes{
 				CN: "idevid-test",
-			},
-			iakAttrs: &types.KeyAttributes{
-				CN: "iak-test",
 				TPMAttributes: &types.TPMAttributes{
 					PublicKeyBytes: pubKeyBytes,
 				},
@@ -2003,9 +1997,11 @@ func TestInstallCreatesIDevID(t *testing.T) {
 		}
 
 		logger := slog.Default()
+		certStore := store.NewMemoryCertStore(logger)
 		params := &Params{
 			Config:       config,
 			Logger:       logger,
+			CertStore:    certStore,
 			DebugSecrets: false,
 		}
 
@@ -2019,6 +2015,17 @@ func TestInstallCreatesIDevID(t *testing.T) {
 			t.Fatal("TPM instance is nil")
 		}
 		defer func() { _ = tpm.Close() }()
+
+		// Pre-seed a synthetic EK certificate. CreateIDevID requires a
+		// non-nil EK certificate to populate the TCG-CSR-IDEVID structure
+		// (see createIDevIDContent/ErrInvalidEKCert); this simulator-backed
+		// EK has no manufacturer-issued certificate, so without seeding one
+		// here Install's "Creating Initial Device Identity Key" step fails.
+		// Matches the convention used by TestCSRCreateTCG_CSR_IDEVID_WithSimulator.
+		tpmImpl, ok := tpm.(*TPM2)
+		require.True(t, ok)
+		require.NoError(t, tpmImpl.writeCertToStore(
+			&types.KeyAttributes{CN: config.EK.CN}, createTestEKCertificate(t)))
 
 		// Run Install
 		err = tpm.Install(nil, nil)

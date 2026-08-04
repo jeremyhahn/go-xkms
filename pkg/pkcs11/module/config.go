@@ -23,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // Default configuration values
@@ -220,7 +222,7 @@ func (c *Config) validateStorage() error {
 		// Empty storage type defaults to memory
 		return nil
 	default:
-		return fmt.Errorf("%w: %s", ErrInvalidStorageType, c.StorageType)
+		return &errs.Detail{Err: ErrInvalidStorageType, Detail: fmt.Sprintf("%s", c.StorageType)}
 	}
 }
 
@@ -237,19 +239,19 @@ func (c *Config) validateTLS() error {
 
 		// Verify cert file exists
 		if _, err := os.Stat(c.TLS.CertFile); os.IsNotExist(err) {
-			return fmt.Errorf("%w: %s", ErrTLSCertNotFound, c.TLS.CertFile)
+			return &errs.Detail{Err: ErrTLSCertNotFound, Detail: fmt.Sprintf("%s", c.TLS.CertFile)}
 		}
 
 		// Verify key file exists
 		if _, err := os.Stat(c.TLS.KeyFile); os.IsNotExist(err) {
-			return fmt.Errorf("%w: %s", ErrTLSKeyNotFound, c.TLS.KeyFile)
+			return &errs.Detail{Err: ErrTLSKeyNotFound, Detail: fmt.Sprintf("%s", c.TLS.KeyFile)}
 		}
 	}
 
 	// Verify CA file exists if specified
 	if c.TLS.CAFile != "" {
 		if _, err := os.Stat(c.TLS.CAFile); os.IsNotExist(err) {
-			return fmt.Errorf("%w: %s", ErrTLSCANotFound, c.TLS.CAFile)
+			return &errs.Detail{Err: ErrTLSCANotFound, Detail: fmt.Sprintf("%s", c.TLS.CAFile)}
 		}
 	}
 
@@ -262,7 +264,7 @@ func validateTarget(target string) error {
 	if strings.HasPrefix(target, "unix://") {
 		path := strings.TrimPrefix(target, "unix://")
 		if path == "" {
-			return fmt.Errorf("%w: empty socket path", ErrInvalidTarget)
+			return &errs.Detail{Err: ErrInvalidTarget, Detail: "empty socket path"}
 		}
 		return nil
 	}
@@ -272,7 +274,7 @@ func validateTarget(target string) error {
 		addr := strings.TrimPrefix(target, "dns://")
 		addr = strings.TrimPrefix(addr, "/")
 		if addr == "" {
-			return fmt.Errorf("%w: empty DNS address", ErrInvalidTarget)
+			return &errs.Detail{Err: ErrInvalidTarget, Detail: "empty DNS address"}
 		}
 		return nil
 	}
@@ -281,19 +283,19 @@ func validateTarget(target string) error {
 	if strings.Contains(target, ":") {
 		parts := strings.Split(target, ":")
 		if len(parts) != 2 {
-			return fmt.Errorf("%w: invalid host:port format", ErrInvalidTarget)
+			return &errs.Detail{Err: ErrInvalidTarget, Detail: "invalid host:port format"}
 		}
 		if parts[0] == "" {
-			return fmt.Errorf("%w: empty host", ErrInvalidTarget)
+			return &errs.Detail{Err: ErrInvalidTarget, Detail: "empty host"}
 		}
 		port, err := strconv.Atoi(parts[1])
 		if err != nil || port < 1 || port > 65535 {
-			return fmt.Errorf("%w: invalid port number", ErrInvalidTarget)
+			return &errs.Detail{Err: ErrInvalidTarget, Detail: "invalid port number"}
 		}
 		return nil
 	}
 
-	return fmt.Errorf("%w: unrecognized format", ErrInvalidTarget)
+	return &errs.Detail{Err: ErrInvalidTarget, Detail: "unrecognized format"}
 }
 
 // LoadFromEnv loads configuration from environment variables.
@@ -380,7 +382,7 @@ func LoadFromFile(path string) (*Config, error) {
 	// #nosec G304 - Config file path is provided by admin/user
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrConfigFileOpen, err)
+		return nil, &errs.Detail{Err: ErrConfigFileOpen, Detail: fmt.Sprintf("%v", err)}
 	}
 	defer func() { _ = file.Close() }()
 
@@ -400,7 +402,7 @@ func LoadFromFile(path string) (*Config, error) {
 		// Parse key = value
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("%w: line %d: invalid format", ErrConfigFileParse, lineNum)
+			return nil, &errs.Detail{Err: ErrConfigFileParse, Detail: fmt.Sprintf("line %d: invalid format", lineNum)}
 		}
 
 		key := strings.TrimSpace(parts[0])
@@ -410,12 +412,12 @@ func LoadFromFile(path string) (*Config, error) {
 		value = trimQuotes(value)
 
 		if err := cfg.setField(key, value); err != nil {
-			return nil, fmt.Errorf("%w: line %d: %v", ErrConfigFileParse, lineNum, err)
+			return nil, &errs.Detail{Err: ErrConfigFileParse, Detail: fmt.Sprintf("line %d: %v", lineNum, err)}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrConfigFileRead, err)
+		return nil, &errs.Detail{Err: ErrConfigFileRead, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return cfg, nil
@@ -437,7 +439,7 @@ func (c *Config) setField(key, value string) error {
 	case "timeout":
 		d, err := time.ParseDuration(value)
 		if err != nil {
-			return fmt.Errorf("invalid timeout duration: %v", err)
+			return &errs.Message{Msg: fmt.Sprintf("invalid timeout duration: %v", err)}
 		}
 		c.Timeout = d
 	case "default_backend":
@@ -457,7 +459,7 @@ func (c *Config) setField(key, value string) error {
 	case "piv_backends":
 		c.PIVBackends = parsePIVBackends(value)
 	default:
-		return fmt.Errorf("unknown configuration key: %s", key)
+		return &errs.Message{Msg: fmt.Sprintf("unknown configuration key: %s", key)}
 	}
 	return nil
 }

@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -35,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // Server represents the REST API server.
@@ -63,6 +66,9 @@ type Server struct {
 	credentialHandlers *CredentialHandlers
 	caHandlers         *CAHandlers
 	clusterHandlers    *ClusterHandlers
+	sshHandlers        *SSHHandlers
+	sshClient          sdkssh.Client
+	sshHostKeys        sdkssh.HostKeyStore
 }
 
 // BackendRegistry is defined in handlers.go
@@ -183,16 +189,27 @@ type Config struct {
 	// lookup. When set, all handler methods that previously called xkms.Get()
 	// will use this service directly.
 	XKMSService *xkms.XKMSService
+
+	// SSHClient is the SSH SDK client backing the /xkms/v1/ssh routes. When
+	// nil the SSH routes are not mounted. The server composition wires this
+	// with a backend provider so SSH key generation honors configured
+	// crypto backends.
+	SSHClient sdkssh.Client
+
+	// SSHHostKeys is the host-key pin store used by the interactive SSH console
+	// WebSocket endpoint (/xkms/v1/ssh/console). When nil (with SSHClient set)
+	// the console endpoint is not mounted.
+	SSHHostKeys sdkssh.HostKeyStore
 }
 
 // NewServer creates a new REST API server.
 func NewServer(cfg *Config) (*Server, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("config is required")
+		return nil, &errs.Message{Msg: "config is required"}
 	}
 
 	if len(cfg.Backends) == 0 {
-		return nil, fmt.Errorf("at least one backend is required")
+		return nil, &errs.Message{Msg: "at least one backend is required"}
 	}
 
 	// Set defaults
@@ -305,7 +322,7 @@ func NewServer(cfg *Config) (*Server, error) {
 					TenantID: cfg.WebAuthnTenantID,
 				})
 				if qerr != nil {
-					return nil, fmt.Errorf("failed to create qrdb webauthn stores: %w", qerr)
+					return nil, &errs.Wrapped{Msg: "failed to create qrdb webauthn stores", Err: qerr}
 				}
 				webauthnUserStore = qrdbUsers
 				credentialStore = qrdbCreds
@@ -324,7 +341,7 @@ func NewServer(cfg *Config) (*Server, error) {
 				CredentialStore: credentialStore,
 			})
 			if err != nil {
-				return nil, fmt.Errorf("failed to create webauthn service: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to create webauthn service", Err: err}
 			}
 		} else {
 			log.Info("WebAuthn using shared service instance")
@@ -346,6 +363,18 @@ func NewServer(cfg *Config) (*Server, error) {
 	// reports a single-node, non-clustered status when the node runs
 	// standalone, so callers (CLI, GUI, health probes) work uniformly.
 	server.clusterHandlers = NewClusterHandlers(cfg.XKMSService)
+
+	// Set up SSH handlers when an SSH SDK client is wired.
+	if cfg.SSHClient != nil {
+		sshHandlers, err := NewSSHHandlers(cfg.SSHClient, log)
+		if err != nil {
+			return nil, err
+		}
+		server.sshHandlers = sshHandlers
+		server.sshClient = cfg.SSHClient
+		server.sshHostKeys = cfg.SSHHostKeys
+		log.Info("SSH handlers enabled")
+	}
 
 	// Set up share handlers when the embedded qrdb node is available.
 	if cfg.ShareEnabled {
@@ -615,6 +644,9 @@ func (s *Server) setupRouter() *chi.Mux {
 			r.Post("/recovery/recover", s.handlers.BarrierRecoverWithKeysHandler)
 			r.Delete("/recovery/keys", s.handlers.BarrierDeleteRecoveryKeysHandler)
 			r.Post("/recovery/root-token", s.handlers.BarrierGenerateRootTokenHandler)
+
+			// Enable at-rest encryption on an unencrypted barrier (migration).
+			r.Post("/enable-encryption", s.handlers.BarrierEnableEncryptionHandler)
 		})
 
 		// PIN management endpoints
@@ -715,6 +747,8 @@ func (s *Server) setupRouter() *chi.Mux {
 				r.Get("/{tenantID}/barrier/status", s.tenantHandlers.TenantBarrierStatusHandler)
 				r.Post("/{tenantID}/barrier/init", s.tenantHandlers.TenantBarrierInitHandler)
 				r.Post("/{tenantID}/barrier/unseal", s.tenantHandlers.TenantBarrierUnsealHandler)
+				r.Put("/{tenantID}/entitlements", s.tenantHandlers.UpdateTenantEntitlementsHandler)
+				r.Put("/{tenantID}/quotas", s.tenantHandlers.UpdateTenantQuotasHandler)
 			})
 		}
 
@@ -835,6 +869,22 @@ func (s *Server) setupRouter() *chi.Mux {
 		}
 	})
 
+	// SSH routes register under their own /xkms/v1/ssh prefix at the root.
+	if s.sshHandlers != nil {
+		s.sshHandlers.Register(r)
+
+		// Interactive console WebSocket (REST/QUIC transport's console path),
+		// behind authentication. The reusable bridge handler is supplied by the
+		// SDK; the resolver maps the authenticated request to a target.
+		if s.sshClient != nil && s.sshHostKeys != nil {
+			consoleHandler := sdkssh.NewConsoleWSHandler(
+				sdkssh.ConsoleResolverFunc(s.resolveConsoleTarget),
+				sdkssh.WithConsoleCheckOrigin(func(*http.Request) bool { return true }),
+			)
+			r.With(s.AuthenticationMiddleware()).Handle("/xkms/v1/ssh/console", consoleHandler)
+		}
+	}
+
 	return r
 }
 
@@ -846,7 +896,7 @@ func (s *Server) Start() error {
 			slog.String("auth", s.authenticator.Name()))
 
 		if err := s.server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-			return fmt.Errorf("failed to start HTTPS server: %w", err)
+			return &errs.Wrapped{Msg: "failed to start HTTPS server", Err: err}
 		}
 	} else {
 		s.logger.Info("Starting HTTP server",
@@ -854,7 +904,7 @@ func (s *Server) Start() error {
 			slog.String("auth", s.authenticator.Name()))
 
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			return fmt.Errorf("failed to start HTTP server: %w", err)
+			return &errs.Wrapped{Msg: "failed to start HTTP server", Err: err}
 		}
 	}
 
@@ -867,7 +917,7 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	if err := s.server.Shutdown(ctx); err != nil {
 		s.logger.Error("Failed to shutdown server", slog.String("error", err.Error()))
-		return fmt.Errorf("failed to shutdown server: %w", err)
+		return &errs.Wrapped{Msg: "failed to shutdown server", Err: err}
 	}
 
 	s.logger.Info("Server stopped")

@@ -293,6 +293,11 @@ func (m *authMockClient) BarrierGenerateRecoveryKeys(_ context.Context, _ *trans
 	return nil, nil
 }
 
+// BarrierEnableEncryption enables barrier encryption.
+func (m *authMockClient) BarrierEnableEncryption(_ context.Context, _ *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	return nil, nil
+}
+
 // BarrierRecoverWithKeys recovers the barrier using recovery keys.
 func (m *authMockClient) BarrierRecoverWithKeys(_ context.Context, _ *transport.BarrierRecoverWithKeysRequest) error {
 	return nil

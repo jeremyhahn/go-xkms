@@ -23,6 +23,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -71,7 +73,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		// Supported algorithms
 	default:
-		return nil, fmt.Errorf("%w: %s for PKCS#11", backend.ErrInvalidAlgorithm, algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s for PKCS#11", algorithm)}
 	}
 
 	// Find or create wrapping key in HSM
@@ -83,7 +85,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 		// Wrapping key doesn't exist, create it with explicit wrap/unwrap capabilities
 		wrappingKeySigner, err = b.generateWrappingKeyPair(wrappingKeyID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate wrapping key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to generate wrapping key", Err: err}
 		}
 	}
 
@@ -112,17 +114,17 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 // unwrap it using the corresponding private key in the HSM.
 func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if keyMaterial == nil || len(keyMaterial) == 0 {
-		return nil, fmt.Errorf("%w: key material cannot be nil or empty", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "key material cannot be nil or empty"}
 	}
 
 	if params == nil {
-		return nil, fmt.Errorf("%w: import parameters cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import parameters cannot be nil"}
 	}
 
 	// Ensure we have an RSA public key
 	rsaPubKey, ok := params.WrappingPublicKey.(*rsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("%w: wrapping public key must be RSA", backend.ErrInvalidKeyType)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "wrapping public key must be RSA"}
 	}
 
 	var wrapped []byte
@@ -141,11 +143,11 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 		wrapped, err = wrapping.WrapRSAAES(keyMaterial, rsaPubKey, params.Algorithm)
 
 	default:
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, params.Algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", params.Algorithm)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to wrap key material", Err: err}
 	}
 
 	return &backend.WrappedKeyMaterial{
@@ -164,7 +166,7 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 // The actual unwrapping is performed by the HSM's C_UnwrapKey function during ImportKey,
 // ensuring the plaintext key material never leaves the HSM hardware boundary.
 func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
-	return nil, fmt.Errorf("%w: unwrapping is performed by PKCS#11 HSM during import", backend.ErrNotSupported)
+	return nil, &errs.Detail{Err: backend.ErrNotSupported, Detail: "unwrapping is performed by PKCS#11 HSM during import"}
 }
 
 // ImportKey imports externally generated key material into the PKCS#11 HSM.
@@ -198,19 +200,19 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	}
 
 	if wrapped == nil {
-		return fmt.Errorf("%w: wrapped key material cannot be nil", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "wrapped key material cannot be nil"}
 	}
 
 	// Initialize low-level PKCS#11 context if not already done
 	if b.p11ctx == nil {
 		p := pkcs11.New(b.config.Library)
 		if p == nil {
-			return fmt.Errorf("failed to load PKCS#11 library: %s", b.config.Library)
+			return &errs.Message{Msg: fmt.Sprintf("failed to load PKCS#11 library: %s", b.config.Library)}
 		}
 
 		if err := p.Initialize(); err != nil {
 			if err != pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
-				return fmt.Errorf("failed to initialize PKCS#11: %w", err)
+				return &errs.Wrapped{Msg: "failed to initialize PKCS#11", Err: err}
 			}
 		}
 
@@ -228,7 +230,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	// Open session
 	session, err := b.p11ctx.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
 	if err != nil {
-		return fmt.Errorf("failed to open session: %w", err)
+		return &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
 	defer b.p11ctx.CloseSession(session)
 
@@ -236,7 +238,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	var didLogin bool
 	if err := b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN); err != nil {
 		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
-			return fmt.Errorf("failed to login: %w", err)
+			return &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 		// Already logged in, don't logout later
 		didLogin = false
@@ -256,21 +258,21 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	}
 
 	if err := b.p11ctx.FindObjectsInit(session, wrappingKeyTemplate); err != nil {
-		return fmt.Errorf("failed to init wrapping key search: %w", err)
+		return &errs.Wrapped{Msg: "failed to init wrapping key search", Err: err}
 	}
 
 	wrappingKeyHandles, _, err := b.p11ctx.FindObjects(session, 1)
 	if err != nil {
 		b.p11ctx.FindObjectsFinal(session)
-		return fmt.Errorf("failed to find wrapping key: %w", err)
+		return &errs.Wrapped{Msg: "failed to find wrapping key", Err: err}
 	}
 
 	if err := b.p11ctx.FindObjectsFinal(session); err != nil {
-		return fmt.Errorf("failed to finalize wrapping key search: %w", err)
+		return &errs.Wrapped{Msg: "failed to finalize wrapping key search", Err: err}
 	}
 
 	if len(wrappingKeyHandles) == 0 {
-		return fmt.Errorf("%w: wrapping key not found in HSM", backend.ErrKeyNotFound)
+		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "wrapping key not found in HSM"}
 	}
 
 	wrappingKeyHandle := wrappingKeyHandles[0]
@@ -282,7 +284,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	// Build the key template based on key type
 	keyTemplate, err := b.buildImportKeyTemplate(attrs, keyID, keyLabel)
 	if err != nil {
-		return fmt.Errorf("failed to build key template: %w", err)
+		return &errs.Wrapped{Msg: "failed to build key template", Err: err}
 	}
 
 	var keyHandle pkcs11.ObjectHandle
@@ -311,7 +313,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 
 		keyHandle, err = b.p11ctx.UnwrapKey(session, []*pkcs11.Mechanism{unwrapMechanism}, wrappingKeyHandle, wrapped.WrappedKey, keyTemplate)
 		if err != nil {
-			return fmt.Errorf("failed to unwrap key with RSA-OAEP: %w", err)
+			return &errs.Wrapped{Msg: "failed to unwrap key with RSA-OAEP", Err: err}
 		}
 
 	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1,
@@ -321,11 +323,11 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		// 2. Unwrap the target key using the AES key
 		keyHandle, err = b.importKeyHybrid(session, attrs, wrapped, wrappingKeyHandle, keyID, keyLabel, keyTemplate)
 		if err != nil {
-			return fmt.Errorf("failed to import key with hybrid unwrapping: %w", err)
+			return &errs.Wrapped{Msg: "failed to import key with hybrid unwrapping", Err: err}
 		}
 
 	default:
-		return fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, wrapped.Algorithm)
+		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
 	}
 
 	// Set label and ID attributes after unwrap (not allowed during C_UnwrapKey on SoftHSM2)
@@ -354,12 +356,12 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	if b.config.KeyStorage != nil {
 		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
-			return fmt.Errorf("failed to save metadata: %w", err)
+			return &errs.Wrapped{Msg: "failed to save metadata", Err: err}
 		}
 	}
 
@@ -376,14 +378,14 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 func (b *Backend) importKeyHybrid(session pkcs11.SessionHandle, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial, wrappingKeyHandle pkcs11.ObjectHandle, keyID, keyLabel []byte, keyTemplate []*pkcs11.Attribute) (pkcs11.ObjectHandle, error) {
 	// Parse the hybrid wrapped format: [4-byte length][wrapped AES key][wrapped key material]
 	if len(wrapped.WrappedKey) < 4 {
-		return 0, fmt.Errorf("wrapped key too short for hybrid format")
+		return 0, &errs.Message{Msg: "wrapped key too short for hybrid format"}
 	}
 
 	// Extract wrapped AES key length
 	wrappedAESKeyLen := uint32(wrapped.WrappedKey[0])<<24 | uint32(wrapped.WrappedKey[1])<<16 | uint32(wrapped.WrappedKey[2])<<8 | uint32(wrapped.WrappedKey[3])
 
 	if len(wrapped.WrappedKey) < int(4+wrappedAESKeyLen) {
-		return 0, fmt.Errorf("wrapped key corrupted: insufficient data")
+		return 0, &errs.Message{Msg: "wrapped key corrupted: insufficient data"}
 	}
 
 	wrappedAESKey := wrapped.WrappedKey[4 : 4+wrappedAESKeyLen]
@@ -400,7 +402,7 @@ func (b *Backend) importKeyHybrid(session pkcs11.SessionHandle, attrs *types.Key
 		hashMech = pkcs11.CKM_SHA_1
 		mgfMech = pkcs11.CKG_MGF1_SHA1
 	default:
-		return 0, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, wrapped.Algorithm)
+		return 0, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
 	}
 
 	// SoftHSM2 doesn't support C_UnwrapKey with CKM_RSA_PKCS_OAEP for secret keys.
@@ -414,12 +416,12 @@ func (b *Backend) importKeyHybrid(session pkcs11.SessionHandle, attrs *types.Key
 
 	// Decrypt the wrapped AES key using the wrapping private key
 	if err := b.p11ctx.DecryptInit(session, []*pkcs11.Mechanism{decryptMech}, wrappingKeyHandle); err != nil {
-		return 0, fmt.Errorf("failed to init decrypt for AES key: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to init decrypt for AES key", Err: err}
 	}
 
 	aesKeyBytes, err := b.p11ctx.Decrypt(session, wrappedAESKey)
 	if err != nil {
-		return 0, fmt.Errorf("failed to decrypt AES key: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to decrypt AES key", Err: err}
 	}
 
 	// Create the AES key as a session object
@@ -433,7 +435,7 @@ func (b *Backend) importKeyHybrid(session pkcs11.SessionHandle, attrs *types.Key
 
 	aesKeyHandle, err := b.p11ctx.CreateObject(session, aesKeyTemplate)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create AES key object: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to create AES key object", Err: err}
 	}
 
 	// Ensure we destroy the temporary AES key when done
@@ -444,7 +446,7 @@ func (b *Backend) importKeyHybrid(session pkcs11.SessionHandle, attrs *types.Key
 
 	targetKeyHandle, err := b.p11ctx.UnwrapKey(session, []*pkcs11.Mechanism{targetUnwrapMech}, aesKeyHandle, wrappedTargetKey, keyTemplate)
 	if err != nil {
-		return 0, fmt.Errorf("failed to unwrap target key with AES-KWP: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to unwrap target key with AES-KWP", Err: err}
 	}
 
 	return targetKeyHandle, nil
@@ -496,7 +498,7 @@ func (b *Backend) buildImportKeyTemplate(attrs *types.KeyAttributes, keyID, keyL
 				pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
 			}
 		default:
-			return nil, fmt.Errorf("%w: unsupported key algorithm for import: %v (symmetric: %v)", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm, attrs.SymmetricAlgorithm)
+			return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported key algorithm for import: %v (symmetric: %v)", attrs.KeyAlgorithm, attrs.SymmetricAlgorithm)}
 		}
 	}
 
@@ -539,12 +541,12 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	if b.p11ctx == nil {
 		p := pkcs11.New(b.config.Library)
 		if p == nil {
-			return nil, fmt.Errorf("failed to load PKCS#11 library: %s", b.config.Library)
+			return nil, &errs.Message{Msg: fmt.Sprintf("failed to load PKCS#11 library: %s", b.config.Library)}
 		}
 
 		if err := p.Initialize(); err != nil {
 			if err != pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
-				return nil, fmt.Errorf("failed to initialize PKCS#11: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to initialize PKCS#11", Err: err}
 			}
 		}
 
@@ -562,7 +564,7 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	// Open session
 	session, err := b.p11ctx.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open session: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
 	defer b.p11ctx.CloseSession(session)
 
@@ -570,7 +572,7 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	var didLogin bool
 	if err := b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN); err != nil {
 		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
-			return nil, fmt.Errorf("failed to login: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 		// Already logged in, don't logout later
 		didLogin = false
@@ -590,17 +592,17 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	}
 
 	if err := b.p11ctx.FindObjectsInit(session, keyTemplate); err != nil {
-		return nil, fmt.Errorf("failed to init key search: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to init key search", Err: err}
 	}
 	defer b.p11ctx.FindObjectsFinal(session)
 
 	keyHandles, _, err := b.p11ctx.FindObjects(session, 1)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	if len(keyHandles) == 0 {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	keyHandle := keyHandles[0]
@@ -612,11 +614,11 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, nil),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get extractable attribute: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get extractable attribute", Err: err}
 	}
 
 	if len(extractableAttr) == 0 || len(extractableAttr[0].Value) == 0 {
-		return nil, fmt.Errorf("failed to determine if key is extractable")
+		return nil, &errs.Message{Msg: "failed to determine if key is extractable"}
 	}
 
 	isExtractable := extractableAttr[0].Value[0] != 0
@@ -632,17 +634,17 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	}
 
 	if err := b.p11ctx.FindObjectsInit(session, wrappingKeyTemplate); err != nil {
-		return nil, fmt.Errorf("failed to init wrapping key search: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to init wrapping key search", Err: err}
 	}
 	defer b.p11ctx.FindObjectsFinal(session)
 
 	wrappingKeyHandles, _, err := b.p11ctx.FindObjects(session, 1)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find wrapping key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find wrapping key", Err: err}
 	}
 
 	if len(wrappingKeyHandles) == 0 {
-		return nil, fmt.Errorf("%w: wrapping key not found in HSM", backend.ErrKeyNotFound)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "wrapping key not found in HSM"}
 	}
 
 	wrappingKeyHandle := wrappingKeyHandles[0]
@@ -659,13 +661,13 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		))
 
 	default:
-		return nil, fmt.Errorf("%w: %s for export", backend.ErrInvalidAlgorithm, algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s for export", algorithm)}
 	}
 
 	// Wrap the key using C_WrapKey
 	wrappedKey, err := b.p11ctx.WrapKey(session, []*pkcs11.Mechanism{wrapMechanism}, wrappingKeyHandle, keyHandle)
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to wrap key", Err: err}
 	}
 
 	return &backend.WrappedKeyMaterial{
@@ -682,7 +684,7 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 func (b *Backend) generateWrappingKeyPair(keyID []byte) (crypto.Signer, error) {
 	signer, err := generateRSAWrappingKeyPair(b.pool, keyID, wrappingKeySize)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate wrapping key pair: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate wrapping key pair", Err: err}
 	}
 	return signer, nil
 }
@@ -741,7 +743,7 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	}
 
 	if attrs == nil {
-		return nil, fmt.Errorf("%w: key attributes cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "key attributes cannot be nil"}
 	}
 
 	// Check if this is an asymmetric key - we don't allow raw export of those
@@ -752,7 +754,7 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 
 	// Initialize low-level PKCS#11 context if needed
 	if b.p11ctx == nil {
-		return nil, fmt.Errorf("PKCS#11 context not initialized for export operations")
+		return nil, &errs.Message{Msg: "PKCS#11 context not initialized for export operations"}
 	}
 
 	// Resolve the token slot by configured Slot/TokenLabel. Using slots[0]
@@ -766,7 +768,7 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	// Open session
 	session, err := b.p11ctx.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open session: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
 	defer b.p11ctx.CloseSession(session)
 
@@ -774,7 +776,7 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	if b.config.PIN != "" {
 		if err := b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN); err != nil {
 			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
-				return nil, fmt.Errorf("failed to login: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 			}
 		}
 	}
@@ -787,21 +789,21 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	}
 
 	if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
-		return nil, fmt.Errorf("failed to init key search: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to init key search", Err: err}
 	}
 
 	handles, _, err := b.p11ctx.FindObjects(session, 1)
 	if err != nil {
 		b.p11ctx.FindObjectsFinal(session)
-		return nil, fmt.Errorf("failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	if err := b.p11ctx.FindObjectsFinal(session); err != nil {
-		return nil, fmt.Errorf("failed to finalize key search: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to finalize key search", Err: err}
 	}
 
 	if len(handles) == 0 {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	keyHandle := handles[0]
@@ -811,7 +813,7 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 		pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, nil),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get extractable attribute: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get extractable attribute", Err: err}
 	}
 
 	if len(extractableAttr) == 0 || len(extractableAttr[0].Value) == 0 {
@@ -829,11 +831,11 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	})
 	if err != nil {
 		// This could fail if the key is sensitive (CKA_SENSITIVE=true)
-		return nil, fmt.Errorf("%w: failed to extract key value (key may be sensitive): %v", backend.ErrKeyNotExportable, err)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotExportable, Detail: fmt.Sprintf("failed to extract key value (key may be sensitive): %v", err)}
 	}
 
 	if len(valueAttr) == 0 || len(valueAttr[0].Value) == 0 {
-		return nil, fmt.Errorf("%w: empty key value returned", backend.ErrKeyNotExportable)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotExportable, Detail: "empty key value returned"}
 	}
 
 	return valueAttr[0].Value, nil

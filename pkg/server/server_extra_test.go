@@ -328,8 +328,8 @@ func TestQRDBTransportOptions_WithAddressAndTLS(t *testing.T) {
 			QRDB: config.QRDBConfig{
 				Address: "localhost:63002",
 				TLS: config.TLSConfig{
-					Enabled: true,
-					CAFile:  "/path/to/ca.pem",
+					Enabled:  true,
+					CAFile:   "/path/to/ca.pem",
 					CertFile: "/path/to/cert.pem",
 					KeyFile:  "/path/to/key.pem",
 				},

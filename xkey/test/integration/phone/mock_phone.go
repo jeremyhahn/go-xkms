@@ -80,7 +80,7 @@ func (m *MockPhone) ProcessHandshakeMessage(incoming []byte) ([]byte, bool, erro
 	defer m.mu.Unlock()
 
 	if m.noiseSession == nil {
-		return nil, false, fmt.Errorf("noise session not initialized")
+		return nil, false, &MessageError{Msg: "noise session not initialized"}
 	}
 
 	return m.noiseSession.HandshakeMessage(incoming)

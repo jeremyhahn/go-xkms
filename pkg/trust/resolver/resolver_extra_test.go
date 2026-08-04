@@ -186,9 +186,9 @@ var _ truststrap.PinStore = fakeTOFUPinStore{}
 func (fakeTOFUPinStore) Get(_ context.Context, _ string, _ int) (*truststrap.Pin, error) {
 	return nil, truststrap.ErrPinNotFound{}
 }
-func (fakeTOFUPinStore) Put(_ context.Context, _ *truststrap.Pin) error     { return nil }
-func (fakeTOFUPinStore) Delete(_ context.Context, _ string, _ int) error    { return nil }
-func (fakeTOFUPinStore) List(_ context.Context) ([]*truststrap.Pin, error)  { return nil, nil }
+func (fakeTOFUPinStore) Put(_ context.Context, _ *truststrap.Pin) error    { return nil }
+func (fakeTOFUPinStore) Delete(_ context.Context, _ string, _ int) error   { return nil }
+func (fakeTOFUPinStore) List(_ context.Context) ([]*truststrap.Pin, error) { return nil, nil }
 
 func TestWithTOFUPinStore_Accepted(t *testing.T) {
 	cfg := &resolver.Config{
@@ -317,7 +317,7 @@ func TestTLSConfig_UnknownStrategy(t *testing.T) {
 // endpointHostPort coverage via TLSConfig/CAPool
 // ---------------------------------------------------------------------------
 
-// TestEndpoint_HostPortSupplied exercises the "endpoint != ''" branch in
+// TestEndpoint_HostPortSupplied exercises the "endpoint != ”" branch in
 // endpointHostPort by passing a host:port to TLSConfig.
 func TestEndpoint_HostPortSupplied(t *testing.T) {
 	_, pemBytes := selfSignedCA(t)
@@ -597,7 +597,7 @@ func TestValidate_NoiseMissingStaticKey(t *testing.T) {
 		Scopes: map[string]*resolver.ScopeConfig{
 			"test": {
 				Strategies: []resolver.Strategy{resolver.StrategyNoise},
-				Noise:      &resolver.NoiseConfig{
+				Noise: &resolver.NoiseConfig{
 					// ServerStaticKey missing, ServerAddr present
 					ServerAddr: "noise.example.com:7777",
 				},

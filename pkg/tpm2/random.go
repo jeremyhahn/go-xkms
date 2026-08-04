@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"math"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 )
 
@@ -121,7 +123,7 @@ func (tpm *TPM2) readChunk(data []byte, requestSize int) (int, error) {
 
 	// Get the random bytes
 	if requestSize > math.MaxUint16 {
-		return 0, fmt.Errorf("request size too large: %d", requestSize)
+		return 0, &errs.Message{Msg: fmt.Sprintf("request size too large: %d", requestSize)}
 	}
 	resp, err := tpm2.GetRandom{
 		BytesRequested: uint16(requestSize), // #nosec G115 -- Bounds checked above

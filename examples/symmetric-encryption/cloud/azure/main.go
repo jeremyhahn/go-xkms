@@ -32,6 +32,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/azurekv"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -54,7 +56,7 @@ func azureKVExample() error {
 	// Create Azure Key Vault backend
 	b, err := createAzureKVBackend()
 	if err != nil {
-		return fmt.Errorf("failed to create Azure Key Vault backend: %w", err)
+		return &errs.Wrapped{Msg: "failed to create Azure Key Vault backend", Err: err}
 	}
 	defer func() { _ = b.Close() }()
 
@@ -70,7 +72,7 @@ func azureKVExample() error {
 	fmt.Println("1. Generating AES-256 key in Azure Key Vault...")
 	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
-		return fmt.Errorf("failed to generate key: %w", err)
+		return &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 	fmt.Printf("   ✓ Generated %s key in Azure Key Vault\n", key.Algorithm())
 	fmt.Println("   ✓ Key uses envelope encryption (local AES + key wrapping)")
@@ -79,7 +81,7 @@ func azureKVExample() error {
 	fmt.Println("\n2. Creating encrypter...")
 	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
-		return fmt.Errorf("failed to get encrypter: %w", err)
+		return &errs.Wrapped{Msg: "failed to get encrypter", Err: err}
 	}
 	fmt.Println("   ✓ Encrypter created")
 
@@ -95,7 +97,7 @@ func azureKVExample() error {
 		AdditionalData: aad,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to encrypt: %w", err)
+		return &errs.Wrapped{Msg: "failed to encrypt", Err: err}
 	}
 	fmt.Printf("   ✓ Ciphertext: %s...\n", base64.StdEncoding.EncodeToString(encrypted.Ciphertext[:min(32, len(encrypted.Ciphertext))]))
 	fmt.Println("   ✓ Data encrypted locally, DEK wrapped in Azure KV")
@@ -106,14 +108,14 @@ func azureKVExample() error {
 		AdditionalData: aad,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to decrypt: %w", err)
+		return &errs.Wrapped{Msg: "failed to decrypt", Err: err}
 	}
 	fmt.Printf("   ✓ Decrypted: %q\n", decrypted)
 	fmt.Println("   ✓ DEK unwrapped in Azure KV, data decrypted locally")
 
 	// Verify
 	if string(decrypted) != string(plaintext) {
-		return fmt.Errorf("decrypted data does not match original")
+		return &errs.Message{Msg: "decrypted data does not match original"}
 	}
 	fmt.Println("   ✓ Verification successful!")
 
@@ -125,28 +127,28 @@ func createAzureKVBackend() (types.SymmetricKeyProvider, error) {
 	// Requires: AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_VAULT_URL
 	tenantID := os.Getenv("AZURE_TENANT_ID")
 	if tenantID == "" {
-		return nil, fmt.Errorf("AZURE_TENANT_ID environment variable not set")
+		return nil, &errs.Message{Msg: "AZURE_TENANT_ID environment variable not set"}
 	}
 
 	clientID := os.Getenv("AZURE_CLIENT_ID")
 	if clientID == "" {
-		return nil, fmt.Errorf("AZURE_CLIENT_ID environment variable not set")
+		return nil, &errs.Message{Msg: "AZURE_CLIENT_ID environment variable not set"}
 	}
 
 	clientSecret := os.Getenv("AZURE_CLIENT_SECRET")
 	if clientSecret == "" {
-		return nil, fmt.Errorf("AZURE_CLIENT_SECRET environment variable not set")
+		return nil, &errs.Message{Msg: "AZURE_CLIENT_SECRET environment variable not set"}
 	}
 
 	vaultURL := os.Getenv("AZURE_VAULT_URL")
 	if vaultURL == "" {
-		return nil, fmt.Errorf("AZURE_VAULT_URL environment variable not set")
+		return nil, &errs.Message{Msg: "AZURE_VAULT_URL environment variable not set"}
 	}
 
 	// Create temporary storage for key metadata
 	storage, err := createTempStorage()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create storage: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create storage", Err: err}
 	}
 
 	// Create Azure Key Vault backend configuration
@@ -162,7 +164,7 @@ func createAzureKVBackend() (types.SymmetricKeyProvider, error) {
 	// Create and initialize the backend
 	b, err := azurekv.NewBackend(backendCfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure Key Vault backend: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create Azure Key Vault backend", Err: err}
 	}
 
 	return b, nil

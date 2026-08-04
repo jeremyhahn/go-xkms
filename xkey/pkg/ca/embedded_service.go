@@ -87,7 +87,7 @@ func (s *Service) IssueEKCertificate(ctx context.Context, request *xkms.TrustedC
 	}
 	cert, err := s.ca.IssueEKCertificate(ctx, request, ekPubKey)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrTCGCertIssuance, err)
+		return nil, &SentinelCauseError{Sentinel: ErrTCGCertIssuance, Cause: err}
 	}
 	return cert, nil
 }
@@ -101,7 +101,7 @@ func (s *Service) IssueAKCertificate(ctx context.Context, request *xkms.TrustedC
 	}
 	cert, err := s.ca.IssueAKCertificate(ctx, request, pubKey)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrTCGCertIssuance, err)
+		return nil, &SentinelCauseError{Sentinel: ErrTCGCertIssuance, Cause: err}
 	}
 	return cert, nil
 }
@@ -117,7 +117,7 @@ func (s *Service) SignTCGCSRIDevID(ctx context.Context, tcgCSR *xkms.TCG_CSR_IDE
 	}
 	iakDER, idevidDER, err = s.ca.SignTCGCSRIDevID(ctx, tcgCSR, request)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", ErrTCGCSRSigning, err)
+		return nil, nil, &SentinelCauseError{Sentinel: ErrTCGCSRSigning, Cause: err}
 	}
 	return iakDER, idevidDER, nil
 }
@@ -135,7 +135,7 @@ func (s *Service) EnrollDevice(ctx context.Context, packedCSR []byte, request *x
 	}
 	result, err := s.ca.EnrollDevice(ctx, packedCSR, request)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrTCGEnrollment, err)
+		return nil, &SentinelCauseError{Sentinel: ErrTCGEnrollment, Cause: err}
 	}
 	return result, nil
 }
@@ -158,7 +158,7 @@ func (s *Service) GetCABundle(_ context.Context, req *transport.GetCABundleReque
 
 	bundlePEM, err := s.ca.CABundle()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrBundleGeneration, err)
+		return nil, &SentinelCauseError{Sentinel: ErrBundleGeneration, Cause: err}
 	}
 
 	// Parse individual certificates from the PEM bundle.
@@ -193,7 +193,7 @@ func (s *Service) GetCACertificate(_ context.Context, req *transport.GetCACertif
 
 	cert, err := s.ca.CACertificate()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCACertificateRetrieval, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCACertificateRetrieval, Cause: err}
 	}
 
 	certPEM := pem.EncodeToMemory(&pem.Block{
@@ -235,7 +235,7 @@ func (s *Service) SignCSR(ctx context.Context, req *transport.SignCSRRequest) (*
 
 	cert, err := s.ca.SignCSR(ctx, req.CSRPEM, opts)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCSRSigning, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCSRSigning, Cause: err}
 	}
 
 	certPEM := pem.EncodeToMemory(&pem.Block{
@@ -295,7 +295,7 @@ func (s *Service) IssueCertificate(ctx context.Context, req *transport.IssueCert
 		issued, err = s.ca.IssueCertificate(ctx, certReq)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCertificateIssuance, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCertificateIssuance, Cause: err}
 	}
 
 	return &transport.IssueCertificateResponse{
@@ -321,11 +321,11 @@ func (s *Service) RevokeCertificate(ctx context.Context, req *transport.RevokeCe
 
 	serial, ok := new(big.Int).SetString(req.SerialNumber, 10)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidSerialNumber, req.SerialNumber)
+		return nil, &DetailError{Err: ErrInvalidSerialNumber, Detail: fmt.Sprintf(": %s", req.SerialNumber)}
 	}
 
 	if err := s.ca.Revoke(ctx, serial, req.Reason); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCertificateRevocation, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCertificateRevocation, Cause: err}
 	}
 
 	return &transport.RevokeCertificateResponse{
@@ -345,7 +345,7 @@ func (s *Service) GenerateCRL(ctx context.Context, req *transport.GenerateCRLReq
 
 	crlDER, err := s.ca.GenerateCRL(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCRLGeneration, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCRLGeneration, Cause: err}
 	}
 
 	crlPEM := pem.EncodeToMemory(&pem.Block{
@@ -376,12 +376,12 @@ func (s *Service) IsRevoked(_ context.Context, req *transport.IsRevokedRequest) 
 
 	serial, ok := new(big.Int).SetString(req.SerialNumber, 10)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidSerialNumber, req.SerialNumber)
+		return nil, &DetailError{Err: ErrInvalidSerialNumber, Detail: fmt.Sprintf(": %s", req.SerialNumber)}
 	}
 
 	revoked, err := s.ca.IsRevoked(serial)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrRevocationCheck, err)
+		return nil, &SentinelCauseError{Sentinel: ErrRevocationCheck, Cause: err}
 	}
 
 	return &transport.IsRevokedResponse{

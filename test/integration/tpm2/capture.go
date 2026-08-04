@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 )
@@ -127,7 +129,7 @@ type TPMResponseHeader struct {
 // ParseTPMCommandHeader parses a TPM command header from packet data
 func ParseTPMCommandHeader(data []byte) (*TPMCommandHeader, error) {
 	if len(data) < 10 {
-		return nil, fmt.Errorf("packet too short for TPM command header: %d bytes", len(data))
+		return nil, &errs.Message{Msg: fmt.Sprintf("packet too short for TPM command header: %d bytes", len(data))}
 	}
 
 	hdr := &TPMCommandHeader{
@@ -142,7 +144,7 @@ func ParseTPMCommandHeader(data []byte) (*TPMCommandHeader, error) {
 // ParseTPMResponseHeader parses a TPM response header from packet data
 func ParseTPMResponseHeader(data []byte) (*TPMResponseHeader, error) {
 	if len(data) < 10 {
-		return nil, fmt.Errorf("packet too short for TPM response header: %d bytes", len(data))
+		return nil, &errs.Message{Msg: fmt.Sprintf("packet too short for TPM response header: %d bytes", len(data))}
 	}
 
 	hdr := &TPMResponseHeader{
@@ -182,11 +184,11 @@ func HasSessionArea(data []byte) bool {
 // This is a best-effort parser for common TPM commands with sessions
 func ExtractSessionAttributes(data []byte) ([]byte, error) {
 	if !HasSessionArea(data) {
-		return nil, fmt.Errorf("packet does not have session area")
+		return nil, &errs.Message{Msg: "packet does not have session area"}
 	}
 
 	if len(data) < 10 {
-		return nil, fmt.Errorf("packet too short")
+		return nil, &errs.Message{Msg: "packet too short"}
 	}
 
 	// Skip command header (10 bytes)
@@ -213,7 +215,7 @@ func ExtractSessionAttributes(data []byte) ([]byte, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("no session attributes found")
+	return nil, &errs.Message{Msg: "no session attributes found"}
 }
 
 // ContainsPlaintextPattern searches for common plaintext patterns that should be encrypted

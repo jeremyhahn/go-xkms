@@ -17,11 +17,12 @@ package services
 
 import (
 	"context"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"runtime"
 	"sync/atomic"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"

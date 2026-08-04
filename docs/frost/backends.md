@@ -196,7 +196,7 @@ func awsConfig() (*frost.Config, error) {
         // KMS key for envelope encryption
         KeyID: "alias/frost-master-key",
 
-        // Optional: Custom endpoint for LocalStack testing
+        // Optional: Custom endpoint for Floci emulator testing
         // Endpoint: "http://localhost:4566",
     })
     if err != nil {

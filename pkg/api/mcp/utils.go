@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -37,7 +39,7 @@ func extractPublicKey(privKey interface{}) (crypto.PublicKey, error) {
 	case crypto.Signer:
 		return key.Public(), nil
 	default:
-		return nil, fmt.Errorf("unsupported key type: %T", privKey)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %T", privKey)}
 	}
 }
 
@@ -80,7 +82,7 @@ func parseHashAlgorithm(hashStr string) (crypto.Hash, error) {
 	case "SHA512":
 		return crypto.SHA512, nil
 	default:
-		return 0, fmt.Errorf("unsupported hash algorithm: %s", hashStr)
+		return 0, &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", hashStr)}
 	}
 }
 
@@ -98,6 +100,6 @@ func verifySignature(pubKey crypto.PublicKey, digest, signature []byte, hash cry
 		return ed25519.Verify(key, digest, signature), nil
 
 	default:
-		return false, fmt.Errorf("unsupported public key type: %T", pubKey)
+		return false, &errs.Message{Msg: fmt.Sprintf("unsupported public key type: %T", pubKey)}
 	}
 }

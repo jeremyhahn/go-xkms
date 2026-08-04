@@ -120,4 +120,5 @@ export {
   mdiContentSave,
   mdiContentSaveOutline,
   mdiPuzzleOutline,
+  mdiSsh,
 } from '@mdi/js';

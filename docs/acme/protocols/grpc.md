@@ -158,7 +158,7 @@ import (
     "context"
     "log"
 
-    pb "github.com/jeremyhahn/go-trusted-ca/api/proto/admin/v1"
+    pb "github.com/jeremyhahn/go-xkms/api/proto/admin/v1"
     "google.golang.org/grpc"
     "google.golang.org/grpc/credentials"
 )

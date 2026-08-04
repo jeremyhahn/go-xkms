@@ -86,13 +86,13 @@ func (h *AWSCredentialsHandler) Handle(ctx context.Context, data *TokenData) err
 	// Ensure directory exists
 	dir := filepath.Dir(credPath)
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("%w: %v", ErrAWSCredentialsWrite, err)
+		return &SentinelCauseError{Sentinel: ErrAWSCredentialsWrite, Cause: err}
 	}
 
 	// Read existing credentials file
 	sections, err := h.readCredentialsFile(credPath)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("%w: %v", ErrAWSCredentialsRead, err)
+		return &SentinelCauseError{Sentinel: ErrAWSCredentialsRead, Cause: err}
 	}
 
 	// Build profile section
@@ -103,7 +103,7 @@ func (h *AWSCredentialsHandler) Handle(ctx context.Context, data *TokenData) err
 
 	// Write back the credentials file
 	if err := h.writeCredentialsFile(credPath, sections); err != nil {
-		return fmt.Errorf("%w: %v", ErrAWSCredentialsWrite, err)
+		return &SentinelCauseError{Sentinel: ErrAWSCredentialsWrite, Cause: err}
 	}
 
 	return nil

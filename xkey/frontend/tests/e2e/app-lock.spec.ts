@@ -1,7 +1,30 @@
 import { test, expect } from '@playwright/test';
-import { waitForAppReady, isWailsMode } from './helpers';
+import {
+  waitForAppReady,
+  isWailsMode,
+  waitForBackendReady,
+  lockAppViaBackend,
+  unlockAppViaBackend,
+} from './helpers';
+
+// The default PIN configured by global-setup.ts (E2E_USER_PIN, default
+// '123456'). Hardcoded here to match the convention already used by the
+// PIN-based tests in this file.
+const E2E_USER_PIN = '123456';
 
 test.describe('App Lock Overlay', () => {
+  // The live tier shares ONE long-running Wails backend process across the
+  // whole suite (see tests/e2e/live/README.md + global-setup.ts). Any test
+  // in this file that deliberately locks the app via lockAppViaBackend()
+  // MUST leave it unlocked again, or every subsequent test/spec file that
+  // reuses this backend inherits a locked app and fails. This afterEach is
+  // the safety net: best-effort, no-ops cleanly when not in Wails mode or
+  // when the app is already unlocked.
+  test.afterEach(async ({ page }) => {
+    const wails = await isWailsMode(page).catch(() => false);
+    if (!wails) return;
+    await unlockAppViaBackend(page, E2E_USER_PIN).catch(() => {});
+  });
 
   test.describe('Overlay visibility', () => {
     test('lock overlay is hidden by default in Vite mode', async ({ page }) => {
@@ -40,80 +63,92 @@ test.describe('App Lock Overlay', () => {
 
   test.describe('Overlay interaction (Wails mode)', () => {
     test('lock overlay shows with correct structure', async ({ page }) => {
-      const wails = await isWailsMode(page).catch(() => false);
-      test.skip(!wails, 'Requires Wails backend for lock state');
-
       await page.goto('/');
       await waitForAppReady(page);
 
-      // In Wails mode, if the backend returns is_locked: true, overlay shows
-      const overlay = page.locator('.lock-overlay');
-      const isVisible = await overlay.isVisible().catch(() => false);
+      const wails = await isWailsMode(page).catch(() => false);
+      test.skip(!wails, 'Requires Wails backend for lock state');
+      await waitForBackendReady(page);
 
-      if (isVisible) {
-        // Verify structure
-        await expect(page.locator('.lock-overlay h2')).toHaveText('App Locked');
-        await expect(page.locator('.pin-input')).toBeVisible();
-        await expect(page.locator('.unlock-button')).toBeVisible();
-        await expect(page.locator('.pin-input')).toBeFocused();
-      }
+      // Deliberately lock the app — global-setup.ts leaves the shared
+      // backend unlocked with auto-lock disabled, so the overlay never
+      // appears on its own during the suite.
+      await lockAppViaBackend(page);
+
+      const overlay = page.locator('.lock-overlay');
+      await expect(overlay).toBeVisible({ timeout: 5_000 });
+
+      // Verify structure
+      await expect(page.locator('.lock-overlay h2')).toHaveText('App Locked');
+      await expect(page.locator('.pin-input')).toBeVisible();
+      await expect(page.locator('.unlock-button')).toBeVisible();
+      await expect(page.locator('.pin-input')).toBeFocused();
     });
 
     test('empty PIN shows validation error', async ({ page }) => {
-      const wails = await isWailsMode(page).catch(() => false);
-      test.skip(!wails, 'Requires Wails backend for lock state');
-
       await page.goto('/');
       await waitForAppReady(page);
 
-      const overlay = page.locator('.lock-overlay');
-      const isVisible = await overlay.isVisible().catch(() => false);
-      test.skip(!isVisible, 'Lock overlay not shown — app may not be locked');
+      const wails = await isWailsMode(page).catch(() => false);
+      test.skip(!wails, 'Requires Wails backend for lock state');
+      await waitForBackendReady(page);
 
-      // Click unlock without entering PIN
-      await page.locator('.unlock-button').click();
+      await lockAppViaBackend(page);
+      const overlay = page.locator('.lock-overlay');
+      await expect(overlay).toBeVisible({ timeout: 5_000 });
+
+      // The Unlock button is disabled while the PIN input is empty (see
+      // "unlock button is disabled when PIN is empty" below), so a click
+      // can never reach handleUnlock()'s empty-PIN branch. Enter on the
+      // PIN input calls handleUnlock() directly via onkeydown, bypassing
+      // the button's disabled state — that is the only reachable path to
+      // this validation message.
+      await page.locator('.pin-input').press('Enter');
       await expect(page.locator('.pin-error')).toHaveText('PIN is required');
     });
 
     test('unlock button is disabled when PIN is empty', async ({ page }) => {
-      const wails = await isWailsMode(page).catch(() => false);
-      test.skip(!wails, 'Requires Wails backend for lock state');
-
       await page.goto('/');
       await waitForAppReady(page);
 
+      const wails = await isWailsMode(page).catch(() => false);
+      test.skip(!wails, 'Requires Wails backend for lock state');
+      await waitForBackendReady(page);
+
+      await lockAppViaBackend(page);
       const overlay = page.locator('.lock-overlay');
-      const isVisible = await overlay.isVisible().catch(() => false);
-      test.skip(!isVisible, 'Lock overlay not shown');
+      await expect(overlay).toBeVisible({ timeout: 5_000 });
 
       await expect(page.locator('.unlock-button')).toBeDisabled();
     });
 
     test('entering PIN enables unlock button', async ({ page }) => {
-      const wails = await isWailsMode(page).catch(() => false);
-      test.skip(!wails, 'Requires Wails backend for lock state');
-
       await page.goto('/');
       await waitForAppReady(page);
 
+      const wails = await isWailsMode(page).catch(() => false);
+      test.skip(!wails, 'Requires Wails backend for lock state');
+      await waitForBackendReady(page);
+
+      await lockAppViaBackend(page);
       const overlay = page.locator('.lock-overlay');
-      const isVisible = await overlay.isVisible().catch(() => false);
-      test.skip(!isVisible, 'Lock overlay not shown');
+      await expect(overlay).toBeVisible({ timeout: 5_000 });
 
       await page.locator('.pin-input').fill('123456');
       await expect(page.locator('.unlock-button')).toBeEnabled();
     });
 
     test('failed PIN unlock shows error', async ({ page }) => {
-      const wails = await isWailsMode(page).catch(() => false);
-      test.skip(!wails, 'Requires Wails backend for lock state');
-
       await page.goto('/');
       await waitForAppReady(page);
 
+      const wails = await isWailsMode(page).catch(() => false);
+      test.skip(!wails, 'Requires Wails backend for lock state');
+      await waitForBackendReady(page);
+
+      await lockAppViaBackend(page);
       const overlay = page.locator('.lock-overlay');
-      const isVisible = await overlay.isVisible().catch(() => false);
-      test.skip(!isVisible, 'Lock overlay not shown');
+      await expect(overlay).toBeVisible({ timeout: 5_000 });
 
       // Enter an incorrect PIN
       await page.locator('.pin-input').fill('000000');
@@ -124,15 +159,16 @@ test.describe('App Lock Overlay', () => {
     });
 
     test('successful PIN unlock hides overlay', async ({ page }) => {
-      const wails = await isWailsMode(page).catch(() => false);
-      test.skip(!wails, 'Requires Wails backend for lock state');
-
       await page.goto('/');
       await waitForAppReady(page);
 
+      const wails = await isWailsMode(page).catch(() => false);
+      test.skip(!wails, 'Requires Wails backend for lock state');
+      await waitForBackendReady(page);
+
+      await lockAppViaBackend(page);
       const overlay = page.locator('.lock-overlay');
-      const isVisible = await overlay.isVisible().catch(() => false);
-      test.skip(!isVisible, 'Lock overlay not shown');
+      await expect(overlay).toBeVisible({ timeout: 5_000 });
 
       // Enter correct PIN (the one set during wizard)
       await page.locator('.pin-input').fill('123456');
@@ -145,18 +181,29 @@ test.describe('App Lock Overlay', () => {
 
   test.describe('Auto-unlock behavior', () => {
     test('app:unlocked event clears lock overlay', async ({ page }) => {
-      const wails = await isWailsMode(page).catch(() => false);
-      test.skip(!wails, 'Requires Wails runtime for events');
-
       await page.goto('/');
       await waitForAppReady(page);
 
-      // If auto-unseal succeeded, app:unlocked event should have fired
-      // and the overlay should not be visible
+      const wails = await isWailsMode(page).catch(() => false);
+      test.skip(!wails, 'Requires Wails runtime for events');
+      await waitForBackendReady(page);
+
+      // Lock the app first so there is something for the event to clear.
+      await lockAppViaBackend(page);
       const overlay = page.locator('.lock-overlay');
-      // When auto-unseal works, the overlay should never appear
-      // We verify it's not visible (auto-unlock happened before frontend mount)
-      await expect(overlay).not.toBeVisible();
+      await expect(overlay).toBeVisible({ timeout: 5_000 });
+
+      // Call AppLockService.AutoUnlock() directly — the same RPC the
+      // startup auto-unseal path uses — which unlocks the backend and
+      // emits the real `app:unlocked` Wails event WITHOUT going through
+      // the PIN overlay's UI click handler. This proves the frontend's
+      // event listener (setupEventListeners in stores/events.ts) — not
+      // just the button handler — clears the overlay.
+      await page.evaluate(async () => {
+        await (window as any).go.services.AppLockService.AutoUnlock();
+      });
+
+      await expect(overlay).not.toBeVisible({ timeout: 5_000 });
     });
   });
 
@@ -231,14 +278,18 @@ test.describe('App Lock Overlay', () => {
     });
 
     test('lock overlay triggered by Lock button in Wails mode has opaque backdrop', async ({ page }) => {
-      const wails = await isWailsMode(page).catch(() => false);
-      test.skip(!wails, 'Requires Wails backend to trigger lock via Lock button');
-
       await page.goto('/');
       await waitForAppReady(page);
 
-      // Click the Lock button in the header toolbar.
-      const lockButton = page.locator('button').filter({ hasText: /^lock$/i }).first();
+      const wails = await isWailsMode(page).catch(() => false);
+      test.skip(!wails, 'Requires Wails backend to trigger lock via Lock button');
+
+      // Click the Lock button in the header toolbar. Use the stable
+      // data-testid rather than a text regex: LockButton.svelte renders the
+      // icon and label as separate nodes with incidental whitespace between
+      // them, so a strict /^lock$/ text match never matches the rendered
+      // (untrimmed) textContent and always skipped this test.
+      const lockButton = page.locator('[data-testid="lock-button"]');
       const lockButtonVisible = await lockButton.isVisible().catch(() => false);
       test.skip(!lockButtonVisible, 'Lock button not visible — setup may not be complete');
 
@@ -257,28 +308,24 @@ test.describe('App Lock Overlay', () => {
 
   test.describe('PIN input behavior', () => {
     test('Enter key triggers unlock', async ({ page }) => {
-      const wails = await isWailsMode(page).catch(() => false);
-      test.skip(!wails, 'Requires Wails backend for lock state');
-
       await page.goto('/');
       await waitForAppReady(page);
 
-      const overlay = page.locator('.lock-overlay');
-      const isVisible = await overlay.isVisible().catch(() => false);
-      test.skip(!isVisible, 'Lock overlay not shown');
+      const wails = await isWailsMode(page).catch(() => false);
+      test.skip(!wails, 'Requires Wails backend for lock state');
+      await waitForBackendReady(page);
 
-      // Type PIN and press Enter
+      await lockAppViaBackend(page);
+      const overlay = page.locator('.lock-overlay');
+      await expect(overlay).toBeVisible({ timeout: 5_000 });
+
+      // Type the correct PIN (matches E2E_USER_PIN set up by global-setup.ts)
+      // and press Enter.
       await page.locator('.pin-input').fill('123456');
       await page.locator('.pin-input').press('Enter');
 
-      // Should either unlock successfully or show error (depending on PIN correctness)
-      // The important thing is that Enter triggers the unlock attempt
-      await page.waitForTimeout(500);
-
-      // Either overlay disappeared (correct PIN) or error shows (incorrect PIN)
-      const overlayStillVisible = await overlay.isVisible().catch(() => false);
-      const errorVisible = await page.locator('.pin-error').isVisible().catch(() => false);
-      expect(overlayStillVisible === false || errorVisible === true).toBeTruthy();
+      // Enter must trigger the same unlock attempt as clicking the button.
+      await expect(overlay).not.toBeVisible({ timeout: 5_000 });
     });
   });
 });

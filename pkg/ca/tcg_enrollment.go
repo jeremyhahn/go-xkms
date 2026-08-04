@@ -21,6 +21,8 @@ import (
 	"log/slog"
 	"sync/atomic"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
@@ -73,7 +75,7 @@ func (ca *CA) EnrollDevice(ctx context.Context, packedCSR []byte, request *Certi
 	// Unmarshal the CSR from packed bytes
 	tcgCSR, err := tpm2.UnmarshalIDevIDCSR(packedCSR)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTCGCSRUnmarshalFailed, err)
+		return nil, &errs.Detail{Err: ErrTCGCSRUnmarshalFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	csrContent := &tcgCSR.CsrContents
@@ -89,12 +91,12 @@ func (ca *CA) EnrollDevice(ctx context.Context, packedCSR []byte, request *Certi
 	if block != nil {
 		ekCert, err = x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("%w: pem: %v", ErrTCGInvalidEKCert, err)
+			return nil, &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("pem: %v", err)}
 		}
 	} else {
 		ekCert, err = x509.ParseCertificate(csrContent.EkCert)
 		if err != nil {
-			return nil, fmt.Errorf("%w: der: %v", ErrTCGInvalidEKCert, err)
+			return nil, &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("der: %v", err)}
 		}
 	}
 
@@ -111,7 +113,7 @@ func (ca *CA) EnrollDevice(ctx context.Context, packedCSR []byte, request *Certi
 		nil, // Let the TPM generate a random secret
 	)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTCGMakeCredentialFailed, err)
+		return nil, &errs.Detail{Err: ErrTCGMakeCredentialFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	slog.Debug("EnrollDevice: MakeCredential succeeded, signing CSR",

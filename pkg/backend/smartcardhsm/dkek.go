@@ -19,6 +19,8 @@ import (
 	"crypto/rand"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -62,7 +64,7 @@ type DKEKShare struct {
 // Returns a slice of DKEKShare structs containing the share data.
 func GenerateDKEKShares(n, m int) ([]DKEKShare, error) {
 	if n < 1 || n > 8 {
-		return nil, fmt.Errorf("smartcardhsm: invalid share count %d (must be 1-8)", n)
+		return nil, &errs.Message{Msg: fmt.Sprintf("smartcardhsm: invalid share count %d (must be 1-8)", n)}
 	}
 	if m < 1 || m > n {
 		return nil, ErrDKEKThresholdInvalid
@@ -72,12 +74,12 @@ func GenerateDKEKShares(n, m int) ([]DKEKShare, error) {
 	// is mlocked, canary-guarded, and explicitly wiped on Destroy.
 	dkekBuf, err := secure.NewBuffer(32)
 	if err != nil {
-		return nil, fmt.Errorf("smartcardhsm: failed to allocate DKEK buffer: %w", err)
+		return nil, &errs.Wrapped{Msg: "smartcardhsm: failed to allocate DKEK buffer", Err: err}
 	}
 	defer dkekBuf.Destroy()
 
 	if _, err := rand.Read(dkekBuf.Bytes()); err != nil {
-		return nil, fmt.Errorf("smartcardhsm: failed to generate DKEK: %w", err)
+		return nil, &errs.Wrapped{Msg: "smartcardhsm: failed to generate DKEK", Err: err}
 	}
 
 	// Split using Shamir's Secret Sharing. ShamirSplit reads the DKEK
@@ -85,7 +87,7 @@ func GenerateDKEKShares(n, m int) ([]DKEKShare, error) {
 	// destroyed by the deferred cleanup above.
 	shares, err := qrdbsdk.ShamirSplit(dkekBuf.Bytes(), n, m)
 	if err != nil {
-		return nil, fmt.Errorf("smartcardhsm: failed to split DKEK: %w", err)
+		return nil, &errs.Wrapped{Msg: "smartcardhsm: failed to split DKEK", Err: err}
 	}
 
 	result := make([]DKEKShare, len(shares))
@@ -103,7 +105,7 @@ func GenerateDKEKShares(n, m int) ([]DKEKShare, error) {
 // At least 'threshold' shares must be provided.
 func ReconstructDKEK(shares []DKEKShare, threshold int) ([]byte, error) {
 	if len(shares) < threshold {
-		return nil, fmt.Errorf("smartcardhsm: insufficient shares (%d < %d)", len(shares), threshold)
+		return nil, &errs.Message{Msg: fmt.Sprintf("smartcardhsm: insufficient shares (%d < %d)", len(shares), threshold)}
 	}
 
 	// Convert to shamir shares
@@ -118,7 +120,7 @@ func ReconstructDKEK(shares []DKEKShare, threshold int) ([]byte, error) {
 	// Reconstruct
 	dkek, err := qrdbsdk.ShamirCombine(shamirShares)
 	if err != nil {
-		return nil, fmt.Errorf("smartcardhsm: failed to reconstruct DKEK: %w", err)
+		return nil, &errs.Wrapped{Msg: "smartcardhsm: failed to reconstruct DKEK", Err: err}
 	}
 
 	return dkek, nil
@@ -146,7 +148,7 @@ func (b *Backend) GetDKEKStatus() (*DKEKStatus, error) {
 	// Parse response
 	// Response format: status (1 byte) | shares_imported (1 byte) | shares_remaining (1 byte)
 	if len(resp.Data) < 3 {
-		return nil, fmt.Errorf("smartcardhsm: invalid DKEK status response")
+		return nil, &errs.Message{Msg: "smartcardhsm: invalid DKEK status response"}
 	}
 
 	status := &DKEKStatus{
@@ -310,7 +312,7 @@ func (b *Backend) getDKEKStatusLocked() (*DKEKStatus, error) {
 	}
 
 	if len(resp.Data) < 3 {
-		return nil, fmt.Errorf("smartcardhsm: invalid DKEK status response")
+		return nil, &errs.Message{Msg: "smartcardhsm: invalid DKEK status response"}
 	}
 
 	return &DKEKStatus{

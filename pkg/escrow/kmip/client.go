@@ -27,7 +27,8 @@ package kmip
 
 import (
 	"context"
-	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 )
@@ -101,8 +102,7 @@ func (a *KMIPAgent) EscrowKey(_ context.Context, req *escrow.EscrowRequest) (*es
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
-	return nil, fmt.Errorf("%w: KMIP protocol library not yet integrated (requires github.com/ovh/kmip-go)",
-		escrow.ErrNotImplemented)
+	return nil, &errs.Detail{Err: escrow.ErrNotImplemented, Detail: "KMIP protocol library not yet integrated (requires github.com/ovh/kmip-go)"}
 }
 
 // RecoverKey retrieves wrapped key material from the KMIP server.
@@ -114,15 +114,13 @@ func (a *KMIPAgent) RecoverKey(_ context.Context, req *escrow.RecoverRequest) (*
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
-	return nil, fmt.Errorf("%w: KMIP protocol library not yet integrated (requires github.com/ovh/kmip-go)",
-		escrow.ErrNotImplemented)
+	return nil, &errs.Detail{Err: escrow.ErrNotImplemented, Detail: "KMIP protocol library not yet integrated (requires github.com/ovh/kmip-go)"}
 }
 
 // ListEscrowed returns all keys held by the KMIP server.
 // Stub: returns ErrNotImplemented.
 func (a *KMIPAgent) ListEscrowed(_ context.Context) ([]escrow.EscrowRecord, error) {
-	return nil, fmt.Errorf("%w: KMIP protocol library not yet integrated (requires github.com/ovh/kmip-go)",
-		escrow.ErrNotImplemented)
+	return nil, &errs.Detail{Err: escrow.ErrNotImplemented, Detail: "KMIP protocol library not yet integrated (requires github.com/ovh/kmip-go)"}
 }
 
 // RevokeEscrow removes an escrowed key from the KMIP server.
@@ -131,8 +129,7 @@ func (a *KMIPAgent) RevokeEscrow(_ context.Context, escrowID string) error {
 	if escrowID == "" {
 		return escrow.ErrEmptyKeyID
 	}
-	return fmt.Errorf("%w: KMIP protocol library not yet integrated (requires github.com/ovh/kmip-go)",
-		escrow.ErrNotImplemented)
+	return &errs.Detail{Err: escrow.ErrNotImplemented, Detail: "KMIP protocol library not yet integrated (requires github.com/ovh/kmip-go)"}
 }
 
 // Close releases resources held by the KMIP agent.

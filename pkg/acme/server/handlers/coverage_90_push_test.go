@@ -3,9 +3,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -42,30 +42,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestFormatIntNegative tests formatInt with negative numbers
-func TestFormatIntNegative(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    int
-		expected string
-	}{
-		{name: "zero", input: 0, expected: "0"},
-		{name: "positive single digit", input: 5, expected: "5"},
-		{name: "positive multi digit", input: 123, expected: "123"},
-		{name: "negative single digit", input: -5, expected: "-5"},
-		{name: "negative multi digit", input: -123, expected: "-123"},
-		{name: "negative large", input: -99999, expected: "-99999"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := formatInt(tc.input)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-// TestEncodeJSONWithLoggerNilLogger tests encodeJSONWithLogger with nil logger
 func TestEncodeJSONWithLoggerNilLogger(t *testing.T) {
 	// Test with nil logger - should use slog.Default()
 	rr := httptest.NewRecorder()

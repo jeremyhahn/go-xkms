@@ -47,6 +47,11 @@ services:
       - XKMS_LOG_LEVEL=debug
       - XKMS_DATA_DIR=/data
       # Raft identity for node 1
+      # This cluster test intentionally runs the nodes in plain-HTTP, no-auth
+      # mode to validate raft cluster formation (see cluster_test.go). The
+      # secure-by-default guard would otherwise refuse to start, so opt into
+      # the sanctioned development escape hatch.
+      - XKMS_INSECURE=true
       - XKMS_CLUSTER_ENABLED=true
       - XKMS_CLUSTER_NODE_ID=1
       - XKMS_CLUSTER_SHARD_ID=1
@@ -84,6 +89,11 @@ services:
       - XKMS_LOG_LEVEL=debug
       - XKMS_DATA_DIR=/data
       # Raft identity for node 2
+      # This cluster test intentionally runs the nodes in plain-HTTP, no-auth
+      # mode to validate raft cluster formation (see cluster_test.go). The
+      # secure-by-default guard would otherwise refuse to start, so opt into
+      # the sanctioned development escape hatch.
+      - XKMS_INSECURE=true
       - XKMS_CLUSTER_ENABLED=true
       - XKMS_CLUSTER_NODE_ID=2
       - XKMS_CLUSTER_SHARD_ID=1
@@ -123,6 +133,11 @@ services:
       - XKMS_LOG_LEVEL=debug
       - XKMS_DATA_DIR=/data
       # Raft identity for node 3
+      # This cluster test intentionally runs the nodes in plain-HTTP, no-auth
+      # mode to validate raft cluster formation (see cluster_test.go). The
+      # secure-by-default guard would otherwise refuse to start, so opt into
+      # the sanctioned development escape hatch.
+      - XKMS_INSECURE=true
       - XKMS_CLUSTER_ENABLED=true
       - XKMS_CLUSTER_NODE_ID=3
       - XKMS_CLUSTER_SHARD_ID=1
@@ -148,6 +163,31 @@ services:
       - cluster-net
 
   # ---------------------------------------------------------------------------
+  # standalone: a single non-clustered qrdb-backed xkmsd — the standalone-server
+  # counterpart to the 3-node Raft cluster. It reuses the node image but sets NO
+  # XKMS_CLUSTER_* env, so xkmsd hosts an embedded standalone qrdb node.
+  # ---------------------------------------------------------------------------
+  standalone:
+    image: go-xkms-cluster-node:latest
+    container_name: cluster-standalone
+    volumes:
+      - standalone-data:/data
+      - ./config.node.yaml:/etc/xkms/xkmsd.yaml:ro
+    environment:
+      - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
+      - XKMS_LOG_LEVEL=debug
+      - XKMS_DATA_DIR=/data
+      - XKMS_INSECURE=true
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8443/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - cluster-net
+
+  # ---------------------------------------------------------------------------
   # test runner
   # ---------------------------------------------------------------------------
   test:
@@ -162,8 +202,12 @@ services:
         condition: service_healthy
       node3:
         condition: service_healthy
+      standalone:
+        condition: service_healthy
     volumes:
       - ../../..:/workspace
+      # The resilience (chaos) tests drive docker directly to kill/restart nodes.
+      - /var/run/docker.sock:/var/run/docker.sock
       # Sibling module bind-mounts so ensure-gowork.sh resolves in-house deps.
       - ../../../../go-qrdb:/go-qrdb:cached
       - ../../../../go-quicraft:/go-quicraft:cached
@@ -180,6 +224,8 @@ services:
       - CLUSTER_NODE1_URL=http://node1:8443
       - CLUSTER_NODE2_URL=http://node2:8443
       - CLUSTER_NODE3_URL=http://node3:8443
+      # Standalone (non-clustered) node endpoint.
+      - CLUSTER_STANDALONE_URL=http://standalone:8443
       # Shard identifier the tests will query for a leader.
       - CLUSTER_SHARD_ID=1
     working_dir: /workspace
@@ -192,6 +238,8 @@ volumes:
   node2-data:
     driver: local
   node3-data:
+    driver: local
+  standalone-data:
     driver: local
   go-cache:
     driver: local

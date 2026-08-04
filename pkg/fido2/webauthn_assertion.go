@@ -17,9 +17,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"fmt"
 	"log"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/go-webauthn/webauthn/protocol"
 )
@@ -78,7 +79,7 @@ func buildAssertionClientDataJSON(challenge []byte, origin string) ([]byte, erro
 	}
 	out, err := json.Marshal(cd)
 	if err != nil {
-		return nil, fmt.Errorf("fido2: failed to marshal clientDataJSON: %w", err)
+		return nil, &errs.Wrapped{Msg: "fido2: failed to marshal clientDataJSON", Err: err}
 	}
 	return out, nil
 }
@@ -90,18 +91,18 @@ func buildAssertionClientDataJSON(challenge []byte, origin string) ([]byte, erro
 // JSON when empty.
 func buildPublicKeyAssertionJSON(resp *GetAssertionResponse, clientDataJSON []byte) (credentialID, doc []byte, err error) {
 	if resp == nil {
-		return nil, nil, fmt.Errorf("fido2: nil GetAssertionResponse")
+		return nil, nil, &errs.Message{Msg: "fido2: nil GetAssertionResponse"}
 	}
 	if len(resp.AuthData) == 0 {
-		return nil, nil, fmt.Errorf("fido2: GetAssertionResponse missing authData")
+		return nil, nil, &errs.Message{Msg: "fido2: GetAssertionResponse missing authData"}
 	}
 	if len(resp.Signature) == 0 {
-		return nil, nil, fmt.Errorf("fido2: GetAssertionResponse missing signature")
+		return nil, nil, &errs.Message{Msg: "fido2: GetAssertionResponse missing signature"}
 	}
 
 	credentialID = resp.Credential.ID
 	if len(credentialID) == 0 {
-		return nil, nil, fmt.Errorf("fido2: GetAssertionResponse missing credential id")
+		return nil, nil, &errs.Message{Msg: "fido2: GetAssertionResponse missing credential id"}
 	}
 
 	credIDB64 := b64url(credentialID)
@@ -121,7 +122,7 @@ func buildPublicKeyAssertionJSON(resp *GetAssertionResponse, clientDataJSON []by
 
 	doc, err = json.Marshal(cred)
 	if err != nil {
-		return nil, nil, fmt.Errorf("fido2: failed to marshal PublicKeyCredential JSON: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "fido2: failed to marshal PublicKeyCredential JSON", Err: err}
 	}
 	return credentialID, doc, nil
 }
@@ -175,10 +176,10 @@ func assertionAllowList(ids [][]byte) []PublicKeyCredentialDescriptor {
 // optional userHandle.
 func (h *FIDO2Handler) AuthenticateWebAuthn(opts WebAuthnAuthenticationOptions) (*WebAuthnAssertion, error) {
 	if len(opts.Challenge) == 0 {
-		return nil, fmt.Errorf("fido2: authentication challenge required")
+		return nil, &errs.Message{Msg: "fido2: authentication challenge required"}
 	}
 	if opts.Origin == "" {
-		return nil, fmt.Errorf("fido2: authentication origin required")
+		return nil, &errs.Message{Msg: "fido2: authentication origin required"}
 	}
 
 	// Build clientDataJSON and derive the clientDataHash the authenticator signs.
@@ -199,7 +200,7 @@ func (h *FIDO2Handler) AuthenticateWebAuthn(opts WebAuthnAuthenticationOptions) 
 		if closeErr := device.Close(); closeErr != nil {
 			log.Printf("failed to close device after CTAP init error: %v", closeErr)
 		}
-		return nil, fmt.Errorf("fido2: failed to initialize CTAP device: %w", err)
+		return nil, &errs.Wrapped{Msg: "fido2: failed to initialize CTAP device", Err: err}
 	}
 	defer func() {
 		if err := ctapDev.Close(); err != nil {
@@ -209,7 +210,7 @@ func (h *FIDO2Handler) AuthenticateWebAuthn(opts WebAuthnAuthenticationOptions) 
 
 	auth, err := NewAuthenticator(ctapDev, h.config)
 	if err != nil {
-		return nil, fmt.Errorf("fido2: failed to create authenticator: %w", err)
+		return nil, &errs.Wrapped{Msg: "fido2: failed to create authenticator", Err: err}
 	}
 
 	if opts.Timeout > 0 {
@@ -231,7 +232,7 @@ func (h *FIDO2Handler) AuthenticateWebAuthn(opts WebAuthnAuthenticationOptions) 
 	h.logger.Printf("Please touch your security key to authenticate...")
 	resp, err := auth.GetAssertion(req)
 	if err != nil {
-		return nil, fmt.Errorf("fido2: GetAssertion failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "fido2: GetAssertion failed", Err: err}
 	}
 
 	return buildWebAuthnAssertion(resp, opts.Challenge, opts.Origin)
@@ -254,7 +255,7 @@ func (h *FIDO2Handler) AuthenticateWebAuthn(opts WebAuthnAuthenticationOptions) 
 // explicit origin.
 func parseRequestOptions(optionsJSON []byte, origin string) (WebAuthnAuthenticationOptions, error) {
 	if len(optionsJSON) == 0 {
-		return WebAuthnAuthenticationOptions{}, fmt.Errorf("fido2: %w", ErrAssertionOptionsRequired)
+		return WebAuthnAuthenticationOptions{}, &errs.Wrapped{Msg: "fido2", Err: ErrAssertionOptionsRequired}
 	}
 
 	// Accept the wrapped CredentialAssertion ({"publicKey": {...}}) first; if the
@@ -262,22 +263,22 @@ func parseRequestOptions(optionsJSON []byte, origin string) (WebAuthnAuthenticat
 	// which we then decode directly.
 	var wrapped protocol.CredentialAssertion
 	if err := json.Unmarshal(optionsJSON, &wrapped); err != nil {
-		return WebAuthnAuthenticationOptions{}, fmt.Errorf("fido2: failed to parse assertion options: %w", err)
+		return WebAuthnAuthenticationOptions{}, &errs.Wrapped{Msg: "fido2: failed to parse assertion options", Err: err}
 	}
 
 	reqOpts := wrapped.Response
 	if len(reqOpts.Challenge) == 0 {
 		// No publicKey wrapper present — decode the bare request options.
 		if err := json.Unmarshal(optionsJSON, &reqOpts); err != nil {
-			return WebAuthnAuthenticationOptions{}, fmt.Errorf("fido2: failed to parse assertion options: %w", err)
+			return WebAuthnAuthenticationOptions{}, &errs.Wrapped{Msg: "fido2: failed to parse assertion options", Err: err}
 		}
 	}
 
 	if len(reqOpts.Challenge) == 0 {
-		return WebAuthnAuthenticationOptions{}, fmt.Errorf("fido2: %w", ErrAssertionChallengeMissing)
+		return WebAuthnAuthenticationOptions{}, &errs.Wrapped{Msg: "fido2", Err: ErrAssertionChallengeMissing}
 	}
 	if reqOpts.RelyingPartyID == "" {
-		return WebAuthnAuthenticationOptions{}, fmt.Errorf("fido2: %w", ErrAssertionRPIDMissing)
+		return WebAuthnAuthenticationOptions{}, &errs.Wrapped{Msg: "fido2", Err: ErrAssertionRPIDMissing}
 	}
 
 	resolvedOrigin := origin

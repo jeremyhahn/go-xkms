@@ -29,6 +29,8 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // AndroidKeyAttestationOID is the OID for the Android Key Attestation extension.
@@ -288,10 +290,10 @@ func ParseKeyAttestation(cert *x509.Certificate) (*KeyDescription, error) {
 	var raw keyDescriptionASN1
 	rest, err := asn1.Unmarshal(extValue, &raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrExtensionParseFailed, err)
+		return nil, &errs.Detail{Err: ErrExtensionParseFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	if len(rest) > 0 {
-		return nil, fmt.Errorf("%w: trailing data after KeyDescription", ErrExtensionParseFailed)
+		return nil, &errs.Detail{Err: ErrExtensionParseFailed, Detail: "trailing data after KeyDescription"}
 	}
 
 	desc := &KeyDescription{
@@ -410,7 +412,7 @@ func VerifyKeyAttestation(chain []*x509.Certificate, opts *VerifyOptions) (*KeyD
 	// Verify the certificate chain against trusted roots if provided
 	if opts.TrustedRoots != nil {
 		if err := verifyCertificateChain(chain, opts.TrustedRoots); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrChainVerificationFailed, err)
+			return nil, &errs.Detail{Err: ErrChainVerificationFailed, Detail: fmt.Sprintf("%v", err)}
 		}
 	}
 
@@ -431,10 +433,7 @@ func VerifyKeyAttestation(chain []*x509.Certificate, opts *VerifyOptions) (*KeyD
 
 	// Verify the security level meets the minimum requirement
 	if desc.AttestationSecurityLevel < opts.MinSecurityLevel {
-		return nil, fmt.Errorf("%w: got %s, require %s",
-			ErrInsufficientSecurityLevel,
-			desc.AttestationSecurityLevel,
-			opts.MinSecurityLevel)
+		return nil, &errs.Detail{Err: ErrInsufficientSecurityLevel, Detail: fmt.Sprintf("got %s, require %s", desc.AttestationSecurityLevel, opts.MinSecurityLevel)}
 	}
 
 	// Verify boot state if requested
@@ -496,7 +495,7 @@ func BuildMinimalAttestationExtension(
 		Bytes:      []byte{},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("android: failed to marshal empty authorization list: %w", err)
+		return nil, &errs.Wrapped{Msg: "android: failed to marshal empty authorization list", Err: err}
 	}
 
 	// Workaround: build the KeyDescription manually since the encoding
@@ -504,32 +503,32 @@ func BuildMinimalAttestationExtension(
 	// We marshal each field individually and concatenate.
 	versionBytes, err := asn1.Marshal(version)
 	if err != nil {
-		return nil, fmt.Errorf("android: failed to marshal version: %w", err)
+		return nil, &errs.Wrapped{Msg: "android: failed to marshal version", Err: err}
 	}
 
 	attestSecBytes, err := asn1.Marshal(asn1.Enumerated(attestSecLevel))
 	if err != nil {
-		return nil, fmt.Errorf("android: failed to marshal attestation security level: %w", err)
+		return nil, &errs.Wrapped{Msg: "android: failed to marshal attestation security level", Err: err}
 	}
 
 	kmVersionBytes, err := asn1.Marshal(kmVersion)
 	if err != nil {
-		return nil, fmt.Errorf("android: failed to marshal keymaster version: %w", err)
+		return nil, &errs.Wrapped{Msg: "android: failed to marshal keymaster version", Err: err}
 	}
 
 	kmSecBytes, err := asn1.Marshal(asn1.Enumerated(kmSecLevel))
 	if err != nil {
-		return nil, fmt.Errorf("android: failed to marshal keymaster security level: %w", err)
+		return nil, &errs.Wrapped{Msg: "android: failed to marshal keymaster security level", Err: err}
 	}
 
 	challengeBytes, err := asn1.Marshal(challenge)
 	if err != nil {
-		return nil, fmt.Errorf("android: failed to marshal challenge: %w", err)
+		return nil, &errs.Wrapped{Msg: "android: failed to marshal challenge", Err: err}
 	}
 
 	uniqueIDBytes, err := asn1.Marshal(uniqueID)
 	if err != nil {
-		return nil, fmt.Errorf("android: failed to marshal unique ID: %w", err)
+		return nil, &errs.Wrapped{Msg: "android: failed to marshal unique ID", Err: err}
 	}
 
 	// Concatenate all fields into the SEQUENCE content
@@ -551,7 +550,7 @@ func BuildMinimalAttestationExtension(
 		Bytes:      seqContent.Bytes(),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("android: failed to marshal KeyDescription sequence: %w", err)
+		return nil, &errs.Wrapped{Msg: "android: failed to marshal KeyDescription sequence", Err: err}
 	}
 
 	return result, nil

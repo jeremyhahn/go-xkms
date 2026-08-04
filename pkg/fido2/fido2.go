@@ -19,6 +19,8 @@ import (
 	"io"
 	"log"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // Handler provides high-level FIDO2 operations
@@ -64,11 +66,11 @@ func NewHandler(config *Config, enumerator HIDDeviceEnumerator) (*FIDO2Handler, 
 	}
 
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid configuration", Err: err}
 	}
 
 	if enumerator == nil {
-		return nil, fmt.Errorf("HID device enumerator required")
+		return nil, &errs.Message{Msg: "HID device enumerator required"}
 	}
 
 	return &FIDO2Handler{
@@ -109,7 +111,7 @@ func (h *FIDO2Handler) EnrollKey(config *EnrollmentConfig) (*EnrollmentResult, e
 		if closeErr := device.Close(); closeErr != nil {
 			log.Printf("failed to close device after CTAP init error: %v", closeErr)
 		}
-		return nil, fmt.Errorf("failed to initialize CTAP device: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to initialize CTAP device", Err: err}
 	}
 	defer func() {
 		if err := ctapDev.Close(); err != nil {
@@ -120,12 +122,12 @@ func (h *FIDO2Handler) EnrollKey(config *EnrollmentConfig) (*EnrollmentResult, e
 	// Create authenticator
 	auth, err := NewAuthenticator(ctapDev, h.config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create authenticator: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create authenticator", Err: err}
 	}
 
 	// Check for hmac-secret support
 	if !auth.SupportsHMACSecret() {
-		return nil, fmt.Errorf("device does not support hmac-secret extension")
+		return nil, &errs.Message{Msg: "device does not support hmac-secret extension"}
 	}
 
 	// Create HMAC-secret extension handler
@@ -145,7 +147,7 @@ func (h *FIDO2Handler) EnrollKey(config *EnrollmentConfig) (*EnrollmentResult, e
 	h.logger.Printf("Please touch your security key...")
 	result, err := hmacExt.EnrollCredential(config)
 	if err != nil {
-		return nil, fmt.Errorf("enrollment failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "enrollment failed", Err: err}
 	}
 
 	result.Created = time.Now()
@@ -166,7 +168,7 @@ func (h *FIDO2Handler) UnlockWithKey(config *AuthenticationConfig) ([]byte, erro
 		if closeErr := device.Close(); closeErr != nil {
 			log.Printf("failed to close device after CTAP init error: %v", closeErr)
 		}
-		return nil, fmt.Errorf("failed to initialize CTAP device: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to initialize CTAP device", Err: err}
 	}
 	defer func() {
 		if err := ctapDev.Close(); err != nil {
@@ -177,12 +179,12 @@ func (h *FIDO2Handler) UnlockWithKey(config *AuthenticationConfig) ([]byte, erro
 	// Create authenticator
 	auth, err := NewAuthenticator(ctapDev, h.config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create authenticator: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create authenticator", Err: err}
 	}
 
 	// Check for hmac-secret support
 	if !auth.SupportsHMACSecret() {
-		return nil, fmt.Errorf("device does not support hmac-secret extension")
+		return nil, &errs.Message{Msg: "device does not support hmac-secret extension"}
 	}
 
 	// Create HMAC-secret extension handler
@@ -221,17 +223,17 @@ func (h *FIDO2Handler) UnlockWithKey(config *AuthenticationConfig) ([]byte, erro
 		// Generate derived key from HMAC secret
 		derivedKey, err := GenerateDerivedKey(result.HMACSecret)
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate derived key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to generate derived key", Err: err}
 		}
 
 		return derivedKey, nil
 	}
 
 	if lastErr != nil {
-		return nil, fmt.Errorf("unlock failed after %d attempts: %w", h.config.RetryCount, lastErr)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("unlock failed after %d attempts", h.config.RetryCount), Err: lastErr}
 	}
 
-	return nil, fmt.Errorf("unlock failed after %d attempts", h.config.RetryCount)
+	return nil, &errs.Message{Msg: fmt.Sprintf("unlock failed after %d attempts", h.config.RetryCount)}
 }
 
 // ListDevices returns available FIDO2 devices
@@ -239,7 +241,7 @@ func (h *FIDO2Handler) ListDevices() ([]Device, error) {
 	// Enumerate all FIDO2 devices (vendor ID 0, product ID 0 means all)
 	hidDevices, err := h.enumerator.Enumerate(0, 0)
 	if err != nil {
-		return nil, fmt.Errorf("failed to enumerate devices: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to enumerate devices", Err: err}
 	}
 
 	var devices []Device
@@ -291,7 +293,7 @@ func (h *FIDO2Handler) selectDevice() (HIDDevice, error) {
 	if h.config.DevicePath != "" {
 		device, err := h.enumerator.Open(h.config.DevicePath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open configured device %s: %w", h.config.DevicePath, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to open configured device %s", h.config.DevicePath), Err: err}
 		}
 		return device, nil
 	}
@@ -299,7 +301,7 @@ func (h *FIDO2Handler) selectDevice() (HIDDevice, error) {
 	// Enumerate devices
 	hidDevices, err := h.enumerator.Enumerate(0, 0)
 	if err != nil {
-		return nil, fmt.Errorf("failed to enumerate devices: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to enumerate devices", Err: err}
 	}
 
 	if len(hidDevices) == 0 {

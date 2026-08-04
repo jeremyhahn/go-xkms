@@ -27,6 +27,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
@@ -95,11 +97,11 @@ func (t *Transport) Connect(ctx context.Context) error {
 
 	usb, err := phone.NewUSBTransport(usbCfg)
 	if err != nil {
-		return fmt.Errorf("%w: %v", transport.ErrConnectionFailed, err)
+		return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	if err := usb.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", transport.ErrConnectionFailed, err)
+		return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	t.phoneUSB = usb
@@ -141,20 +143,20 @@ func (t *Transport) Request(ctx context.Context, method string, req, resp interf
 	// Marshal request to JSON-RPC format.
 	reqBytes, err := json.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("%w: failed to marshal request: %v", transport.ErrInvalidRequest, err)
+		return &errs.Detail{Err: transport.ErrInvalidRequest, Detail: fmt.Sprintf("failed to marshal request: %v", err)}
 	}
 
 	// Send and receive over USB transport.
 	respBytes, err := t.phoneUSB.SendAndReceive(ctx, reqBytes)
 	if err != nil {
 		t.connected = false
-		return fmt.Errorf("%w: %v", transport.ErrConnectionFailed, err)
+		return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Unmarshal response.
 	if resp != nil {
 		if err := json.Unmarshal(respBytes, resp); err != nil {
-			return fmt.Errorf("%w: failed to unmarshal response: %v", transport.ErrInvalidResponse, err)
+			return &errs.Detail{Err: transport.ErrInvalidResponse, Detail: fmt.Sprintf("failed to unmarshal response: %v", err)}
 		}
 	}
 

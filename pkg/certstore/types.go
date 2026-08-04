@@ -123,7 +123,7 @@ type ChainInfo struct {
 // =============================================================================
 
 // Well-known OID definitions for certificate extension display.
-// Exported for use by dependent packages (e.g., go-trusted-ca).
+// Exported for use by dependent packages (e.g., pkg/ca).
 var (
 	// OIDTCGBase is the TCG Base OID: 2.23.133
 	OIDTCGBase = asn1.ObjectIdentifier{2, 23, 133}

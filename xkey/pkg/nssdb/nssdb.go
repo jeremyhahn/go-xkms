@@ -162,10 +162,10 @@ type Writer struct {
 func NewWriter(nssdbDir string) (*Writer, error) {
 	info, err := os.Stat(nssdbDir)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrDirNotExist, nssdbDir)
+		return nil, &DetailError{Err: ErrDirNotExist, Detail: fmt.Sprintf(": %s", nssdbDir)}
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("%w: %s is not a directory", ErrDirNotExist, nssdbDir)
+		return nil, &DetailError{Err: ErrDirNotExist, Detail: fmt.Sprintf(": %s is not a directory", nssdbDir)}
 	}
 
 	certDBPath := filepath.Join(nssdbDir, cert9DBFile)
@@ -173,13 +173,13 @@ func NewWriter(nssdbDir string) (*Writer, error) {
 
 	certDB, err := sql.Open("sqlite", certDBPath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: cert9.db: %s", ErrOpenDatabase, err)
+		return nil, &DetailError{Err: ErrOpenDatabase, Detail: fmt.Sprintf(": cert9.db: %s", err)}
 	}
 
 	keyDB, err := sql.Open("sqlite", keyDBPath)
 	if err != nil {
 		_ = certDB.Close()
-		return nil, fmt.Errorf("%w: key4.db: %s", ErrOpenDatabase, err)
+		return nil, &DetailError{Err: ErrOpenDatabase, Detail: fmt.Sprintf(": key4.db: %s", err)}
 	}
 
 	// Enable WAL mode for better concurrent read performance.
@@ -187,20 +187,20 @@ func NewWriter(nssdbDir string) (*Writer, error) {
 		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 			_ = certDB.Close()
 			_ = keyDB.Close()
-			return nil, fmt.Errorf("%w: %s", ErrCreateSchema, err)
+			return nil, &DetailError{Err: ErrCreateSchema, Detail: fmt.Sprintf(": %s", err)}
 		}
 	}
 
 	if _, err := certDB.Exec(cert9Schema); err != nil {
 		_ = certDB.Close()
 		_ = keyDB.Close()
-		return nil, fmt.Errorf("%w: cert9.db: %s", ErrCreateSchema, err)
+		return nil, &DetailError{Err: ErrCreateSchema, Detail: fmt.Sprintf(": cert9.db: %s", err)}
 	}
 
 	if _, err := keyDB.Exec(key4Schema); err != nil {
 		_ = certDB.Close()
 		_ = keyDB.Close()
-		return nil, fmt.Errorf("%w: key4.db: %s", ErrCreateSchema, err)
+		return nil, &DetailError{Err: ErrCreateSchema, Detail: fmt.Sprintf(": key4.db: %s", err)}
 	}
 
 	w := &Writer{
@@ -236,7 +236,7 @@ func (w *Writer) AddTrustedCA(cert *x509.Certificate, label string) error {
 
 	serialDER, err := marshalSerial(cert.SerialNumber)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrSerialEncode, err)
+		return &DetailError{Err: ErrSerialEncode, Detail: fmt.Sprintf(": %s", err)}
 	}
 
 	baseID := generateObjectID()
@@ -249,17 +249,17 @@ func (w *Writer) AddTrustedCA(cert *x509.Certificate, label string) error {
 
 	// Insert certificate object into cert9.db.
 	if err := w.insertObject(w.certDB, "nssPublic", certID, certAttrs); err != nil {
-		return fmt.Errorf("%w: %s", ErrInsertCertificate, err)
+		return &DetailError{Err: ErrInsertCertificate, Detail: fmt.Sprintf(": %s", err)}
 	}
 
 	// Insert trust object into cert9.db.
 	if err := w.insertObject(w.certDB, "nssPublic", trustID, trustAttrs); err != nil {
-		return fmt.Errorf("%w: %s", ErrInsertTrust, err)
+		return &DetailError{Err: ErrInsertTrust, Detail: fmt.Sprintf(": %s", err)}
 	}
 
 	// Write PBMAC1 signatures for trust object attributes into key4.db.
 	if err := w.writeTrustSignatures(trustID, trustAttrs); err != nil {
-		return fmt.Errorf("%w: %s", ErrSignatureInsert, err)
+		return &DetailError{Err: ErrSignatureInsert, Detail: fmt.Sprintf(": %s", err)}
 	}
 
 	return nil
@@ -296,7 +296,7 @@ func (w *Writer) RemoveByPrefix(prefix string) error {
 		prefix+"%",
 	)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrRemoveCertificate, err)
+		return &DetailError{Err: ErrRemoveCertificate, Detail: fmt.Sprintf(": %s", err)}
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -309,12 +309,12 @@ func (w *Writer) RemoveByPrefix(prefix string) error {
 	for rows.Next() {
 		var c certRef
 		if err := rows.Scan(&c.id, &c.issuer, &c.serial); err != nil {
-			return fmt.Errorf("%w: %s", ErrRemoveCertificate, err)
+			return &DetailError{Err: ErrRemoveCertificate, Detail: fmt.Sprintf(": %s", err)}
 		}
 		certs = append(certs, c)
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("%w: %s", ErrRemoveCertificate, err)
+		return &DetailError{Err: ErrRemoveCertificate, Detail: fmt.Sprintf(": %s", err)}
 	}
 
 	if len(certs) == 0 {
@@ -331,19 +331,19 @@ func (w *Writer) RemoveByPrefix(prefix string) error {
 			"CE534353", c.issuer, c.serial,
 		)
 		if err != nil {
-			return fmt.Errorf("%w: %s", ErrRemoveTrust, err)
+			return &DetailError{Err: ErrRemoveTrust, Detail: fmt.Sprintf(": %s", err)}
 		}
 		for tRows.Next() {
 			var id int64
 			if err := tRows.Scan(&id); err != nil {
 				_ = tRows.Close()
-				return fmt.Errorf("%w: %s", ErrRemoveTrust, err)
+				return &DetailError{Err: ErrRemoveTrust, Detail: fmt.Sprintf(": %s", err)}
 			}
 			trustIDs = append(trustIDs, id)
 		}
 		if err := tRows.Err(); err != nil {
 			_ = tRows.Close()
-			return fmt.Errorf("%w: %s", ErrRemoveTrust, err)
+			return &DetailError{Err: ErrRemoveTrust, Detail: fmt.Sprintf(": %s", err)}
 		}
 		_ = tRows.Close()
 	}
@@ -364,14 +364,14 @@ func (w *Writer) RemoveByPrefix(prefix string) error {
 	}
 	query := "DELETE FROM nssPublic WHERE id IN (" + strings.Join(placeholders, ",") + ")"
 	if _, err := w.certDB.Exec(query, args...); err != nil {
-		return fmt.Errorf("%w: %s", ErrRemoveCertificate, err)
+		return &DetailError{Err: ErrRemoveCertificate, Detail: fmt.Sprintf(": %s", err)}
 	}
 
 	// Drop HMAC signatures for every removed object.
 	for _, id := range allIDs {
 		sigPrefix := fmt.Sprintf("sig_cert_%x_%%", id)
 		if _, err := w.keyDB.Exec("DELETE FROM metaData WHERE id LIKE ?", sigPrefix); err != nil {
-			return fmt.Errorf("%w: %s", ErrRemoveTrust, err)
+			return &DetailError{Err: ErrRemoveTrust, Detail: fmt.Sprintf(": %s", err)}
 		}
 	}
 
@@ -393,7 +393,7 @@ func (w *Writer) Close() error {
 		errs = append(errs, "key4.db: "+err.Error())
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("%w: %s", ErrCloseDatabase, strings.Join(errs, "; "))
+		return &DetailError{Err: ErrCloseDatabase, Detail: fmt.Sprintf(": %s", strings.Join(errs, "; "))}
 	}
 	return nil
 }
@@ -403,13 +403,13 @@ func (w *Writer) Close() error {
 // directory; the schema uses IF NOT EXISTS.
 func InitDir(nssdbDir string) error {
 	if err := os.MkdirAll(nssdbDir, dirPerm); err != nil {
-		return fmt.Errorf("%w: %s", ErrInitDir, err)
+		return &DetailError{Err: ErrInitDir, Detail: fmt.Sprintf(": %s", err)}
 	}
 
 	// Write pkcs11.txt.
 	p11Path := filepath.Join(nssdbDir, pkcs11TxtFile)
 	if err := os.WriteFile(p11Path, []byte(pkcs11TxtContent), filePerm); err != nil {
-		return fmt.Errorf("%w: %s", ErrWritePKCS11Txt, err)
+		return &DetailError{Err: ErrWritePKCS11Txt, Detail: fmt.Sprintf(": %s", err)}
 	}
 
 	// Open and close a Writer to create the schema and password entry.
@@ -551,14 +551,14 @@ func (w *Writer) ensurePassword() error {
 	// Generate a new password entry for empty password.
 	globalSalt := make([]byte, 20)
 	if _, err := rand.Read(globalSalt); err != nil {
-		return fmt.Errorf("%w: %s", ErrPasswordInit, err)
+		return &DetailError{Err: ErrPasswordInit, Detail: fmt.Sprintf(": %s", err)}
 	}
 
 	w.intermediateKey = deriveIntermediateKey(globalSalt)
 
 	item2, err := buildPBES2PasswordEntry(w.intermediateKey)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrPasswordInit, err)
+		return &DetailError{Err: ErrPasswordInit, Detail: fmt.Sprintf(": %s", err)}
 	}
 
 	_, err = w.keyDB.Exec(
@@ -566,7 +566,7 @@ func (w *Writer) ensurePassword() error {
 		"password", globalSalt, item2,
 	)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrPasswordInit, err)
+		return &DetailError{Err: ErrPasswordInit, Detail: fmt.Sprintf(": %s", err)}
 	}
 
 	return nil
@@ -710,12 +710,12 @@ func encodeSignatureData(objectID, attrType uint32, attrValue []byte) []byte {
 // "ace536358" = 0xCE536358).
 func parseAttrHex(name string) (uint32, error) {
 	if len(name) < 2 || name[0] != 'a' {
-		return 0, fmt.Errorf("invalid attribute name: %s", name)
+		return 0, &MessageError{Msg: fmt.Sprintf("invalid attribute name: %s", name)}
 	}
 	hexStr := name[1:]
 	val, err := strconv.ParseUint(hexStr, 16, 32)
 	if err != nil {
-		return 0, fmt.Errorf("invalid hex in attribute name %s: %w", name, err)
+		return 0, &WrappedError{Msg: fmt.Sprintf("invalid hex in attribute name %s", name), Err: err}
 	}
 	return uint32(val), nil
 }
@@ -796,7 +796,7 @@ func marshalPBES2(salt, iv, ciphertext []byte) ([]byte, error) {
 	}
 	b, err := asn1.Marshal(p)
 	if err != nil {
-		return nil, fmt.Errorf("%w: PBES2: %s", ErrASN1Marshal, err)
+		return nil, &DetailError{Err: ErrASN1Marshal, Detail: fmt.Sprintf(": PBES2: %s", err)}
 	}
 	return b, nil
 }
@@ -843,7 +843,7 @@ func marshalPBMAC1(salt, hmacValue []byte) ([]byte, error) {
 	}
 	b, err := asn1.Marshal(p)
 	if err != nil {
-		return nil, fmt.Errorf("%w: PBMAC1: %s", ErrASN1Marshal, err)
+		return nil, &DetailError{Err: ErrASN1Marshal, Detail: fmt.Sprintf(": PBMAC1: %s", err)}
 	}
 	return b, nil
 }

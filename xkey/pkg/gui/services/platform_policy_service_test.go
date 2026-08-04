@@ -15,9 +15,10 @@ package services
 
 import (
 	"context"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"path/filepath"
 	"testing"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

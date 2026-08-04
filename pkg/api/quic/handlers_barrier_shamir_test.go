@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	quicraftShamir "github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -49,7 +50,7 @@ type testCaptureDistributor struct {
 func (c *testCaptureDistributor) SealAndDistribute(_ context.Context, secret []byte, threshold, total int) (int, error) {
 	raw, err := quicraftShamir.Split(secret, threshold, total)
 	if err != nil {
-		return 0, fmt.Errorf("shamir split failed: %w", err)
+		return 0, &errs.Wrapped{Msg: "shamir split failed", Err: err}
 	}
 	c.mu.Lock()
 	c.shares = make([]string, len(raw))

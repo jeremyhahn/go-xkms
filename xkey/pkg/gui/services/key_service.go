@@ -24,7 +24,7 @@ import (
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/jeremyhahn/go-xkms/sdk/go"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
@@ -368,6 +368,20 @@ func (s *KeyService) ListAllKeys(source string) ([]RemoteKeyInfo, error) {
 		all = append(all, keys...)
 	}
 	return all, nil
+}
+
+// KeyCountForBackend returns the number of keys stored on the given local
+// backend. It satisfies the AdminService BackendKeyLister interface; list
+// failures degrade to a zero count so backend cards render gracefully.
+func (s *KeyService) KeyCountForBackend(backendID string) int {
+	keys, err := s.ListKeys("local", backendID)
+	if err != nil {
+		s.log.Debug("key count unavailable for backend",
+			"backend", backendID,
+			"error", err)
+		return 0
+	}
+	return len(keys)
 }
 
 // GetKey returns information about a specific key.

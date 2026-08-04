@@ -128,6 +128,18 @@ func (m *mockCustodianClient) TenantBarrierUnseal(ctx context.Context, req *tran
 	return nil
 }
 
+func (m *mockCustodianClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCustodianClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCustodianClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return nil, nil
+}
+
 // newTestCustodianConfig creates a Config wired to the given mock client.
 func newTestCustodianConfig(mock *mockCustodianClient) *Config {
 	return &Config{

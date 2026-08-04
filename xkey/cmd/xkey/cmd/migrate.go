@@ -157,7 +157,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	// Get current container size
 	currentSize, err := getFileSize(sourceVol.LUKSPath)
 	if err != nil {
-		return &MigrateError{Operation: "get_size", Err: fmt.Errorf("failed to get container size: %w", err)}
+		return &MigrateError{Operation: "get_size", Err: &WrappedError{Msg: "failed to get container size", Err: err}}
 	}
 
 	// Determine new size
@@ -165,7 +165,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	if migrateSize != "" {
 		newSize, err = parseSize(migrateSize)
 		if err != nil {
-			return &MigrateError{Operation: "parse_size", Err: fmt.Errorf("invalid size: %w", err)}
+			return &MigrateError{Operation: "parse_size", Err: &WrappedError{Msg: "invalid size", Err: err}}
 		}
 	} else {
 		newSize = currentSize * 2
@@ -195,7 +195,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	// Rename current container to .old
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Renaming current container to backup...")
 	if err := os.Rename(sourceVol.LUKSPath, oldPath); err != nil {
-		return &MigrateError{Operation: "rename", Err: fmt.Errorf("%w: %v", ErrMigrateRenameFailed, err)}
+		return &MigrateError{Operation: "rename", Err: &SentinelCauseError{Sentinel: ErrMigrateRenameFailed, Cause: err}}
 	}
 
 	// Create old volume reference for unlocking
@@ -212,7 +212,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		if restoreErr != nil {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
 		}
-		return &MigrateError{Operation: "create", Err: fmt.Errorf("%w: %v", ErrMigrateCreateFailed, err)}
+		return &MigrateError{Operation: "create", Err: &SentinelCauseError{Sentinel: ErrMigrateCreateFailed, Cause: err}}
 	}
 
 	// Unlock both containers
@@ -225,7 +225,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		if restoreErr != nil {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
 		}
-		return &MigrateError{Operation: "create_temp_mount", Err: fmt.Errorf("failed to create temp mount: %w", err)}
+		return &MigrateError{Operation: "create_temp_mount", Err: &WrappedError{Msg: "failed to create temp mount", Err: err}}
 	}
 	defer func() { _ = os.RemoveAll(oldMount) }()
 
@@ -235,7 +235,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		if restoreErr != nil {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
 		}
-		return &MigrateError{Operation: "create_temp_mount", Err: fmt.Errorf("failed to create temp mount: %w", err)}
+		return &MigrateError{Operation: "create_temp_mount", Err: &WrappedError{Msg: "failed to create temp mount", Err: err}}
 	}
 	defer func() { _ = os.RemoveAll(newMount) }()
 
@@ -249,7 +249,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		if restoreErr != nil {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
 		}
-		return &MigrateError{Operation: "unlock_old", Err: fmt.Errorf("%w: %v", ErrMigrateSourceLocked, err)}
+		return &MigrateError{Operation: "unlock_old", Err: &SentinelCauseError{Sentinel: ErrMigrateSourceLocked, Cause: err}}
 	}
 
 	// Unlock new container
@@ -262,7 +262,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		if restoreErr != nil {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
 		}
-		return &MigrateError{Operation: "unlock_new", Err: fmt.Errorf("failed to unlock new container: %w", err)}
+		return &MigrateError{Operation: "unlock_new", Err: &WrappedError{Msg: "failed to unlock new container", Err: err}}
 	}
 
 	// Copy data
@@ -284,7 +284,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		if restoreErr != nil {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not restore original container: %v\n", restoreErr)
 		}
-		return &MigrateError{Operation: "copy_data", Err: fmt.Errorf("%w: %v", ErrMigrateDataCopyFailed, err)}
+		return &MigrateError{Operation: "copy_data", Err: &SentinelCauseError{Sentinel: ErrMigrateDataCopyFailed, Cause: err}}
 	}
 
 	// Lock both containers
@@ -350,7 +350,7 @@ func readMigratePassphrasesFromTerminal(out io.Writer) (string, string, error) {
 	oldPassphrase, err := term.ReadPassword(int(os.Stdin.Fd()))
 	_, _ = fmt.Fprintln(out)
 	if err != nil {
-		return "", "", &MigrateError{Operation: "read_passphrase", Err: fmt.Errorf("%w: %v", ErrMigratePassphraseRead, err)}
+		return "", "", &MigrateError{Operation: "read_passphrase", Err: &SentinelCauseError{Sentinel: ErrMigratePassphraseRead, Cause: err}}
 	}
 
 	// Read passphrase for new container
@@ -358,7 +358,7 @@ func readMigratePassphrasesFromTerminal(out io.Writer) (string, string, error) {
 	newPassphrase, err := term.ReadPassword(int(os.Stdin.Fd()))
 	_, _ = fmt.Fprintln(out)
 	if err != nil {
-		return "", "", &MigrateError{Operation: "read_passphrase", Err: fmt.Errorf("%w: %v", ErrMigratePassphraseRead, err)}
+		return "", "", &MigrateError{Operation: "read_passphrase", Err: &SentinelCauseError{Sentinel: ErrMigratePassphraseRead, Cause: err}}
 	}
 
 	if len(newPassphrase) == 0 {
@@ -369,7 +369,7 @@ func readMigratePassphrasesFromTerminal(out io.Writer) (string, string, error) {
 		confirmPassphrase, err := term.ReadPassword(int(os.Stdin.Fd()))
 		_, _ = fmt.Fprintln(out)
 		if err != nil {
-			return "", "", &MigrateError{Operation: "read_passphrase", Err: fmt.Errorf("%w: %v", ErrMigratePassphraseRead, err)}
+			return "", "", &MigrateError{Operation: "read_passphrase", Err: &SentinelCauseError{Sentinel: ErrMigratePassphraseRead, Cause: err}}
 		}
 		if string(newPassphrase) != string(confirmPassphrase) {
 			return "", "", luks.ErrPassphraseMismatch

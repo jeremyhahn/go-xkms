@@ -16,6 +16,27 @@ and run against `vite dev`, the tests here assume:
 
 ## Running
 
+### Why you must use `dev-browser-e2e`, not `dev-browser`
+
+The xkey GUI resolves its bootstrap config through `os.UserConfigDir()` (on
+Linux: `$XDG_CONFIG_HOME`, defaulting to `~/.config`) to find
+`~/.config/xkey/gui.json`. This path is **outside** `XKEY_HOME`.
+
+Running `make dev-browser` with only `XKEY_HOME` overridden still reads and
+writes the developer's real `~/.config/xkey/gui.json`. If that file contains
+`setup_complete=true` while the sandbox `XKEY_HOME` has no PINs, the app boots
+into an App-Locked screen that no PIN can unlock — a corrupt, developer-data-
+mutating state.
+
+`make dev-browser-e2e` sets **both** `XKEY_HOME` and `XDG_CONFIG_HOME` to
+isolated sandbox directories (`/tmp/xkey-e2e-home` and `/tmp/xkey-e2e-config`)
+so neither your data directory nor your config file is ever touched.
+
+Use `make dev-browser-e2e-clean` to wipe the sandbox before a run that needs
+the first-run wizard (e.g. global-setup initialisation tests).
+
+### Steps
+
 From the repo root:
 
 ```shell
@@ -29,8 +50,11 @@ export LIVE_XKMS_NOISE_ADDR=localhost:18445
 export LIVE_XKMS_NOISE_KEY=<noise key from dev-server-info>
 export LIVE_XKMS_CA_PEM=/tmp/xkms-dev-ca.crt
 
-# Terminal 2: start xkey in Wails dev mode.
-cd xkey && make dev
+# Terminal 2: reset the e2e sandbox so the app boots into the wizard.
+cd xkey && make dev-browser-e2e-clean
+
+# Terminal 2 (continued): start xkey in hermetic browser mode.
+make dev-browser-e2e
 
 # Terminal 3: run the live Playwright tests.
 cd xkey/frontend

@@ -58,6 +58,12 @@ var (
 	// ErrAuthVerifyFailed indicates that auth verification failed on the SRK
 	ErrAuthVerifyFailed = errors.New("tpm2: auth verification failed")
 
+	// ErrAuthProbeFailed indicates that the SRK auth probe failed for a reason
+	// OTHER than a wrong PIN (e.g. a malformed probe surfacing as
+	// TPM_RC_ATTRIBUTES, a missing handle, or a transport fault). It must not be
+	// treated as an invalid-PIN signal.
+	ErrAuthProbeFailed = errors.New("tpm2: auth probe failed (not an auth failure)")
+
 	// ErrAuthChangeFailed indicates that changing the auth value failed
 	ErrAuthChangeFailed = errors.New("tpm2: auth change failed")
 

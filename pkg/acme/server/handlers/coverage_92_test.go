@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -30,6 +30,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/gorilla/mux"
@@ -73,7 +75,7 @@ func TestMapDAONotFound_AllEntityTypes(t *testing.T) {
 }
 
 func TestMapDAONotFound_NonDAOError(t *testing.T) {
-	result := MapDAONotFound(fmt.Errorf("some other error"), "account")
+	result := MapDAONotFound(&errs.Message{Msg: "some other error"}, "account")
 	assert.Nil(t, result, "non-DAO errors should return nil")
 }
 
@@ -1403,7 +1405,7 @@ func TestChallengeHandler_GenericValidationFailure_92(t *testing.T) {
 
 	// Register a challenge verifier that fails
 	service.challengeMap["http-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
-		return fmt.Errorf("connection refused")
+		return &errs.Message{Msg: "connection refused"}
 	}
 
 	// Create order

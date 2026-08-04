@@ -339,6 +339,133 @@ if err != nil {
 }
 ```
 
+## Platform SRK PIN Enrollment and Auth
+
+The Platform SRK (`tpSRKIndex = 0x81000002`, overridable via
+`config.PlatformSRK.SRKHandle`) is the sole object whose authorization value
+serves as the user PIN. Every PIN verification call reaches the TPM through
+this handle.
+
+### First-Boot Enrollment
+
+`PlatformKeyStore.EnrollPlatformSRK(userPIN string) error` performs a
+deliberate one-shot enrollment that binds the operator-supplied PIN as the
+SRK's authorization value. After this call the TPM2 PIN backend works
+end-to-end on every subsequent boot.
+
+```go
+// Call on every boot; ErrPlatformSRKAlreadyEnrolled is a safe no-op sentinel.
+err := platformKeyStore.EnrollPlatformSRK(userPIN)
+if errors.Is(err, tpm2.ErrPlatformSRKAlreadyEnrolled) {
+    // auth already bound; proceed normally
+} else if err != nil {
+    return fmt.Errorf("SRK enrollment: %w", err)
+}
+```
+
+| Condition | Result |
+|-----------|--------|
+| `IsAuthReady() == true` | Returns `ErrPlatformSRKAlreadyEnrolled` (idempotent; treat as a no-op) |
+| `userPIN == ""` | Returns `ErrPlatformSRKEnrollEmptyPIN` |
+| Success | Creates the SRK with `userPIN` as auth value; marks `authReady` |
+
+### Initialization vs Auth-Ready State
+
+Two predicates govern SRK state. Using the wrong one is a common source of
+spurious "backend not ready" failures on clean-install machines where a
+previous TPM owner left an SRK with unknown auth.
+
+| Predicate | Meaning |
+|-----------|---------|
+| `IsInitialized()` | The SRK object exists in the TPM. May be `true` even when the SRK was created by a prior owner with unknown auth. Insufficient alone for activating the TPM2 PIN backend. |
+| `IsAuthReady()` | The SRK's auth value is known-good — set by this application or confirmed via `VerifyAuth`. This is the correct gate for selecting the TPM2 PIN backend. |
+
+`SetAuthReady(bool)` restores a previously confirmed auth-ready state from
+persisted configuration (e.g. `PINStrategy == "tpm2"`) without re-running the
+full enrollment on every boot.
+
+Boot lifecycle:
+
+1. **First boot**: `EnrollPlatformSRK(userPIN)` — SRK created with `userPIN`,
+   `authReady` set.
+2. **Subsequent boots**: `EnrollPlatformSRK` returns
+   `ErrPlatformSRKAlreadyEnrolled` when `authReady`, or the daemon calls
+   `SetAuthReady(true)` after loading a persisted `PINStrategy == "tpm2"`.
+
+### Auth Probe — VerifyAuth
+
+`TPM2.VerifyAuth(handle, authValue)` validates a persistent key's auth by
+issuing a `TPM2_Create` with that key as parent. The TPM evaluates parent auth
+during `Create` before producing the child, so any spec-valid child template
+forces the actual auth check.
+
+**The previous bug**: the probe child was a keyed-hash object with
+`Scheme = Null` and attributes `FixedTPM|FixedParent|UserWithAuth`. This
+template is spec-invalid: the TPM rejected it with `TPM_RC_ATTRIBUTES` before
+auth was ever evaluated. Both correct and incorrect PINs produced the same
+attributes error, masking all PIN verification failures.
+
+**The fix**: use a spec-consistent keyed-hash HMAC(SHA-256) child with
+`SensitiveDataOrigin` set (the TPM generates key material; no caller-supplied
+sensitive data required), plus `UserWithAuth`, `SignEncrypt`, `FixedTPM`,
+`FixedParent`. This template is valid, so the TPM proceeds to evaluate parent
+auth before returning a result.
+
+Result mapping from `TPM2.VerifyAuth`:
+
+| TPM response | Returned error |
+|--------------|----------------|
+| Success (correct auth) | `nil` |
+| `TPM_RC_BAD_AUTH` / `TPM_RC_AUTH_FAIL` / `TPM_RC_LOCKOUT` | `ErrAuthFailed` |
+| Any other rejection (attributes error, transport fault, missing handle) | `ErrAuthProbeRejected` |
+
+`ErrAuthProbeRejected` signals a programming or spec error in the probe itself
+— or a transport fault. It is **never** a wrong-PIN signal and callers must not
+collapse it into `ErrAuthFailed`. Collapsing it is exactly what the previous
+invalid-template bug did: the `TPM_RC_ATTRIBUTES` rejection was indistinguishable
+from an auth failure, hiding the defective probe behind spurious incorrect-PIN
+reports.
+
+`PlatformKeyStore.VerifyAuth(userPIN)` maps the result as follows:
+
+- `nil` → auth confirmed.
+- `ErrAuthFailed` or any TPM auth error (`TPM_RC_BAD_AUTH 0x022`,
+  `TPM_RC_AUTH_FAIL 0x09A`, `TPM_RC_LOCKOUT 0x921`) → `ErrAuthFailed`.
+- Anything else (probe or transport fault) → returned verbatim.
+
+### Dictionary Attack Protection
+
+TPM dictionary-attack (DA) protection throttles PIN guessing by incrementing
+hardware counters on each auth failure and triggering a timed lockout once
+the failure threshold is reached. The mechanism activates only when the object
+whose auth is being checked has its `NoDA` attribute **cleared**.
+
+**Why standard SRK templates break PIN lockout**: TPM SRK templates set
+`NoDA = true` by convention — appropriate for a storage parent that is never
+itself the auth target. When that same template is used for a PIN-verification
+SRK, every failed PIN guess is silently ignored by the DA counter. The lockout
+plumbing exists but brute-force against the PIN is completely unthrottled.
+
+**The fix**: `buildSRKAttrsFromConfig` / `rsaSRKTemplateWithDA` / `enableDAOnSRK`
+clear `NoDA` on the Platform SRK at `0x81000002` only. The seal SSRK at a
+different handle is unaffected and retains `NoDA = true` as appropriate for a
+storage parent. With `NoDA = false`, each wrong PIN increments the TPM DA
+counter; the hardware locks the PIN path once `failedAttempts >= maxFail` and
+requires the lockout recovery interval before accepting further attempts.
+
+Observing and resetting DA state:
+
+```go
+// Query current lockout counters (from TPM fixed properties)
+failed, maxFail, interval, recovery, err := platformKeyStore.GetLockoutInfo()
+
+// Reset after lockout (requires lockout authorization value)
+err = platformKeyStore.DictionaryAttackLockoutReset(lockoutAuth)
+```
+
+`maxFail` and `interval` are set by the TPM manufacturer or platform policy
+and are not configurable from software.
+
 ## Testing
 
 ### Integration Tests
@@ -466,7 +593,9 @@ Session encryption should ONLY be disabled for:
 - TPM provides hardware-backed key isolation
 
 ### Authorization
-- SRK protected by user PIN sealed to TPM
+- Platform SRK (`0x81000002`) authorization value IS the user PIN; each wrong
+  PIN increments the TPM DA counter (see
+  [Platform SRK PIN Enrollment and Auth](#platform-srk-pin-enrollment-and-auth))
 - Hierarchy authorization for administrative operations
 - Session encryption protects data in transit to/from TPM
 

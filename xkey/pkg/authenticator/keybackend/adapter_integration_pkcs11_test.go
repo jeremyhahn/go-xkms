@@ -33,10 +33,26 @@ func init() {
 	})
 }
 
+// softHSMLibPath returns the first SoftHSM2 library path found on this system,
+// or an empty string if SoftHSM2 is not installed.
+func softHSMLibPath() string {
+	candidates := []string{
+		"/usr/lib/softhsm/libsofthsm2.so",                  // Ubuntu apt
+		"/usr/local/lib/softhsm/libsofthsm2.so",            // locally compiled
+		"/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so", // Debian multiarch
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
 // skipIfNoSoftHSM skips the test if SoftHSM is not available.
 func skipIfNoSoftHSM(t *testing.T) {
 	t.Helper()
-	if _, err := os.Stat("/usr/lib/softhsm/libsofthsm2.so"); err != nil {
+	if softHSMLibPath() == "" {
 		t.Skip("SoftHSM not available")
 	}
 }
@@ -44,8 +60,12 @@ func skipIfNoSoftHSM(t *testing.T) {
 // newPKCS11Adapter creates a BackendAdapter backed by a real PKCS#11 backend using SoftHSM.
 func newPKCS11Adapter(t *testing.T) *BackendAdapter {
 	t.Helper()
+	lib := softHSMLibPath()
+	if lib == "" {
+		t.Skip("SoftHSM not available")
+	}
 	config := &xkms.PKCS11BackendConfig{
-		Library:     "/usr/lib/softhsm/libsofthsm2.so",
+		Library:     lib,
 		TokenLabel:  "e2e-piv-test",
 		PIN:         "123456",
 		KeyStorage:  xkms.NewStorageMemory(),

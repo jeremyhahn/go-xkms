@@ -116,7 +116,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 			fmt.Println("No paired devices. Use 'xkey device pair' first.")
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -129,12 +129,12 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	if deviceFilter != "" {
 		device = findDeviceByName(cfg, deviceFilter)
 		if device == nil {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceFilter)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceFilter)}
 		}
 	} else if cfg.DefaultDevice != "" {
 		device = findDeviceByName(cfg, cfg.DefaultDevice)
 		if device == nil {
-			return fmt.Errorf("%w: default device %s not found", ErrDeviceNotFound, cfg.DefaultDevice)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": default device %s not found", cfg.DefaultDevice)}
 		}
 	} else if len(cfg.Devices) > 0 {
 		device = &cfg.Devices[0]
@@ -167,17 +167,17 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	// Load session keys from pairing
 	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
 	if err != nil {
-		return fmt.Errorf("failed to decode local noise key: %w", err)
+		return &WrappedError{Msg: "failed to decode local noise key", Err: err}
 	}
 
 	localKey, err := phone.LoadStaticKey(localPrivateKey)
 	if err != nil {
-		return fmt.Errorf("failed to load local noise key: %w", err)
+		return &WrappedError{Msg: "failed to load local noise key", Err: err}
 	}
 
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
-		return fmt.Errorf("failed to decode remote noise key: %w", err)
+		return &WrappedError{Msg: "failed to decode remote noise key", Err: err}
 	}
 
 	// Create BLE transport
@@ -189,7 +189,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, phone.ErrBLEUnavailable) {
 			return ErrDeviceBLEUnavailable
 		}
-		return fmt.Errorf("failed to initialize Bluetooth: %w", err)
+		return &WrappedError{Msg: "failed to initialize Bluetooth", Err: err}
 	}
 	defer transport.Close()
 
@@ -200,7 +200,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	defer connectCancel()
 
 	if err := transport.Connect(connectCtx, device.Address); err != nil {
-		return fmt.Errorf("connection failed: %w", err)
+		return &WrappedError{Msg: "connection failed", Err: err}
 	}
 	defer transport.Disconnect()
 
@@ -211,7 +211,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 		IsInitiator:          true,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create noise session: %w", err)
+		return &WrappedError{Msg: "failed to create noise session", Err: err}
 	}
 
 	// Perform Noise handshake
@@ -224,13 +224,13 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 		EnvelopeHeaderSize:  0,
 	}
 	if err := phone.PerformHandshake(connectCtx, handshakeCfg); err != nil {
-		return fmt.Errorf("handshake failed: %w", err)
+		return &WrappedError{Msg: "handshake failed", Err: err}
 	}
 
 	// Generate attestation nonce
 	nonce := make([]byte, attestationNonceSize)
 	if _, err := rand.Read(nonce); err != nil {
-		return fmt.Errorf("%w: %v", ErrAttestDeviceNonceGenFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAttestDeviceNonceGenFailed, Cause: err}
 	}
 
 	// Send local.attestDevice request
@@ -241,27 +241,27 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 
 	attestPlaintext, err := phone.EncodeRequest(attestReq)
 	if err != nil {
-		return fmt.Errorf("failed to encode attestation request: %w", err)
+		return &WrappedError{Msg: "failed to encode attestation request", Err: err}
 	}
 
 	attestCiphertext, err := session.Encrypt(attestPlaintext)
 	if err != nil {
-		return fmt.Errorf("failed to encrypt attestation request: %w", err)
+		return &WrappedError{Msg: "failed to encrypt attestation request", Err: err}
 	}
 
 	attestResponseCiphertext, err := transport.SendAndReceive(connectCtx, attestCiphertext)
 	if err != nil {
-		return fmt.Errorf("attestation request failed: %w", err)
+		return &WrappedError{Msg: "attestation request failed", Err: err}
 	}
 
 	attestResponsePlaintext, err := session.Decrypt(attestResponseCiphertext)
 	if err != nil {
-		return fmt.Errorf("failed to decrypt attestation response: %w", err)
+		return &WrappedError{Msg: "failed to decrypt attestation response", Err: err}
 	}
 
 	attestResp, err := phone.DecodeResponse(attestResponsePlaintext)
 	if err != nil {
-		return fmt.Errorf("failed to decode attestation response: %w", err)
+		return &WrappedError{Msg: "failed to decode attestation response", Err: err}
 	}
 
 	if attestResp.Error != nil {
@@ -270,7 +270,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 
 	attestResult, err := phone.DecodeResult[phone.LocalAttestDeviceResult](attestResp)
 	if err != nil {
-		return fmt.Errorf("failed to decode attestation result: %w", err)
+		return &WrappedError{Msg: "failed to decode attestation result", Err: err}
 	}
 
 	// Parse certificate chain
@@ -278,13 +278,13 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	for i, certDER := range attestResult.CertificateChain {
 		cert, err := x509.ParseCertificate(certDER)
 		if err != nil {
-			return fmt.Errorf("%w: certificate %d: %v", ErrAttestDeviceCertParseFailed, i, err)
+			return &DetailError{Err: ErrAttestDeviceCertParseFailed, Detail: fmt.Sprintf(": certificate %d: %v", i, err)}
 		}
 		certChain = append(certChain, cert)
 	}
 
 	if len(certChain) == 0 {
-		return fmt.Errorf("%w: empty certificate chain", ErrAttestDeviceVerifyFailed)
+		return &DetailError{Err: ErrAttestDeviceVerifyFailed, Detail: ": empty certificate chain"}
 	}
 
 	// Build trust pool using the auto-selecting attestation verifier
@@ -292,18 +292,18 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 
 	xkeyStore, xkeyErr := openTrustStore()
 	if xkeyErr != nil {
-		return fmt.Errorf("failed to open trust store: %w", xkeyErr)
+		return &WrappedError{Msg: "failed to open trust store", Err: xkeyErr}
 	}
 	defer func() { _ = xkeyStore.Close() }()
 
 	verifier, verifierErr := xkeyAttestation.NewVerifier(xkeyStore, xkeyTruststore.LoadEmbeddedRoots)
 	if verifierErr != nil {
-		return fmt.Errorf("failed to create attestation verifier: %w", verifierErr)
+		return &WrappedError{Msg: "failed to create attestation verifier", Err: verifierErr}
 	}
 
 	rootPool, poolErr := verifier.BuildTrustPool(xkeyTruststore.PurposeAndroidHardware)
 	if poolErr != nil {
-		return fmt.Errorf("failed to build trust pool: %w", poolErr)
+		return &WrappedError{Msg: "failed to build trust pool", Err: poolErr}
 	}
 
 	// Verify attestation using the Android extension parser
@@ -316,7 +316,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 
 	keyDesc, err := xkms.VerifyAndroidKeyAttestation(certChain, verifyOpts)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAttestDeviceVerifyFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAttestDeviceVerifyFailed, Cause: err}
 	}
 
 	// Extract boot hash from RootOfTrust
@@ -385,7 +385,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 
 	// Save updated configuration
 	if err := saveDevicesConfig(cfg); err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceConfigSaveFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigSaveFailed, Cause: err}
 	}
 
 	// Display results

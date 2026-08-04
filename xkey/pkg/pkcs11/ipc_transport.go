@@ -74,7 +74,7 @@ func (t *IPCTransport) SocketPath() string {
 // barrier_status request to verify the xkey instance is responding.
 func (t *IPCTransport) Connect(_ context.Context) error {
 	if _, err := os.Stat(t.socketPath); err != nil {
-		return fmt.Errorf("%w: socket not found: %s", ErrIPCConnectionFailed, t.socketPath)
+		return &DetailError{Err: ErrIPCConnectionFailed, Detail: fmt.Sprintf(": socket not found: %s", t.socketPath)}
 	}
 	// Verify connectivity by sending a barrier status request.
 	msg := &ipc.Message{
@@ -85,7 +85,7 @@ func (t *IPCTransport) Connect(_ context.Context) error {
 	}
 	_, err := t.sendMessage(msg)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrIPCConnectionFailed, err)
+		return &SentinelCauseError{Sentinel: ErrIPCConnectionFailed, Cause: err}
 	}
 	return nil
 }
@@ -117,16 +117,16 @@ func (t *IPCTransport) Sign(_ context.Context, req *transport.SignRequest) (*tra
 
 	resp, err := t.sendMessage(msg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrSigningFailed, Cause: err}
 	}
 
 	if resp.PKCS11 == nil || resp.PKCS11.Sign == nil {
-		return nil, fmt.Errorf("%w: missing sign result in response", ErrSigningFailed)
+		return nil, &DetailError{Err: ErrSigningFailed, Detail: ": missing sign result in response"}
 	}
 
 	sig, err := base64.StdEncoding.DecodeString(resp.PKCS11.Sign.Signature)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to decode signature: %v", ErrSigningFailed, err)
+		return nil, &DetailError{Err: ErrSigningFailed, Detail: fmt.Sprintf(": failed to decode signature: %v", err)}
 	}
 
 	return &transport.SignResponse{
@@ -152,11 +152,11 @@ func (t *IPCTransport) ListPIVSlots(_ context.Context, req *transport.ListPIVSlo
 
 	resp, err := t.sendMessage(msg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ipc.ErrPKCS11Operation, err)
+		return nil, &SentinelCauseError{Sentinel: ipc.ErrPKCS11Operation, Cause: err}
 	}
 
 	if resp.PKCS11 == nil || resp.PKCS11.PIVSlots == nil {
-		return nil, fmt.Errorf("%w: missing piv_slots result in response", ipc.ErrPKCS11Operation)
+		return nil, &DetailError{Err: ipc.ErrPKCS11Operation, Detail: ": missing piv_slots result in response"}
 	}
 
 	slots := make([]transport.PIVSlotStatus, len(resp.PKCS11.PIVSlots.Slots))
@@ -201,11 +201,11 @@ func (t *IPCTransport) GetPIVCertificate(_ context.Context, req *transport.GetPI
 
 	resp, err := t.sendMessage(msg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ipc.ErrPKCS11Operation, err)
+		return nil, &SentinelCauseError{Sentinel: ipc.ErrPKCS11Operation, Cause: err}
 	}
 
 	if resp.PKCS11 == nil || resp.PKCS11.PIVCert == nil {
-		return nil, fmt.Errorf("%w: missing piv_cert result in response", ipc.ErrPKCS11Operation)
+		return nil, &DetailError{Err: ipc.ErrPKCS11Operation, Detail: ": missing piv_cert result in response"}
 	}
 
 	return &transport.GetPIVCertificateResponse{
@@ -295,27 +295,27 @@ func (t *IPCTransport) GeneratePIVCSR(_ context.Context, _ *transport.GeneratePI
 func (t *IPCTransport) sendMessage(msg *ipc.Message) (*ipc.Response, error) {
 	conn, err := net.DialTimeout("unix", t.socketPath, t.timeout)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrIPCConnectionFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrIPCConnectionFailed, Cause: err}
 	}
 	defer func() { _ = conn.Close() }()
 
 	if err := conn.SetDeadline(time.Now().Add(t.timeout)); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrIPCConnectionFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrIPCConnectionFailed, Cause: err}
 	}
 
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(msg); err != nil {
-		return nil, fmt.Errorf("%w: %v", ipc.ErrProtocolError, err)
+		return nil, &SentinelCauseError{Sentinel: ipc.ErrProtocolError, Cause: err}
 	}
 
 	var resp ipc.Response
 	decoder := json.NewDecoder(conn)
 	if err := decoder.Decode(&resp); err != nil {
-		return nil, fmt.Errorf("%w: %v", ipc.ErrProtocolError, err)
+		return nil, &SentinelCauseError{Sentinel: ipc.ErrProtocolError, Cause: err}
 	}
 
 	if resp.Status == ipc.StatusError {
-		return nil, fmt.Errorf("%w: %s", ipc.ErrPKCS11Operation, resp.Error)
+		return nil, &DetailError{Err: ipc.ErrPKCS11Operation, Detail: fmt.Sprintf(": %s", resp.Error)}
 	}
 
 	return &resp, nil

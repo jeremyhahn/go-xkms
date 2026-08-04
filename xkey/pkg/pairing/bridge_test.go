@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/stretchr/testify/assert"
@@ -1781,6 +1782,10 @@ func (m *mockTransportClient) BarrierHasRecoveryKeys(_ context.Context) (*transp
 }
 
 func (m *mockTransportClient) BarrierGenerateRootToken(_ context.Context, _ *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) BarrierEnableEncryption(_ context.Context, _ *pkgtransport.BarrierEnableEncryptionRequest) (*pkgtransport.BarrierEnableEncryptionResponse, error) {
 	return nil, errNotImplemented
 }
 

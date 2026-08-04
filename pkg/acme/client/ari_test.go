@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -98,6 +98,15 @@ func TestARIGetCertificateIDFromHash(t *testing.T) {
 		certID := GetCertificateIDFromHash(nil)
 		if certID != "" {
 			t.Errorf("expected empty certificate ID for nil cert, got: %s", certID)
+		}
+	})
+
+	t.Run("certificate with empty Raw bytes", func(t *testing.T) {
+		// A non-nil certificate whose Raw field was never populated (e.g.
+		// constructed directly rather than parsed) has nothing to hash.
+		certID := GetCertificateIDFromHash(&x509.Certificate{})
+		if certID != "" {
+			t.Errorf("expected empty certificate ID for cert with empty Raw, got: %s", certID)
 		}
 	})
 }

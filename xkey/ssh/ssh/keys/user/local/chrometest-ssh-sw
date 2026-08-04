@@ -1,0 +1,1 @@
+{"v":2,"scope":"user","owner":"local","name":"chrometest-ssh-sw","algo":"ed25519","fp":"SHA256:8Pw7GmqTgDJ+p99qI4lbk1beNyH/bxcpqNpIMP+p6jc","created":"2026-07-28T02:42:59.908631272Z","comment":"chrometest@e2e","pub":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB/3yzljcKf09fSLHaDvXq2aVI/RlsllRQEfsp3jfU/S","backend_id":"software","backend_key_id":"ssh-user-local-chrometest-ssh-sw"}

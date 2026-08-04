@@ -30,6 +30,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	kms "cloud.google.com/go/kms/apiv1"
 	"cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -37,6 +39,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -169,10 +173,18 @@ func NewBackend(ctx context.Context, config *Config) (*Backend, error) {
 		opts = append(opts, option.WithEndpoint(config.Endpoint))
 	}
 
+	// Plaintext gRPC without authentication, for local emulators only.
+	// Validate() rejects Insecure without a custom Endpoint.
+	if config.Insecure {
+		opts = append(opts,
+			option.WithoutAuthentication(),
+			option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
+	}
+
 	// Create KMS client
 	kmsClient, err := kms.NewKeyManagementClient(ctx, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create KMS client: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create KMS client", Err: err}
 	}
 
 	// Create default tracker if none provided
@@ -249,7 +261,7 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 
 	pubKey, err := b.client.GetPublicKey(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", backend.ErrKeyNotFound, attrs.CN, err)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Return PEM-encoded public key
@@ -259,7 +271,7 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 // Save is not supported for GCP KMS as keys are managed by GCP.
 // Use GenerateKey methods to create keys in KMS.
 func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.FSExtension, overwrite bool) error {
-	return fmt.Errorf("%w: cannot save data to GCP KMS, use GenerateKey methods", backend.ErrOperationNotSupported)
+	return &errs.Detail{Err: backend.ErrOperationNotSupported, Detail: "cannot save data to GCP KMS, use GenerateKey methods"}
 }
 
 // Delete destroys a crypto key version in GCP KMS.
@@ -281,7 +293,7 @@ func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 
 	_, err := b.client.DestroyCryptoKeyVersion(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to destroy key %s: %w", attrs.CN, err)
+		return &errs.Wrapped{Msg: fmt.Sprintf("failed to destroy key %s", attrs.CN), Err: err}
 	}
 
 	return nil
@@ -313,7 +325,7 @@ func (b *Backend) waitForKeyEnabled(ctx context.Context, keyVersionName string, 
 
 		version, err := b.client.GetCryptoKeyVersion(ctx, req)
 		if err != nil {
-			return fmt.Errorf("failed to get key version status: %w", err)
+			return &errs.Wrapped{Msg: "failed to get key version status", Err: err}
 		}
 
 		if version.State == kmspb.CryptoKeyVersion_ENABLED {
@@ -321,13 +333,13 @@ func (b *Backend) waitForKeyEnabled(ctx context.Context, keyVersionName string, 
 		}
 
 		if version.State != kmspb.CryptoKeyVersion_PENDING_GENERATION {
-			return fmt.Errorf("key version in unexpected state: %s", version.State.String())
+			return &errs.Message{Msg: fmt.Sprintf("key version in unexpected state: %s", version.State.String())}
 		}
 
 		time.Sleep(pollInterval)
 	}
 
-	return fmt.Errorf("timeout waiting for key to be enabled after %v", timeout)
+	return &errs.Message{Msg: fmt.Sprintf("timeout waiting for key to be enabled after %v", timeout)}
 }
 
 // GenerateKey generates a new private key with the given attributes.
@@ -345,7 +357,7 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 	case x509.ECDSA:
 		_, err = b.GenerateECDSA(ctx, attrs)
 	default:
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
 	}
 
 	if err != nil {
@@ -390,7 +402,7 @@ func (b *Backend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (
 		algorithm = kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_4096_SHA256
 	default:
 		b.mu.Unlock()
-		return nil, fmt.Errorf("%w: unsupported RSA key size %d", backend.ErrInvalidKeyType, keySize)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("unsupported RSA key size %d", keySize)}
 	}
 
 	req := &kmspb.CreateCryptoKeyRequest{
@@ -410,14 +422,14 @@ func (b *Backend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (
 	cryptoKey, err := b.client.CreateCryptoKey(ctx, req)
 	if err != nil {
 		b.mu.Unlock()
-		return nil, fmt.Errorf("failed to create RSA key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create RSA key", Err: err}
 	}
 
 	// Wait for the key to be enabled (GCP KMS keys start in PENDING_GENERATION state)
 	keyVersionName := b.cryptoKeyVersionName(attrs.CN)
 	if err := b.waitForKeyEnabled(ctx, keyVersionName, 30*time.Second); err != nil {
 		b.mu.Unlock()
-		return nil, fmt.Errorf("key creation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "key creation failed", Err: err}
 	}
 
 	// Store metadata
@@ -434,13 +446,13 @@ func (b *Backend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
 		b.mu.Unlock()
-		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	if b.config.KeyStorage != nil {
 		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
 			b.mu.Unlock()
-			return nil, fmt.Errorf("failed to save metadata: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to save metadata", Err: err}
 		}
 	}
 
@@ -473,7 +485,7 @@ func (b *Backend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes)
 	case "P-384":
 		algorithm = kmspb.CryptoKeyVersion_EC_SIGN_P384_SHA384
 	default:
-		return nil, fmt.Errorf("%w: unsupported curve %s", backend.ErrInvalidKeyType, curve)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("unsupported curve %s", curve)}
 	}
 
 	req := &kmspb.CreateCryptoKeyRequest{
@@ -493,14 +505,14 @@ func (b *Backend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes)
 	cryptoKey, err := b.client.CreateCryptoKey(ctx, req)
 	if err != nil {
 		b.mu.Unlock()
-		return nil, fmt.Errorf("failed to create ECDSA key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create ECDSA key", Err: err}
 	}
 
 	// Wait for the key to be enabled (GCP KMS keys start in PENDING_GENERATION state)
 	keyVersionName := b.cryptoKeyVersionName(attrs.CN)
 	if err := b.waitForKeyEnabled(ctx, keyVersionName, 30*time.Second); err != nil {
 		b.mu.Unlock()
-		return nil, fmt.Errorf("key creation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "key creation failed", Err: err}
 	}
 
 	// Store metadata
@@ -518,13 +530,13 @@ func (b *Backend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes)
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
 		b.mu.Unlock()
-		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	if b.config.KeyStorage != nil {
 		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
 			b.mu.Unlock()
-			return nil, fmt.Errorf("failed to save metadata: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to save metadata", Err: err}
 		}
 	}
 
@@ -555,16 +567,16 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: attributes specify asymmetric algorithm %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("attributes specify asymmetric algorithm %s", attrs.KeyAlgorithm)}
 	}
 
 	// GCP KMS only supports 256-bit symmetric keys
 	if attrs.SymmetricAlgorithm.KeySize() != 256 {
-		return nil, fmt.Errorf("%w: GCP KMS only supports AES-256 symmetric keys, got %d-bit", backend.ErrInvalidKeyType, attrs.SymmetricAlgorithm.KeySize())
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("GCP KMS only supports AES-256 symmetric keys, got %d-bit", attrs.SymmetricAlgorithm.KeySize())}
 	}
 
 	req := &kmspb.CreateCryptoKeyRequest{
@@ -585,13 +597,13 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 
 	cryptoKey, err := b.client.CreateCryptoKey(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create symmetric key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create symmetric key", Err: err}
 	}
 
 	// Wait for the key to be enabled (GCP KMS keys start in PENDING_GENERATION state)
 	keyVersionName := b.cryptoKeyVersionName(attrs.CN)
 	if err := b.waitForKeyEnabled(ctx, keyVersionName, 30*time.Second); err != nil {
-		return nil, fmt.Errorf("key creation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "key creation failed", Err: err}
 	}
 
 	// Store metadata
@@ -607,12 +619,12 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	if b.config.KeyStorage != nil {
 		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
-			return nil, fmt.Errorf("failed to save metadata: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to save metadata", Err: err}
 		}
 	}
 
@@ -654,11 +666,11 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: attributes specify asymmetric algorithm %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("attributes specify asymmetric algorithm %s", attrs.KeyAlgorithm)}
 	}
 
 	keyName := b.cryptoKeyName(attrs.CN)
@@ -667,12 +679,12 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 		Name: keyName,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to get key: %v", backend.ErrKeyNotFound, err)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
 	}
 
 	// Verify this is a symmetric encryption key
 	if cryptoKey.Purpose != kmspb.CryptoKey_ENCRYPT_DECRYPT {
-		return nil, fmt.Errorf("%w: key is not a symmetric encryption key, purpose is %s", backend.ErrInvalidKeyType, cryptoKey.Purpose)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key is not a symmetric encryption key, purpose is %s", cryptoKey.Purpose)}
 	}
 
 	return &gcpKMSSymmetricKey{
@@ -723,13 +735,13 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 
 	pubKey, err := b.client.GetPublicKey(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", backend.ErrKeyNotFound, attrs.CN, err)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Parse the PEM-encoded public key
 	publicKey, err := parsePublicKey(pubKey.Pem)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
 	return &kmsSigner{
@@ -750,7 +762,7 @@ func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte, opts crypto.Si
 	}
 
 	if len(digest) == 0 {
-		return nil, fmt.Errorf("%w: digest is empty", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "digest is empty"}
 	}
 
 	ctx := context.Background()
@@ -773,7 +785,7 @@ func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte, opts crypto.Si
 				Digest: &kmspb.Digest_Sha512{Sha512: digest},
 			}
 		default:
-			return nil, fmt.Errorf("%w: unsupported hash algorithm %v", backend.ErrInvalidAlgorithm, opts.HashFunc())
+			return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported hash algorithm %v", opts.HashFunc())}
 		}
 	} else {
 		// Default to SHA256
@@ -794,12 +806,12 @@ func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte, opts crypto.Si
 
 	resp, err := b.client.AsymmetricSign(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to sign", Err: err}
 	}
 
 	// Verify the response checksum
 	if resp.SignatureCrc32C != nil && resp.SignatureCrc32C.Value != int64(crc32c(resp.Signature)) {
-		return nil, fmt.Errorf("signature checksum mismatch")
+		return nil, &errs.Message{Msg: "signature checksum mismatch"}
 	}
 
 	return resp.Signature, nil
@@ -808,22 +820,22 @@ func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte, opts crypto.Si
 // Verify verifies a signature using the public key from GCP KMS.
 func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) error {
 	if len(digest) == 0 {
-		return fmt.Errorf("%w: digest is empty", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "digest is empty"}
 	}
 
 	if len(signature) == 0 {
-		return fmt.Errorf("%w: signature is empty", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "signature is empty"}
 	}
 
 	// Get the public key
 	pubKeyPEM, err := b.Get(attrs, backend.FSEXT_PUBLIC_PEM)
 	if err != nil {
-		return fmt.Errorf("failed to get public key: %w", err)
+		return &errs.Wrapped{Msg: "failed to get public key", Err: err}
 	}
 
 	publicKey, err := parsePublicKey(string(pubKeyPEM))
 	if err != nil {
-		return fmt.Errorf("failed to parse public key: %w", err)
+		return &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
 	// Determine the hash algorithm to use (default to SHA256)
@@ -842,7 +854,7 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 	case crypto.SHA512:
 		cryptoHash = crypto.SHA512
 	default:
-		return fmt.Errorf("%w: unsupported hash algorithm %s", backend.ErrInvalidAlgorithm, hash)
+		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported hash algorithm %s", hash)}
 	}
 
 	// Verify based on key type
@@ -853,11 +865,11 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 	case *ecdsa.PublicKey:
 		// ECDSA verification
 		if !ecdsa.VerifyASN1(pub, digest, signature) {
-			return fmt.Errorf("%w: signature verification failed", backend.ErrInvalidAttributes)
+			return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "signature verification failed"}
 		}
 		return nil
 	default:
-		return fmt.Errorf("%w: unknown public key type", backend.ErrInvalidKeyType)
+		return &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "unknown public key type"}
 	}
 }
 
@@ -879,7 +891,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	if b.config.KeyStorage != nil {
 		_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.ID())
 		if err != nil {
-			return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 		}
 	}
 
@@ -890,7 +902,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		Name: keyName,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to get key: %v", backend.ErrKeyNotFound, err)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
 	}
 
 	// Return nil for private key since it's not extractable from KMS
@@ -911,7 +923,7 @@ func (b *Backend) GetSignerByID(keyID string) (crypto.Signer, error) {
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("%w: key %s does not implement crypto.Signer", backend.ErrInvalidKeyType, keyID)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key %s does not implement crypto.Signer", keyID)}
 	}
 	return signer, nil
 }
@@ -929,7 +941,7 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 	}
 	decrypter, ok := key.(crypto.Decrypter)
 	if !ok {
-		return nil, fmt.Errorf("%w: key %s does not implement crypto.Decrypter", backend.ErrInvalidKeyType, keyID)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key %s does not implement crypto.Decrypter", keyID)}
 	}
 	return decrypter, nil
 }
@@ -968,7 +980,7 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 
 	keys, err := b.client.ListCryptoKeys(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list crypto keys: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list crypto keys", Err: err}
 	}
 
 	var allKeys []*types.KeyAttributes
@@ -1057,7 +1069,7 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 
 	// Only RSA keys with ASYMMETRIC_DECRYPT purpose support decryption
 	if attrs.KeyAlgorithm != x509.RSA {
-		return nil, fmt.Errorf("%w: only RSA keys support decryption in GCP KMS", backend.ErrOperationNotSupported)
+		return nil, &errs.Detail{Err: backend.ErrOperationNotSupported, Detail: "only RSA keys support decryption in GCP KMS"}
 	}
 
 	// Get the public key to verify the key exists and get key details
@@ -1069,7 +1081,7 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 
 	pubKey, err := b.client.GetPublicKey(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", backend.ErrKeyNotFound, attrs.CN, err)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Verify the key supports decryption
@@ -1082,13 +1094,13 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 		kmspb.CryptoKeyVersion_RSA_DECRYPT_OAEP_4096_SHA1:
 		// Valid decryption algorithm
 	default:
-		return nil, fmt.Errorf("%w: key does not support decryption, algorithm is %s", backend.ErrOperationNotSupported, pubKey.Algorithm)
+		return nil, &errs.Detail{Err: backend.ErrOperationNotSupported, Detail: fmt.Sprintf("key does not support decryption, algorithm is %s", pubKey.Algorithm)}
 	}
 
 	// Parse the PEM-encoded public key
 	publicKey, err := parsePublicKey(pubKey.Pem)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
 	return &kmsDecrypter{
@@ -1125,7 +1137,7 @@ func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) err
 
 	newVersion, err := b.client.CreateCryptoKeyVersion(ctx, createReq)
 	if err != nil {
-		return fmt.Errorf("failed to create new key version: %w", err)
+		return &errs.Wrapped{Msg: "failed to create new key version", Err: err}
 	}
 
 	// Set the new version as primary
@@ -1136,7 +1148,7 @@ func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) err
 
 	_, err = b.client.UpdateCryptoKeyPrimaryVersion(ctx, updateReq)
 	if err != nil {
-		return fmt.Errorf("failed to set new version as primary: %w", err)
+		return &errs.Wrapped{Msg: "failed to set new version as primary", Err: err}
 	}
 
 	// Reset AEAD tracking after successful rotation
@@ -1176,12 +1188,12 @@ func (b *Backend) cryptoKeyName(keyID string) string {
 func parsePublicKey(pemData string) (crypto.PublicKey, error) {
 	block, _ := pem.Decode([]byte(pemData))
 	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM block")
+		return nil, &errs.Message{Msg: "failed to decode PEM block"}
 	}
 
 	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
 	return pub, nil
@@ -1246,12 +1258,12 @@ func (d *kmsDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.De
 
 	resp, err := d.backend.client.AsymmetricDecrypt(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decrypt", Err: err}
 	}
 
 	// Verify the response checksum
 	if resp.PlaintextCrc32C != nil && resp.PlaintextCrc32C.Value != int64(crc32c(resp.Plaintext)) {
-		return nil, fmt.Errorf("plaintext checksum mismatch")
+		return nil, &errs.Message{Msg: "plaintext checksum mismatch"}
 	}
 
 	return resp.Plaintext, nil
@@ -1265,7 +1277,7 @@ func mapCurveToAlgorithm(curve elliptic.Curve) (kmspb.CryptoKeyVersion_CryptoKey
 	case "P-384":
 		return kmspb.CryptoKeyVersion_EC_SIGN_P384_SHA384, nil
 	default:
-		return 0, fmt.Errorf("%w: unsupported curve %s", backend.ErrInvalidKeyType, curve.Params().Name)
+		return 0, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("unsupported curve %s", curve.Params().Name)}
 	}
 }
 
@@ -1322,7 +1334,7 @@ func (k *gcpKMSSymmetricKey) KeySize() int {
 // Raw returns an error because GCP KMS keys cannot expose raw key material.
 // The key material stays in GCP KMS and can only be used through KMS operations.
 func (k *gcpKMSSymmetricKey) Raw() ([]byte, error) {
-	return nil, fmt.Errorf("GCP KMS symmetric keys do not expose raw key material: %w", backend.ErrNotSupported)
+	return nil, &errs.Wrapped{Msg: "GCP KMS symmetric keys do not expose raw key material", Err: backend.ErrNotSupported}
 }
 
 // gcpKMSSymmetricEncrypter implements types.SymmetricEncrypter for GCP KMS.
@@ -1357,7 +1369,7 @@ func (e *gcpKMSSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 	// STEP 1: Check bytes limit before encryption
 	if e.backend.tracker != nil {
 		if err := e.backend.tracker.IncrementBytes(keyID, int64(len(plaintext))); err != nil {
-			return nil, fmt.Errorf("AEAD safety check failed: %w (consider rotating this key)", err)
+			return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (consider rotating this key)"}
 		}
 	}
 
@@ -1379,12 +1391,12 @@ func (e *gcpKMSSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 
 	resp, err := e.backend.client.Encrypt(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("GCP KMS encryption failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "GCP KMS encryption failed", Err: err}
 	}
 
 	// Verify the response checksum
 	if resp.CiphertextCrc32C != nil && resp.CiphertextCrc32C.Value != int64(crc32c(resp.Ciphertext)) {
-		return nil, fmt.Errorf("ciphertext checksum mismatch")
+		return nil, &errs.Message{Msg: "ciphertext checksum mismatch"}
 	}
 
 	// GCP KMS returns a single ciphertext blob that includes nonce and tag
@@ -1424,12 +1436,12 @@ func (e *gcpKMSSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 
 	resp, err := e.backend.client.Decrypt(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("GCP KMS decryption failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "GCP KMS decryption failed", Err: err}
 	}
 
 	// Verify the response checksum
 	if resp.PlaintextCrc32C != nil && resp.PlaintextCrc32C.Value != int64(crc32c(resp.Plaintext)) {
-		return nil, fmt.Errorf("plaintext checksum mismatch")
+		return nil, &errs.Message{Msg: "plaintext checksum mismatch"}
 	}
 
 	return resp.Plaintext, nil

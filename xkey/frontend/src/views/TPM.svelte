@@ -1996,13 +1996,13 @@
                 <!-- Summary -->
                 <div class="nv-summary-card">
                   <div class="nv-summary-counts">
-                    <span class="text-body-medium">{nvSummary.defined} / {nvSummary.max} indexes defined</span>
+                    <span class="text-body-medium">{nvSummary.indexes_defined} / {nvSummary.indexes_max} indexes defined</span>
                   </div>
-                  {#if nvSummary.max > 0}
+                  {#if nvSummary.indexes_max > 0}
                     <div class="nv-usage-bar">
                       <div
                         class="nv-usage-fill"
-                        style="width: {Math.min((nvSummary.defined / nvSummary.max) * 100, 100)}%"
+                        style="width: {Math.min((nvSummary.indexes_defined / nvSummary.indexes_max) * 100, 100)}%"
                       ></div>
                     </div>
                   {/if}

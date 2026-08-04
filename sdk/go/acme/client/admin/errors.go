@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -169,4 +169,16 @@ func NewRevocationFailed(op, message string) *RevocationFailedError {
 	return &RevocationFailedError{
 		CAError: *errors.NewInternal(op, message),
 	}
+}
+
+// FlexUint64UnmarshalError indicates JSON data could not be unmarshaled
+// into a FlexUint64.
+type FlexUint64UnmarshalError struct {
+	// Data is the raw JSON payload that failed to unmarshal.
+	Data string
+}
+
+// Error returns a human-readable description.
+func (e *FlexUint64UnmarshalError) Error() string {
+	return "cannot unmarshal " + e.Data + " into FlexUint64"
 }

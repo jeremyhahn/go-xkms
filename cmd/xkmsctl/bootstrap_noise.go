@@ -77,7 +77,7 @@ server's certificate, use: openssl s_client -connect host:port </dev/null | open
 func generateNoiseKey(outputFile string) {
 	key, err := noiseproto.GenerateStaticKey()
 	if err != nil {
-		handleError(fmt.Errorf("failed to generate key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGenerateKeyFailed, Err: err})
 		return
 	}
 
@@ -87,7 +87,7 @@ func generateNoiseKey(outputFile string) {
 	if outputFile != "" {
 		// Write private key to file
 		if err := os.WriteFile(outputFile, []byte(privateHex+"\n"), 0600); err != nil {
-			handleError(fmt.Errorf("failed to write key file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrWriteKeyFileFailed, Err: err})
 			return
 		}
 		fmt.Printf("Private key written to: %s\n", outputFile)
@@ -104,20 +104,20 @@ func showNoiseKey(keyFile, keyHex string) {
 	if keyFile != "" {
 		data, err := os.ReadFile(keyFile)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read key file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrReadKeyFileFailed, Err: err})
 			return
 		}
 		hexKey = strings.TrimSpace(string(data))
 	} else if keyHex != "" {
 		hexKey = keyHex
 	} else {
-		handleError(fmt.Errorf("either --key-file or --key-hex is required"))
+		handleError(ErrKeyInputRequired)
 		return
 	}
 
 	key, err := noiseproto.DecodeStaticKey(hexKey)
 	if err != nil {
-		handleError(fmt.Errorf("failed to decode key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrDecodeKeyFailed, Err: err})
 		return
 	}
 
@@ -126,27 +126,27 @@ func showNoiseKey(keyFile, keyHex string) {
 
 func showSPKIPin(certFile string) {
 	if certFile == "" {
-		handleError(fmt.Errorf("--cert-file is required"))
+		handleError(ErrCertFileRequired)
 		return
 	}
 
 	// Read PEM certificate file
 	data, err := os.ReadFile(certFile)
 	if err != nil {
-		handleError(fmt.Errorf("failed to read certificate file: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCertFileRead, Err: err})
 		return
 	}
 
 	// Parse PEM
 	block, _ := pem.Decode(data)
 	if block == nil {
-		handleError(fmt.Errorf("no PEM data found in file"))
+		handleError(ErrNoPEMData)
 		return
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		handleError(fmt.Errorf("failed to parse certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrParseCertificateFailed, Err: err})
 		return
 	}
 

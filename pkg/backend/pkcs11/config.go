@@ -20,6 +20,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -98,17 +100,17 @@ func (c *Config) Validate() error {
 
 	// Library path is required
 	if c.Library == "" {
-		return fmt.Errorf("%w: library path is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "library path is required"}
 	}
 
 	// Check if library file exists
 	if _, err := os.Stat(c.Library); os.IsNotExist(err) {
-		return fmt.Errorf("%w: %s", ErrLibraryNotFound, c.Library)
+		return &errs.Detail{Err: ErrLibraryNotFound, Detail: fmt.Sprintf("%s", c.Library)}
 	}
 
 	// Token label is required
 	if c.TokenLabel == "" {
-		return fmt.Errorf("%w: token label is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "token label is required"}
 	}
 
 	// If PIN is set, validate length
@@ -123,10 +125,10 @@ func (c *Config) Validate() error {
 
 	// Storage providers are required
 	if c.KeyStorage == nil {
-		return fmt.Errorf("%w: key storage is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "key storage is required"}
 	}
 	if c.CertStorage == nil {
-		return fmt.Errorf("%w: cert storage is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "cert storage is required"}
 	}
 
 	return nil

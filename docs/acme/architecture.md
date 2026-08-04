@@ -1,20 +1,20 @@
 # Architecture
 
-go-trusted-ca is an ACME RFC-8555 compliant Certificate Authority with support for TCG (Trusted Computing Group) specifications, multi-tenancy, and hardware-backed key storage.
+go-xkms provides an ACME RFC-8555 compliant Certificate Authority with support for TCG (Trusted Computing Group) specifications, multi-tenancy, and hardware-backed key storage. (The ACME server was formerly the standalone `go-trusted-ca` project; it is now decommissioned and absorbed into go-xkms — CA in `pkg/ca`, ACME in `pkg/acme`.)
 
 ## Core Architecture
 
-go-trusted-ca uses a layered architecture with go-xkms's CA as the foundation:
+go-xkms uses a layered architecture with its CA (`pkg/ca`) as the foundation:
 
 ```
 +---------------------------------------------------------------------------+
-|                         go-trusted-ca                                      |
+|                       go-xkms (pkg/acme)                                   |
 +----------------------------------------------------------------------------+
 |  ACME Server | TCG Enrollment | Admin API | Policy Engine                  |
 +----------------------------------------------------------------------------+
 |                   Certificate Authority (pkg/ca)                           |
 |  +---------------------------------------------------------------------+  |
-|  |                   go-xkms CA (Embedded)                              |  |
+|  |                   go-xkms CA (pkg/ca core)                          |  |
 |  |  CSR Signing | Cert Issuance | Revocation | CRL Generation          |  |
 |  +---------------------------------------------------------------------+  |
 +----------------------------------------------------------------------------+
@@ -31,11 +31,11 @@ This architecture ensures:
 
 ## Unified SDK Dependency Chain
 
-go-trusted-ca consumes unified SDKs from go-qrdb and go-xkms to avoid duplicating functionality. The diagram below shows which capabilities come from which layer:
+The ACME subsystem (`pkg/acme`) consumes the unified go-qrdb SDK to avoid duplicating functionality, and uses go-xkms's own CA and key-management packages directly. The diagram below shows which capabilities come from which layer:
 
 ```
 +-------------------------------------------------------------------+
-|                        go-trusted-ca                               |
+|                     go-xkms ACME (pkg/acme)                        |
 |                                                                    |
 |  Consumes from go-qrdb:                                           |
 |    - Barrier (seal/unseal via ceremony service)                    |
@@ -92,7 +92,7 @@ go-trusted-ca consumes unified SDKs from go-qrdb and go-xkms to avoid duplicatin
 The barrier (seal/unseal) capability flows through go-qrdb's ceremony service:
 
 ```
-go-trusted-ca (admin setup)
+go-xkms ACME (admin setup)
     |
     +-- calls go-qrdb ceremony service (via SDK)
             |
@@ -103,69 +103,64 @@ go-trusted-ca (admin setup)
                             +-- PebbleDB (encrypted storage)
 ```
 
-The ceremony service encapsulates barrier initialization, key share distribution, and unseal operations. go-trusted-ca's admin setup wizard delegates to this service rather than implementing barrier logic directly.
+The ceremony service encapsulates barrier initialization, key share distribution, and unseal operations. The ACME admin setup wizard delegates to this service rather than implementing barrier logic directly.
 
 ## SDK Dependency Model
 
-go-trusted-ca implements a two-layer SDK isolation pattern to ensure stable APIs and clean dependency boundaries:
+The ACME subsystem now lives inside go-xkms (`pkg/acme`), so it uses go-xkms's own CA, key-management, and storage packages directly — no cross-repo SDK boundary applies there. The one remaining external boundary is go-xkms → go-qrdb, which goes through the go-qrdb SDK to keep that dependency stable:
 
 ```
 +-----------------------------------------------------------------+
-|                      go-trusted-ca                                |
+|                     go-xkms (pkg/acme, pkg/ca, ...)              |
 |                                                                   |
-|  Imports:                                                         |
+|  External dependency — imports only:                              |
 |    - github.com/jeremyhahn/go-qrdb/sdk/go      (RBAC, IAM,      |
 |                                                    KV storage)    |
-|    - github.com/jeremyhahn/go-xkms/sdk/go                        |
 |    - github.com/jeremyhahn/go-qrdb/pkg/system   (OpenSSL config) |
 |    - github.com/jeremyhahn/go-qrdb/pkg/*         (DB, KV, seal)  |
 |                                                                   |
-|  Does NOT directly import:                                        |
-|    - go-xkms/pkg/*        (internal packages)                    |
+|  Internal: pkg/acme uses go-xkms/pkg/* (ca, tpm2, backend, ...)  |
+|            directly — they are the same module.                   |
 +-----------------------------------------------------------------+
-         |                                    |
-         |                                    |
-         v                                    v
-+-------------------------------+    +-------------------------------+
-|  go-qrdb/sdk/go               |    |  go-xkms/sdk/go               |
-|                               |    |                               |
-|  Provides:                    |    |  Provides:                    |
-|    - IAM / RBAC               |    |    - TPM access               |
-|    - Auth (JWT)               |    |    - FIDO2 operations         |
-|    - KV Storage               |    |    - Hardware attestation     |
-|    - Raft Consensus           |    |    - Key management (KMS)     |
-|    - Seal / Unseal            |    |                               |
-|                               |    |  Stable API contract          |
-|  Stable API contract          |    |                               |
-|                               |    +-------------------------------+
+         |
+         v
++-------------------------------+
+|  go-qrdb/sdk/go               |
+|                               |
+|  Provides:                    |
+|    - IAM / RBAC               |
+|    - Auth (JWT)               |
+|    - KV Storage               |
+|    - Raft Consensus           |
+|    - Seal / Unseal            |
+|                               |
+|  Stable API contract          |
 +-------------------------------+
 ```
 
 ### Dependency Rules
 
-1. **go-trusted-ca** depends on:
-   - `go-qrdb/sdk/go` for RBAC policy engine, auth, KV storage, Raft consensus, and seal operations
+1. **go-xkms** depends on go-qrdb only through:
+   - `go-qrdb/sdk/go` for the RBAC policy engine, auth, KV storage, Raft consensus, and seal operations
    - `go-qrdb/pkg/system` for OpenSSL configuration parsing
    - `go-qrdb/pkg/*` for database lifecycle, KV store interfaces, and seal primitives
-   - `go-xkms/sdk/go` for TPM/FIDO2 hardware access and key management (KMS)
 
-2. **Never import go-xkms internal packages**:
-   - Do NOT import `go-xkms/pkg/*`
+2. **`pkg/acme` uses go-xkms packages directly** (`pkg/ca`, `pkg/tpm2`, `pkg/backend`, ...) — they are part of the same module; there is no internal SDK boundary inside go-xkms.
 
-3. **SDK provides stable contracts**:
-   - Internal refactoring does not break consumers
+3. **The go-qrdb SDK provides a stable contract**:
+   - go-qrdb internal refactoring does not break go-xkms
    - Semver-compatible API evolution
 
 ### Benefits
 
-- **API Stability**: Internal package refactoring does not break go-trusted-ca
-- **Clean Boundaries**: Clear separation between projects
+- **API Stability**: go-qrdb internal refactoring does not break go-xkms
+- **Clean Boundaries**: a single, explicit go-xkms → go-qrdb SDK boundary
 - **Type Safety**: SDK re-exports ensure type compatibility
-- **Maintainability**: Explicit contracts reduce coupling
+- **Maintainability**: explicit contracts reduce coupling
 
 ## Deployment Modes
 
-go-trusted-ca supports three deployment modes to match different operational requirements:
+go-xkms's ACME server supports three deployment modes to match different operational requirements:
 
 | Mode | Storage | Consensus | Use Case |
 |------|---------|-----------|----------|
@@ -211,7 +206,7 @@ Single-node deployment with direct PebbleDB storage. Simplest deployment with no
 ```yaml
 qrdb:
   mode: standalone
-  data_dir: /var/lib/trusted-ca/data
+  data_dir: /var/lib/xkms/data
   cluster_id: 1
   node_id: 1
 ```
@@ -254,7 +249,7 @@ Single-node deployment with Raft consensus. Identical to standalone but prepared
 ```yaml
 qrdb:
   mode: raft
-  data_dir: /var/lib/trusted-ca/data
+  data_dir: /var/lib/xkms/data
   cluster_id: 1
   node_id: 1
   raft:
@@ -297,7 +292,7 @@ Multi-node deployment with Raft consensus for high availability and automatic fa
 ```yaml
 qrdb:
   mode: raft
-  data_dir: /var/lib/trusted-ca/data
+  data_dir: /var/lib/xkms/data
   cluster_id: 1
   node_id: 1
   raft:
@@ -462,7 +457,7 @@ global/tenant/{tenant_id}
 
 ## Key Storage Backends
 
-go-trusted-ca uses go-xkms for secure key storage with multiple backend options:
+The ACME server uses go-xkms's key-storage backends for secure key storage, with multiple backend options:
 
 | Backend | Description | Security Level |
 |---------|-------------|----------------|

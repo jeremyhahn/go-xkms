@@ -1231,6 +1231,8 @@ export namespace services {
 		}
 	}
 	export class BarrierAutoUnsealStatus {
+	    available: boolean;
+	    reason?: string;
 	    tpm_available: boolean;
 	    barrier_sealed: boolean;
 	    policy_configured: boolean;
@@ -1243,6 +1245,8 @@ export namespace services {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available = source["available"];
+	        this.reason = source["reason"];
 	        this.tpm_available = source["tpm_available"];
 	        this.barrier_sealed = source["barrier_sealed"];
 	        this.policy_configured = source["policy_configured"];
@@ -1369,6 +1373,7 @@ export namespace services {
 	    include_trust_bundle: boolean;
 	    chrome_profile_mode: string;
 	    firefox_profile_mode: string;
+	    include_extensions: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new BrowserConfig(source);
@@ -1381,6 +1386,7 @@ export namespace services {
 	        this.include_trust_bundle = source["include_trust_bundle"];
 	        this.chrome_profile_mode = source["chrome_profile_mode"];
 	        this.firefox_profile_mode = source["firefox_profile_mode"];
+	        this.include_extensions = source["include_extensions"];
 	    }
 	}
 	export class BrowserInfo {
@@ -2811,12 +2817,29 @@ export namespace services {
 	        this.certificate = source["certificate"];
 	    }
 	}
+	export class LaunchOptions {
+	    IncludeExtensions: boolean;
+	    ExtensionIDs: string[];
+	    SourceProfile: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LaunchOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.IncludeExtensions = source["IncludeExtensions"];
+	        this.ExtensionIDs = source["ExtensionIDs"];
+	        this.SourceProfile = source["SourceProfile"];
+	    }
+	}
 	export class LaunchResult {
 	    browser: string;
 	    family: string;
 	    mode: string;
 	    cert_count: number;
 	    pid: number;
+	    extensions_imported: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new LaunchResult(source);
@@ -2829,6 +2852,7 @@ export namespace services {
 	        this.mode = source["mode"];
 	        this.cert_count = source["cert_count"];
 	        this.pid = source["pid"];
+	        this.extensions_imported = source["extensions_imported"];
 	    }
 	}
 	export class ListFactorsResponse {
@@ -3337,6 +3361,7 @@ export namespace services {
 	    user_pin_set: boolean;
 	    initialized: boolean;
 	    strategy: string;
+	    so_pin_supported: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new PINStatusInfo(source);
@@ -3348,6 +3373,7 @@ export namespace services {
 	        this.user_pin_set = source["user_pin_set"];
 	        this.initialized = source["initialized"];
 	        this.strategy = source["strategy"];
+	        this.so_pin_supported = source["so_pin_supported"];
 	    }
 	}
 	export class PIVCardInfo {
@@ -4102,6 +4128,254 @@ export namespace services {
 	        this.webauthn_response = source["webauthn_response"];
 	        this.piv_cert_pem = source["piv_cert_pem"];
 	        this.piv_slot = source["piv_slot"];
+	    }
+	}
+	export class SSHBackendInfo {
+	    id: string;
+	    display_name: string;
+	    category: string;
+	    location: string;
+	    is_default: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHBackendInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.display_name = source["display_name"];
+	        this.category = source["category"];
+	        this.location = source["location"];
+	        this.is_default = source["is_default"];
+	    }
+	}
+	export class SSHConfigHostEntry {
+	    alias: string;
+	    hostname: string;
+	    user: string;
+	    port: number;
+	    identity_files: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHConfigHostEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.alias = source["alias"];
+	        this.hostname = source["hostname"];
+	        this.user = source["user"];
+	        this.port = source["port"];
+	        this.identity_files = source["identity_files"];
+	    }
+	}
+	export class SSHConnectParams {
+	    host: string;
+	    port: number;
+	    user: string;
+	    key_scope: string;
+	    key_owner: string;
+	    key_name: string;
+	    key_source: string;
+	    ssh_config_alias: string;
+	    local_identity: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHConnectParams(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.key_scope = source["key_scope"];
+	        this.key_owner = source["key_owner"];
+	        this.key_name = source["key_name"];
+	        this.key_source = source["key_source"];
+	        this.ssh_config_alias = source["ssh_config_alias"];
+	        this.local_identity = source["local_identity"];
+	    }
+	}
+	export class SSHConsoleEndpoint {
+	    url: string;
+	    token: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHConsoleEndpoint(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.url = source["url"];
+	        this.token = source["token"];
+	    }
+	}
+	export class SSHGenerateParams {
+	    name: string;
+	    algorithm: string;
+	    rsa_bits: number;
+	    comment: string;
+	    backend: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHGenerateParams(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.algorithm = source["algorithm"];
+	        this.rsa_bits = source["rsa_bits"];
+	        this.comment = source["comment"];
+	        this.backend = source["backend"];
+	    }
+	}
+	export class SSHKeyInfo {
+	    name: string;
+	    algorithm: string;
+	    public_key: string;
+	    fingerprint: string;
+	    comment: string;
+	    backend: string;
+	    backend_key_id: string;
+	    created_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHKeyInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.algorithm = source["algorithm"];
+	        this.public_key = source["public_key"];
+	        this.fingerprint = source["fingerprint"];
+	        this.comment = source["comment"];
+	        this.backend = source["backend"];
+	        this.backend_key_id = source["backend_key_id"];
+	        this.created_at = source["created_at"];
+	    }
+	}
+	export class SSHLocalKeyInfo {
+	    source: string;
+	    path: string;
+	    key_type: string;
+	    fingerprint: string;
+	    comment: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHLocalKeyInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source = source["source"];
+	        this.path = source["path"];
+	        this.key_type = source["key_type"];
+	        this.fingerprint = source["fingerprint"];
+	        this.comment = source["comment"];
+	    }
+	}
+	export class SSHProfileEntry {
+	    id: string;
+	    name: string;
+	    folder_path: string;
+	    host: string;
+	    port: number;
+	    user: string;
+	    key_scope: string;
+	    key_owner: string;
+	    key_name: string;
+	    key_source: string;
+	    ssh_config_alias: string;
+	    local_identity: string;
+	    persist_session: boolean;
+	    options?: string[];
+	    console_mode: string;
+	    notes: string;
+	    created_at: string;
+	    updated_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHProfileEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.folder_path = source["folder_path"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.key_scope = source["key_scope"];
+	        this.key_owner = source["key_owner"];
+	        this.key_name = source["key_name"];
+	        this.key_source = source["key_source"];
+	        this.ssh_config_alias = source["ssh_config_alias"];
+	        this.local_identity = source["local_identity"];
+	        this.persist_session = source["persist_session"];
+	        this.options = source["options"];
+	        this.console_mode = source["console_mode"];
+	        this.notes = source["notes"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	    }
+	}
+	export class SSHProfileParams {
+	    id?: string;
+	    name: string;
+	    folder_path: string;
+	    host: string;
+	    port: number;
+	    user: string;
+	    key_scope: string;
+	    key_owner: string;
+	    key_name: string;
+	    key_source: string;
+	    ssh_config_alias: string;
+	    local_identity: string;
+	    persist_session: boolean;
+	    options?: string[];
+	    console_mode: string;
+	    notes: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHProfileParams(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.folder_path = source["folder_path"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.key_scope = source["key_scope"];
+	        this.key_owner = source["key_owner"];
+	        this.key_name = source["key_name"];
+	        this.key_source = source["key_source"];
+	        this.ssh_config_alias = source["ssh_config_alias"];
+	        this.local_identity = source["local_identity"];
+	        this.persist_session = source["persist_session"];
+	        this.options = source["options"];
+	        this.console_mode = source["console_mode"];
+	        this.notes = source["notes"];
+	    }
+	}
+	export class SSHProfileService {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHProfileService(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
 	    }
 	}
 	export class SealProtectionStatus {
@@ -4970,6 +5244,86 @@ export namespace services {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace sessions {
+	
+	export class Session {
+	    id: string;
+	    title: string;
+	    host?: string;
+	    port?: number;
+	    user?: string;
+	    key_scope?: string;
+	    key_owner?: string;
+	    key_name?: string;
+	    key_source?: string;
+	    local_identity?: string;
+	    profile_id?: string;
+	    alias?: string;
+	    // Go type: time
+	    created_at: any;
+	    // Go type: time
+	    last_connected_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Session(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.key_scope = source["key_scope"];
+	        this.key_owner = source["key_owner"];
+	        this.key_name = source["key_name"];
+	        this.key_source = source["key_source"];
+	        this.local_identity = source["local_identity"];
+	        this.profile_id = source["profile_id"];
+	        this.alias = source["alias"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.last_connected_at = this.convertValues(source["last_connected_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace slog {
+	
+	export class Logger {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new Logger(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
 	}
 
 }

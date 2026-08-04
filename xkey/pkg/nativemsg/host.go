@@ -106,20 +106,20 @@ func (h *Host) Run(ctx context.Context) error {
 func (h *Host) handshake() error {
 	msg, err := ReadMessage(h.stdin)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrHandshakeFailed, err)
+		return &SentinelCauseError{Sentinel: ErrHandshakeFailed, Cause: err}
 	}
 
 	if msg.Type != MsgTypeHandshake {
-		return fmt.Errorf("%w: expected handshake message, got %q", ErrHandshakeFailed, msg.Type)
+		return &DetailError{Err: ErrHandshakeFailed, Detail: fmt.Sprintf(": expected handshake message, got %q", msg.Type)}
 	}
 
 	if msg.PubKey == "" {
-		return fmt.Errorf("%w: missing public key in handshake", ErrHandshakeFailed)
+		return &DetailError{Err: ErrHandshakeFailed, Detail: ": missing public key in handshake"}
 	}
 
 	peerPubKey, err := base64.StdEncoding.DecodeString(msg.PubKey)
 	if err != nil {
-		return fmt.Errorf("%w: invalid base64 public key: %v", ErrInvalidPublicKey, err)
+		return &DetailError{Err: ErrInvalidPublicKey, Detail: fmt.Sprintf(": invalid base64 public key: %v", err)}
 	}
 
 	sc, ourPubKey, err := NewSessionCrypto()
@@ -232,7 +232,7 @@ func (h *Host) initiatePairing(ourPubKey, identityKey []byte, origin string) err
 		if writeErr := h.sendPairingFailed("pairing code could not be displayed"); writeErr != nil {
 			h.logger.Error("failed to write pairing_failed", "error", writeErr)
 		}
-		return fmt.Errorf("%w: %v", ErrIPCConnection, notifyErr)
+		return &SentinelCauseError{Sentinel: ErrIPCConnection, Cause: notifyErr}
 	}
 	h.logger.Info("pairing code sent to GUI via IPC")
 
@@ -263,7 +263,7 @@ func (h *Host) notifyPairingCode(code string, identityKey []byte, origin string)
 		return err
 	}
 	if resp.Status != ipc.StatusOK {
-		return fmt.Errorf("%w: IPC pairing notify: %s", ErrIPCConnection, resp.Error)
+		return &DetailError{Err: ErrIPCConnection, Detail: fmt.Sprintf(": IPC pairing notify: %s", resp.Error)}
 	}
 	return nil
 }
@@ -284,7 +284,7 @@ func (h *Host) notifyPairingCompleted(origin string) error {
 		return err
 	}
 	if resp.Status != ipc.StatusOK {
-		return fmt.Errorf("%w: IPC pairing completed: %s", ErrIPCConnection, resp.Error)
+		return &DetailError{Err: ErrIPCConnection, Detail: fmt.Sprintf(": IPC pairing completed: %s", resp.Error)}
 	}
 	return nil
 }
@@ -296,9 +296,9 @@ func (h *Host) awaitPairingConfirmation(ourPubKey []byte, origin string) error {
 	msg, err := ReadMessage(h.stdin)
 	if err != nil {
 		if isEOF(err) {
-			return fmt.Errorf("%w: extension disconnected during pairing", ErrPairingRejected)
+			return &DetailError{Err: ErrPairingRejected, Detail: ": extension disconnected during pairing"}
 		}
-		return fmt.Errorf("%w: %v", ErrPairingRejected, err)
+		return &SentinelCauseError{Sentinel: ErrPairingRejected, Cause: err}
 	}
 
 	if msg.Type != MsgTypePairingConfirm {
@@ -359,7 +359,7 @@ func (h *Host) sendHandshakeOK(ourPubKey []byte) error {
 		PubKey: base64.StdEncoding.EncodeToString(ourPubKey),
 	}
 	if err := WriteMessage(h.stdout, resp); err != nil {
-		return fmt.Errorf("%w: %v", ErrHandshakeFailed, err)
+		return &SentinelCauseError{Sentinel: ErrHandshakeFailed, Cause: err}
 	}
 	return nil
 }
@@ -374,7 +374,7 @@ func (h *Host) sendPairingRequired(ourPubKey []byte) error {
 		PairingRequired: true,
 	}
 	if err := WriteMessage(h.stdout, resp); err != nil {
-		return fmt.Errorf("%w: %v", ErrHandshakeFailed, err)
+		return &SentinelCauseError{Sentinel: ErrHandshakeFailed, Cause: err}
 	}
 	return nil
 }
@@ -400,7 +400,7 @@ func (h *Host) sendHandshakeRejected(ourPubKey []byte, reason string) error {
 		Error:  reason,
 	}
 	if err := WriteMessage(h.stdout, resp); err != nil {
-		return fmt.Errorf("%w: %v", ErrHandshakeFailed, err)
+		return &SentinelCauseError{Sentinel: ErrHandshakeFailed, Cause: err}
 	}
 	return ErrIdentityMismatch
 }
@@ -463,7 +463,7 @@ func (h *Host) relayLoop(ctx context.Context) error {
 func (h *Host) handleEncryptedMessage(msg *NativeMessage) error {
 	ciphertext, err := base64.StdEncoding.DecodeString(msg.Ciphertext)
 	if err != nil {
-		return fmt.Errorf("%w: invalid base64 ciphertext: %v", ErrDecryptionFailed, err)
+		return &DetailError{Err: ErrDecryptionFailed, Detail: fmt.Sprintf(": invalid base64 ciphertext: %v", err)}
 	}
 
 	plaintext, err := h.crypto.Decrypt(msg.Nonce, ciphertext)
@@ -474,7 +474,7 @@ func (h *Host) handleEncryptedMessage(msg *NativeMessage) error {
 	// Parse the decrypted plaintext as an IPC Message.
 	var ipcMsg ipc.Message
 	if err := json.Unmarshal(plaintext, &ipcMsg); err != nil {
-		return fmt.Errorf("%w: invalid IPC message: %v", ErrReadFailed, err)
+		return &DetailError{Err: ErrReadFailed, Detail: fmt.Sprintf(": invalid IPC message: %v", err)}
 	}
 
 	// Forward to the IPC server and get the response.
@@ -486,7 +486,7 @@ func (h *Host) handleEncryptedMessage(msg *NativeMessage) error {
 	// Serialize the IPC response.
 	respJSON, err := json.Marshal(ipcResp)
 	if err != nil {
-		return fmt.Errorf("%w: cannot serialize IPC response: %v", ErrWriteFailed, err)
+		return &DetailError{Err: ErrWriteFailed, Detail: fmt.Sprintf(": cannot serialize IPC response: %v", err)}
 	}
 
 	// Encrypt the response.
@@ -510,23 +510,23 @@ func (h *Host) handleEncryptedMessage(msg *NativeMessage) error {
 func (h *Host) forwardToIPC(msg *ipc.Message) (*ipc.Response, error) {
 	conn, err := net.DialTimeout("unix", h.ipcSocketPath, ipcDialTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrIPCConnection, err)
+		return nil, &SentinelCauseError{Sentinel: ErrIPCConnection, Cause: err}
 	}
 	defer func() { _ = conn.Close() }()
 
 	if err := conn.SetDeadline(time.Now().Add(ipcReadWriteTimeout)); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrIPCConnection, err)
+		return nil, &SentinelCauseError{Sentinel: ErrIPCConnection, Cause: err}
 	}
 
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(msg); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrIPCConnection, err)
+		return nil, &SentinelCauseError{Sentinel: ErrIPCConnection, Cause: err}
 	}
 
 	var resp ipc.Response
 	decoder := json.NewDecoder(conn)
 	if err := decoder.Decode(&resp); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrIPCConnection, err)
+		return nil, &SentinelCauseError{Sentinel: ErrIPCConnection, Cause: err}
 	}
 
 	return &resp, nil

@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc/metadata"
 )
@@ -51,10 +53,10 @@ type JWTConfig struct {
 // NewJWTAuthenticator creates a new JWT authenticator.
 func NewJWTAuthenticator(config *JWTConfig) (*JWTAuthenticator, error) {
 	if config == nil {
-		return nil, fmt.Errorf("config is required")
+		return nil, &errs.Message{Msg: "config is required"}
 	}
 	if config.PublicKey == nil {
-		return nil, fmt.Errorf("public key is required")
+		return nil, &errs.Message{Msg: "public key is required"}
 	}
 
 	headerName := config.HeaderName
@@ -75,7 +77,7 @@ func (a *JWTAuthenticator) AuthenticateHTTP(r *http.Request) (*Identity, error) 
 	// Get token from Authorization header
 	authHeader := r.Header.Get(a.headerName)
 	if authHeader == "" {
-		return nil, fmt.Errorf("no authorization header")
+		return nil, &errs.Message{Msg: "no authorization header"}
 	}
 
 	// Extract Bearer token
@@ -87,7 +89,7 @@ func (a *JWTAuthenticator) AuthenticateHTTP(r *http.Request) (*Identity, error) 
 	}
 
 	if tokenString == "" {
-		return nil, fmt.Errorf("no token provided")
+		return nil, &errs.Message{Msg: "no token provided"}
 	}
 
 	// Parse and validate token
@@ -120,7 +122,7 @@ func (a *JWTAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD)
 	}
 
 	if tokenString == "" {
-		return nil, fmt.Errorf("no token provided in metadata")
+		return nil, &errs.Message{Msg: "no token provided in metadata"}
 	}
 
 	// Parse and validate token
@@ -150,23 +152,23 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 		return a.publicKey, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("invalid token: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid token", Err: err}
 	}
 
 	if !token.Valid {
-		return nil, fmt.Errorf("token is not valid")
+		return nil, &errs.Message{Msg: "token is not valid"}
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return nil, fmt.Errorf("invalid claims type")
+		return nil, &errs.Message{Msg: "invalid claims type"}
 	}
 
 	// Validate issuer if configured
 	if a.issuer != "" {
 		iss, ok := claims["iss"].(string)
 		if !ok || iss != a.issuer {
-			return nil, fmt.Errorf("invalid issuer: expected %s", a.issuer)
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid issuer: expected %s", a.issuer)}
 		}
 	}
 
@@ -180,7 +182,7 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 	// Extract subject
 	sub, _ := claims["sub"].(string)
 	if sub == "" {
-		return nil, fmt.Errorf("missing subject claim")
+		return nil, &errs.Message{Msg: "missing subject claim"}
 	}
 
 	identity := &Identity{
@@ -250,7 +252,7 @@ func (a *JWTAuthenticator) validateAudience(claims jwt.MapClaims) error {
 				return nil
 			}
 		}
-		return fmt.Errorf("invalid audience: %s", v)
+		return &errs.Message{Msg: fmt.Sprintf("invalid audience: %s", v)}
 	case []interface{}:
 		for _, aud := range v {
 			if audStr, ok := aud.(string); ok {
@@ -261,9 +263,9 @@ func (a *JWTAuthenticator) validateAudience(claims jwt.MapClaims) error {
 				}
 			}
 		}
-		return fmt.Errorf("invalid audience: %v", v)
+		return &errs.Message{Msg: fmt.Sprintf("invalid audience: %v", v)}
 	default:
-		return fmt.Errorf("invalid audience format")
+		return &errs.Message{Msg: "invalid audience format"}
 	}
 }
 

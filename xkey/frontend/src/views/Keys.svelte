@@ -7,15 +7,17 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DataTable from '$lib/components/DataTable.svelte';
   import Modal from '$lib/components/Modal.svelte';
-  import { getBackendLabel, getBackendIcon, isHardwareBackend } from '$lib/utils/backends';
+  import { getBackendLabel, getBackendIcon } from '$lib/utils/backends';
+  import BackendBadge from '$lib/components/BackendBadge.svelte';
   import {
     mdiKey, mdiPlus, mdiShieldCheckOutline,
     mdiDelete, mdiExport, mdiFingerprint, mdiRefresh,
     mdiFilter, mdiShieldHalfFull, mdiLockOutline,
     mdiLockOpen, mdiCheckCircle, mdiCloseCircle, mdiDotsVertical,
     mdiSwapHorizontal, mdiContentCopy, mdiDownload, mdiFolderOpen,
-    mdiContentSave, mdiAlertCircle
+    mdiContentSave, mdiAlertCircle, mdiSsh
   } from '$lib/utils/icons';
+  import GenerateSSHKeyDialog from '$lib/components/GenerateSSHKeyDialog.svelte';
   import {
     textToBase64, base64ToText, base64ToHex, hexToBase64, copyToClipboard
   } from '$lib/utils/encoding';
@@ -24,10 +26,22 @@
   import { clickOutside } from '$lib/actions/clickOutside';
   import type {
     RemoteKeyInfo, RemoteBackendInfo, GenerateKeyParams,
-    GenerateKeyResult, AttestKeyResult, BackendCapabilities
+    GenerateKeyResult, AttestKeyResult, BackendCapabilities, SSHKeyInfo
   } from '$lib/api/backend';
 
+  /**
+   * UnifiedKeyRow is a Keys-view row that may be a backend crypto key or an
+   * SSH key. SSH keys are surfaced as first-class rows (badged "SSH") and the
+   * raw backend signing key that backs them is suppressed (see mergeKeys).
+   */
+  interface UnifiedKeyRow extends RemoteKeyInfo {
+    isSSH?: boolean;
+    fingerprint?: string;
+    publicKeyLine?: string;
+  }
+
   let keys: RemoteKeyInfo[] = [];
+  let sshKeys: SSHKeyInfo[] = [];
   let backends: RemoteBackendInfo[] = [];
   let selectedBackend = 'all';
   let selectedKeyType = 'all';
@@ -36,6 +50,7 @@
 
   // Generate Key dialog state
   let showGenerateDialog = false;
+  let showGenerateSSHDialog = false;
   let generateBackend = '';
   let generateKeyId = '';
   let generatePurpose = 'SIGNING';
@@ -116,6 +131,7 @@
   let showDeleteConfirmDialog = false;
   let deleteTargetBackend = '';
   let deleteTargetKeyId = '';
+  let deleteTargetIsSSH = false;
 
 
   const keySizeOptions: Record<string, number[]> = {
@@ -231,7 +247,14 @@
     divider?: boolean;
   }
 
-  function getKeyOps(key: RemoteKeyInfo): MenuItem[] {
+  function getKeyOps(key: UnifiedKeyRow): MenuItem[] {
+    if (key.isSSH) {
+      return [
+        { id: 'ssh-copy', label: 'Copy public key', icon: mdiContentCopy },
+        { id: 'divider', label: '', icon: '', divider: true },
+        { id: 'delete', label: 'Delete', icon: mdiDelete, danger: true },
+      ];
+    }
     const caps = backendCaps.get(key.backend);
     if (!caps) return [{ id: 'delete', label: 'Delete', icon: mdiDelete, danger: true }];
     const ops: MenuItem[] = [];
@@ -271,8 +294,15 @@
     }
   }
 
-  function handleMenuAction(key: RemoteKeyInfo, actionId: string): void {
+  function handleMenuAction(key: UnifiedKeyRow, actionId: string): void {
     closeKeyMenu();
+    if (key.isSSH) {
+      switch (actionId) {
+        case 'ssh-copy': sshCopyPublicKey(key); break;
+        case 'delete': openDeleteConfirm(key); break;
+      }
+      return;
+    }
     switch (actionId) {
       case 'sign': openSignDialog(key); break;
       case 'verify': openVerifyDialog(key); break;
@@ -286,7 +316,8 @@
   }
 
   // Purpose label for key card display
-  function getPurposeLabel(key: RemoteKeyInfo): string {
+  function getPurposeLabel(key: UnifiedKeyRow): string {
+    if (key.isSSH) return 'SSH';
     const t = key.key_type?.toUpperCase();
     const purposeNames = ['SIGNING', 'ENCRYPTION', 'CA', 'TLS', 'SECRET', 'HMAC', 'ATTESTATION'];
     if (purposeNames.includes(t)) return t;
@@ -296,14 +327,41 @@
     return t || 'Unknown';
   }
 
-  $: filteredKeys = keys.filter((k) => {
+  // mergeKeys folds SSH keys into the backend-key list. SSH keys render as
+  // friendly "SSH" rows; the raw backend signing key that backs a backend-bound
+  // SSH key (matched exactly on backend + backend_key_id) is suppressed so it is
+  // not shown twice.
+  function mergeKeys(remote: RemoteKeyInfo[], ssh: SSHKeyInfo[]): UnifiedKeyRow[] {
+    const suppress = new Set<string>();
+    for (const s of ssh) {
+      if (s.backend && s.backend_key_id) suppress.add(`${s.backend} ${s.backend_key_id}`);
+    }
+    const sshRows: UnifiedKeyRow[] = ssh.map((s) => ({
+      key_id: s.name,
+      key_type: 'SSH',
+      algorithm: s.algorithm,
+      backend: s.backend || 'software',
+      public_key_pem: '',
+      isSSH: true,
+      fingerprint: s.fingerprint,
+      publicKeyLine: s.public_key,
+    }));
+    const backendRows: UnifiedKeyRow[] = remote.filter(
+      (k) => !suppress.has(`${k.backend} ${k.key_id}`),
+    );
+    return [...sshRows, ...backendRows];
+  }
+
+  $: unifiedKeys = mergeKeys(keys, sshKeys);
+
+  $: filteredKeys = unifiedKeys.filter((k) => {
     if (selectedBackend !== 'all' && k.backend !== selectedBackend) return false;
     if (selectedKeyType !== 'all' && k.key_type !== selectedKeyType) return false;
     return true;
   });
 
-  // Dynamic key type filter chips from actual keys
-  $: uniqueKeyTypes = [...new Set(keys.map(k => k.key_type))].sort();
+  // Dynamic key type filter chips from actual keys (SSH included)
+  $: uniqueKeyTypes = [...new Set(unifiedKeys.map(k => k.key_type))].sort();
 
   $: {
     const sizes = keySizeOptions[generateAlgorithm] ?? [];
@@ -326,10 +384,11 @@
   async function loadData(): Promise<void> {
     if (!isWailsAvailable()) return;
     loading = true;
-    const [backendList, registeredList, keyList] = await Promise.all([
+    const [backendList, registeredList, keyList, sshList] = await Promise.all([
       callBackend<RemoteBackendInfo[]>('KeyService', 'ListBackends', 'local'),
       callBackend<RemoteBackendInfo[]>('KeyService', 'ListRegisteredBackends'),
       callBackend<RemoteKeyInfo[]>('KeyService', 'ListAllKeys', 'local'),
+      callBackend<SSHKeyInfo[]>('SSHService', 'ListKeys'),
     ]);
     // Merge: start with registered (has all backends), overlay SDK data (has capabilities)
     const byId = new Map<string, RemoteBackendInfo>();
@@ -344,6 +403,7 @@
     }
     backends = Array.from(byId.values());
     keys = keyList ?? [];
+    sshKeys = sshList ?? [];
     loading = false;
   }
 
@@ -358,9 +418,38 @@
     }
   }
 
-  function openDeleteConfirm(key: RemoteKeyInfo): void {
+  // confirmDelete dispatches the delete from the confirm dialog to the correct
+  // service: SSH keys go through SSHService, all others through KeyService.
+  async function confirmDelete(): Promise<void> {
+    if (deleteTargetIsSSH) {
+      const ok = await callBackendVoid('SSHService', 'DeleteKey', deleteTargetKeyId);
+      if (ok) {
+        addNotification('success', `SSH key "${deleteTargetKeyId}" deleted`);
+        showDeleteConfirmDialog = false;
+        await loadData();
+      } else {
+        addNotification('error', `Failed to delete SSH key "${deleteTargetKeyId}"`);
+      }
+      return;
+    }
+    await deleteKey(deleteTargetBackend, deleteTargetKeyId);
+  }
+
+  async function sshCopyPublicKey(key: UnifiedKeyRow): Promise<void> {
+    const line = key.publicKeyLine ?? '';
+    if (!line) {
+      addNotification('error', 'No public key available');
+      return;
+    }
+    const ok = await copyToClipboard(line);
+    addNotification(ok ? 'success' : 'error',
+      ok ? `Public key for "${key.key_id}" copied` : 'Failed to copy public key');
+  }
+
+  function openDeleteConfirm(key: UnifiedKeyRow): void {
     deleteTargetBackend = key.backend;
     deleteTargetKeyId = key.key_id;
+    deleteTargetIsSSH = !!key.isSSH;
     showDeleteConfirmDialog = true;
   }
 
@@ -733,8 +822,11 @@
   async function handleBulkDeleteKeys(): Promise<void> {
     const ids = Array.from(selectedKeyIds);
     for (const keyId of ids) {
-      const key = keys.find(k => k.key_id === keyId);
-      if (key) {
+      const key = unifiedKeys.find(k => k.key_id === keyId);
+      if (!key) continue;
+      if (key.isSSH) {
+        await callBackendVoid('SSHService', 'DeleteKey', key.key_id);
+      } else {
         await callBackendVoid('KeyService', 'DeleteKey', 'local', key.backend, key.key_id);
       }
     }
@@ -761,7 +853,7 @@
       <div class="summary-row">
         <Card variant="elevated">
           <div class="summary-card">
-            <span class="text-display-small summary-count">{keys.length}</span>
+            <span class="text-display-small summary-count">{unifiedKeys.length}</span>
             <span class="text-label-large summary-label">Total Keys</span>
           </div>
         </Card>
@@ -775,6 +867,14 @@
           <div class="summary-card action-card">
             <Button variant="primary" icon={mdiPlus} on:click={openGenerateDialog}>
               Generate Key
+            </Button>
+            <Button
+              variant="outline"
+              icon={mdiSsh}
+              data-testid="keys-generate-ssh"
+              on:click={() => (showGenerateSSHDialog = true)}
+            >
+              Generate SSH Key
             </Button>
           </div>
         </Card>
@@ -835,12 +935,7 @@
               <span class="text-body-medium">{value}</span>
             </div>
           {:else if column.key === 'backend'}
-            <span class="backend-badge" class:backend-hw={isHardwareBackend(row.backend)} class:backend-sw={!isHardwareBackend(row.backend)}>
-              {#if isHardwareBackend(row.backend)}
-                <Icon path={getBackendIcon(row.backend)} size={14} />
-              {/if}
-              {getBackendLabel(row.backend)}
-            </span>
+            <BackendBadge backend={row.backend} compact />
           {:else if column.key === 'key_type'}
             <span class="purpose-badge">{getPurposeLabel(row)}</span>
           {:else if column.key === 'algorithm'}
@@ -1359,9 +1454,12 @@
   </div>
   <svelte:fragment slot="actions">
     <Button variant="text" on:click={() => (showDeleteConfirmDialog = false)}>Cancel</Button>
-    <Button variant="danger" on:click={() => deleteKey(deleteTargetBackend, deleteTargetKeyId)}>Delete</Button>
+    <Button variant="danger" on:click={confirmDelete}>Delete</Button>
   </svelte:fragment>
 </Modal>
+
+<!-- Generate SSH Key (shared dialog; SSH keys are backend-bound) -->
+<GenerateSSHKeyDialog bind:open={showGenerateSSHDialog} onGenerated={loadData} />
 
 <style>
   .keys-view {
@@ -1456,26 +1554,6 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-  }
-
-  .backend-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.125rem 0.5rem;
-    border-radius: 99px;
-    font-size: 0.75rem;
-    font-weight: 500;
-  }
-
-  .backend-hw {
-    background: var(--md-sys-color-tertiary-container);
-    color: var(--md-sys-color-on-tertiary-container);
-  }
-
-  .backend-sw {
-    background: var(--md-sys-color-surface-container-highest);
-    color: var(--md-sys-color-on-surface-variant);
   }
 
   .purpose-badge {

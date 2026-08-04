@@ -15,8 +15,9 @@ package grpc
 
 import (
 	"errors"
-	"fmt"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -26,7 +27,7 @@ import (
 
 func TestNotLeaderStatus_Translation(t *testing.T) {
 	src := &qrdbtransport.NotLeaderError{ShardID: 7, LeaderID: 3, LeaderAddress: "10.0.0.3:63001"}
-	err, ok := notLeaderStatus(fmt.Errorf("write: %w", src))
+	err, ok := notLeaderStatus(&errs.Wrapped{Msg: "write", Err: src})
 	if !ok {
 		t.Fatal("notLeaderStatus(NotLeaderError) ok = false, want true")
 	}
@@ -65,7 +66,7 @@ func TestNotLeaderStatus_NoMatch(t *testing.T) {
 
 func TestWrapWriteError_NotLeader(t *testing.T) {
 	src := &qrdbtransport.NotLeaderError{ShardID: 1, LeaderID: 9, LeaderAddress: "n9:63001"}
-	err := wrapWriteError(fmt.Errorf("generate key: %w", src), codes.Internal, "failed to generate key: %v", src)
+	err := wrapWriteError(&errs.Wrapped{Msg: "generate key", Err: src}, codes.Internal, "failed to generate key: %v", src)
 
 	st, _ := status.FromError(err)
 	if st.Code() != codes.FailedPrecondition {

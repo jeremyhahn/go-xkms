@@ -1,6 +1,6 @@
 # RFC 8555 ACME Protocol Compliance Report
 
-**Project:** go-trusted-ca
+**Project:** go-xkms
 **Date:** 2025-11-17
 **RFC Version:** RFC 8555 (Automatic Certificate Management Environment)
 **Status:** ✅ 100% RFC 8555 COMPLIANT
@@ -9,7 +9,7 @@
 
 ## Overview
 
-This document details go-trusted-ca's compliance with RFC 8555, the Automatic Certificate Management Environment (ACME) protocol. The implementation has been verified through:
+This document details go-xkms's compliance with RFC 8555, the Automatic Certificate Management Environment (ACME) protocol. The implementation has been verified through:
 
 - 236 unit tests (100% passing)
 - 13 integration tests (100% passing)
@@ -632,7 +632,7 @@ Total: 13 tests (7 main, 6 sub-tests), 0 failures
 
 ## Conclusion
 
-**go-trusted-ca is FULLY COMPLIANT with RFC 8555** with all ACME protocol features implemented and comprehensively tested:
+**go-xkms is FULLY COMPLIANT with RFC 8555** with all ACME protocol features implemented and comprehensively tested:
 
 ✅ **Strengths:**
 - Complete ACME workflow: Account → Order → Authorization → Challenge → Finalize → Certificate

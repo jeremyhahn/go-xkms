@@ -88,3 +88,31 @@ func TestPCRPolicyEntity_FieldsPreserved(t *testing.T) {
 		t.Error("AutoUnseal should be false")
 	}
 }
+
+func TestPCRPolicyEntity_DescriptionAndPlatformFlagPreserved(t *testing.T) {
+	e := &PCRPolicyEntity{
+		Name:             "gui-policy",
+		Description:      "Boot policy for secure boot verification",
+		Bank:             "SHA256",
+		PCRs:             map[uint][]byte{0: {0x01}},
+		IsPlatformPolicy: true,
+	}
+
+	if e.Description != "Boot policy for secure boot verification" {
+		t.Errorf("Description = %q, want preserved value", e.Description)
+	}
+	if !e.IsPlatformPolicy {
+		t.Error("IsPlatformPolicy should be true")
+	}
+}
+
+func TestPCRPolicyEntity_DescriptionAndPlatformFlagZeroValue(t *testing.T) {
+	var e PCRPolicyEntity
+
+	if e.Description != "" {
+		t.Errorf("zero-value Description = %q, want empty", e.Description)
+	}
+	if e.IsPlatformPolicy {
+		t.Error("zero-value IsPlatformPolicy should be false")
+	}
+}

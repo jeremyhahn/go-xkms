@@ -3,9 +3,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -31,9 +31,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gorilla/mux"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,18 +43,18 @@ import (
 // ==========================================================================
 
 type stubCeremonyClient struct {
-	initResp           *db.CeremonyInitializeResponse
-	initErr            error
-	statusResp         *db.CeremonyStatusResponse
-	statusErr          error
-	claimBeginResp     *db.ClaimCertBeginResponse
-	claimBeginErr      error
-	claimCompleteResp  *db.ClaimCertCompleteResponse
-	claimCompleteErr   error
-	claimShareResp     *db.ClaimShareResponse
-	claimShareErr      error
-	signCSRResp        *db.SignCSRInitResponse
-	signCSRErr         error
+	initResp          *db.CeremonyInitializeResponse
+	initErr           error
+	statusResp        *db.CeremonyStatusResponse
+	statusErr         error
+	claimBeginResp    *db.ClaimCertBeginResponse
+	claimBeginErr     error
+	claimCompleteResp *db.ClaimCertCompleteResponse
+	claimCompleteErr  error
+	claimShareResp    *db.ClaimShareResponse
+	claimShareErr     error
+	signCSRResp       *db.SignCSRInitResponse
+	signCSRErr        error
 }
 
 func newStubCeremonyClient() *stubCeremonyClient {
@@ -204,9 +204,9 @@ func TestCeremonyService_InitializeCeremony_Success(t *testing.T) {
 	svc := NewCeremonyService(stub, nil, slog.Default())
 
 	resp, err := svc.InitializeCeremony(context.Background(), &CeremonyInitializeRequest{
-		SOPin:      "so-pin",
-		UserPin:    "user-pin",
-		Threshold:  2,
+		SOPin:     "so-pin",
+		UserPin:   "user-pin",
+		Threshold: 2,
 		Officers: []CeremonyOfficerRequest{
 			{Username: "officer1", CSRPEM: "pem1"},
 		},

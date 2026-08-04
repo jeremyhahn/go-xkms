@@ -212,3 +212,50 @@ func TestApplyEnvOverrides_ClusterRaftTLS(t *testing.T) {
 		t.Fatalf("raft_tls env overrides not applied: %+v", cfg.Cluster.RaftTLS)
 	}
 }
+
+func TestRaftACMEEnrollmentConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name       string
+		acme       RaftACMEEnrollmentConfig
+		keyBackend string
+		wantErr    bool
+	}{
+		{
+			name:       "disabled is always valid",
+			acme:       RaftACMEEnrollmentConfig{Enabled: false},
+			keyBackend: "",
+			wantErr:    false,
+		},
+		{
+			// ACME-attested issuance works for any backend: the first node
+			// issues in-process (any backend) and joiners select the challenge
+			// by backend at runtime, so config validation no longer hard-
+			// requires tpm2.
+			name:       "enabled with tpm2 backend is valid",
+			acme:       RaftACMEEnrollmentConfig{Enabled: true},
+			keyBackend: "tpm2",
+			wantErr:    false,
+		},
+		{
+			name:       "enabled with software backend is valid",
+			acme:       RaftACMEEnrollmentConfig{Enabled: true},
+			keyBackend: "",
+			wantErr:    false,
+		},
+		{
+			name:       "enabled with pkcs11 backend is valid",
+			acme:       RaftACMEEnrollmentConfig{Enabled: true},
+			keyBackend: "pkcs11",
+			wantErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.acme.Validate(tt.keyBackend)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Validate(%q) error = %v, wantErr %v", tt.keyBackend, err, tt.wantErr)
+			}
+		})
+	}
+}

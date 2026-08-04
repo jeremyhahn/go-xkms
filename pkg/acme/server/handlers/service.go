@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -210,6 +210,14 @@ type Params struct {
 	// network-zone extension OIDTPNetworkZone) that are appended to ExtraExtensions in
 	// registration order. A hook error aborts finalization fail-closed.
 	OrderPreSignHooks *OrderPreSignHookRegistry
+
+	// ClusterCACN, when set, routes TCG-CSR-IDEVID (enroll-01) issuance through
+	// the named CA identity — a dedicated cluster intermediate — instead of the
+	// CA's default issuing identity. This keeps Raft node transport certificates
+	// on a purpose-built intermediate (root signs intermediates only), the
+	// recommended FedRAMP/PCI posture. Empty preserves default issuance. The CA
+	// must implement ca.IdentityIssuer for this to take effect.
+	ClusterCACN string
 }
 
 // CAAValidatorInterface defines the interface for CAA validation.
@@ -225,6 +233,7 @@ type RestService struct {
 	caaIdentities           []string
 	caaValidator            CAAValidatorInterface
 	challengeMap            map[string]common.ChallengeVerifierFunc
+	clusterCACN             string
 	endorseEABRequired      bool
 	endorseDeviceIDMetaKey  string
 	externalAccountRequired bool
@@ -281,6 +290,7 @@ func NewRestService(params *Params) (RestServicer, error) {
 		caaIdentities:           params.CAAIdentities,
 		caaValidator:            params.CAAValidator,
 		challengeMap:            params.ChallengeMap,
+		clusterCACN:             params.ClusterCACN,
 		endorseEABRequired:      params.EndorseEABRequired,
 		endorseDeviceIDMetaKey:  params.EndorseDeviceIDMetaKey,
 		externalAccountRequired: params.ExternalAccountRequired,

@@ -5,6 +5,7 @@ package integration
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
@@ -41,7 +44,7 @@ func (m *memCertStore) Get(attrs *types.KeyAttributes) (*x509.Certificate, error
 	if cert, ok := m.certs[attrs.CN]; ok {
 		return cert, nil
 	}
-	return nil, fmt.Errorf("certificate not found: %s", attrs.CN)
+	return nil, &errs.Message{Msg: fmt.Sprintf("certificate not found: %s", attrs.CN)}
 }
 
 // Save stores a certificate
@@ -64,7 +67,7 @@ func (m *memCertStore) Delete(attrs *types.KeyAttributes) error {
 func (m *memCertStore) ImportCertificate(attrs *types.KeyAttributes, certPEM []byte) (*x509.Certificate, error) {
 	block, _ := pem.Decode(certPEM)
 	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM certificate")
+		return nil, &errs.Message{Msg: "failed to decode PEM certificate"}
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
@@ -86,10 +89,10 @@ const (
 
 var (
 	// ErrTPMConnection indicates failure to connect to TPM
-	ErrTPMConnection = fmt.Errorf("failed to connect to TPM")
+	ErrTPMConnection = errors.New("failed to connect to TPM")
 
 	// ErrTPMOperation indicates a TPM operation failed
-	ErrTPMOperation = fmt.Errorf("TPM operation failed")
+	ErrTPMOperation = errors.New("TPM operation failed")
 )
 
 // getTPMAddress returns the TPM simulator address from environment or defaults

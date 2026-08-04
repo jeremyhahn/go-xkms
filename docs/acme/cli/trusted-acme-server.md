@@ -252,7 +252,7 @@ make docker-build
 docker run -d \
   -p 8443:8443 \
   -v /data/trustedca:/var/lib/trustedca \
-  go-trusted-ca:latest
+  go-xkms:latest
 
 # With Admin API enabled
 docker run -d \
@@ -261,7 +261,7 @@ docker run -d \
   -p 9444:9444 \
   -v /data/trustedca:/var/lib/trustedca \
   -e TRUSTEDCA_SERVER_EXTERNAL_URL=https://acme.example.com \
-  go-trusted-ca:latest \
+  go-xkms:latest \
   --admin-enabled
 ```
 

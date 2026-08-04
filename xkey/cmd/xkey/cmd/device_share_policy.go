@@ -124,12 +124,12 @@ func init() {
 func runSharePolicyList(cmd *cobra.Command, args []string) error {
 	store, err := loadSharingPolicyStore()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSharePolicyLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSharePolicyLoadFailed, Cause: err}
 	}
 
 	policies, err := store.ListPolicies()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSharePolicyLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSharePolicyLoadFailed, Cause: err}
 	}
 
 	if len(policies) == 0 {
@@ -180,7 +180,7 @@ func runSharePolicySet(cmd *cobra.Command, args []string) error {
 
 	store, err := loadSharingPolicyStore()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSharePolicyLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSharePolicyLoadFailed, Cause: err}
 	}
 
 	policy := &phone.SharingPolicy{
@@ -194,7 +194,7 @@ func runSharePolicySet(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := store.SetPolicy(policy); err != nil {
-		return fmt.Errorf("%w: %v", ErrSharePolicySetFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSharePolicySetFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Sharing policy set for %s/%s:\n", backend, keyID)
@@ -219,14 +219,14 @@ func runSharePolicyRemove(cmd *cobra.Command, args []string) error {
 
 	store, err := loadSharingPolicyStore()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSharePolicyLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSharePolicyLoadFailed, Cause: err}
 	}
 
 	if err := store.DeletePolicy(backend, keyID); err != nil {
 		if errors.Is(err, phone.ErrSharePolicyNotFound) {
-			return fmt.Errorf("%w: no policy found for %s/%s", ErrSharePolicyRemoveFailed, backend, keyID)
+			return &DetailError{Err: ErrSharePolicyRemoveFailed, Detail: fmt.Sprintf(": no policy found for %s/%s", backend, keyID)}
 		}
-		return fmt.Errorf("%w: %v", ErrSharePolicyRemoveFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSharePolicyRemoveFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Sharing policy removed for %s/%s.\n", backend, keyID)

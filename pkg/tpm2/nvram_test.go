@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"math"
 	"math/big"
 	"testing"
 	"time"
@@ -936,6 +937,389 @@ func TestCertificateNVRAMOperations(t *testing.T) {
 
 		err := tpmImpl.deleteCertFromNVRAM(nvIndex)
 		assert.Error(t, err)
+	})
+}
+
+// TestNVReadAuthReadWithNonEmptyOwnerAuth proves that NVRead uses the
+// index-self auth path (TPMA_NV_AUTHREAD, TCG Part 3 §31.13) when the
+// NV index was defined with AuthRead=true and empty index authValue, even
+// when the simulator owner hierarchy auth has been changed to a non-empty
+// value.  Without the fix, the function would send the owner handle with
+// the wrong (empty) password and receive TPM_RC_BAD_AUTH.
+func TestNVReadAuthReadWithNonEmptyOwnerAuth(t *testing.T) {
+	_, tpmIface := createSim(false, false)
+	defer func() { _ = tpmIface.Close() }()
+
+	tpm := tpmIface.(*TPM2)
+
+	ownerPIN := store.NewPassword([]byte("owner-secret"))
+
+	// Set owner hierarchy auth to a non-empty value on the SIMULATOR ONLY.
+	ownerHandle := tpm2.TPMHandle(tpm2.TPMRHOwner)
+	ekAttrs, err := tpmIface.EKAttributes()
+	require.NoError(t, err)
+
+	err = tpm.SetHierarchyAuth(ekAttrs.TPMAttributes.HierarchyAuth, ownerPIN, &ownerHandle)
+	require.NoError(t, err)
+
+	secret := []byte("authread-secret")
+	nvHandle := tpm2.TPMHandle(0x01800030)
+
+	// Define NV space with AuthRead=true but OwnerRead=false, so the only
+	// valid read path is the index-self auth.  Use owner auth for defining
+	// and writing (OwnerWrite=true) so we can set up the index, but we
+	// intentionally leave AuthRead as the sole readable attribute.
+	defs := tpm2.NVDefineSpace{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(ownerPIN.Bytes()),
+		},
+		PublicInfo: tpm2.New2B(
+			tpm2.TPMSNVPublic{
+				NVIndex:  nvHandle,
+				NameAlg:  tpm2.TPMAlgSHA256,
+				DataSize: uint16(len(secret)),
+				Attributes: tpm2.TPMANV{
+					AuthRead:   true,
+					AuthWrite:  true,
+					OwnerWrite: true,
+					NT:         tpm2.TPMNTOrdinary,
+					NoDA:       true,
+					// OwnerRead intentionally NOT set.
+				},
+			}),
+	}
+	_, err = defs.Execute(tpm.transport)
+	require.NoError(t, err)
+
+	nvPubRsp, err := tpm2.NVReadPublic{NVIndex: nvHandle}.Execute(tpm.transport)
+	require.NoError(t, err)
+
+	// Write via owner auth.
+	_, err = tpm2.NVWrite{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(ownerPIN.Bytes()),
+		},
+		NVIndex: tpm2.NamedHandle{
+			Handle: nvHandle,
+			Name:   nvPubRsp.NVName,
+		},
+		Data:   tpm2.TPM2BMaxNVBuffer{Buffer: secret},
+		Offset: 0,
+	}.Execute(tpm.transport)
+	require.NoError(t, err)
+
+	// Construct keyAttrs with NO hierarchy auth — caller doesn't know owner
+	// password, simulating an EK cert index with empty index auth.
+	keyAttrs := &types.KeyAttributes{
+		Parent: &types.KeyAttributes{
+			TPMAttributes: &types.TPMAttributes{
+				HierarchyAuth: store.NewPassword(nil), // empty — no owner auth
+			},
+		},
+		TPMAttributes: &types.TPMAttributes{
+			Handle:    nvHandle,
+			HashAlg:   tpm2.TPMAlgSHA256,
+			Hierarchy: tpm2.TPMRHOwner,
+		},
+	}
+
+	// NVRead must succeed via AuthRead (index-self auth), bypassing the
+	// non-empty owner auth that would otherwise fail.
+	data, err := tpm.NVRead(keyAttrs, uint16(len(secret)))
+	require.NoError(t, err)
+	assert.Equal(t, secret, data)
+
+	// Clean up — requires the owner auth we set.
+	_, err = tpm2.NVUndefineSpace{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(ownerPIN.Bytes()),
+		},
+		NVIndex: tpm2.NamedHandle{Handle: nvHandle, Name: nvPubRsp.NVName},
+	}.Execute(tpm.transport)
+	assert.NoError(t, err)
+}
+
+// TestNVReadOwnerReadWithOwnerAuth proves that an OWNERREAD-only NV index
+// (no AUTHREAD) is still readable via NVRead when the caller supplies the
+// correct owner hierarchy auth.
+func TestNVReadOwnerReadWithOwnerAuth(t *testing.T) {
+	_, tpmIface := createSim(false, false)
+	defer func() { _ = tpmIface.Close() }()
+
+	tpm := tpmIface.(*TPM2)
+
+	ownerPIN := store.NewPassword([]byte("owner-read-test"))
+
+	ownerHandle := tpm2.TPMHandle(tpm2.TPMRHOwner)
+	ekAttrs, err := tpmIface.EKAttributes()
+	require.NoError(t, err)
+
+	err = tpm.SetHierarchyAuth(ekAttrs.TPMAttributes.HierarchyAuth, ownerPIN, &ownerHandle)
+	require.NoError(t, err)
+
+	secret := []byte("ownerread-secret")
+	nvHandle := tpm2.TPMHandle(0x01800040)
+
+	// Define with OwnerRead=true and OwnerWrite=true; AuthRead is NOT set so
+	// only the owner-hierarchy path is valid for reads.
+	defs := tpm2.NVDefineSpace{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(ownerPIN.Bytes()),
+		},
+		PublicInfo: tpm2.New2B(
+			tpm2.TPMSNVPublic{
+				NVIndex:  nvHandle,
+				NameAlg:  tpm2.TPMAlgSHA256,
+				DataSize: uint16(len(secret)),
+				Attributes: tpm2.TPMANV{
+					OwnerRead:  true,
+					OwnerWrite: true,
+					AuthWrite:  true,
+					NT:         tpm2.TPMNTOrdinary,
+					NoDA:       true,
+					// AuthRead intentionally NOT set.
+				},
+			}),
+	}
+	_, err = defs.Execute(tpm.transport)
+	require.NoError(t, err)
+
+	nvPubRsp, err := tpm2.NVReadPublic{NVIndex: nvHandle}.Execute(tpm.transport)
+	require.NoError(t, err)
+
+	_, err = tpm2.NVWrite{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(ownerPIN.Bytes()),
+		},
+		NVIndex: tpm2.NamedHandle{
+			Handle: nvHandle,
+			Name:   nvPubRsp.NVName,
+		},
+		Data:   tpm2.TPM2BMaxNVBuffer{Buffer: secret},
+		Offset: 0,
+	}.Execute(tpm.transport)
+	require.NoError(t, err)
+
+	// Supply owner auth via Parent.TPMAttributes.HierarchyAuth.
+	keyAttrs := &types.KeyAttributes{
+		Parent: &types.KeyAttributes{
+			TPMAttributes: &types.TPMAttributes{
+				HierarchyAuth: ownerPIN,
+			},
+		},
+		TPMAttributes: &types.TPMAttributes{
+			Handle:    nvHandle,
+			HashAlg:   tpm2.TPMAlgSHA256,
+			Hierarchy: tpm2.TPMRHOwner,
+		},
+	}
+
+	data, err := tpm.NVRead(keyAttrs, uint16(len(secret)))
+	require.NoError(t, err)
+	assert.Equal(t, secret, data)
+
+	// Clean up.
+	_, err = tpm2.NVUndefineSpace{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(ownerPIN.Bytes()),
+		},
+		NVIndex: tpm2.NamedHandle{Handle: nvHandle, Name: nvPubRsp.NVName},
+	}.Execute(tpm.transport)
+	assert.NoError(t, err)
+}
+
+// TestNVReadNotAuthorizedError proves that NVRead returns ErrNVReadNotAuthorized
+// when the NV index attributes have neither AuthRead nor OwnerRead set.
+// We simulate this by defining an index with only PPRead (platform hierarchy
+// read, bit 16) and no owner- or auth-value-based read attribute, then
+// calling NVRead which must return the typed error without panicking.
+func TestNVReadNotAuthorizedError(t *testing.T) {
+	_, tpmIface := createSim(false, false)
+	defer func() { _ = tpmIface.Close() }()
+
+	tpm := tpmIface.(*TPM2)
+
+	ekAttrs, err := tpmIface.EKAttributes()
+	require.NoError(t, err)
+
+	var hierarchyAuth []byte
+	if ekAttrs.TPMAttributes.HierarchyAuth != nil {
+		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth.Bytes()
+	}
+
+	secret := []byte("ppread-only")
+	nvHandle := tpm2.TPMHandle(0x01800050)
+
+	// Define an NV index with PPRead only — neither AuthRead nor OwnerRead
+	// is set.  NVRead cannot satisfy this without a platform session, so it
+	// must return ErrNVReadNotAuthorized via the default branch.
+	defs := tpm2.NVDefineSpace{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(hierarchyAuth),
+		},
+		PublicInfo: tpm2.New2B(
+			tpm2.TPMSNVPublic{
+				NVIndex:  nvHandle,
+				NameAlg:  tpm2.TPMAlgSHA256,
+				DataSize: uint16(len(secret)),
+				Attributes: tpm2.TPMANV{
+					PPRead:     true,
+					OwnerWrite: true,
+					AuthWrite:  true,
+					NT:         tpm2.TPMNTOrdinary,
+					NoDA:       true,
+					// AuthRead and OwnerRead both NOT set.
+				},
+			}),
+	}
+	_, err = defs.Execute(tpm.transport)
+	require.NoError(t, err)
+
+	nvPubRsp, err := tpm2.NVReadPublic{NVIndex: nvHandle}.Execute(tpm.transport)
+	require.NoError(t, err)
+
+	// Write so the index is WRITTEN (not uninitialized) — avoids a different
+	// TPM error if the TPM refuses to read an unwritten index.
+	_, err = tpm2.NVWrite{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(hierarchyAuth),
+		},
+		NVIndex: tpm2.NamedHandle{
+			Handle: nvHandle,
+			Name:   nvPubRsp.NVName,
+		},
+		Data:   tpm2.TPM2BMaxNVBuffer{Buffer: secret},
+		Offset: 0,
+	}.Execute(tpm.transport)
+	require.NoError(t, err)
+
+	keyAttrs := &types.KeyAttributes{
+		Parent: &types.KeyAttributes{
+			TPMAttributes: &types.TPMAttributes{
+				HierarchyAuth: store.NewPassword(nil),
+			},
+		},
+		TPMAttributes: &types.TPMAttributes{
+			Handle:    nvHandle,
+			HashAlg:   tpm2.TPMAlgSHA256,
+			Hierarchy: tpm2.TPMRHOwner,
+		},
+	}
+
+	_, err = tpm.NVRead(keyAttrs, uint16(len(secret)))
+	assert.ErrorIs(t, err, ErrNVReadNotAuthorized)
+
+	// Clean up.
+	_, err = tpm2.NVUndefineSpace{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(hierarchyAuth),
+		},
+		NVIndex: tpm2.NamedHandle{Handle: nvHandle, Name: nvPubRsp.NVName},
+	}.Execute(tpm.transport)
+	assert.NoError(t, err)
+}
+
+// TestNVReadWriteChunked proves that NVRead and NVWrite correctly handle NV
+// indices whose DataSize exceeds the TPM's TPM_PT_NV_BUFFER_MAX.
+//
+// The test:
+//  1. Queries the simulator's NV buffer maximum via the same capability call
+//     that production code uses (nvBufferMaxUint16 wrapping nvBufferMax).
+//  2. Defines an NV index of bufMax+33 bytes — one chunk longer than a single
+//     NV_Write or NV_Read can transfer — then writes known data and reads it
+//     back, asserting byte-exact round-trip equality.
+//  3. Verifies the error path: attempting an NVRead with a dataSize that
+//     would exceed the index's actual DataSize is clamped and succeeds (the
+//     clamping semantics guarantee the API is robust to over-sized requests).
+func TestNVReadWriteChunked(t *testing.T) {
+	_, tpmIface := createSim(false, false)
+	defer func() { _ = tpmIface.Close() }()
+
+	tpm := tpmIface.(*TPM2)
+
+	// Query the simulator's NV buffer maximum.
+	bufMax := nvBufferMaxUint16(tpm.transport)
+	require.NotZero(t, bufMax, "TPM_PT_NV_BUFFER_MAX must be non-zero")
+
+	// Size the payload to bufMax+33 so at least two chunks are required.
+	payloadSize := int(bufMax) + 33
+	require.LessOrEqual(t, payloadSize, math.MaxUint16,
+		"payload size must fit in uint16")
+
+	payload := make([]byte, payloadSize)
+	for i := range payload {
+		payload[i] = byte(i % 251) // deterministic, non-trivial pattern
+	}
+
+	ekAttrs, err := tpmIface.EKAttributes()
+	require.NoError(t, err)
+
+	nvHandle := tpm2.TPMHandle(nvramChunkIndex)
+
+	keyAttrs := &types.KeyAttributes{
+		Parent:   ekAttrs,
+		SealData: types.NewSealData(payload),
+		TPMAttributes: &types.TPMAttributes{
+			Handle:    nvHandle,
+			HashAlg:   tpm2.TPMAlgSHA256,
+			Hierarchy: tpm2.TPMRHOwner,
+		},
+	}
+
+	t.Run("write_and_read_larger_than_buffer_max", func(t *testing.T) {
+		// NVWrite must succeed even though payloadSize > bufMax.
+		err := tpm.NVWrite(keyAttrs)
+		require.NoError(t, err, "NVWrite must succeed for payload > TPM_PT_NV_BUFFER_MAX")
+
+		// NVRead with the exact payload size must succeed and return all bytes.
+		got, err := tpm.NVRead(keyAttrs, uint16(payloadSize)) // #nosec G115 -- checked above
+		require.NoError(t, err, "NVRead must succeed for payload > TPM_PT_NV_BUFFER_MAX")
+		assert.Equal(t, payload, got, "round-trip data must match exactly")
+
+		// NVRead with dataSize==0 must also return the full index contents.
+		got0, err := tpm.NVRead(keyAttrs, 0)
+		require.NoError(t, err, "NVRead with dataSize==0 must return full contents")
+		assert.Equal(t, payload, got0, "round-trip data (dataSize=0) must match exactly")
+
+		// Clean up.
+		err = tpm.NVUndefine(keyAttrs)
+		assert.NoError(t, err)
+	})
+
+	t.Run("read_oversized_request_is_clamped", func(t *testing.T) {
+		// Re-define with a small payload so we can request a larger size.
+		smallPayload := payload[:bufMax/2]
+		keyAttrs2 := &types.KeyAttributes{
+			Parent:   ekAttrs,
+			SealData: types.NewSealData(smallPayload),
+			TPMAttributes: &types.TPMAttributes{
+				Handle:    tpm2.TPMHandle(nvramChunkIndex + 1),
+				HashAlg:   tpm2.TPMAlgSHA256,
+				Hierarchy: tpm2.TPMRHOwner,
+			},
+		}
+
+		err := tpm.NVWrite(keyAttrs2)
+		require.NoError(t, err)
+
+		// Request more bytes than the index contains — the implementation
+		// must clamp to nvPub.DataSize and succeed.
+		overSize := uint16(len(smallPayload)) + 100
+		got, err := tpm.NVRead(keyAttrs2, overSize)
+		require.NoError(t, err, "NVRead with oversized request must be clamped and succeed")
+		assert.Equal(t, smallPayload, got, "clamped read must return full index contents")
+
+		err = tpm.NVUndefine(keyAttrs2)
+		assert.NoError(t, err)
 	})
 }
 

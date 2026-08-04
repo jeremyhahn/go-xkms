@@ -17,6 +17,8 @@ export default defineConfig({
      shared backend is initialized + unlocked before the workers start. No-op in
      Vite UI-only mode (no BASE_URL). */
   globalSetup: './tests/e2e/global-setup.ts',
+  /* Restore the prior auto-lock timeout after the suite. No-op in Vite mode. */
+  globalTeardown: './tests/e2e/global-teardown.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

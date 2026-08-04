@@ -204,6 +204,41 @@ func TestCompositeKeyStore_Close(t *testing.T) {
 	}
 }
 
+// TestCompositeKeyStore_Close_BothBackendAndStorageFail exercises the
+// branch where certStorage.Close is attempted as a best-effort cleanup even
+// though backend.Close already failed, and both failures need to be
+// observable (the backend error is returned; the storage error is logged).
+func TestCompositeKeyStore_Close_BothBackendAndStorageFail(t *testing.T) {
+	mockBackend := backmocks.NewMockBackend()
+	certStorage := storagemocks.NewMockCertStorage()
+
+	mockBackend.CloseFunc = func() error { return xkms.ErrBackendClosed }
+	certStorage.CloseFunc = func() error { return xkms.ErrStorageClosed }
+
+	ks, err := xkms.New(&xkms.BackendConfig{
+		Backend:     mockBackend,
+		CertStorage: certStorage,
+	})
+	if err != nil {
+		t.Fatalf("failed to create keystore: %v", err)
+	}
+
+	err = ks.Close()
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// The backend error takes precedence as the returned error.
+	if !contains(err.Error(), xkms.ErrBackendClosed.Error()) {
+		t.Errorf("expected backend close error to be returned, got: %v", err)
+	}
+	if mockBackend.CloseCalls == 0 {
+		t.Error("backend Close was not called")
+	}
+	if certStorage.CloseCalls == 0 {
+		t.Error("cert storage Close was not attempted despite backend failure")
+	}
+}
+
 func TestCompositeKeyStore_InterfaceCompliance(t *testing.T) {
 	mockBackend := backmocks.NewMockBackend()
 	certStorage := storagemocks.NewMockCertStorage()

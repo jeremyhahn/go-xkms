@@ -172,38 +172,13 @@ SIBLING_MOUNTS := -v $(PARENT_DIR)go-codec:/go-codec:cached \
                   -v $(PARENT_DIR)go-quicraft:/go-quicraft:cached \
                   -v $(PARENT_DIR)go-truststrap:/go-truststrap:cached
 
-# go.work generation for Docker containers (creates workspace in /tmp to avoid polluting mounted volume)
-define GOWORK_CONTENT
-go 1.26.4
-
-use (
-	/workspace
-	/workspace/sdk/go
-	/workspace/xkey
-	/go-codec
-	/go-frost
-	/go-objstore
-	/go-qrdb
-	/go-qrdb/sdk/go
-	/go-quicraft
-	/go-truststrap
-)
-
-replace (
-	github.com/jeremyhahn/go-codec v0.0.0 => /go-codec
-	github.com/jeremyhahn/go-frost v0.0.0 => /go-frost
-	github.com/jeremyhahn/go-objstore v0.0.0 => /go-objstore
-	github.com/jeremyhahn/go-qrdb v0.0.0 => /go-qrdb
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0 => /go-qrdb/sdk/go
-	github.com/jeremyhahn/go-quicraft v0.0.0 => /go-quicraft
-	github.com/jeremyhahn/go-truststrap v0.0.0 => /go-truststrap
-	github.com/jeremyhahn/go-xkms v0.0.0 => /workspace
-	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0 => /workspace/sdk/go
-	github.com/jeremyhahn/go-xkms/xkey v0.0.0 => /workspace/xkey
-)
-endef
-export GOWORK_CONTENT
-GOWORK_INIT := printf '%s\n' \"$$GOWORK_CONTENT\" > /tmp/go.work && export GOWORK=/tmp/go.work &&
+# go.work generation for Docker containers. All container contexts (Dockerfiles,
+# entrypoints, devcontainer ensure-gowork.sh, and the docker-run targets below)
+# delegate to the SINGLE canonical generator scripts/gen-gowork.sh so the module
+# set and the version-specific replace directives live in exactly one place and
+# can never drift per-context. Every docker-run user mounts the repo at
+# /workspace, so the generator is always reachable there.
+GOWORK_INIT := bash /workspace/scripts/gen-gowork.sh /workspace /tmp/go.work && export GOWORK=/tmp/go.work &&
 
 # ==============================================================================
 # PKCS#11 Module Configuration
@@ -234,7 +209,7 @@ XKMS_GRPC_TLS_INSECURE ?= true
 PKCS11_TEST_TIMEOUT ?= 10m
 
 # Test configuration - include codec build tags for go-codec support
-TEST_FLAGS := -v -race -tags="codec_cbor codec_json codec_msgpack tpm_simulator"
+TEST_FLAGS := -v -race -timeout 30m -tags="codec_cbor codec_json codec_msgpack tpm_simulator"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
 COVERAGE_HTML := $(COVERAGE_DIR)/coverage.html
 COVERAGE_THRESHOLD := 80
@@ -310,7 +285,6 @@ build-server: builder-image
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
 		$(SIBLING_MOUNTS) \
-		-e GOWORK_CONTENT \
 		-w /workspace \
 		$(BUILDER_IMAGE) \
 		bash -c "$(GOWORK_INIT) CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/"
@@ -345,7 +319,6 @@ build-xkey:
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
 		$(SIBLING_MOUNTS) \
-		-e GOWORK_CONTENT \
 		-w /workspace/xkey \
 		$(XKEY_BUILDER_IMAGE) \
 		bash -c "$(GOWORK_INIT) CGO_ENABLED=1 go build -tags 'ble,production,codec_json,pkcs11,webkit2_41' -buildvcs=false -ldflags '-X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Version=$(VERSION) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Commit=$(GIT_COMMIT) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Date=$(BUILD_DATE)' -o /workspace/$(BIN_DIR)/xkey ./cmd/xkey && chown $(shell id -u):$(shell id -g) /workspace/$(BIN_DIR)/xkey"
@@ -577,7 +550,6 @@ lib: builder-image
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
 		$(SIBLING_MOUNTS) \
-		-e GOWORK_CONTENT \
 		-w /workspace \
 		$(BUILDER_IMAGE) \
 		bash -c "$(GOWORK_INIT) CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -buildmode=c-shared -o $(SHARED_LIB) $(CGO_SOURCE)/main.go"
@@ -1252,12 +1224,12 @@ emulator-start:
 emulator-stop:
 	@$(EMULATOR_COMPOSE) down -v 2>/dev/null || true
 	@cd $(API_TEST_DIR) && docker compose down -v 2>/dev/null || true
-	@docker stop $$(docker ps -q --filter "name=localstack") 2>/dev/null || true
+	@docker stop $$(docker ps -q --filter "name=floci") 2>/dev/null || true
 	@docker stop $$(docker ps -q --filter "name=xkms") 2>/dev/null || true
 	@docker stop $$(docker ps -q --filter "name=azure") 2>/dev/null || true
 	@docker stop $$(docker ps -q --filter "name=gcp") 2>/dev/null || true
 	@docker stop $$(docker ps -q --filter "name=vault") 2>/dev/null || true
-	@docker rm $$(docker ps -aq --filter "name=localstack") 2>/dev/null || true
+	@docker rm $$(docker ps -aq --filter "name=floci") 2>/dev/null || true
 	@docker rm $$(docker ps -aq --filter "name=xkms") 2>/dev/null || true
 	@docker rm $$(docker ps -aq --filter "name=azure") 2>/dev/null || true
 	@docker rm $$(docker ps -aq --filter "name=gcp") 2>/dev/null || true
@@ -1272,7 +1244,8 @@ emulator-restart: emulator-stop emulator-start
 emulator-status:
 	@$(EMULATOR_COMPOSE) ps
 	@echo ""
-	@curl -s http://localhost:4566/_localstack/health 2>/dev/null | jq -C '.' || echo "LocalStack: Not responding"
+	@curl -sf http://localhost:4566/_floci/health >/dev/null 2>&1 && echo "Floci (AWS): Running" || echo "Floci (AWS): Not responding"
+	@curl -sf http://localhost:4588/health >/dev/null 2>&1 && echo "Floci (GCP): Running" || echo "Floci (GCP): Not responding"
 	@curl -s -k https://localhost:4997/health >/dev/null 2>&1 && echo "Azure KV: Running" || echo "Azure KV: Not responding"
 
 .PHONY: emulator-logs
@@ -1283,7 +1256,7 @@ emulator-logs:
 .PHONY: emulator-clean
 ## emulator-clean: Stop emulators and clean data
 emulator-clean: emulator-stop
-	@rm -rf ${TMPDIR:-/tmp}/localstack .azure-emulator
+	@rm -rf .azure-emulator
 
 # ==============================================================================
 # Package-Specific Integration Tests
@@ -1392,18 +1365,18 @@ test-tpm2-encryption-local:
 	@echo "$(GREEN)✓ TPM2 encryption tests complete$(RESET)"
 
 .PHONY: integration-test-awskms
-## integration-test-awskms: Run AWS KMS/LocalStack integration tests
+## integration-test-awskms: Run AWS KMS/Floci integration tests
 integration-test-awskms:
-	@echo "$(CYAN)$(BOLD)→ Running AWS KMS/LocalStack integration tests...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Running AWS KMS/Floci integration tests...$(RESET)"
 	@cd test/integration/awskms && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/awskms && docker compose up -d localstack
+	@cd test/integration/awskms && docker compose up -d floci
 	@cd test/integration/awskms && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ AWS KMS integration tests complete$(RESET)"
 
 .PHONY: integration-test-gcpkms
-## integration-test-gcpkms: Run GCP KMS integration tests with mock client
+## integration-test-gcpkms: Run GCP KMS integration tests (Floci emulator + mock client)
 integration-test-gcpkms:
-	@echo "$(CYAN)$(BOLD)→ Running GCP KMS integration tests with mock client...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Running GCP KMS integration tests (Floci emulator + mock client)...$(RESET)"
 	@cd test/integration/gcpkms && docker compose down -v >/dev/null 2>&1 || true
 	@cd test/integration/gcpkms && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ GCP KMS integration tests complete$(RESET)"
@@ -1847,7 +1820,7 @@ coverage-awskms:
 	@echo "Starting fresh emulators..."
 	@$(MAKE) emulator-start
 	@mkdir -p $(COVERAGE_DIR)
-	@AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 LOCALSTACK_ENDPOINT=http://localhost:4566 \
+	@AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 FLOCI_ENDPOINT=http://localhost:4566 \
 		$(GO) test -v -tags="integration awskms" -coverprofile=$(COVERAGE_DIR)/awskms.out -covermode=atomic \
 		./test/integration/awskms/... ./pkg/backend/awskms/... || ($(MAKE) emulator-stop && exit 1)
 	@$(MAKE) emulator-stop
@@ -2626,7 +2599,6 @@ docker-ci: docker-ci-build
 	@docker run --rm \
 		-v $(PWD):/workspace \
 		$(SIBLING_MOUNTS) \
-		-e GOWORK_CONTENT \
 		-w /workspace \
 		$(CI_IMAGE_NAME):latest \
 		bash -c "$(GOWORK_INIT) make ci-local"
@@ -2840,7 +2812,7 @@ integration-test-api-kill:
 .PHONY: integration-test-api-all
 ## integration-test-api-all: Run ALL API protocol integration tests (Unix, REST, gRPC, QUIC)
 ## MCP is excluded: SDK transport speaks HTTP but MCP server speaks JSON-RPC over TCP.
-integration-test-api-all: integration-test-api-kill integration-test-api-unix integration-test-api-rest integration-test-api-grpc integration-test-api-quic
+integration-test-api-all: integration-test-api-kill integration-test-api-unix integration-test-api-rest integration-test-api-grpc integration-test-api-quic integration-test-api-ssh
 	@echo "$(GREEN)$(BOLD)✓ All API protocol integration tests complete!$(RESET)"
 
 .PHONY: integration-test-api-unix
@@ -2908,6 +2880,41 @@ integration-test-api-mcp:
 		exit $$EXIT_CODE
 	@echo "$(GREEN)✓ MCP protocol integration tests complete$(RESET)"
 
+.PHONY: integration-test-api-ssh
+## integration-test-api-ssh: Run SSH multi-protocol integration tests driving the xkey CLI against xkmsd
+integration-test-api-ssh:
+	@echo "$(CYAN)$(BOLD)→ Running SSH multi-protocol integration tests (xkey CLI vs xkmsd)...$(RESET)"
+	$(call kill_integration_containers)
+	@$(API_COMPOSE) build
+	@$(API_COMPOSE) run --rm --name xkms-test-ssh integration-tests \
+		sh -c "bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work && mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && (cd xkey && GOWORK=/tmp/go.work go build -tags='codec_cbor codec_json codec_msgpack' -o /app/build/bin/xkey ./cmd/xkey) && XKMS_SSH_TEST_BACKENDS=software,tpm2,pkcs11 XKEY_CLI_BIN=/app/build/bin/xkey go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'XkeySSH' -timeout 10m" ; \
+		EXIT_CODE=$$? ; \
+		$(API_COMPOSE) down -v --remove-orphans ; \
+		exit $$EXIT_CODE
+	@echo "$(GREEN)✓ SSH multi-protocol integration tests complete$(RESET)"
+
+.PHONY: integration-test-ssh-backends
+## integration-test-ssh-backends: Confirm SSH key gen+sign+verify on EVERY backend (software/tpm2-sim/pkcs11-SoftHSM2/cloud); AWS via Floci, GCP+Azure via self-consistent mocks
+integration-test-ssh-backends:
+	@echo "$(CYAN)$(BOLD)→ Running per-backend SSH key generate/sign/verify suite...$(RESET)"
+	@cd test/integration/awskms && docker compose down -v >/dev/null 2>&1 || true
+	@cd test/integration/awskms && docker compose up -d --wait floci
+	@AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
+		CGO_ENABLED=1 $(GO) test -v -tags 'integration tpm_simulator pkcs11 awskms gcpkms azurekv' \
+		./test/integration/sshbackend/... -timeout 15m ; \
+		EXIT_CODE=$$? ; \
+		cd test/integration/awskms && docker compose down -v >/dev/null 2>&1 ; \
+		exit $$EXIT_CODE
+	@echo "$(GREEN)✓ Per-backend SSH suite complete$(RESET)"
+
+.PHONY: integration-test-ssh-backends-cloud-real
+## integration-test-ssh-backends-cloud-real: SSH key gen+sign+verify against LIVE cloud KMS (opt-in; needs AWS_*/GCPKMS_*/AZURE_* creds; never in CI)
+integration-test-ssh-backends-cloud-real:
+	@echo "$(CYAN)$(BOLD)→ Running per-backend SSH suite against LIVE cloud KMS (opt-in)...$(RESET)"
+	CGO_ENABLED=1 $(GO) test -v -tags 'integration cloud_real awskms gcpkms azurekv' \
+		./test/integration/sshbackend/... -run TestSSHBackend_CloudReal -timeout 20m
+	@echo "$(GREEN)✓ Live cloud SSH suite complete$(RESET)"
+
 .PHONY: integration-test-api-frost
 ## integration-test-api-frost: Run FROST API integration tests across all protocols
 integration-test-api-frost:
@@ -2974,9 +2981,9 @@ integration-test-bootstrap:
 	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
 
 .PHONY: integration-test-cluster
-## integration-test-cluster: Run 3-node Raft cluster integration tests (leader election, replication, restart, failover)
+## integration-test-cluster: Run 3-node Raft cluster + standalone-server integration tests (crypto gen/sign/verify replication, public-key consistency, delete replication, leader failover, node restart/rejoin catch-up, standalone lifecycle)
 integration-test-cluster:
-	@echo "$(CYAN)$(BOLD)→ Running 3-node cluster integration tests...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Running 3-node Raft cluster + standalone-server integration tests...$(RESET)"
 	@cd test/integration/cluster && bash gen-certs.sh
 	@cd test/integration/cluster && docker compose down -v >/dev/null 2>&1 || true
 	@cd test/integration/cluster && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)

@@ -20,25 +20,25 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/health"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-// testHealthChecker implements health.Checker for testing
+// testHealthChecker implements qrdbsdk.HealthChecker for testing
 type testHealthChecker struct {
-	liveResult    health.CheckResult
-	readyResults  []health.CheckResult
-	startupResult health.CheckResult
+	liveResult    qrdbsdk.HealthCheckResult
+	readyResults  []qrdbsdk.HealthCheckResult
+	startupResult qrdbsdk.HealthCheckResult
 }
 
-func (m *testHealthChecker) Live(ctx context.Context) health.CheckResult {
+func (m *testHealthChecker) Live(ctx context.Context) qrdbsdk.HealthCheckResult {
 	return m.liveResult
 }
 
-func (m *testHealthChecker) Ready(ctx context.Context) []health.CheckResult {
+func (m *testHealthChecker) Ready(ctx context.Context) []qrdbsdk.HealthCheckResult {
 	return m.readyResults
 }
 
-func (m *testHealthChecker) Startup(ctx context.Context) health.CheckResult {
+func (m *testHealthChecker) Startup(ctx context.Context) qrdbsdk.HealthCheckResult {
 	return m.startupResult
 }
 
@@ -61,16 +61,16 @@ func TestLivenessHandler_NoHealthChecker(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Status != health.StatusHealthy {
-		t.Errorf("expected status %s, got %s", health.StatusHealthy, resp.Status)
+	if resp.Status != qrdbsdk.HealthCheckStatusHealthy {
+		t.Errorf("expected status %s, got %s", qrdbsdk.HealthCheckStatusHealthy, resp.Status)
 	}
 }
 
 func TestLivenessHandler_Healthy(t *testing.T) {
 	h := &HandlerContext{
 		HealthChecker: &testHealthChecker{
-			liveResult: health.CheckResult{
-				Status:  health.StatusHealthy,
+			liveResult: qrdbsdk.HealthCheckResult{
+				Status:  qrdbsdk.HealthCheckStatusHealthy,
 				Message: "OK",
 			},
 		},
@@ -90,16 +90,16 @@ func TestLivenessHandler_Healthy(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Status != health.StatusHealthy {
-		t.Errorf("expected status %s, got %s", health.StatusHealthy, resp.Status)
+	if resp.Status != qrdbsdk.HealthCheckStatusHealthy {
+		t.Errorf("expected status %s, got %s", qrdbsdk.HealthCheckStatusHealthy, resp.Status)
 	}
 }
 
 func TestLivenessHandler_Unhealthy(t *testing.T) {
 	h := &HandlerContext{
 		HealthChecker: &testHealthChecker{
-			liveResult: health.CheckResult{
-				Status:  health.StatusUnhealthy,
+			liveResult: qrdbsdk.HealthCheckResult{
+				Status:  qrdbsdk.HealthCheckStatusUnhealthy,
 				Message: "Service is dead",
 			},
 		},
@@ -119,8 +119,8 @@ func TestLivenessHandler_Unhealthy(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Status != health.StatusUnhealthy {
-		t.Errorf("expected status %s, got %s", health.StatusUnhealthy, resp.Status)
+	if resp.Status != qrdbsdk.HealthCheckStatusUnhealthy {
+		t.Errorf("expected status %s, got %s", qrdbsdk.HealthCheckStatusUnhealthy, resp.Status)
 	}
 }
 
@@ -143,17 +143,17 @@ func TestReadinessHandler_NoHealthChecker(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Status != health.StatusHealthy {
-		t.Errorf("expected status %s, got %s", health.StatusHealthy, resp.Status)
+	if resp.Status != qrdbsdk.HealthCheckStatusHealthy {
+		t.Errorf("expected status %s, got %s", qrdbsdk.HealthCheckStatusHealthy, resp.Status)
 	}
 }
 
 func TestReadinessHandler_Healthy(t *testing.T) {
 	h := &HandlerContext{
 		HealthChecker: &testHealthChecker{
-			readyResults: []health.CheckResult{
-				{Name: "db", Status: health.StatusHealthy, Message: "Connected"},
-				{Name: "cache", Status: health.StatusHealthy, Message: "Connected"},
+			readyResults: []qrdbsdk.HealthCheckResult{
+				{Name: "db", Status: qrdbsdk.HealthCheckStatusHealthy, Message: "Connected"},
+				{Name: "cache", Status: qrdbsdk.HealthCheckStatusHealthy, Message: "Connected"},
 			},
 		},
 	}
@@ -172,8 +172,8 @@ func TestReadinessHandler_Healthy(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Status != health.StatusHealthy {
-		t.Errorf("expected status %s, got %s", health.StatusHealthy, resp.Status)
+	if resp.Status != qrdbsdk.HealthCheckStatusHealthy {
+		t.Errorf("expected status %s, got %s", qrdbsdk.HealthCheckStatusHealthy, resp.Status)
 	}
 
 	if len(resp.Checks) != 2 {
@@ -184,9 +184,9 @@ func TestReadinessHandler_Healthy(t *testing.T) {
 func TestReadinessHandler_Degraded(t *testing.T) {
 	h := &HandlerContext{
 		HealthChecker: &testHealthChecker{
-			readyResults: []health.CheckResult{
-				{Name: "db", Status: health.StatusHealthy, Message: "Connected"},
-				{Name: "cache", Status: health.StatusDegraded, Message: "High latency"},
+			readyResults: []qrdbsdk.HealthCheckResult{
+				{Name: "db", Status: qrdbsdk.HealthCheckStatusHealthy, Message: "Connected"},
+				{Name: "cache", Status: qrdbsdk.HealthCheckStatusDegraded, Message: "High latency"},
 			},
 		},
 	}
@@ -206,8 +206,8 @@ func TestReadinessHandler_Degraded(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Status != health.StatusDegraded {
-		t.Errorf("expected status %s, got %s", health.StatusDegraded, resp.Status)
+	if resp.Status != qrdbsdk.HealthCheckStatusDegraded {
+		t.Errorf("expected status %s, got %s", qrdbsdk.HealthCheckStatusDegraded, resp.Status)
 	}
 
 	if resp.Message != "Service is degraded" {
@@ -218,9 +218,9 @@ func TestReadinessHandler_Degraded(t *testing.T) {
 func TestReadinessHandler_Unhealthy(t *testing.T) {
 	h := &HandlerContext{
 		HealthChecker: &testHealthChecker{
-			readyResults: []health.CheckResult{
-				{Name: "db", Status: health.StatusUnhealthy, Message: "Connection refused"},
-				{Name: "cache", Status: health.StatusHealthy, Message: "Connected"},
+			readyResults: []qrdbsdk.HealthCheckResult{
+				{Name: "db", Status: qrdbsdk.HealthCheckStatusUnhealthy, Message: "Connection refused"},
+				{Name: "cache", Status: qrdbsdk.HealthCheckStatusHealthy, Message: "Connected"},
 			},
 		},
 	}
@@ -239,8 +239,8 @@ func TestReadinessHandler_Unhealthy(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Status != health.StatusUnhealthy {
-		t.Errorf("expected status %s, got %s", health.StatusUnhealthy, resp.Status)
+	if resp.Status != qrdbsdk.HealthCheckStatusUnhealthy {
+		t.Errorf("expected status %s, got %s", qrdbsdk.HealthCheckStatusUnhealthy, resp.Status)
 	}
 
 	if resp.Message != "One or more checks failed" {
@@ -267,16 +267,16 @@ func TestStartupHandler_NoHealthChecker(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Status != health.StatusHealthy {
-		t.Errorf("expected status %s, got %s", health.StatusHealthy, resp.Status)
+	if resp.Status != qrdbsdk.HealthCheckStatusHealthy {
+		t.Errorf("expected status %s, got %s", qrdbsdk.HealthCheckStatusHealthy, resp.Status)
 	}
 }
 
 func TestStartupHandler_Started(t *testing.T) {
 	h := &HandlerContext{
 		HealthChecker: &testHealthChecker{
-			startupResult: health.CheckResult{
-				Status:  health.StatusHealthy,
+			startupResult: qrdbsdk.HealthCheckResult{
+				Status:  qrdbsdk.HealthCheckStatusHealthy,
 				Message: "Service started",
 			},
 		},
@@ -296,16 +296,16 @@ func TestStartupHandler_Started(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Status != health.StatusHealthy {
-		t.Errorf("expected status %s, got %s", health.StatusHealthy, resp.Status)
+	if resp.Status != qrdbsdk.HealthCheckStatusHealthy {
+		t.Errorf("expected status %s, got %s", qrdbsdk.HealthCheckStatusHealthy, resp.Status)
 	}
 }
 
 func TestStartupHandler_NotStarted(t *testing.T) {
 	h := &HandlerContext{
 		HealthChecker: &testHealthChecker{
-			startupResult: health.CheckResult{
-				Status:  health.StatusUnhealthy,
+			startupResult: qrdbsdk.HealthCheckResult{
+				Status:  qrdbsdk.HealthCheckStatusUnhealthy,
 				Message: "Service still starting",
 			},
 		},
@@ -325,17 +325,17 @@ func TestStartupHandler_NotStarted(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Status != health.StatusUnhealthy {
-		t.Errorf("expected status %s, got %s", health.StatusUnhealthy, resp.Status)
+	if resp.Status != qrdbsdk.HealthCheckStatusUnhealthy {
+		t.Errorf("expected status %s, got %s", qrdbsdk.HealthCheckStatusUnhealthy, resp.Status)
 	}
 }
 
 func TestHealthCheckResponse_JSON(t *testing.T) {
 	resp := HealthCheckResponse{
-		Status:  health.StatusHealthy,
+		Status:  qrdbsdk.HealthCheckStatusHealthy,
 		Message: "test message",
-		Checks: []health.CheckResult{
-			{Name: "test", Status: health.StatusHealthy, Message: "OK"},
+		Checks: []qrdbsdk.HealthCheckResult{
+			{Name: "test", Status: qrdbsdk.HealthCheckStatusHealthy, Message: "OK"},
 		},
 	}
 

@@ -1,0 +1,197 @@
+- generic [ref=e3]:
+  - navigation "Main navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e9]: xKey
+      - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+        - img [ref=e11]
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: OVERVIEW
+        - button "Dashboard" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - generic [ref=e19]: Dashboard
+        - button "Pairing" [ref=e20] [cursor=pointer]:
+          - img [ref=e21]
+          - generic [ref=e23]: Pairing
+        - button "TPM 2.0" [ref=e234] [cursor=pointer]:
+          - img [ref=e235]
+          - generic [ref=e237]: TPM 2.0
+      - generic [ref=e24]:
+        - generic [ref=e25]: STORE
+        - button "Keys" [ref=e26] [cursor=pointer]:
+          - img [ref=e27]
+          - generic [ref=e29]: Keys
+        - button "Trust Store" [ref=e30] [cursor=pointer]:
+          - img [ref=e31]
+          - generic [ref=e33]: Trust Store
+        - button "Certificates" [ref=e34] [cursor=pointer]:
+          - img [ref=e35]
+          - generic [ref=e37]: Certificates
+      - generic [ref=e38]:
+        - generic [ref=e39]: APPLICATIONS
+        - button "SSH" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+          - generic [ref=e43]: SSH
+        - button "FIDO2" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: FIDO2
+        - button "OATH" [ref=e48] [cursor=pointer]:
+          - img [ref=e49]
+          - generic [ref=e51]: OATH
+        - button "PIV" [ref=e52] [cursor=pointer]:
+          - img [ref=e53]
+          - generic [ref=e55]: PIV
+        - button "Passwords" [ref=e56] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: Passwords
+        - button "Sealed Data" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e63]: Sealed Data
+        - button "Browser" [ref=e64] [cursor=pointer]:
+          - img [ref=e65]
+          - generic [ref=e67]: Browser
+      - generic [ref=e68]:
+        - generic [ref=e69]: MANAGEMENT
+        - button "Audit Log" [ref=e70] [cursor=pointer]:
+          - img [ref=e71]
+          - generic [ref=e73]: Audit Log
+        - button "Admin" [ref=e74] [cursor=pointer]:
+          - img [ref=e75]
+          - generic [ref=e77]: Admin
+      - generic [ref=e78]:
+        - generic [ref=e79]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e80] [cursor=pointer]:
+          - img [ref=e81]
+          - generic [ref=e83]: OIDC
+        - button "API Explorer" [ref=e84] [cursor=pointer]:
+          - img [ref=e85]
+          - generic [ref=e87]: API Explorer
+    - generic [ref=e88]:
+      - generic "Standalone mode" [ref=e89]:
+        - generic [ref=e91]: Standalone
+      - button "Theme" [ref=e92] [cursor=pointer]:
+        - img [ref=e93]
+        - generic [ref=e95]: Theme
+      - button "Settings" [ref=e96] [cursor=pointer]:
+        - img [ref=e97]
+        - generic [ref=e99]: Settings
+  - main [ref=e100]:
+    - generic [ref=e102]:
+      - button "Lock app" [ref=e103] [cursor=pointer]:
+        - img [ref=e104]
+        - generic [ref=e106]: Lock
+      - button "No touch pending" [disabled] [ref=e107]:
+        - img [ref=e109]
+    - generic [ref=e497]:
+      - generic [ref=e500]:
+        - heading "Key Management" [level=1] [ref=e501]
+        - paragraph [ref=e502]: Local key operations
+      - generic [ref=e503]:
+        - generic [ref=e504]:
+          - generic [ref=e506]:
+            - generic [ref=e507]: "4"
+            - generic [ref=e508]: Total Keys
+          - generic [ref=e510]:
+            - generic [ref=e511]: "2"
+            - generic [ref=e512]: Backends
+          - generic [ref=e514]:
+            - button "Generate Key" [ref=e515] [cursor=pointer]:
+              - img [ref=e516]
+              - generic [ref=e518]: Generate Key
+            - button "Generate SSH Key" [ref=e519] [cursor=pointer]:
+              - img [ref=e520]
+              - generic [ref=e522]: Generate SSH Key
+        - generic [ref=e523]:
+          - img [ref=e524]
+          - button "All Backends" [ref=e526] [cursor=pointer]
+          - button "software" [ref=e527] [cursor=pointer]
+          - button "tpm2" [ref=e528] [cursor=pointer]
+          - generic [ref=e529]: "|"
+          - button "All Types" [ref=e530] [cursor=pointer]
+          - button "ENCRYPTION" [ref=e531] [cursor=pointer]
+          - button "SIGNING" [ref=e532] [cursor=pointer]
+          - button "SSH" [ref=e533] [cursor=pointer]
+          - button "Refresh" [ref=e534] [cursor=pointer]:
+            - img [ref=e535]
+            - generic [ref=e537]: Refresh
+        - table [ref=e539]:
+          - rowgroup [ref=e540]:
+            - row "Key ID Backend Purpose Algorithm Actions" [ref=e541]:
+              - columnheader [ref=e542]:
+                - checkbox [ref=e543] [cursor=pointer]
+              - columnheader "Key ID" [ref=e544] [cursor=pointer]
+              - columnheader "Backend" [ref=e545] [cursor=pointer]
+              - columnheader "Purpose" [ref=e546] [cursor=pointer]
+              - columnheader "Algorithm" [ref=e547] [cursor=pointer]
+              - columnheader "Actions" [ref=e548]
+          - rowgroup [ref=e549]:
+            - row "chrometest-ssh-sw Software SSH ed25519" [ref=e550] [cursor=pointer]:
+              - cell [ref=e551]:
+                - checkbox [ref=e552]
+              - cell "chrometest-ssh-sw" [ref=e553]:
+                - generic [ref=e554]:
+                  - img [ref=e555]
+                  - generic [ref=e557]: chrometest-ssh-sw
+              - cell "Software" [ref=e558]:
+                - generic "Software" [ref=e559]:
+                  - img [ref=e560]
+                  - generic [ref=e562]: Software
+              - cell "SSH" [ref=e563]:
+                - generic [ref=e564]: SSH
+              - cell "ed25519" [ref=e565]
+              - cell [ref=e566]:
+                - button "Actions" [ref=e568]:
+                  - img [ref=e569]
+            - row "chrometest-ssh-tpm TPM 2.0 SSH ecdsa-p256" [ref=e571] [cursor=pointer]:
+              - cell [ref=e572]:
+                - checkbox [ref=e573]
+              - cell "chrometest-ssh-tpm" [ref=e574]:
+                - generic [ref=e575]:
+                  - img [ref=e576]
+                  - generic [ref=e578]: chrometest-ssh-tpm
+              - cell "TPM 2.0" [ref=e579]:
+                - generic "TPM 2.0 (hardware-backed)" [ref=e580]:
+                  - img [ref=e581]
+                  - generic [ref=e583]: TPM 2.0
+              - cell "SSH" [ref=e584]:
+                - generic [ref=e585]: SSH
+              - cell "ecdsa-p256" [ref=e586]
+              - cell [ref=e587]:
+                - button "Actions" [ref=e589]:
+                  - img [ref=e590]
+            - row "xkms-sealing-key-software Software ENCRYPTION ECDSA" [ref=e592] [cursor=pointer]:
+              - cell [ref=e593]:
+                - checkbox [ref=e594]
+              - cell "xkms-sealing-key-software" [ref=e595]:
+                - generic [ref=e596]:
+                  - img [ref=e597]
+                  - generic [ref=e599]: xkms-sealing-key-software
+              - cell "Software" [ref=e600]:
+                - generic "Software" [ref=e601]:
+                  - img [ref=e602]
+                  - generic [ref=e604]: Software
+              - cell "ENCRYPTION" [ref=e605]:
+                - generic [ref=e606]: ENCRYPTION
+              - cell "ECDSA" [ref=e607]
+              - cell [ref=e608]:
+                - button "Actions" [ref=e610]:
+                  - img [ref=e611]
+            - row "piv-9a Software SIGNING ECDSA" [ref=e613] [cursor=pointer]:
+              - cell [ref=e614]:
+                - checkbox [ref=e615]
+              - cell "piv-9a" [ref=e616]:
+                - generic [ref=e617]:
+                  - img [ref=e618]
+                  - generic [ref=e620]: piv-9a
+              - cell "Software" [ref=e621]:
+                - generic "Software" [ref=e622]:
+                  - img [ref=e623]
+                  - generic [ref=e625]: Software
+              - cell "SIGNING" [ref=e626]:
+                - generic [ref=e627]: SIGNING
+              - cell "ECDSA" [ref=e628]
+              - cell [ref=e629]:
+                - button "Actions" [ref=e631]:
+                  - img [ref=e632]

@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 	p11 "github.com/miekg/pkcs11"
@@ -210,14 +212,14 @@ func (m *PIVSlotModel) enumeratePrivateKeys() (map[pivcert.PIVSlot]keyInfo, erro
 		}
 
 		if err := m.pool.Ctx().FindObjectsInit(session, template); err != nil {
-			return fmt.Errorf("FindObjectsInit(CKO_PRIVATE_KEY): %w", err)
+			return &errs.Wrapped{Msg: "FindObjectsInit(CKO_PRIVATE_KEY)", Err: err}
 		}
 		defer m.pool.Ctx().FindObjectsFinal(session)
 
 		for {
 			handles, _, findErr := m.pool.Ctx().FindObjects(session, 100)
 			if findErr != nil {
-				return fmt.Errorf("FindObjects(CKO_PRIVATE_KEY): %w", findErr)
+				return &errs.Wrapped{Msg: "FindObjects(CKO_PRIVATE_KEY)", Err: findErr}
 			}
 			if len(handles) == 0 {
 				break
@@ -247,14 +249,14 @@ func (m *PIVSlotModel) enumerateCertificates() (map[pivcert.PIVSlot]struct{}, er
 		}
 
 		if err := m.pool.Ctx().FindObjectsInit(session, template); err != nil {
-			return fmt.Errorf("FindObjectsInit(CKO_CERTIFICATE): %w", err)
+			return &errs.Wrapped{Msg: "FindObjectsInit(CKO_CERTIFICATE)", Err: err}
 		}
 		defer m.pool.Ctx().FindObjectsFinal(session)
 
 		for {
 			handles, _, findErr := m.pool.Ctx().FindObjects(session, 100)
 			if findErr != nil {
-				return fmt.Errorf("FindObjects(CKO_CERTIFICATE): %w", findErr)
+				return &errs.Wrapped{Msg: "FindObjects(CKO_CERTIFICATE)", Err: findErr}
 			}
 			if len(handles) == 0 {
 				break

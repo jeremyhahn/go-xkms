@@ -14,7 +14,7 @@
 package pkcs8
 
 import (
-	"fmt"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -26,15 +26,23 @@ type Config struct {
 	// This can be file-based, memory-based, or any implementation
 	// of the storage.Backend interface.
 	KeyStorage storage.Backend
+
+	// AllowPlaintextKeys controls whether the backend permits key persistence
+	// without a password. The default (false) is fail-closed: GenerateKey
+	// returns ErrPlaintextKeyNotAllowed when no password is supplied for a
+	// software key. Set to true only when plaintext storage is intentional
+	// (e.g., ephemeral test backends or keys that are encrypted at the
+	// filesystem/volume layer instead).
+	AllowPlaintextKeys bool
 }
 
 // Validate checks if the Config is valid.
 func (c *Config) Validate() error {
 	if c == nil {
-		return fmt.Errorf("config is nil")
+		return &errs.Message{Msg: "config is nil"}
 	}
 	if c.KeyStorage == nil {
-		return fmt.Errorf("KeyStorage is required")
+		return &errs.Message{Msg: "KeyStorage is required"}
 	}
 	return nil
 }
@@ -67,11 +75,12 @@ func (c *Config) Validate() error {
 //	key, err := backend.GenerateKey(attrs)
 func NewBackend(config *Config) (types.KeyProvider, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid config", Err: err}
 	}
 
 	return &PKCS8Backend{
-		storage: config.KeyStorage,
-		closed:  false,
+		storage:        config.KeyStorage,
+		closed:         false,
+		allowPlaintext: config.AllowPlaintextKeys,
 	}, nil
 }

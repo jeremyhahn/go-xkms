@@ -16,7 +16,8 @@ package encoding
 import (
 	"crypto"
 	"crypto/x509"
-	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/youmark/pkcs8"
 )
@@ -38,7 +39,7 @@ func EncodePKCS8(privateKey crypto.PrivateKey, password []byte) ([]byte, error) 
 	// Use youmark/pkcs8 package which handles encryption
 	der, err := pkcs8.MarshalPrivateKey(privateKey, password, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal PKCS#8: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal PKCS#8", Err: err}
 	}
 
 	return der, nil
@@ -66,7 +67,7 @@ func DecodePKCS8(data []byte, password []byte) (crypto.PrivateKey, error) {
 		if isPasswordError(err) {
 			return nil, ErrInvalidPassword
 		}
-		return nil, fmt.Errorf("failed to parse PKCS#8: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse PKCS#8", Err: err}
 	}
 
 	// Type assertion - pkcs8 returns interface{}
@@ -93,7 +94,7 @@ func EncodePublicKeyPKIX(publicKey crypto.PublicKey) ([]byte, error) {
 
 	der, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal PKIX public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal PKIX public key", Err: err}
 	}
 
 	return der, nil
@@ -114,7 +115,7 @@ func DecodePublicKeyPKIX(data []byte) (crypto.PublicKey, error) {
 
 	pubKey, err := x509.ParsePKIXPublicKey(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse PKIX public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse PKIX public key", Err: err}
 	}
 
 	return pubKey, nil

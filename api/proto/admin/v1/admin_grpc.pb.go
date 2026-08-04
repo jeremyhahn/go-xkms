@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -66,7 +66,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// AdminService provides administrative operations for go-trusted-ca.
+// AdminService provides administrative operations for go-xkms.
 type AdminServiceClient interface {
 	// Tenant operations
 	CreateTenant(ctx context.Context, in *CreateTenantRequest, opts ...grpc.CallOption) (*TenantInfo, error)
@@ -386,7 +386,7 @@ func (c *adminServiceClient) GetStats(ctx context.Context, in *emptypb.Empty, op
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
 //
-// AdminService provides administrative operations for go-trusted-ca.
+// AdminService provides administrative operations for go-xkms.
 type AdminServiceServer interface {
 	// Tenant operations
 	CreateTenant(context.Context, *CreateTenantRequest) (*TenantInfo, error)

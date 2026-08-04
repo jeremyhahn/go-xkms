@@ -22,6 +22,8 @@ import (
 	"crypto/x509"
 	"fmt"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // ecdsaHashAlgorithms maps ECDSA signature algorithms to their corresponding hash functions.
@@ -68,11 +70,11 @@ func NewVerifier(trustedRoots []*x509.Certificate) *Verifier {
 //  3. Optional freshness and PCR validation
 func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) error {
 	if err := stmt.Validate(); err != nil {
-		return fmt.Errorf("attestation: invalid statement: %w", err)
+		return &errs.Wrapped{Msg: "attestation: invalid statement", Err: err}
 	}
 
 	if err := opts.Validate(); err != nil {
-		return fmt.Errorf("attestation: invalid options: %w", err)
+		return &errs.Wrapped{Msg: "attestation: invalid options", Err: err}
 	}
 
 	result := &Result{
@@ -92,7 +94,7 @@ func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) error
 	if err := v.VerifySignature(stmt, opts); err != nil {
 		result.SignatureValid = false
 		result.Error = err
-		return fmt.Errorf("%w: %v", ErrSignatureVerificationFailed, err)
+		return &errs.Detail{Err: ErrSignatureVerificationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	result.SignatureValid = true
 
@@ -101,7 +103,7 @@ func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) error
 		if err := v.verifyFreshness(stmt, opts); err != nil {
 			result.FreshnessValid = false
 			result.Error = err
-			return fmt.Errorf("attestation: freshness check failed: %w", err)
+			return &errs.Wrapped{Msg: "attestation: freshness check failed", Err: err}
 		}
 		result.FreshnessValid = true
 	}
@@ -111,7 +113,7 @@ func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) error
 		if err := v.verifyPCRs(stmt, opts); err != nil {
 			result.PCRsValid = false
 			result.Error = err
-			return fmt.Errorf("attestation: PCR verification failed: %w", err)
+			return &errs.Wrapped{Msg: "attestation: PCR verification failed", Err: err}
 		}
 		result.PCRsValid = true
 	}
@@ -136,11 +138,11 @@ func (v *Verifier) VerifyChain(stmt *AttestationStatement, opts *VerifyOptions) 
 	}
 
 	if now.Before(attestingCert.NotBefore) {
-		return fmt.Errorf("%w (valid from %s)", ErrCertificateNotYetValid, attestingCert.NotBefore)
+		return &errs.Affix{Err: ErrCertificateNotYetValid, Suffix: fmt.Sprintf(" (valid from %s)", attestingCert.NotBefore)}
 	}
 
 	if now.After(attestingCert.NotAfter) {
-		return fmt.Errorf("%w (expired at %s)", ErrCertificateExpired, attestingCert.NotAfter)
+		return &errs.Affix{Err: ErrCertificateExpired, Suffix: fmt.Sprintf(" (expired at %s)", attestingCert.NotAfter)}
 	}
 
 	// If only one cert, check for self-signed
@@ -153,7 +155,7 @@ func (v *Verifier) VerifyChain(stmt *AttestationStatement, opts *VerifyOptions) 
 		// Fallback: try CheckSignature directly for non-CA self-signed certs
 		if err := cert.CheckSignature(cert.SignatureAlgorithm,
 			cert.RawTBSCertificate, cert.Signature); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidSelfSignedCert, err)
+			return &errs.Detail{Err: ErrInvalidSelfSignedCert, Detail: fmt.Sprintf("%v", err)}
 		}
 		return nil
 	}
@@ -167,16 +169,16 @@ func (v *Verifier) VerifyChain(stmt *AttestationStatement, opts *VerifyOptions) 
 		if err := nextCert.CheckSignature(currentCert.SignatureAlgorithm,
 			currentCert.RawTBSCertificate,
 			currentCert.Signature); err != nil {
-			return fmt.Errorf("%w at position %d: %v", ErrInvalidChainSignature, i, err)
+			return &errs.Affix{Err: ErrInvalidChainSignature, Suffix: fmt.Sprintf(" at position %d: %v", i, err)}
 		}
 
 		// Verify next cert is not expired
 		if now.Before(nextCert.NotBefore) {
-			return fmt.Errorf("%w: intermediate certificate %d", ErrCertificateNotYetValid, i+1)
+			return &errs.Detail{Err: ErrCertificateNotYetValid, Detail: fmt.Sprintf("intermediate certificate %d", i+1)}
 		}
 
 		if now.After(nextCert.NotAfter) {
-			return fmt.Errorf("%w: intermediate certificate %d", ErrCertificateExpired, i+1)
+			return &errs.Detail{Err: ErrCertificateExpired, Detail: fmt.Sprintf("intermediate certificate %d", i+1)}
 		}
 	}
 
@@ -199,7 +201,7 @@ func (v *Verifier) VerifySignature(stmt *AttestationStatement, opts *VerifyOptio
 		// Fallback: use public key bytes for verification
 		pubBytes, err := x509.MarshalPKIXPublicKey(stmt.AttestedKeyPublic)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrMarshalAttestedKey, err)
+			return &errs.Detail{Err: ErrMarshalAttestedKey, Detail: fmt.Sprintf("%v", err)}
 		}
 		dataToVerify = pubBytes
 	}
@@ -213,7 +215,7 @@ func (v *Verifier) VerifySignature(stmt *AttestationStatement, opts *VerifyOptio
 	case ed25519.PublicKey:
 		return v.verifyEd25519Signature(pubKey, stmt.Signature, dataToVerify)
 	default:
-		return fmt.Errorf("%w: %T", ErrUnsupportedKeyType, stmt.AttestingKeyPublic)
+		return &errs.Detail{Err: ErrUnsupportedKeyType, Detail: fmt.Sprintf("%T", stmt.AttestingKeyPublic)}
 	}
 }
 
@@ -221,7 +223,7 @@ func (v *Verifier) VerifySignature(stmt *AttestationStatement, opts *VerifyOptio
 func (v *Verifier) verifyRSASignature(pubKey *rsa.PublicKey, sig, data []byte, sigAlg x509.SignatureAlgorithm) error {
 	hash, ok := rsaHashAlgorithms[sigAlg]
 	if !ok {
-		return fmt.Errorf("%w: %s", ErrUnsupportedSignatureAlgorithm, sigAlg)
+		return &errs.Detail{Err: ErrUnsupportedSignatureAlgorithm, Detail: fmt.Sprintf("%s", sigAlg)}
 	}
 
 	h := hash.New()
@@ -229,7 +231,7 @@ func (v *Verifier) verifyRSASignature(pubKey *rsa.PublicKey, sig, data []byte, s
 	digest := h.Sum(nil)
 
 	if err := rsa.VerifyPKCS1v15(pubKey, hash, digest, sig); err != nil {
-		return fmt.Errorf("%w: %v", ErrSignatureVerificationFailed, err)
+		return &errs.Detail{Err: ErrSignatureVerificationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return nil
@@ -239,7 +241,7 @@ func (v *Verifier) verifyRSASignature(pubKey *rsa.PublicKey, sig, data []byte, s
 func (v *Verifier) verifyECDSASignature(pubKey *ecdsa.PublicKey, sig, data []byte, sigAlg x509.SignatureAlgorithm) error {
 	hash, ok := ecdsaHashAlgorithms[sigAlg]
 	if !ok {
-		return fmt.Errorf("%w: %s", ErrUnsupportedSignatureAlgorithm, sigAlg)
+		return &errs.Detail{Err: ErrUnsupportedSignatureAlgorithm, Detail: fmt.Sprintf("%s", sigAlg)}
 	}
 
 	h := hash.New()
@@ -276,7 +278,7 @@ func (v *Verifier) verifyFreshness(stmt *AttestationStatement, opts *VerifyOptio
 
 	createdTime, err := time.Parse(time.RFC3339, stmt.CreatedAt)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidTimestamp, err)
+		return &errs.Detail{Err: ErrInvalidTimestamp, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	now := time.Now()
@@ -291,7 +293,7 @@ func (v *Verifier) verifyFreshness(stmt *AttestationStatement, opts *VerifyOptio
 
 	window := time.Duration(opts.FreshnessWindow) * time.Second
 	if age > window {
-		return fmt.Errorf("%w (age: %v, allowed: %v)", ErrAttestationExpired, age, window)
+		return &errs.Affix{Err: ErrAttestationExpired, Suffix: fmt.Sprintf(" (age: %v, allowed: %v)", age, window)}
 	}
 
 	return nil
@@ -315,12 +317,11 @@ func (v *Verifier) verifyPCRs(stmt *AttestationStatement, opts *VerifyOptions) e
 	for pcrIdx, expectedDigest := range opts.ExpectedPCRs {
 		actualDigest, ok := stmt.PCRValues[pcrIdx]
 		if !ok {
-			return fmt.Errorf("%w: PCR %d", ErrPCRMissing, pcrIdx)
+			return &errs.Detail{Err: ErrPCRMissing, Detail: fmt.Sprintf("PCR %d", pcrIdx)}
 		}
 
 		if !bytesEqual(actualDigest, expectedDigest) {
-			return fmt.Errorf("%w: PCR %d (expected %x, got %x)",
-				ErrPCRMismatch, pcrIdx, expectedDigest, actualDigest)
+			return &errs.Detail{Err: ErrPCRMismatch, Detail: fmt.Sprintf("PCR %d (expected %x, got %x)", pcrIdx, expectedDigest, actualDigest)}
 		}
 	}
 
@@ -343,7 +344,7 @@ func bytesEqual(a, b []byte) bool {
 func (stmt *AttestationStatement) Hash() ([]byte, error) {
 	pubBytes, err := x509.MarshalPKIXPublicKey(stmt.AttestedKeyPublic)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrMarshalAttestedKey, err)
+		return nil, &errs.Detail{Err: ErrMarshalAttestedKey, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	h := sha256.Sum256(pubBytes)

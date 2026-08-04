@@ -106,6 +106,12 @@ type KeyCounter interface {
 	KeyCount() int
 }
 
+// BackendKeyLister returns the number of keys stored in a specific backend.
+// AdminService uses this to populate per-backend key counts in ListBackends.
+type BackendKeyLister interface {
+	KeyCountForBackend(backendID string) int
+}
+
 // RemoteBackendListFunc returns backend info from the remote server.
 type RemoteBackendListFunc func() ([]BackendInfo, error)
 
@@ -137,6 +143,7 @@ type AdminService struct {
 	sealSvc          *SealService
 	configUpdateFunc func(backendID string) error
 	pivRegisterFn    func(backendID, category string)
+	keyLister        BackendKeyLister
 }
 
 // NewAdminService creates a new AdminService.
@@ -174,6 +181,13 @@ func (s *AdminService) SetBackendRegistry(registry backendregistry.Registry) {
 // PIV manager so it can participate in PIV operations without a restart.
 func (s *AdminService) SetPIVRegisterFunc(fn func(backendID, category string)) {
 	s.pivRegisterFn = fn
+}
+
+// SetBackendKeyLister sets the service that can report per-backend key counts.
+// When set, ListBackends populates KeyCount for each local backend by querying
+// the lister. This enables the Admin view to show accurate key counts per card.
+func (s *AdminService) SetBackendKeyLister(lister BackendKeyLister) {
+	s.keyLister = lister
 }
 
 // SetTPMStatusProvider sets the TPM status provider for TPM backend detection.
@@ -322,13 +336,21 @@ func (s *AdminService) dynamicBackends() []BackendInfo {
 			if status.InitError != "" {
 				metadata["init_error"] = status.InitError
 			}
+			// The TPM backend is auto-detected here (not in the registry), so it
+			// bypasses convertRegisteredBackend's keyLister path. Query the lister
+			// explicitly so the card reflects keys actually stored in the TPM —
+			// including TPM-backed PIV keys — instead of a hard-coded zero.
+			tpmKeyCount := 0
+			if s.keyLister != nil {
+				tpmKeyCount = s.keyLister.KeyCountForBackend("tpm2")
+			}
 			backends = append(backends, BackendInfo{
 				ID:          "tpm2",
 				Type:        "tpm2",
 				DisplayName: "TPM 2.0",
 				Enabled:     true,
 				Connected:   status.Available,
-				KeyCount:    0,
+				KeyCount:    tpmKeyCount,
 				Algorithms:  []string{"RSA", "ECDSA", "AES"},
 				Description: desc,
 				Capabilities: BackendCapability{
@@ -419,13 +441,19 @@ func (s *AdminService) dynamicBackends() []BackendInfo {
 			isYubiKey := strings.Contains(mod.LibraryPath, "libykcs11") || strings.Contains(mod.LibraryPath, "ykcs11")
 			fido2Capable := !isYubiKey
 
+			// Auto-detected PKCS#11 modules also bypass the keyLister path; count
+			// their keys explicitly so a token holding keys does not read as zero.
+			pkcs11KeyCount := 0
+			if s.keyLister != nil {
+				pkcs11KeyCount = s.keyLister.KeyCountForBackend(mod.ID)
+			}
 			backends = append(backends, BackendInfo{
 				ID:          mod.ID,
 				Type:        "pkcs11",
 				DisplayName: displayName,
 				Enabled:     mod.State == "loaded",
 				Connected:   connected,
-				KeyCount:    0,
+				KeyCount:    pkcs11KeyCount,
 				Algorithms:  []string{"RSA", "ECDSA", "AES"},
 				Description: fmt.Sprintf("PKCS#11 HSM - %s", mod.LibraryPath),
 				Capabilities: BackendCapability{
@@ -481,13 +509,18 @@ func (s *AdminService) convertRegisteredBackend(rb *backendregistry.RegisteredBa
 		displayName = s.defaultDisplayName(rb.Category, rb.ID)
 	}
 
+	keyCount := 0
+	if s.keyLister != nil {
+		keyCount = s.keyLister.KeyCountForBackend(rb.ID)
+	}
+
 	return BackendInfo{
 		ID:           rb.ID,
 		Type:         string(rb.Category),
 		DisplayName:  displayName,
 		Enabled:      state != backendregistry.StateError && state != backendregistry.StateOffline,
 		Connected:    connected,
-		KeyCount:     0,
+		KeyCount:     keyCount,
 		Algorithms:   s.algorithmsForCategory(rb.Category),
 		Description:  s.descriptionForCategory(rb.Category),
 		Capabilities: caps,
@@ -591,14 +624,14 @@ func (s *AdminService) RenameBackend(backendID string, newName string) error {
 	// Persist to config file.
 	ucfg, loadErr := config.Load()
 	if loadErr != nil {
-		return fmt.Errorf("%w: %v", ErrAdminConfigLoadFailed, loadErr)
+		return &SentinelCauseError{Sentinel: ErrAdminConfigLoadFailed, Cause: loadErr}
 	}
 
 	for i, existing := range ucfg.Backends.Local {
 		if existing.ID == backendID {
 			ucfg.Backends.Local[i].Name = newName
 			if saveErr := config.Save(ucfg); saveErr != nil {
-				return fmt.Errorf("%w: %v", ErrAdminConfigSaveFailed, saveErr)
+				return &SentinelCauseError{Sentinel: ErrAdminConfigSaveFailed, Cause: saveErr}
 			}
 			return nil
 		}
@@ -641,6 +674,11 @@ func (s *AdminService) descriptionForCategory(cat backendregistry.BackendCategor
 
 // fallbackBackends returns default backends when registry is unavailable.
 func (s *AdminService) fallbackBackends() []BackendInfo {
+	softwareKeyCount := 0
+	if s.keyLister != nil {
+		softwareKeyCount = s.keyLister.KeyCountForBackend("software")
+	}
+
 	backends := []BackendInfo{
 		{
 			ID:          "software",
@@ -648,7 +686,7 @@ func (s *AdminService) fallbackBackends() []BackendInfo {
 			DisplayName: "Software",
 			Enabled:     true,
 			Connected:   true,
-			KeyCount:    0,
+			KeyCount:    softwareKeyCount,
 			Algorithms:  []string{"RSA", "ECDSA", "Ed25519", "AES", "ML-KEM"},
 			Description: "In-memory and file-backed software key store",
 			Capabilities: BackendCapability{
@@ -682,13 +720,21 @@ func (s *AdminService) fallbackBackends() []BackendInfo {
 			if status.InitError != "" {
 				metadata["init_error"] = status.InitError
 			}
+			// The TPM backend is auto-detected here (not in the registry), so it
+			// bypasses convertRegisteredBackend's keyLister path. Query the lister
+			// explicitly so the card reflects keys actually stored in the TPM —
+			// including TPM-backed PIV keys — instead of a hard-coded zero.
+			tpmKeyCount := 0
+			if s.keyLister != nil {
+				tpmKeyCount = s.keyLister.KeyCountForBackend("tpm2")
+			}
 			backends = append(backends, BackendInfo{
 				ID:          "tpm2",
 				Type:        "tpm2",
 				DisplayName: "TPM 2.0",
 				Enabled:     true,
 				Connected:   status.Available,
-				KeyCount:    0,
+				KeyCount:    tpmKeyCount,
 				Algorithms:  []string{"RSA", "ECDSA", "AES"},
 				Description: desc,
 				Capabilities: BackendCapability{
@@ -808,6 +854,7 @@ func (s *AdminService) SetDefaultBackend(backendID string) error {
 		backendregistry.CapPIV,
 		backendregistry.CapOATH,
 		backendregistry.CapPasswords,
+		backendregistry.CapSSH,
 	}
 	for _, cap := range capabilities {
 		if backend.HasCapability(cap) {
@@ -1106,7 +1153,7 @@ func (s *AdminService) ConfigureBackend(backendType string, params map[string]st
 	// Load the unified config from disk.
 	ucfg, loadErr := config.Load()
 	if loadErr != nil {
-		return fmt.Errorf("%w: %v", ErrAdminConfigLoadFailed, loadErr)
+		return &SentinelCauseError{Sentinel: ErrAdminConfigLoadFailed, Cause: loadErr}
 	}
 
 	// Check for duplicate IDs and replace if updating.
@@ -1124,7 +1171,7 @@ func (s *AdminService) ConfigureBackend(backendType string, params map[string]st
 
 	// Persist the updated config to disk.
 	if saveErr := config.Save(ucfg); saveErr != nil {
-		return fmt.Errorf("%w: %v", ErrAdminConfigSaveFailed, saveErr)
+		return &SentinelCauseError{Sentinel: ErrAdminConfigSaveFailed, Cause: saveErr}
 	}
 
 	// Register the backend in the in-memory registry.
@@ -1150,7 +1197,7 @@ func (s *AdminService) buildBackendConfig(backendType string, params map[string]
 	id := params["id"]
 	name := params["name"]
 	if id == "" {
-		return nil, nil, fmt.Errorf("%w: id", ErrAdminMissingField)
+		return nil, nil, &DetailError{Err: ErrAdminMissingField, Detail: ": id"}
 	}
 	if name == "" {
 		name = id
@@ -1169,13 +1216,13 @@ func (s *AdminService) buildBackendConfig(backendType string, params map[string]
 	case "pkcs11":
 		libPath := params["library_path"]
 		if libPath == "" {
-			return nil, nil, fmt.Errorf("%w: library_path", ErrAdminMissingField)
+			return nil, nil, &DetailError{Err: ErrAdminMissingField, Detail: ": library_path"}
 		}
 		slotID := 0
 		if s, ok := params["slot_id"]; ok && s != "" {
 			parsed, parseErr := strconv.Atoi(s)
 			if parseErr != nil {
-				return nil, nil, fmt.Errorf("%w: slot_id must be a number", ErrAdminMissingField)
+				return nil, nil, &DetailError{Err: ErrAdminMissingField, Detail: ": slot_id must be a number"}
 			}
 			slotID = parsed
 		}
@@ -1203,7 +1250,7 @@ func (s *AdminService) buildBackendConfig(backendType string, params map[string]
 		caps[backendregistry.CapAttestation] = true
 
 	default:
-		return nil, nil, fmt.Errorf("%w: %s", ErrAdminInvalidBackendType, backendType)
+		return nil, nil, &DetailError{Err: ErrAdminInvalidBackendType, Detail: fmt.Sprintf(": %s", backendType)}
 	}
 
 	rb := &backendregistry.RegisteredBackend{

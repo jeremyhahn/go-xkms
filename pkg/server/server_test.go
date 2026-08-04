@@ -1849,10 +1849,20 @@ func TestCreateTPM2Backend_DefaultValues(t *testing.T) {
 		},
 	}
 
-	// This will fail because there's no TPM available, but we're testing the config parsing
-	_, err := createTPM2Backend(config)
-	// Expected to fail - no TPM available in test environment
-	assert.Error(t, err)
+	// Exercises the use_simulator config-parsing path. The outcome depends on the
+	// environment: without a TPM (or the tpm_simulator build) createTPM2Backend
+	// errors; in the CI container (tpm_simulator tag + simulator present) it
+	// succeeds. Both are valid — assert only that it does not return a
+	// backend-and-error or neither.
+	backend, err := createTPM2Backend(config)
+	if err != nil {
+		assert.Nil(t, backend, "no backend should be returned on error")
+	} else {
+		assert.NotNil(t, backend, "a backend must be returned on success")
+		// Close to release the process-global go-tpm-tools simulator lock;
+		// otherwise the next simulator-opening test blocks forever on Get().
+		_ = backend.Close()
+	}
 }
 
 func TestCreateTPM2Backend_CustomValues(t *testing.T) {
@@ -1875,9 +1885,15 @@ func TestCreateTPM2Backend_CustomValues(t *testing.T) {
 		},
 	}
 
-	_, err := createTPM2Backend(config)
-	// Expected to fail - no TPM available in test environment
-	assert.Error(t, err)
+	// With the tpm_simulator build + a simulator present this succeeds; without
+	// a TPM it errors. Both are valid — but on success the backend MUST be
+	// closed to release the process-global go-tpm-tools simulator lock, or the
+	// next simulator-opening test blocks forever on Get().
+	backend, err := createTPM2Backend(config)
+	if err == nil {
+		assert.NotNil(t, backend)
+		_ = backend.Close()
+	}
 }
 
 func TestCreateTPM2Backend_IntHandles(t *testing.T) {
@@ -2315,6 +2331,22 @@ func TestCreateBackend_AllTypes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend, err := createBackend(tt.config)
+			// Any created backend must be closed to release its resources — in
+			// particular the process-global go-tpm-tools simulator lock, whose
+			// leak would hang the next simulator-opening test.
+			if backend != nil {
+				defer func() { _ = backend.Close() }()
+			}
+			if tt.name == "tpm2 - simulator" {
+				// Build-dependent: with the tpm_simulator tag + a simulator
+				// present this succeeds; otherwise it errors. Both are valid.
+				if err == nil {
+					assert.NotNil(t, backend)
+				} else {
+					assert.Nil(t, backend)
+				}
+				return
+			}
 			if tt.expectError {
 				assert.Error(t, err)
 				assert.Nil(t, backend)
@@ -4028,9 +4060,15 @@ func TestCreateTPM2Backend_StringHandles(t *testing.T) {
 		},
 	}
 
-	_, err := createTPM2Backend(config)
-	// Expected to fail - no TPM available in test environment
-	assert.Error(t, err)
+	// With the tpm_simulator build + a simulator present this succeeds; without
+	// a TPM it errors. Both are valid — but on success the backend MUST be
+	// closed to release the process-global go-tpm-tools simulator lock, or the
+	// next simulator-opening test blocks forever on Get().
+	backend, err := createTPM2Backend(config)
+	if err == nil {
+		assert.NotNil(t, backend)
+		_ = backend.Close()
+	}
 }
 
 // Test Shutdown with Unix servers
@@ -4159,20 +4197,22 @@ func TestInitialize_BackendCreationFailure(t *testing.T) {
 	defer xkms.Reset()
 
 	config := &BackendFactoryConfig{
-		DefaultBackend: "tpm2",
+		DefaultBackend: "broken",
 		Backends: []BackendConfig{
 			{
-				Name:    "tpm2",
-				Type:    "tpm2",
+				Name:    "broken",
+				Type:    "nonexistent-backend-type",
 				Enabled: true,
-				Config: map[string]interface{}{
-					"use_simulator": true,
-				},
+				Config:  map[string]interface{}{},
 			},
 		},
 	}
 
-	// Should fail because TPM is not available
+	// Should fail: the backend type is unknown, so backend creation fails and
+	// Initialize propagates the error. Deterministic — this avoids depending on
+	// the absence of a TPM (the tpm_simulator build provides one, which would
+	// make a "use_simulator" tpm2 backend succeed and also leak the global
+	// simulator lock).
 	err := Initialize(config)
 	assert.Error(t, err)
 }

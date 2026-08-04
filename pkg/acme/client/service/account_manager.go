@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/client"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
@@ -244,7 +246,7 @@ var signerGenerators = map[string]signerGenerator{
 		if !ok {
 			return nil, ErrKeyGeneration{
 				Algorithm: "ECDSA",
-				Err:       fmt.Errorf("unsupported curve: %s", curveName),
+				Err:       &errs.Message{Msg: fmt.Sprintf("unsupported curve: %s", curveName)},
 			}
 		}
 		key, err := ecdsa.GenerateKey(curve, rand.Reader)
@@ -285,7 +287,7 @@ func generateSigner(keyCfg *KeyConfig) (crypto.Signer, error) {
 	if !ok {
 		return nil, ErrKeyGeneration{
 			Algorithm: keyCfg.Algorithm,
-			Err:       fmt.Errorf("unsupported algorithm: %s", keyCfg.Algorithm),
+			Err:       &errs.Message{Msg: fmt.Sprintf("unsupported algorithm: %s", keyCfg.Algorithm)},
 		}
 	}
 	return generator(keyCfg)

@@ -1,0 +1,162 @@
+- generic [ref=e331]:
+  - navigation "Main navigation" [ref=e332]:
+    - generic [ref=e333]:
+      - generic [ref=e334]:
+        - img [ref=e336]
+        - generic [ref=e337]: xKey
+      - button "Collapse sidebar" [ref=e338] [cursor=pointer]:
+        - img [ref=e339]
+    - generic [ref=e341]:
+      - generic [ref=e342]:
+        - generic [ref=e343]: OVERVIEW
+        - button "Dashboard" [ref=e344] [cursor=pointer]:
+          - img [ref=e345]
+          - generic [ref=e347]: Dashboard
+        - button "Pairing" [ref=e348] [cursor=pointer]:
+          - img [ref=e349]
+          - generic [ref=e351]: Pairing
+        - button "TPM 2.0" [ref=e352] [cursor=pointer]:
+          - img [ref=e353]
+          - generic [ref=e355]: TPM 2.0
+      - generic [ref=e356]:
+        - generic [ref=e357]: STORE
+        - button "Keys" [ref=e358] [cursor=pointer]:
+          - img [ref=e359]
+          - generic [ref=e361]: Keys
+        - button "Trust Store" [ref=e362] [cursor=pointer]:
+          - img [ref=e363]
+          - generic [ref=e365]: Trust Store
+        - button "Certificates" [ref=e366] [cursor=pointer]:
+          - img [ref=e367]
+          - generic [ref=e369]: Certificates
+      - generic [ref=e370]:
+        - generic [ref=e371]: APPLICATIONS
+        - button "SSH" [ref=e372] [cursor=pointer]:
+          - img [ref=e373]
+          - generic [ref=e375]: SSH
+        - button "FIDO2" [ref=e376] [cursor=pointer]:
+          - img [ref=e377]
+          - generic [ref=e379]: FIDO2
+        - button "OATH" [ref=e380] [cursor=pointer]:
+          - img [ref=e381]
+          - generic [ref=e383]: OATH
+        - button "PIV" [ref=e384] [cursor=pointer]:
+          - img [ref=e385]
+          - generic [ref=e387]: PIV
+        - button "Passwords" [ref=e388] [cursor=pointer]:
+          - img [ref=e389]
+          - generic [ref=e391]: Passwords
+        - button "Sealed Data" [ref=e392] [cursor=pointer]:
+          - img [ref=e393]
+          - generic [ref=e395]: Sealed Data
+        - button "Browser" [ref=e396] [cursor=pointer]:
+          - img [ref=e397]
+          - generic [ref=e399]: Browser
+      - generic [ref=e400]:
+        - generic [ref=e401]: MANAGEMENT
+        - button "Audit Log" [ref=e402] [cursor=pointer]:
+          - img [ref=e403]
+          - generic [ref=e405]: Audit Log
+        - button "Admin" [ref=e406] [cursor=pointer]:
+          - img [ref=e407]
+          - generic [ref=e409]: Admin
+      - generic [ref=e410]:
+        - generic [ref=e411]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e412] [cursor=pointer]:
+          - img [ref=e413]
+          - generic [ref=e415]: OIDC
+        - button "API Explorer" [ref=e416] [cursor=pointer]:
+          - img [ref=e417]
+          - generic [ref=e419]: API Explorer
+    - generic [ref=e420]:
+      - generic "Standalone mode" [ref=e421]:
+        - generic [ref=e423]: Standalone
+      - button "Theme" [ref=e424] [cursor=pointer]:
+        - img [ref=e425]
+        - generic [ref=e427]: Theme
+      - button "Settings" [ref=e428] [cursor=pointer]:
+        - img [ref=e429]
+        - generic [ref=e431]: Settings
+  - main [ref=e432]:
+    - generic [ref=e434]:
+      - button "Lock app" [ref=e435] [cursor=pointer]:
+        - img [ref=e436]
+        - generic [ref=e438]: Lock
+      - button "No touch pending" [disabled] [ref=e439]:
+        - img [ref=e441]
+    - generic [ref=e614]:
+      - generic [ref=e617]:
+        - heading "Passwords" [level=1] [ref=e618]
+        - paragraph [ref=e619]: Static password management
+      - generic [ref=e620]:
+        - button "Import" [ref=e621] [cursor=pointer]:
+          - img [ref=e622]
+          - generic [ref=e624]: Import
+        - button "Restore" [ref=e625] [cursor=pointer]:
+          - img [ref=e626]
+          - generic [ref=e628]: Restore
+        - button "Backup" [ref=e629] [cursor=pointer]:
+          - img [ref=e630]
+          - generic [ref=e632]: Backup
+        - button "Add Password" [ref=e633] [cursor=pointer]:
+          - img [ref=e634]
+          - generic [ref=e636]: Add Password
+      - generic [ref=e638]:
+        - complementary [ref=e639]:
+          - tree "Folders" [ref=e640]:
+            - treeitem "All Passwords" [selected] [ref=e641] [cursor=pointer]:
+              - img [ref=e643]
+              - generic [ref=e645]: All Passwords
+            - group
+            - button "New Folder" [ref=e648] [cursor=pointer]:
+              - img [ref=e650]
+              - generic [ref=e652]: New Folder
+          - generic [ref=e653]:
+            - generic [ref=e654]:
+              - generic [ref=e655]:
+                - img [ref=e656]
+                - text: Teams
+              - button "Create team" [ref=e658] [cursor=pointer]:
+                - img [ref=e659]
+            - paragraph [ref=e661]: No teams yet.
+        - generic [ref=e662]:
+          - generic [ref=e664]:
+            - img [ref=e666]
+            - textbox "Search passwords..." [ref=e668]
+          - option "plainmode-entry" [selected] [ref=e738] [cursor=pointer]:
+            - generic [ref=e742]: plainmode-entry
+            - generic [ref=e743]:
+              - button "Copy password" [ref=e744]:
+                - img [ref=e745]
+              - button "Delete" [ref=e747]:
+                - img [ref=e748]
+        - complementary [ref=e676]:
+          - generic [ref=e677]:
+            - generic [ref=e751]:
+              - button "Edit" [ref=e752] [cursor=pointer]:
+                - img [ref=e753]
+                - generic [ref=e755]: Edit
+              - button "Delete" [ref=e756] [cursor=pointer]:
+                - img [ref=e757]
+                - generic [ref=e759]: Delete
+            - generic [ref=e760]:
+              - generic [ref=e761]:
+                - img [ref=e763]
+                - generic [ref=e765]:
+                  - generic [ref=e766]: Password
+                  - generic [ref=e767]: SUPERSECRETPLAIN123
+                - button "Hide password" [active] [ref=e799] [cursor=pointer]:
+                  - img [ref=e769]
+                - button "Copy password" [ref=e771] [cursor=pointer]:
+                  - img [ref=e772]
+              - generic [ref=e774]:
+                - img [ref=e776]
+                - generic [ref=e778]:
+                  - generic [ref=e779]: Expires
+                  - generic [ref=e780]: Never
+              - generic [ref=e783]:
+                - generic [ref=e784]: Created
+                - generic [ref=e785]: Jul 27, 2026, 10:54 PM
+              - generic [ref=e787]:
+                - generic [ref=e788]: Updated
+                - generic [ref=e789]: Jul 27, 2026, 10:54 PM

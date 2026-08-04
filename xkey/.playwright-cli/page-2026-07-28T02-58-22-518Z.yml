@@ -1,0 +1,194 @@
+- generic [ref=e331]:
+  - navigation "Main navigation" [ref=e332]:
+    - generic [ref=e333]:
+      - generic [ref=e334]:
+        - img [ref=e336]
+        - generic [ref=e337]: xKey
+      - button "Collapse sidebar" [ref=e338] [cursor=pointer]:
+        - img [ref=e339]
+    - generic [ref=e341]:
+      - generic [ref=e342]:
+        - generic [ref=e343]: OVERVIEW
+        - button "Dashboard" [ref=e344] [cursor=pointer]:
+          - img [ref=e345]
+          - generic [ref=e347]: Dashboard
+        - button "Pairing" [ref=e348] [cursor=pointer]:
+          - img [ref=e349]
+          - generic [ref=e351]: Pairing
+        - button "TPM 2.0" [ref=e352] [cursor=pointer]:
+          - img [ref=e353]
+          - generic [ref=e355]: TPM 2.0
+      - generic [ref=e356]:
+        - generic [ref=e357]: STORE
+        - button "Keys" [ref=e358] [cursor=pointer]:
+          - img [ref=e359]
+          - generic [ref=e361]: Keys
+        - button "Trust Store" [ref=e362] [cursor=pointer]:
+          - img [ref=e363]
+          - generic [ref=e365]: Trust Store
+        - button "Certificates" [ref=e366] [cursor=pointer]:
+          - img [ref=e367]
+          - generic [ref=e369]: Certificates
+      - generic [ref=e370]:
+        - generic [ref=e371]: APPLICATIONS
+        - button "SSH" [ref=e372] [cursor=pointer]:
+          - img [ref=e373]
+          - generic [ref=e375]: SSH
+        - button "FIDO2" [ref=e376] [cursor=pointer]:
+          - img [ref=e377]
+          - generic [ref=e379]: FIDO2
+        - button "OATH" [ref=e380] [cursor=pointer]:
+          - img [ref=e381]
+          - generic [ref=e383]: OATH
+        - button "PIV" [ref=e384] [cursor=pointer]:
+          - img [ref=e385]
+          - generic [ref=e387]: PIV
+        - button "Passwords" [ref=e388] [cursor=pointer]:
+          - img [ref=e389]
+          - generic [ref=e391]: Passwords
+        - button "Sealed Data" [ref=e392] [cursor=pointer]:
+          - img [ref=e393]
+          - generic [ref=e395]: Sealed Data
+        - button "Browser" [ref=e396] [cursor=pointer]:
+          - img [ref=e397]
+          - generic [ref=e399]: Browser
+      - generic [ref=e400]:
+        - generic [ref=e401]: MANAGEMENT
+        - button "Audit Log" [ref=e402] [cursor=pointer]:
+          - img [ref=e403]
+          - generic [ref=e405]: Audit Log
+        - button "Admin" [ref=e406] [cursor=pointer]:
+          - img [ref=e407]
+          - generic [ref=e409]: Admin
+      - generic [ref=e410]:
+        - generic [ref=e411]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e412] [cursor=pointer]:
+          - img [ref=e413]
+          - generic [ref=e415]: OIDC
+        - button "API Explorer" [ref=e416] [cursor=pointer]:
+          - img [ref=e417]
+          - generic [ref=e419]: API Explorer
+    - generic [ref=e420]:
+      - generic "Standalone mode" [ref=e421]:
+        - generic [ref=e423]: Standalone
+      - button "Theme" [ref=e424] [cursor=pointer]:
+        - img [ref=e425]
+        - generic [ref=e427]: Theme
+      - button "Settings" [ref=e428] [cursor=pointer]:
+        - img [ref=e429]
+        - generic [ref=e431]: Settings
+  - main [ref=e432]:
+    - generic [ref=e434]:
+      - button "Lock app" [ref=e435] [cursor=pointer]:
+        - img [ref=e436]
+        - generic [ref=e438]: Lock
+      - button "No touch pending" [disabled] [ref=e439]:
+        - img [ref=e441]
+    - generic [ref=e800]:
+      - generic [ref=e803]:
+        - heading "Audit Log" [level=1] [ref=e804]
+        - paragraph [ref=e805]: Security event history
+      - generic [ref=e806]:
+        - generic [ref=e807]:
+          - img [ref=e809]
+          - textbox "Search events..." [ref=e811]
+        - generic [ref=e812]:
+          - combobox [ref=e813] [cursor=pointer]:
+            - option "All operations" [selected]
+            - option "Pin_verified"
+            - option "Config_updated"
+            - option "Pin_changed"
+            - option "Service_started"
+            - option "So_pin_failed"
+            - option "Barrier_initialized"
+            - option "Tpm_auth_failed"
+          - combobox [ref=e814] [cursor=pointer]:
+            - option "All devices" [selected]
+          - combobox [ref=e815] [cursor=pointer]:
+            - option "All statuses" [selected]
+            - option "Success"
+            - option "Failure"
+        - button "Export" [ref=e816] [cursor=pointer]:
+          - img [ref=e817]
+          - generic [ref=e819]: Export
+      - generic [ref=e820]:
+        - generic [ref=e822]: 9 event(s) found
+        - generic [ref=e823]:
+          - generic [ref=e824]:
+            - img [ref=e826]
+            - generic [ref=e828]:
+              - generic [ref=e829]:
+                - generic [ref=e830]: pin_verified
+                - img [ref=e832]
+              - paragraph [ref=e834]: pin_verified operation
+              - generic [ref=e836]: "Backend: tpm2"
+            - generic [ref=e837]: 4 minutes ago
+          - generic [ref=e838]:
+            - img [ref=e840]
+            - generic [ref=e842]:
+              - generic [ref=e843]:
+                - generic [ref=e844]: config_updated
+                - img [ref=e846]
+              - paragraph [ref=e848]: config_updated operation
+            - generic [ref=e849]: 4 minutes ago
+          - generic [ref=e850]:
+            - img [ref=e852]
+            - generic [ref=e854]:
+              - generic [ref=e855]:
+                - generic [ref=e856]: pin_changed
+                - img [ref=e858]
+              - paragraph [ref=e860]: pin_changed operation
+              - generic [ref=e862]: "Backend: tpm2"
+            - generic [ref=e863]: 4 minutes ago
+          - generic [ref=e864]:
+            - img [ref=e866]
+            - generic [ref=e868]:
+              - generic [ref=e869]:
+                - generic [ref=e870]: service_started
+                - img [ref=e872]
+              - paragraph [ref=e874]: service_started operation
+            - generic [ref=e875]: 4 minutes ago
+          - generic [ref=e876]:
+            - img [ref=e878]
+            - generic [ref=e880]:
+              - generic [ref=e881]:
+                - generic [ref=e882]: so_pin_failed
+                - img [ref=e884]
+              - paragraph [ref=e886]: "pin: PIN not set"
+              - generic [ref=e888]: "Backend: tpm2"
+            - generic [ref=e889]: 4 minutes ago
+          - generic [ref=e890]:
+            - img [ref=e892]
+            - generic [ref=e894]:
+              - generic [ref=e895]:
+                - generic [ref=e896]: so_pin_failed
+                - img [ref=e898]
+              - paragraph [ref=e900]: "pin: PIN not set"
+              - generic [ref=e902]: "Backend: tpm2"
+            - generic [ref=e903]: 4 minutes ago
+          - generic [ref=e904]:
+            - img [ref=e906]
+            - generic [ref=e908]:
+              - generic [ref=e909]:
+                - generic [ref=e910]: so_pin_failed
+                - img [ref=e912]
+              - paragraph [ref=e914]: "pin: PIN not set"
+              - generic [ref=e916]: "Backend: tpm2"
+            - generic [ref=e917]: 4 minutes ago
+          - generic [ref=e918]:
+            - img [ref=e920]
+            - generic [ref=e922]:
+              - generic [ref=e923]:
+                - generic [ref=e924]: barrier_initialized
+                - img [ref=e926]
+              - paragraph [ref=e928]: barrier_initialized operation
+            - generic [ref=e929]: 4 minutes ago
+          - generic [ref=e930]:
+            - img [ref=e932]
+            - generic [ref=e934]:
+              - generic [ref=e935]:
+                - generic [ref=e936]: tpm_auth_failed
+                - img [ref=e938]
+              - paragraph [ref=e940]: "TPM_RC_BAD_AUTH (session 1): authorization failure without DA implications"
+              - generic [ref=e942]: "Backend: tpm2"
+            - generic [ref=e943]: 4 minutes ago

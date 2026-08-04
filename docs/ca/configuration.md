@@ -68,13 +68,58 @@ type Identity struct {
     // Multi-key support
     Keys []*types.KeyConfig `yaml:"keys"`
 
-    // Per-identity keystore configurations
-    Keystores map[string]interface{} `yaml:"keystores"`
+    // Per-identity keystore configurations. Nil => legacy single-backend
+    // path (uses scalar KeystoreType). Non-nil => per-key routing: each
+    // key in Keys is routed to the backend matching its StoreType.
+    Keystores *CAKeystoresConfig `yaml:"keystores,omitempty"`
 
     // Whether this is the root CA
     IsRoot bool `yaml:"is-root"`
 }
 ```
+
+### CAKeystoresConfig
+
+```go
+type CAKeystoresConfig struct {
+    Software *CAKeystoreSoftwareConfig `yaml:"software"`
+    TPM2     *CAKeystoreTPM2Config     `yaml:"tpm2"`
+    PKCS11   *CAKeystorePKCS11Config   `yaml:"pkcs11"`
+}
+
+type CAKeystoreSoftwareConfig struct {
+    // PlatformPolicy enables TPM platform-policy binding for software keys
+    // encrypted at rest under a TPM SRK.
+    PlatformPolicy bool   `yaml:"platform-policy"`
+    // Password is the identity-wide fallback passphrase for software CA
+    // keys. Applied to any key whose per-key KeyConfig.Password is empty.
+    // When non-empty the key is written as encrypted PKCS#8 at rest.
+    // Source from a secrets manager or the node's PIN backend.
+    Password string `yaml:"password,omitempty"`
+}
+
+type CAKeystoreTPM2Config struct {
+    // SRKHandle is the persistent TPM handle for the SRK wrapping CA keys,
+    // e.g. 0x81000001.
+    SRKHandle uint32 `yaml:"srk-handle"`
+    // SRKAuth is a KMS URI resolving to the SRK password, e.g.:
+    //   kms://ca/root/tpm2/srk-auth?ensure=true&len=32&enc=base64
+    SRKAuth string `yaml:"srk-auth,omitempty"`
+    // PlatformPolicy enables PCR-bound platform policy on TPM CA keys.
+    PlatformPolicy bool `yaml:"platform-policy"`
+}
+
+type CAKeystorePKCS11Config struct {
+    Pin    string `yaml:"pin,omitempty"`
+    Slot   int    `yaml:"slot,omitempty"`
+    Module string `yaml:"module,omitempty"`
+}
+```
+
+Nil sub-fields (`Software`, `TPM2`, `PKCS11`) are ignored; only the
+sub-field matching a key's `StoreType` is consulted. A nil `Keystores`
+pointer falls back to the legacy single-keystore path. See
+[Multi-Keystore Routing](multi-keystore.md) for a worked example.
 
 ## YAML Configuration Example
 
@@ -82,7 +127,7 @@ type Identity struct {
 
 ```yaml
 certificate-authority:
-  home: /var/lib/trustedca
+  home: /var/lib/xkms
   platform-ca: 1  # Use intermediate CA for signing
   default-validity: 365
 
@@ -113,7 +158,7 @@ certificate-authority:
 
 ```yaml
 certificate-authority:
-  home: /var/lib/trustedca
+  home: /var/lib/xkms
   platform-ca: 1
   default-validity: 398
   sans-include-localhost: false
@@ -186,7 +231,7 @@ certificate-authority:
 
 ```yaml
 certificate-authority:
-  home: /var/lib/trustedca
+  home: /var/lib/xkms
   platform-ca: 1
   default-validity: 398
 
@@ -337,6 +382,11 @@ keystores:
     platform-policy: true
 ```
 
+| Parameter | Description |
+|-----------|-------------|
+| `password` | Identity-wide fallback passphrase for software keys. Applied to any key in the identity whose per-key `KeyConfig.Password` is empty; the key file is written as encrypted PKCS#8 at rest. Source from a secrets manager or the node's PIN backend — do not embed secrets in YAML. |
+| `platform-policy` | Enables TPM platform-policy binding for software keys encrypted at rest under a TPM SRK. |
+
 ### TPM 2.0
 
 ```yaml
@@ -344,15 +394,15 @@ keystore-type: tpm2
 keystores:
   tpm2:
     srk-handle: 0x81000001
-    srk-auth: "${TPM_SRK_AUTH}"
+    srk-auth: "kms://ca/root/tpm2/srk-auth?ensure=true&len=32&enc=base64"
     platform-policy: true
 ```
 
 | Parameter | Description |
 |-----------|-------------|
-| `srk-handle` | Storage Root Key persistent handle |
-| `srk-auth` | SRK authorization value |
-| `platform-policy` | Enable platform PCR policy |
+| `srk-handle` | Persistent TPM handle for the Storage Root Key wrapping CA keys, e.g. `0x81000001`. |
+| `srk-auth` | KMS URI resolving to the SRK password, e.g. `kms://ca/root/tpm2/srk-auth?ensure=true&len=32&enc=base64`. The xkms KMS client resolves this URI at startup. |
+| `platform-policy` | Enables PCR-bound platform policy on TPM CA keys. |
 
 ### PKCS#11 (HSM)
 
@@ -361,20 +411,15 @@ keystore-type: pkcs11
 keystores:
   pkcs11:
     library: /usr/lib/pkcs11/libsofthsm2.so
-    config: /etc/softhsm/softhsm.conf
     slot: 0
-    label: "MyCA-HSM"
     pin: "${HSM_PIN}"
-    platform-policy: true
 ```
 
 | Parameter | Description |
 |-----------|-------------|
-| `library` | Path to PKCS#11 library (.so/.dll) |
-| `config` | Optional configuration file path |
-| `slot` | HSM slot number |
-| `label` | Token label for key identification |
-| `pin` | User PIN for HSM access |
+| `module` | Path to PKCS#11 shared library (.so/.dll). |
+| `slot` | HSM slot number. |
+| `pin` | User PIN for HSM access. |
 
 ## Multi-Key Configuration
 
@@ -501,5 +546,6 @@ keystores:
 ## See Also
 
 - [Architecture](architecture.md)
+- [Multi-Keystore Routing](multi-keystore.md)
 - [Certificate Types](certificate-types.md)
 - [API Reference](api-reference.md)

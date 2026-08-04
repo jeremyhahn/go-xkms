@@ -13,87 +13,52 @@
 
 package validation
 
-import "fmt"
+import (
+	"fmt"
 
-// Constraint enumerates the specific validation rule that was violated.
-type Constraint int
-
-const (
-	// ConstraintEmpty indicates the value was empty.
-	ConstraintEmpty Constraint = iota
-	// ConstraintNullByte indicates the value contains a null byte.
-	ConstraintNullByte
-	// ConstraintTooLong indicates the value exceeds the maximum length.
-	ConstraintTooLong
-	// ConstraintAbsolutePath indicates the value is an absolute filesystem path.
-	ConstraintAbsolutePath
-	// ConstraintPathTraversal indicates the value contains a path traversal sequence.
-	ConstraintPathTraversal
-	// ConstraintControlChars indicates the value contains control characters.
-	ConstraintControlChars
-	// ConstraintInvalidChars indicates the value contains disallowed characters.
-	ConstraintInvalidChars
-	// ConstraintInvalidFormat indicates the value does not match the required format.
-	ConstraintInvalidFormat
-	// ConstraintInvalidKeyType indicates the key type is not recognized.
-	ConstraintInvalidKeyType
-	// ConstraintInvalidAlgorithm indicates the algorithm is not recognized.
-	ConstraintInvalidAlgorithm
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-// constraintMessages maps each constraint to a human-readable explanation.
-var constraintMessages = map[Constraint]string{
-	ConstraintEmpty:            "cannot be empty",
-	ConstraintNullByte:         "contains null byte",
-	ConstraintTooLong:          "exceeds maximum length",
-	ConstraintAbsolutePath:     "cannot be an absolute path",
-	ConstraintPathTraversal:    "contains path traversal attempt",
-	ConstraintControlChars:     "contains control characters",
-	ConstraintInvalidChars:     "contains invalid characters",
-	ConstraintInvalidFormat:    "invalid format",
-	ConstraintInvalidKeyType:   "invalid key type",
-	ConstraintInvalidAlgorithm: "invalid algorithm",
-}
+// Constraint enumerates the specific validation rule that was violated.
+// It aliases the shared stack-wide constraint vocabulary exported by the
+// qrdb SDK so all layers report validation failures uniformly.
+type Constraint = qrdbsdk.ValidationConstraint
 
-// String returns the human-readable name for a Constraint.
-func (c Constraint) String() string {
-	if msg, ok := constraintMessages[c]; ok {
-		return msg
-	}
-	return "unknown constraint"
-}
+// Constraint values re-exported from the shared qrdb SDK validation
+// framework. The names and messages are identical to the pre-unification
+// local definitions, so error strings are unchanged.
+const (
+	// ConstraintEmpty indicates the value was empty.
+	ConstraintEmpty = qrdbsdk.ValidationConstraintEmpty
+	// ConstraintNullByte indicates the value contains a null byte.
+	ConstraintNullByte = qrdbsdk.ValidationConstraintNullByte
+	// ConstraintTooLong indicates the value exceeds the maximum length.
+	ConstraintTooLong = qrdbsdk.ValidationConstraintTooLong
+	// ConstraintAbsolutePath indicates the value is an absolute filesystem path.
+	ConstraintAbsolutePath = qrdbsdk.ValidationConstraintAbsolutePath
+	// ConstraintPathTraversal indicates the value contains a path traversal sequence.
+	ConstraintPathTraversal = qrdbsdk.ValidationConstraintPathTraversal
+	// ConstraintControlChars indicates the value contains control characters.
+	ConstraintControlChars = qrdbsdk.ValidationConstraintControlChars
+	// ConstraintInvalidChars indicates the value contains disallowed characters.
+	ConstraintInvalidChars = qrdbsdk.ValidationConstraintInvalidChars
+	// ConstraintInvalidFormat indicates the value does not match the required format.
+	ConstraintInvalidFormat = qrdbsdk.ValidationConstraintInvalidFormat
+	// ConstraintInvalidKeyType indicates the key type is not recognized.
+	ConstraintInvalidKeyType = qrdbsdk.ValidationConstraintInvalidKeyType
+	// ConstraintInvalidAlgorithm indicates the algorithm is not recognized.
+	ConstraintInvalidAlgorithm = qrdbsdk.ValidationConstraintInvalidAlgorithm
+)
 
-// ErrValidation is the base validation error carrying the field name and violated constraint.
-type ErrValidation struct {
-	// Field is the name of the field that failed validation (e.g. "key ID", "backend name").
-	Field string
-	// Constraint is the specific rule that was violated.
-	Constraint Constraint
-	// Detail provides additional context (e.g. max length, allowed characters).
-	Detail string
-}
-
-// Error returns a human-readable error message.
-func (e *ErrValidation) Error() string {
-	base := fmt.Sprintf("%s %s", e.Field, e.Constraint)
-	if e.Detail != "" {
-		return fmt.Sprintf("%s: %s", base, e.Detail)
-	}
-	return base
-}
+// ErrValidation is the base validation error carrying the field name and
+// violated constraint. It aliases the shared qrdb SDK ValidationError, whose
+// promoted As method lets errors.As with a **ErrValidation target match any
+// domain error type that embeds it.
+type ErrValidation = qrdbsdk.ValidationError
 
 // ErrKeyID is returned when a key identifier fails validation.
 type ErrKeyID struct {
 	ErrValidation
-}
-
-// As supports errors.As by allowing ErrKeyID to match *ErrValidation targets.
-func (e *ErrKeyID) As(target any) bool {
-	if t, ok := target.(**ErrValidation); ok {
-		*t = &e.ErrValidation
-		return true
-	}
-	return false
 }
 
 // ErrKeyReference is returned when a 4-part key reference fails validation.
@@ -127,27 +92,9 @@ func (e *ErrKeyReference) Unwrap() error {
 	return e.Cause
 }
 
-// As supports errors.As by allowing ErrKeyReference to match *ErrValidation targets.
-func (e *ErrKeyReference) As(target any) bool {
-	if t, ok := target.(**ErrValidation); ok {
-		*t = &e.ErrValidation
-		return true
-	}
-	return false
-}
-
 // ErrBackendName is returned when a backend name fails validation.
 type ErrBackendName struct {
 	ErrValidation
-}
-
-// As supports errors.As by allowing ErrBackendName to match *ErrValidation targets.
-func (e *ErrBackendName) As(target any) bool {
-	if t, ok := target.(**ErrValidation); ok {
-		*t = &e.ErrValidation
-		return true
-	}
-	return false
 }
 
 // newErrKeyID creates an ErrKeyID for the given constraint with optional detail.

@@ -366,6 +366,10 @@ export function SetPlatformPolicyService(arg1) {
   return window['go']['services']['TPMService']['SetPlatformPolicyService'](arg1);
 }
 
+export function SetPolicyStore(arg1) {
+  return window['go']['services']['TPMService']['SetPolicyStore'](arg1);
+}
+
 export function SetStaticPasswordService(arg1) {
   return window['go']['services']['TPMService']['SetStaticPasswordService'](arg1);
 }

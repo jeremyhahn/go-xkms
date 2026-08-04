@@ -16,7 +16,6 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"os"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -48,11 +47,11 @@ The result is output as base64-encoded ciphertext.`,
 			var err error
 			data, err = os.ReadFile(dataFile)
 			if err != nil {
-				handleError(fmt.Errorf("failed to read data file: %w", err))
+				handleError(&WrappedError{Sentinel: ErrReadDataFileFailed, Err: err})
 				return
 			}
 		} else {
-			handleError(fmt.Errorf("data must be provided as argument or via --data-file"))
+			handleError(ErrDataInputRequired)
 			return
 		}
 
@@ -66,14 +65,14 @@ The result is output as base64-encoded ciphertext.`,
 func sealData(cfg *Config, printer *Printer, keyID string, data, aad []byte) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -90,7 +89,7 @@ func sealData(cfg *Config, printer *Printer, keyID string, data, aad []byte) {
 	// Seal the data
 	resp, err := cl.Seal(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to seal data: %w", err))
+		handleError(&WrappedError{Sentinel: ErrSealDataFailed, Err: err})
 		return
 	}
 
@@ -143,19 +142,19 @@ Use --nonce and --tag for algorithms that require them.`,
 		} else if ciphertextFile != "" {
 			data, err := os.ReadFile(ciphertextFile)
 			if err != nil {
-				handleError(fmt.Errorf("failed to read ciphertext file: %w", err))
+				handleError(&WrappedError{Sentinel: ErrReadCiphertextFileFailed, Err: err})
 				return
 			}
 			ciphertextB64 = string(data)
 		} else {
-			handleError(fmt.Errorf("ciphertext must be provided as argument, via --ciphertext, or via --ciphertext-file"))
+			handleError(ErrCiphertextInputRequired)
 			return
 		}
 
 		// Decode base64 ciphertext
 		ciphertext, err := base64.StdEncoding.DecodeString(ciphertextB64)
 		if err != nil {
-			handleError(fmt.Errorf("invalid base64 ciphertext: %w", err))
+			handleError(&WrappedError{Sentinel: ErrInvalidBase64Ciphertext, Err: err})
 			return
 		}
 
@@ -164,14 +163,14 @@ Use --nonce and --tag for algorithms that require them.`,
 		if nonceStr != "" {
 			nonce, err = base64.StdEncoding.DecodeString(nonceStr)
 			if err != nil {
-				handleError(fmt.Errorf("invalid base64 nonce: %w", err))
+				handleError(&WrappedError{Sentinel: ErrInvalidBase64Nonce, Err: err})
 				return
 			}
 		}
 		if tagStr != "" {
 			tag, err = base64.StdEncoding.DecodeString(tagStr)
 			if err != nil {
-				handleError(fmt.Errorf("invalid base64 tag: %w", err))
+				handleError(&WrappedError{Sentinel: ErrInvalidBase64Tag, Err: err})
 				return
 			}
 		}
@@ -186,14 +185,14 @@ Use --nonce and --tag for algorithms that require them.`,
 func unsealData(cfg *Config, printer *Printer, keyID string, ciphertext, nonce, tag, aad []byte) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -212,7 +211,7 @@ func unsealData(cfg *Config, printer *Printer, keyID string, ciphertext, nonce, 
 	// Unseal the data
 	resp, err := cl.Unseal(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to unseal data: %w", err))
+		handleError(&WrappedError{Sentinel: ErrUnsealDataFailed, Err: err})
 		return
 	}
 
@@ -245,14 +244,14 @@ var canSealCmd = &cobra.Command{
 func canSeal(cfg *Config, printer *Printer) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -261,7 +260,7 @@ func canSeal(cfg *Config, printer *Printer) {
 	// Check sealing support
 	resp, err := cl.CanSeal(ctx, cfg.Backend)
 	if err != nil {
-		handleError(fmt.Errorf("failed to check sealing support: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCheckSealingSupportFailed, Err: err})
 		return
 	}
 

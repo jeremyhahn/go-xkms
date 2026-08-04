@@ -16,7 +16,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 )
@@ -73,7 +72,7 @@ func (h *JSONHandler) Handle(ctx context.Context, data *TokenData) error {
 	}
 
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrJSONMarshalFailed, err)
+		return &SentinelCauseError{Sentinel: ErrJSONMarshalFailed, Cause: err}
 	}
 
 	writer := h.Writer
@@ -82,12 +81,12 @@ func (h *JSONHandler) Handle(ctx context.Context, data *TokenData) error {
 	}
 
 	if _, err := writer.Write(jsonBytes); err != nil {
-		return fmt.Errorf("%w: %v", ErrOutputWriteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOutputWriteFailed, Cause: err}
 	}
 
 	// Add newline for readability
 	if _, err := writer.Write([]byte("\n")); err != nil {
-		return fmt.Errorf("%w: %v", ErrOutputWriteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOutputWriteFailed, Cause: err}
 	}
 
 	return nil

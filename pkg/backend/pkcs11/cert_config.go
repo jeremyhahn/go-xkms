@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 )
@@ -63,7 +65,7 @@ func (c *CertStorageConfig) Validate() error {
 			return errors.New("hardware storage must be enabled for hardware mode")
 		}
 	default:
-		return fmt.Errorf("unknown certificate storage mode: %s", c.Mode)
+		return &errs.Message{Msg: fmt.Sprintf("unknown certificate storage mode: %s", c.Mode)}
 	}
 
 	if c.MaxCertificates < 0 {
@@ -80,11 +82,11 @@ func (b *Backend) CreateCertificateStorage(config *CertStorageConfig) (storage.B
 	}
 
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid certificate storage config: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid certificate storage config", Err: err}
 	}
 
 	if b.pool == nil {
-		return nil, fmt.Errorf("backend must be initialized before creating certificate storage")
+		return nil, &errs.Message{Msg: "backend must be initialized before creating certificate storage"}
 	}
 
 	switch config.Mode {
@@ -101,17 +103,17 @@ func (b *Backend) CreateCertificateStorage(config *CertStorageConfig) (storage.B
 	case hardware.CertStorageModeHybrid:
 		hwStorage, err := b.createHardwareStorage()
 		if err != nil {
-			return nil, fmt.Errorf("failed to create hardware storage: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create hardware storage", Err: err}
 		}
 
 		hybridStorage, err := hardware.NewHybridCertStorageFromBackend(hwStorage, config.ExternalStorage)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create hybrid certificate storage: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create hybrid certificate storage", Err: err}
 		}
 		return hardware.NewHardwareBackendAdapter(hybridStorage), nil
 
 	default:
-		return nil, fmt.Errorf("unknown certificate storage mode: %s", config.Mode)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unknown certificate storage mode: %s", config.Mode)}
 	}
 }
 
@@ -123,7 +125,7 @@ func (b *Backend) CreateCertificateStorage(config *CertStorageConfig) (storage.B
 // C_DestroyObject under CKU_USER with CKR_USER_TYPE_INVALID.
 func (b *Backend) createHardwareStorage() (hardware.HardwareCertStorage, error) {
 	if b.pool == nil {
-		return nil, fmt.Errorf("session pool not initialized")
+		return nil, &errs.Message{Msg: "session pool not initialized"}
 	}
 
 	if b.config.IsYubiKeyPIV() {

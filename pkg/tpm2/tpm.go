@@ -9,6 +9,8 @@ import (
 	"crypto/rsa"
 	"crypto/sha1" // #nosec G505 -- SHA-1 required for TPM 2.0 specification compatibility
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	// #nosec G505 -- SHA-1 required for TPM 2.0 specification compatibility
 	"crypto/sha256"
 	"crypto/sha512"
@@ -376,7 +378,7 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		})
 		if err != nil {
 			params.Logger.Error("failed to open TCP TPM", slog.String("error", err.Error()))
-			return nil, fmt.Errorf("open TCP TPM at %s: %w", params.Config.CommandAddress, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("open TCP TPM at %s", params.Config.CommandAddress), Err: err}
 		}
 	} else if params.Config.UseSimulator {
 		params.Logger.Info(infoOpeningSimulator)
@@ -563,11 +565,11 @@ func OpenTCPTransport(commandAddress, platformAddress string) (transport.TPM, er
 func splitHostPort(addr string) (host string, port int, err error) {
 	h, p, splitErr := strings.Cut(addr, ":")
 	if !splitErr {
-		return "", 0, fmt.Errorf("tpm2: malformed address %q (no colon)", addr)
+		return "", 0, &errs.Message{Msg: fmt.Sprintf("tpm2: malformed address %q (no colon)", addr)}
 	}
 	var portN int
 	if _, scanErr := fmt.Sscanf(p, "%d", &portN); scanErr != nil {
-		return "", 0, fmt.Errorf("tpm2: non-numeric port in %q: %w", addr, scanErr)
+		return "", 0, &errs.Wrapped{Msg: fmt.Sprintf("tpm2: non-numeric port in %q", addr), Err: scanErr}
 	}
 	return h, portN, nil
 }
@@ -661,18 +663,18 @@ func (tpm *TPM2) PlatformPolicyDigest() (tpm2.TPM2BDigest, error) {
 
 	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
 	if err != nil {
-		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: %v", ErrPlatformPolicyDigestCompute, err)
+		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	pcrDigest, err := tpm.PlatformPolicyDigestHash()
 	if err != nil {
-		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: %v", ErrPlatformPolicyDigestCompute, err)
+		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Branch 1: PolicyPCR digest (computed via trial/calculator)
 	pcrCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
 	if err != nil {
-		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: %v", ErrPlatformPolicyDigestCompute, err)
+		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	pcrCmd := tpm2.PolicyPCR{
@@ -687,19 +689,19 @@ func (tpm *TPM2) PlatformPolicyDigest() (tpm2.TPM2BDigest, error) {
 		},
 	}
 	if err := pcrCmd.Update(pcrCalc); err != nil {
-		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: PolicyPCR trial: %v", ErrPlatformPolicyDigestCompute, err)
+		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("PolicyPCR trial: %v", err)}
 	}
 	branch1Digest := pcrCalc.Hash().Digest
 
 	// Branch 2: PolicyAuthValue digest (computed via trial/calculator)
 	authCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
 	if err != nil {
-		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: %v", ErrPlatformPolicyDigestCompute, err)
+		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	authCmd := tpm2.PolicyAuthValue{}
 	if err := authCmd.Update(authCalc); err != nil {
-		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: PolicyAuthValue trial: %v", ErrPlatformPolicyDigestCompute, err)
+		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("PolicyAuthValue trial: %v", err)}
 	}
 	branch2Digest := authCalc.Hash().Digest
 
@@ -710,7 +712,7 @@ func (tpm *TPM2) PlatformPolicyDigest() (tpm2.TPM2BDigest, error) {
 	// Compute PolicyOR over both branches
 	orCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
 	if err != nil {
-		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: %v", ErrPlatformPolicyDigestCompute, err)
+		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	orCmd := tpm2.PolicyOr{
@@ -722,7 +724,7 @@ func (tpm *TPM2) PlatformPolicyDigest() (tpm2.TPM2BDigest, error) {
 		},
 	}
 	if err := orCmd.Update(orCalc); err != nil {
-		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: PolicyOR trial: %v", ErrPlatformPolicyDigestCompute, err)
+		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("PolicyOR trial: %v", err)}
 	}
 	compoundDigest := orCalc.Hash().Digest
 
@@ -840,7 +842,7 @@ func (tpm *TPM2) SetPlatformKeyStore(pks PlatformKeyStorer) {
 // be set to the same authorization store.
 func (tpm *TPM2) SetHierarchyAuth(oldPasswd, newPasswd types.Password, hierarchy *tpm2.TPMHandle) error {
 	if tpm.transport == nil {
-		return errors.New("TPM transport not initialized")
+		return ErrInstallTransportNotInitialized
 	}
 	if hierarchy != nil {
 		var sHierarchy string
@@ -1022,9 +1024,17 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 		return cert, nil
 	}
 
-	// If all attempts failed, return the last error
+	// If all attempts failed, surface the canonical "not found" sentinel
+	// so callers can reliably detect a missing EK certificate with
+	// errors.Is(err, ErrEndorsementCertNotFound), regardless of which
+	// underlying fallback (NV RAM, certificate store, manufacturer
+	// download) was attempted last. The last low-level error is wrapped
+	// for diagnostics rather than returned bare, since a raw TPM RC (e.g.
+	// TPM_RC_HANDLE from a NV index that was never defined) is an
+	// implementation detail, not a distinct error condition callers
+	// should need to match on.
 	if lastErr != nil {
-		return nil, lastErr
+		return nil, &errs.Detail{Err: ErrEndorsementCertNotFound, Detail: fmt.Sprintf("%v", lastErr)}
 	}
 	return nil, ErrEndorsementCertNotFound
 }
@@ -1037,18 +1047,18 @@ func (tpm *TPM2) readEKCertFromNV(ekCertIndex tpm2.TPMHandle) (*x509.Certificate
 		NVIndex: ekCertIndex,
 	}.Execute(tpm.transport)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read NV public at 0x%08X: %w", ekCertIndex, err)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to read NV public at 0x%08X", ekCertIndex), Err: err}
 	}
 
 	// Get the NV public contents
 	nvPublic, err := nvPub.NVPublic.Contents()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get NV public contents: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get NV public contents", Err: err}
 	}
 
 	// Check if the area is readable
 	if nvPublic.DataSize == 0 {
-		return nil, fmt.Errorf("NV area at 0x%08X has zero size", ekCertIndex)
+		return nil, &errs.Message{Msg: fmt.Sprintf("NV area at 0x%08X has zero size", ekCertIndex)}
 	}
 
 	// Step 2: Read NV data in chunks (TPM has max buffer size, typically 1024 bytes)
@@ -1079,7 +1089,7 @@ func (tpm *TPM2) readEKCertFromNV(ekCertIndex tpm2.TPMHandle) (*x509.Certificate
 		}.Execute(tpm.transport)
 
 		if err != nil {
-			return nil, fmt.Errorf("failed to read NV chunk at offset %d: %w", offset, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to read NV chunk at offset %d", offset), Err: err}
 		}
 
 		certData = append(certData, response.Data.Buffer...)
@@ -1716,7 +1726,7 @@ func (tpm *TPM2) EventLog() ([]byte, error) {
 		tpm.tpmDeviceName())
 	cleanPath := filepath.Clean(measurementLogPath)
 	if !filepath.IsAbs(cleanPath) {
-		return nil, fmt.Errorf("measurement log path must be absolute: %s", measurementLogPath)
+		return nil, &errs.Message{Msg: fmt.Sprintf("measurement log path must be absolute: %s", measurementLogPath)}
 	}
 	bytes, err := os.ReadFile(cleanPath)
 	if err != nil {
@@ -1891,10 +1901,10 @@ func (tpm *TPM2) downloadEKCertFromManufacturer(ekCertIndex tpm2.TPMHandle) (*x5
 	// Validate URL before making HTTP request
 	parsedURL, err := url.Parse(ekURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid URL: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid URL", Err: err}
 	}
 	if parsedURL.Scheme != "https" {
-		return nil, fmt.Errorf("only HTTPS URLs are allowed, got: %s", parsedURL.Scheme)
+		return nil, &errs.Message{Msg: fmt.Sprintf("only HTTPS URLs are allowed, got: %s", parsedURL.Scheme)}
 	}
 	resp, err := /* #nosec G107 */ http.Get(ekURL) // URL validated above
 	if err != nil {
@@ -1967,7 +1977,7 @@ func CalculateName(algID tpm2.TPMAlgID, publicArea []byte) ([]byte, error) {
 		h.Write(publicArea)
 		hash = h.Sum(nil)
 	default:
-		return nil, fmt.Errorf("unsupported algorithm ID: %d", algID)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported algorithm ID: %d", algID)}
 	}
 
 	name := make([]byte, 2+len(hash)) // 2 bytes for Algorithm ID + hash length
@@ -1982,7 +1992,7 @@ func CalculateName(algID tpm2.TPMAlgID, publicArea []byte) ([]byte, error) {
 // Each share is returned as a JSON-serialized string.
 func (tpm *TPM2) ShareSecret(secret []byte, shares int) ([]string, error) {
 	if shares < 2 {
-		return nil, fmt.Errorf("shares must be at least 2, got %d", shares)
+		return nil, &errs.Message{Msg: fmt.Sprintf("shares must be at least 2, got %d", shares)}
 	}
 
 	// Calculate threshold as 2/3 of total shares, minimum 2
@@ -1994,7 +2004,7 @@ func (tpm *TPM2) ShareSecret(secret []byte, shares int) ([]string, error) {
 	// Split the secret using Shamir's Secret Sharing
 	shareObjs, err := qrdbsdk.ShamirSplit(secret, threshold, shares)
 	if err != nil {
-		return nil, fmt.Errorf("failed to split secret: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to split secret", Err: err}
 	}
 
 	// Convert Share objects to JSON strings
@@ -2002,7 +2012,7 @@ func (tpm *TPM2) ShareSecret(secret []byte, shares int) ([]string, error) {
 	for i, share := range shareObjs {
 		jsonBytes, err := json.Marshal(share)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal share %d: %w", i, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to marshal share %d", i), Err: err}
 		}
 		result[i] = string(jsonBytes)
 	}
@@ -2014,7 +2024,7 @@ func (tpm *TPM2) ShareSecret(secret []byte, shares int) ([]string, error) {
 // Each share must be a JSON-serialized Share object.
 func (tpm *TPM2) SecretFromShares(shares []string) (string, error) {
 	if len(shares) == 0 {
-		return "", fmt.Errorf("no shares provided")
+		return "", &errs.Message{Msg: "no shares provided"}
 	}
 
 	// Convert JSON strings back to Share objects
@@ -2022,7 +2032,7 @@ func (tpm *TPM2) SecretFromShares(shares []string) (string, error) {
 	for i, shareStr := range shares {
 		var share qrdbsdk.ShamirShare
 		if err := json.Unmarshal([]byte(shareStr), &share); err != nil {
-			return "", fmt.Errorf("failed to unmarshal share %d: %w", i, err)
+			return "", &errs.Wrapped{Msg: fmt.Sprintf("failed to unmarshal share %d", i), Err: err}
 		}
 		shareObjs[i] = &share
 	}
@@ -2030,7 +2040,7 @@ func (tpm *TPM2) SecretFromShares(shares []string) (string, error) {
 	// Combine the shares to reconstruct the secret
 	secret, err := qrdbsdk.ShamirCombine(shareObjs)
 	if err != nil {
-		return "", fmt.Errorf("failed to combine shares: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to combine shares", Err: err}
 	}
 
 	return string(secret), nil

@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"io"
 	"sync"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // KeyPairCall represents a recorded key pair operation.
@@ -277,7 +279,7 @@ func (m *MockSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts)
 	case *ecdsa.PrivateKey:
 		return ecdsa.SignASN1(rand, key, digest)
 	default:
-		return nil, fmt.Errorf("unsupported key type: %T", m.privateKey)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %T", m.privateKey)}
 	}
 }
 
@@ -328,7 +330,7 @@ func (m *MockDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.D
 		return key.Decrypt(rand, ciphertext, opts)
 	}
 
-	return nil, fmt.Errorf("key type does not support decryption")
+	return nil, &errs.Message{Msg: "key type does not support decryption"}
 }
 
 // MockPKCS11Error simulates various PKCS#11 errors.

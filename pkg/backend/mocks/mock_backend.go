@@ -25,6 +25,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -110,7 +112,7 @@ func (m *MockBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttribute
 	m.GenerateKeyCalls = append(m.GenerateKeyCalls, attrs.CN)
 
 	if m.closed {
-		return nil, fmt.Errorf("backend is closed")
+		return nil, &errs.Message{Msg: "backend is closed"}
 	}
 
 	if m.GenerateKeyFunc != nil {
@@ -133,7 +135,7 @@ func (m *MockBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttribute
 		key = privateKey
 		err = genErr
 	default:
-		return nil, fmt.Errorf("unsupported algorithm: %s", attrs.KeyAlgorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported algorithm: %s", attrs.KeyAlgorithm)}
 	}
 
 	if err != nil {
@@ -152,7 +154,7 @@ func (m *MockBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (c
 	m.GetKeyCalls = append(m.GetKeyCalls, attrs.CN)
 
 	if m.closed {
-		return nil, fmt.Errorf("backend is closed")
+		return nil, &errs.Message{Msg: "backend is closed"}
 	}
 
 	if m.GetKeyFunc != nil {
@@ -161,7 +163,7 @@ func (m *MockBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (c
 
 	key, ok := m.keys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 	return key, nil
 }
@@ -174,7 +176,7 @@ func (m *MockBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes)
 	m.DeleteKeyCalls = append(m.DeleteKeyCalls, attrs.CN)
 
 	if m.closed {
-		return fmt.Errorf("backend is closed")
+		return &errs.Message{Msg: "backend is closed"}
 	}
 
 	if m.DeleteKeyFunc != nil {
@@ -182,7 +184,7 @@ func (m *MockBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes)
 	}
 
 	if _, ok := m.keys[attrs.CN]; !ok {
-		return fmt.Errorf("key not found: %s", attrs.CN)
+		return &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 	delete(m.keys, attrs.CN)
 	return nil
@@ -196,7 +198,7 @@ func (m *MockBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, err
 	m.ListKeysCalls++
 
 	if m.closed {
-		return nil, fmt.Errorf("backend is closed")
+		return nil, &errs.Message{Msg: "backend is closed"}
 	}
 
 	if m.ListKeysFunc != nil {
@@ -223,7 +225,7 @@ func (m *MockBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (c
 	m.SignerCalls = append(m.SignerCalls, attrs.CN)
 
 	if m.closed {
-		return nil, fmt.Errorf("backend is closed")
+		return nil, &errs.Message{Msg: "backend is closed"}
 	}
 
 	if m.SignerFunc != nil {
@@ -232,12 +234,12 @@ func (m *MockBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (c
 
 	key, ok := m.keys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("key does not implement crypto.Signer")
+		return nil, &errs.Message{Msg: "key does not implement crypto.Signer"}
 	}
 	return signer, nil
 }
@@ -250,7 +252,7 @@ func (m *MockBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes)
 	m.DecrypterCalls = append(m.DecrypterCalls, attrs.CN)
 
 	if m.closed {
-		return nil, fmt.Errorf("backend is closed")
+		return nil, &errs.Message{Msg: "backend is closed"}
 	}
 
 	if m.DecrypterFunc != nil {
@@ -259,12 +261,12 @@ func (m *MockBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes)
 
 	key, ok := m.keys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 
 	decrypter, ok := key.(crypto.Decrypter)
 	if !ok {
-		return nil, fmt.Errorf("key does not implement crypto.Decrypter")
+		return nil, &errs.Message{Msg: "key does not implement crypto.Decrypter"}
 	}
 	return decrypter, nil
 }

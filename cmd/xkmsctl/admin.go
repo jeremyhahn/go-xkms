@@ -75,7 +75,7 @@ Example (mTLS with PKCS#11 token):
 
 		handler, ok := adminCreateHandlers[method]
 		if !ok {
-			return fmt.Errorf("%w: %s (supported: fido2, mtls)", ErrUnsupportedAuthMethod, method)
+			return &WrappedDetailError{Sentinel: ErrUnsupportedAuthMethod, Detail: method + " (supported: fido2, mtls)"}
 		}
 
 		if err := handler(cmd, username, cfg, printer, storagePath); err != nil {
@@ -103,13 +103,13 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 	// Connect to the xkms service.
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
+		return &WrappedError{Sentinel: ErrCreateClientFailed, Err: err}
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
+		return &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
 	printVerbose("Connected to xkms service")
 
@@ -121,7 +121,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 
 	handler, err := fido2.NewHandler(&fidoConfig, enumerator)
 	if err != nil {
-		return fmt.Errorf("failed to create FIDO2 handler: %w", err)
+		return &WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err}
 	}
 	defer func() { _ = handler.Close() }()
 
@@ -212,13 +212,13 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 	// persisting both in the embedded qrdb node behind the xkms server.
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
+		return &WrappedError{Sentinel: ErrCreateClientFailed, Err: err}
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
+		return &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
 
 	if _, err := cl.CreateUser(ctx, &client.CreateUserRequest{
@@ -226,7 +226,7 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 		DisplayName: displayName,
 		Role:        string(RoleAdmin),
 	}); err != nil {
-		return fmt.Errorf("failed to create admin: %w", err)
+		return &WrappedError{Sentinel: ErrCreateAdminFailed, Err: err}
 	}
 
 	var notAfterUnix int64
@@ -234,7 +234,7 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 		notAfterUnix = cert.NotAfter.Unix()
 	}
 	if err := cl.BindUserCert(ctx, username, fingerprint, notAfterUnix); err != nil {
-		return fmt.Errorf("failed to bind cert: %w", err)
+		return &WrappedError{Sentinel: ErrBindCertFailed, Err: err}
 	}
 
 	if err := printer.PrintSuccess("\nAdministrator created successfully!"); err != nil {
@@ -287,7 +287,7 @@ func loadEnrollmentCert(cmd *cobra.Command, cfg *Config) (*x509.Certificate, err
 			PIN:        cfg.PKCS11PIN,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to load PKCS#11 certificate: %w", err)
+			return nil, &WrappedError{Sentinel: ErrLoadPKCS11CertificateFailed, Err: err}
 		}
 		defer cleanup()
 
@@ -305,17 +305,17 @@ func loadEnrollmentCert(cmd *cobra.Command, cfg *Config) (*x509.Certificate, err
 func loadCertFromFile(path string) (*x509.Certificate, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrCertFileRead, path, err)
+		return nil, &WrappedDetailError{Sentinel: ErrCertFileRead, Detail: path, Err: err}
 	}
 
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, fmt.Errorf("%w: %s: no PEM block found", ErrCertFileParse, path)
+		return nil, &WrappedDetailError{Sentinel: ErrCertFileParse, Detail: path + ": no PEM block found"}
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrCertFileParse, path, err)
+		return nil, &WrappedDetailError{Sentinel: ErrCertFileParse, Detail: path, Err: err}
 	}
 
 	return cert, nil
@@ -332,21 +332,21 @@ var adminListCmd = &cobra.Command{
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		resp, err := cl.ListUsers(ctx)
 		if err != nil {
-			handleError(fmt.Errorf("failed to list admins: %w", err))
+			handleError(&WrappedError{Sentinel: ErrListAdminsFailed, Err: err})
 			return
 		}
 
@@ -415,21 +415,21 @@ var adminGetCmd = &cobra.Command{
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		resp, err := cl.GetUser(ctx, username)
 		if err != nil {
-			handleError(fmt.Errorf("failed to get admin: %w", err))
+			handleError(&WrappedError{Sentinel: ErrGetAdminFailed, Err: err})
 			return
 		}
 		a := resp.User
@@ -504,20 +504,20 @@ Note: You cannot delete the last administrator account.`,
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		if err := cl.DeleteUser(ctx, username); err != nil {
-			handleError(fmt.Errorf("failed to delete admin: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDeleteAdminFailed, Err: err})
 			return
 		}
 
@@ -548,20 +548,20 @@ var adminDisableCmd = &cobra.Command{
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		if err := cl.DisableUser(ctx, username); err != nil {
-			handleError(fmt.Errorf("failed to disable admin: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDisableAdminFailed, Err: err})
 			return
 		}
 
@@ -593,20 +593,20 @@ var adminEnableCmd = &cobra.Command{
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		if err := cl.EnableUser(ctx, username); err != nil {
-			handleError(fmt.Errorf("failed to enable admin: %w", err))
+			handleError(&WrappedError{Sentinel: ErrEnableAdminFailed, Err: err})
 			return
 		}
 
@@ -636,21 +636,21 @@ var adminStatusCmd = &cobra.Command{
 
 		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("failed to create client: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
 		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
-			handleError(fmt.Errorf("failed to connect: %w", err))
+			handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 			return
 		}
 		printVerbose("Connected to xkms service")
 
 		resp, err := cl.ListUsers(ctx)
 		if err != nil {
-			handleError(fmt.Errorf("failed to check admin status: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCheckAdminStatusFailed, Err: err})
 			return
 		}
 

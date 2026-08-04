@@ -17,8 +17,9 @@ package frost
 
 import (
 	"crypto"
-	"fmt"
 	"io"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -59,7 +60,7 @@ func (s *FrostSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	// Generate nonces
 	noncePackage, err := s.backend.GenerateNonces(s.keyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate nonces: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate nonces", Err: err}
 	}
 
 	// Create commitment from our nonce package
@@ -77,13 +78,13 @@ func (s *FrostSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 		// Generate signature share
 		share, err := s.backend.SignRound(s.keyID, digest, noncePackage, commitments)
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate signature share: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to generate signature share", Err: err}
 		}
 
 		// Aggregate (with single share)
 		signature, err := s.backend.Aggregate(s.keyID, digest, commitments, []*SignatureShare{share})
 		if err != nil {
-			return nil, fmt.Errorf("failed to aggregate signature: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to aggregate signature", Err: err}
 		}
 
 		return signature, nil
@@ -91,7 +92,7 @@ func (s *FrostSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 
 	// For threshold > 1, orchestrated signing is not yet implemented
 	// Applications should use the explicit round API for distributed scenarios
-	return nil, fmt.Errorf("orchestrated multi-participant signing not implemented; use GenerateNonces, SignRound, and Aggregate for distributed signing")
+	return nil, &errs.Message{Msg: "orchestrated multi-participant signing not implemented; use GenerateNonces, SignRound, and Aggregate for distributed signing"}
 }
 
 // Algorithm returns the public key algorithm type.

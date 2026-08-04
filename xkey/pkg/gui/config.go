@@ -15,7 +15,6 @@ package gui
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -264,13 +263,13 @@ func configDir() (string, error) {
 		// Fallback to ~/.config on Linux.
 		home, homeErr := os.UserHomeDir()
 		if homeErr != nil {
-			return "", fmt.Errorf("%w: %v", ErrConfigLoad, homeErr)
+			return "", &SentinelCauseError{Sentinel: ErrConfigLoad, Cause: homeErr}
 		}
 		cfgBase = filepath.Join(home, ".config")
 	}
 	dir := filepath.Join(cfgBase, "xkey")
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", fmt.Errorf("%w: %v", ErrConfigLoad, err)
+		return "", &SentinelCauseError{Sentinel: ErrConfigLoad, Cause: err}
 	}
 	return dir, nil
 }
@@ -291,7 +290,7 @@ func guiConfigPath() (string, error) {
 func legacyGUIConfigPath() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrConfigLoad, err)
+		return "", &SentinelCauseError{Sentinel: ErrConfigLoad, Cause: err}
 	}
 	return filepath.Join(homeDir, ".xkey", "gui.json"), nil
 }
@@ -328,11 +327,11 @@ func LoadGUIConfig() (*GUIConfig, error) {
 		if os.IsNotExist(err) {
 			// No file yet; fall through to viper overlay.
 		} else {
-			return nil, fmt.Errorf("%w: %v", ErrConfigLoad, err)
+			return nil, &SentinelCauseError{Sentinel: ErrConfigLoad, Cause: err}
 		}
 	} else {
 		if jsonErr := json.Unmarshal(data, cfg); jsonErr != nil {
-			return nil, fmt.Errorf("%w: %v", ErrConfigLoad, jsonErr)
+			return nil, &SentinelCauseError{Sentinel: ErrConfigLoad, Cause: jsonErr}
 		}
 	}
 
@@ -456,7 +455,7 @@ func LoadGUIConfig() (*GUIConfig, error) {
 // SaveGUIConfig persists the GUI configuration to the JSON file.
 func SaveGUIConfig(cfg *GUIConfig) error {
 	if cfg == nil {
-		return fmt.Errorf("%w: nil config", ErrConfigSave)
+		return &DetailError{Err: ErrConfigSave, Detail: ": nil config"}
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -464,26 +463,26 @@ func SaveGUIConfig(cfg *GUIConfig) error {
 
 	cfgPath, err := guiConfigPath()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrConfigSave, err)
+		return &SentinelCauseError{Sentinel: ErrConfigSave, Cause: err}
 	}
 
 	dir := filepath.Dir(cfgPath)
 	if mkErr := os.MkdirAll(dir, 0700); mkErr != nil {
-		return fmt.Errorf("%w: %v", ErrConfigSave, mkErr)
+		return &SentinelCauseError{Sentinel: ErrConfigSave, Cause: mkErr}
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrConfigSave, err)
+		return &SentinelCauseError{Sentinel: ErrConfigSave, Cause: err}
 	}
 
 	tmpPath := cfgPath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return fmt.Errorf("%w: %v", ErrConfigSave, err)
+		return &SentinelCauseError{Sentinel: ErrConfigSave, Cause: err}
 	}
 
 	if err := os.Rename(tmpPath, cfgPath); err != nil {
-		return fmt.Errorf("%w: %v", ErrConfigSave, err)
+		return &SentinelCauseError{Sentinel: ErrConfigSave, Cause: err}
 	}
 
 	return nil

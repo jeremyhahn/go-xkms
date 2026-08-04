@@ -1,6 +1,6 @@
 # Security Hardening
 
-Security best practices and hardening guidelines for go-trusted-ca deployments.
+Security best practices and hardening guidelines for go-xkms deployments.
 
 ## TLS Configuration
 

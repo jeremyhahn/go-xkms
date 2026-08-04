@@ -39,6 +39,7 @@ type mockPINBackend struct {
 	setUserPINErr   error
 	changeSOPINErr  error
 	changeUserErr   error
+	verifySOErr     error
 	verifyUserErr   error
 	resetLockoutErr error
 
@@ -55,7 +56,7 @@ func (m *mockPINBackend) SetSOPIN(_, _ string) error      { return m.setSOPINErr
 func (m *mockPINBackend) SetUserPIN(_, _ string) error    { return m.setUserPINErr }
 func (m *mockPINBackend) ChangeSOPIN(_, _ string) error   { return m.changeSOPINErr }
 func (m *mockPINBackend) ChangeUserPIN(_, _ string) error { return m.changeUserErr }
-func (m *mockPINBackend) VerifySOPIN(_ string) error      { return nil }
+func (m *mockPINBackend) VerifySOPIN(_ string) error      { return m.verifySOErr }
 func (m *mockPINBackend) VerifyUserPIN(_ string) error    { return m.verifyUserErr }
 func (m *mockPINBackend) ResetLockout(_ string) error     { return m.resetLockoutErr }
 func (m *mockPINBackend) SetMaxAttempts(_ int)            {}
@@ -277,6 +278,38 @@ func TestPINService_GetLockoutStatus_NotConfigured(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrPINServiceNotConfigured))
 }
 
+// TestPINService_GetLockoutStatus_SoftwareBackend_ReturnsZeroStatus verifies
+// that when the backend returns nil (software backend has no native lockout),
+// GetLockoutStatus returns a non-nil zero-value status instead of nil so the
+// frontend never receives JSON null and the Settings panel never spins forever.
+func TestPINService_GetLockoutStatus_SoftwareBackend_ReturnsZeroStatus(t *testing.T) {
+	// mockPINBackend.lockoutStatus is nil by default, matching the software
+	// backend contract (no native lockout → nil).
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
+	svc := newTestPINService(backend)
+
+	status, err := svc.GetLockoutStatus()
+	require.NoError(t, err)
+	require.NotNil(t, status, "GetLockoutStatus must never return nil when service is configured")
+	assert.Equal(t, 0, status.FailedAttempts)
+	assert.Equal(t, 0, status.MaxAttempts)
+	assert.False(t, status.IsLocked)
+	assert.Equal(t, 0, status.RecoverySeconds)
+}
+
+// TestPINService_GetLockoutStatus_Error verifies the error path when the
+// PIN service is not configured.
+func TestPINService_GetLockoutStatus_Error(t *testing.T) {
+	// Service with no backend wired: getPINService returns ErrPINServiceNotConfigured.
+	svc := NewPINService()
+	svc.SetContext(context.Background())
+
+	status, err := svc.GetLockoutStatus()
+	assert.Nil(t, status, "nil expected on error path")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPINServiceNotConfigured)
+}
+
 func TestPINService_ResetLockout(t *testing.T) {
 	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestPINService(backend)
@@ -479,4 +512,108 @@ func TestPINService_ChangeSOPIN_DoesNotTouchBarrier(t *testing.T) {
 
 	err := svc.ChangeSOPIN("old-so", "new-so")
 	require.NoError(t, err) // proves barrier was NOT touched
+}
+
+// ---------------------------------------------------------------------------
+// SO PIN capability tests
+// ---------------------------------------------------------------------------
+
+func TestPINService_GetPINStatus_SOPINSupported_Software(t *testing.T) {
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
+	svc := newTestPINService(backend)
+
+	status, err := svc.GetPINStatus()
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	assert.True(t, status.SOPINSupported)
+}
+
+func TestPINService_GetPINStatus_SOPINSupported_TPM2(t *testing.T) {
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategyTPM2}
+	svc := newTestPINService(backend)
+
+	status, err := svc.GetPINStatus()
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	assert.False(t, status.SOPINSupported)
+}
+
+func TestPINService_SOPINSupported_NotConfigured(t *testing.T) {
+	svc := newTestPINService(nil)
+	assert.True(t, svc.SOPINSupported(), "an unconfigured service should default to supported")
+}
+
+func TestPINService_SOPINSupported_TPM2(t *testing.T) {
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategyTPM2}
+	svc := newTestPINService(backend)
+	assert.False(t, svc.SOPINSupported())
+}
+
+func TestPINService_SOPINSupported_Software(t *testing.T) {
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
+	svc := newTestPINService(backend)
+	assert.True(t, svc.SOPINSupported())
+}
+
+func TestPINService_Strategy(t *testing.T) {
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategyTPM2}
+	svc := newTestPINService(backend)
+	assert.Equal(t, string(qrdbsdk.PINStrategyTPM2), svc.Strategy())
+}
+
+func TestPINService_Strategy_NotConfigured(t *testing.T) {
+	svc := newTestPINService(nil)
+	assert.Equal(t, "", svc.Strategy())
+}
+
+// TestPINService_SetSOPIN_TPM2MapsToNotSupported verifies that the raw
+// "pin: PIN not set" error the tpm2 backend always returns from SetSOPIN
+// is rewritten into the clearer, actionable ErrSOPINNotSupported.
+func TestPINService_SetSOPIN_TPM2MapsToNotSupported(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:    qrdbsdk.PINStrategyTPM2,
+		setSOPINErr: qrdbsdk.ErrPINNotSet,
+	}
+	svc := newTestPINService(backend)
+
+	err := svc.SetSOPIN("", "123456")
+	assert.True(t, errors.Is(err, ErrSOPINNotSupported))
+}
+
+// TestPINService_SetSOPIN_SoftwareErrPINNotSet_NotRemapped verifies that an
+// ErrPINNotSet from a strategy that DOES support SO PINs is left untouched
+// (a software backend should never actually return this from SetSOPIN, but
+// the mapping is strategy-gated defensively).
+func TestPINService_SetSOPIN_SoftwareErrPINNotSet_NotRemapped(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:    qrdbsdk.PINStrategySoftware,
+		setSOPINErr: qrdbsdk.ErrPINNotSet,
+	}
+	svc := newTestPINService(backend)
+
+	err := svc.SetSOPIN("", "123456")
+	assert.True(t, errors.Is(err, qrdbsdk.ErrPINNotSet))
+	assert.False(t, errors.Is(err, ErrSOPINNotSupported))
+}
+
+func TestPINService_ChangeSOPIN_TPM2MapsToNotSupported(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:       qrdbsdk.PINStrategyTPM2,
+		changeSOPINErr: qrdbsdk.ErrPINNotSet,
+	}
+	svc := newTestPINService(backend)
+
+	err := svc.ChangeSOPIN("old-123456", "new-123456")
+	assert.True(t, errors.Is(err, ErrSOPINNotSupported))
+}
+
+func TestPINService_VerifySOPIN_TPM2MapsToNotSupported(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:    qrdbsdk.PINStrategyTPM2,
+		verifySOErr: qrdbsdk.ErrPINNotSet,
+	}
+	svc := newTestPINService(backend)
+
+	err := svc.VerifySOPIN("123456")
+	assert.True(t, errors.Is(err, ErrSOPINNotSupported))
 }

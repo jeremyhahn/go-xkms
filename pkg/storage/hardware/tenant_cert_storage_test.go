@@ -46,7 +46,7 @@ func newHardwareTestRegistry(t *testing.T) *seal.BarrierRegistry {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	creds := seal.Credentials{Secret: "test-pass"}
+	creds := seal.Credentials{Secret: []byte("test-pass")}
 	err = barrier.Initialize(ctx, creds)
 	require.NoError(t, err)
 
@@ -76,7 +76,7 @@ func newHardwareTestRegistryWithTenant(t *testing.T, tenantID string) *seal.Barr
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	creds := seal.Credentials{Secret: "tenant-pass"}
+	creds := seal.Credentials{Secret: []byte("tenant-pass")}
 	err = registry.InitializeTenant(ctx, tenantID, creds)
 	require.NoError(t, err)
 

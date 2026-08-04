@@ -12,6 +12,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
 	"github.com/cloudflare/circl/sign/mldsa/mldsa65"
 	"github.com/cloudflare/circl/sign/mldsa/mldsa87"
@@ -25,7 +27,7 @@ import (
 // NewKeyFromSeed, which produces the same keypair for the same seed.
 func (b *ThresholdBackend) generateQuantumKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs.QuantumAttributes == nil {
-		return nil, fmt.Errorf("quantum attributes required for quantum key generation")
+		return nil, &errs.Message{Msg: "quantum attributes required for quantum key generation"}
 	}
 
 	algorithm := string(attrs.QuantumAttributes.Algorithm)
@@ -33,13 +35,13 @@ func (b *ThresholdBackend) generateQuantumKey(attrs *types.KeyAttributes) (crypt
 	// Only support ML-DSA (signing) for threshold operations.
 	// ML-KEM (key encapsulation) is not meaningful for threshold schemes.
 	if !strings.HasPrefix(algorithm, "ML-DSA") {
-		return nil, fmt.Errorf("only ML-DSA algorithms are supported for threshold operations, got: %s", algorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("only ML-DSA algorithms are supported for threshold operations, got: %s", algorithm)}
 	}
 
 	// Generate a random 32-byte seed. SeedSize is 32 for all ML-DSA levels.
 	var seed [mldsa44.SeedSize]byte
 	if _, err := io.ReadFull(rand.Reader, seed[:]); err != nil {
-		return nil, fmt.Errorf("failed to generate seed: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate seed", Err: err}
 	}
 
 	switch algorithm {
@@ -53,7 +55,7 @@ func (b *ThresholdBackend) generateQuantumKey(attrs *types.KeyAttributes) (crypt
 		_, sk := mldsa87.NewKeyFromSeed(&seed)
 		return sk, nil
 	default:
-		return nil, fmt.Errorf("unsupported ML-DSA algorithm: %s", algorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported ML-DSA algorithm: %s", algorithm)}
 	}
 }
 
@@ -69,7 +71,7 @@ func marshalQuantumKey(privateKey crypto.PrivateKey) ([]byte, error) {
 	case *mldsa87.PrivateKey:
 		return sk.Bytes(), nil
 	default:
-		return nil, fmt.Errorf("not a quantum ML-DSA private key: %T", privateKey)
+		return nil, &errs.Message{Msg: fmt.Sprintf("not a quantum ML-DSA private key: %T", privateKey)}
 	}
 }
 
@@ -80,23 +82,23 @@ func unmarshalQuantumKey(keyBytes []byte, algorithm string) (crypto.PrivateKey, 
 	case "ML-DSA-44":
 		var sk mldsa44.PrivateKey
 		if err := sk.UnmarshalBinary(keyBytes); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal ML-DSA-44 key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to unmarshal ML-DSA-44 key", Err: err}
 		}
 		return &sk, nil
 	case "ML-DSA-65":
 		var sk mldsa65.PrivateKey
 		if err := sk.UnmarshalBinary(keyBytes); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal ML-DSA-65 key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to unmarshal ML-DSA-65 key", Err: err}
 		}
 		return &sk, nil
 	case "ML-DSA-87":
 		var sk mldsa87.PrivateKey
 		if err := sk.UnmarshalBinary(keyBytes); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal ML-DSA-87 key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to unmarshal ML-DSA-87 key", Err: err}
 		}
 		return &sk, nil
 	default:
-		return nil, fmt.Errorf("unsupported ML-DSA algorithm: %s", algorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported ML-DSA algorithm: %s", algorithm)}
 	}
 }
 

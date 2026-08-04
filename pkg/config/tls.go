@@ -18,6 +18,8 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // LoadTLSConfig loads a tls.Config from the TLSConfig struct
@@ -29,7 +31,7 @@ func (cfg *TLSConfig) LoadTLSConfig() (*tls.Config, error) {
 	// Load server certificate and key
 	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load server certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to load server certificate", Err: err}
 	}
 
 	// Determine minimum TLS version
@@ -52,7 +54,7 @@ func (cfg *TLSConfig) LoadTLSConfig() (*tls.Config, error) {
 	if len(cfg.CipherSuites) > 0 {
 		suites, err := parseCipherSuites(cfg.CipherSuites)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse cipher suites: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to parse cipher suites", Err: err}
 		}
 		tlsConfig.CipherSuites = suites
 	}
@@ -63,7 +65,7 @@ func (cfg *TLSConfig) LoadTLSConfig() (*tls.Config, error) {
 	if cfg.ClientAuth != "" && cfg.ClientAuth != "none" {
 		clientAuth, err := parseClientAuthType(cfg.ClientAuth)
 		if err != nil {
-			return nil, fmt.Errorf("invalid client_auth value: %w", err)
+			return nil, &errs.Wrapped{Msg: "invalid client_auth value", Err: err}
 		}
 		tlsConfig.ClientAuth = clientAuth
 
@@ -71,7 +73,7 @@ func (cfg *TLSConfig) LoadTLSConfig() (*tls.Config, error) {
 		if cfg.CAFile != "" || len(cfg.ClientCAs) > 0 {
 			pool, err := loadCertPool(cfg.CAFile, cfg.ClientCAs)
 			if err != nil {
-				return nil, fmt.Errorf("failed to load client CA certificates: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to load client CA certificates", Err: err}
 			}
 			tlsConfig.ClientCAs = pool
 		}
@@ -108,7 +110,7 @@ func parseClientAuthType(authType string) (tls.ClientAuthType, error) {
 	case "require_and_verify":
 		return tls.RequireAndVerifyClientCert, nil
 	default:
-		return tls.NoClientCert, fmt.Errorf("unknown client auth type: %s", authType)
+		return tls.NoClientCert, &errs.Message{Msg: fmt.Sprintf("unknown client auth type: %s", authType)}
 	}
 }
 
@@ -134,7 +136,7 @@ func parseCipherSuites(suites []string) ([]uint16, error) {
 	for _, name := range suites {
 		id, ok := cipherSuiteMap[name]
 		if !ok {
-			return nil, fmt.Errorf("unknown cipher suite: %s", name)
+			return nil, &errs.Message{Msg: fmt.Sprintf("unknown cipher suite: %s", name)}
 		}
 		result = append(result, id)
 	}
@@ -151,10 +153,10 @@ func loadCertPool(caFile string, additionalCAs []string) (*x509.CertPool, error)
 		// #nosec G304 - CA file path from trusted config
 		caCert, err := os.ReadFile(caFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read CA file %s: %w", caFile, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to read CA file %s", caFile), Err: err}
 		}
 		if !pool.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("failed to parse CA certificate from %s", caFile)
+			return nil, &errs.Message{Msg: fmt.Sprintf("failed to parse CA certificate from %s", caFile)}
 		}
 	}
 
@@ -163,10 +165,10 @@ func loadCertPool(caFile string, additionalCAs []string) (*x509.CertPool, error)
 		// #nosec G304 - CA file paths from trusted config
 		caCert, err := os.ReadFile(caPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read CA file %s: %w", caPath, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to read CA file %s", caPath), Err: err}
 		}
 		if !pool.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("failed to parse CA certificate from %s", caPath)
+			return nil, &errs.Message{Msg: fmt.Sprintf("failed to parse CA certificate from %s", caPath)}
 		}
 	}
 

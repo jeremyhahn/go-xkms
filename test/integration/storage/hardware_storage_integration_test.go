@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 	"github.com/stretchr/testify/assert"
@@ -249,19 +251,19 @@ func TestHardwareStorageIntegration_ConcurrentAccess(t *testing.T) {
 				if err := retryTransient(3, func() error {
 					return hwStorage.SaveCert(certID, cert)
 				}); err != nil {
-					errors <- fmt.Errorf("save failed: %w", err)
+					errors <- &errs.Wrapped{Msg: "save failed", Err: err}
 					continue
 				}
 
 				// Check exists
 				if exists, err := hwStorage.CertExists(certID); err != nil || !exists {
-					errors <- fmt.Errorf("exists check failed: %w", err)
+					errors <- &errs.Wrapped{Msg: "exists check failed", Err: err}
 					continue
 				}
 
 				// Retrieve
 				if _, err := hwStorage.GetCert(certID); err != nil {
-					errors <- fmt.Errorf("get failed: %w", err)
+					errors <- &errs.Wrapped{Msg: "get failed", Err: err}
 					continue
 				}
 
@@ -269,7 +271,7 @@ func TestHardwareStorageIntegration_ConcurrentAccess(t *testing.T) {
 				if err := retryTransient(3, func() error {
 					return hwStorage.DeleteCert(certID)
 				}); err != nil {
-					errors <- fmt.Errorf("delete failed: %w", err)
+					errors <- &errs.Wrapped{Msg: "delete failed", Err: err}
 				}
 
 				successMutex.Lock()

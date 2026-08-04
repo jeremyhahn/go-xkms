@@ -140,7 +140,7 @@ func TestConfigValidate(t *testing.T) {
 			errType: ErrInvalidConfig,
 		},
 		{
-			name: "valid LocalStack region",
+			name: "valid emulator region",
 			config: &Config{
 				Region:      "us-east-1-local",
 				KeyStorage:  storage.New(),
@@ -341,7 +341,7 @@ func TestIsValidRegion(t *testing.T) {
 			want:   true,
 		},
 		{
-			name:   "valid LocalStack region",
+			name:   "valid emulator region",
 			region: "us-east-1-local",
 			want:   true,
 		},

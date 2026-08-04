@@ -5,7 +5,7 @@ Official Go SDK for the Trusted CA ACME RFC-8555 compliant Certificate Authority
 ## Installation
 
 ```bash
-go get github.com/jeremyhahn/go-trusted-ca/sdk/go
+go get github.com/jeremyhahn/go-xkms/sdk/go
 ```
 
 ## Quick Start
@@ -19,7 +19,7 @@ import (
     "context"
     "log"
 
-    trustedca "github.com/jeremyhahn/go-trusted-ca/sdk/go"
+    trustedca "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func main() {
@@ -59,8 +59,8 @@ import (
     "context"
     "log"
 
-    trustedca "github.com/jeremyhahn/go-trusted-ca/sdk/go"
-    "github.com/jeremyhahn/go-trusted-ca/sdk/go/client/admin"
+    trustedca "github.com/jeremyhahn/go-xkms/sdk/go"
+    "github.com/jeremyhahn/go-xkms/sdk/go/client/admin"
 )
 
 func main() {
@@ -133,7 +133,7 @@ client, err := trustedca.NewClient("acme.example.com:443",
 The SDK provides typed errors for programmatic handling:
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/sdk/go/errors"
+import "github.com/jeremyhahn/go-xkms/sdk/go/errors"
 
 account, err := client.Account().Create(ctx, req)
 if err != nil {

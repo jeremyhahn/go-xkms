@@ -74,7 +74,7 @@ func MigrateFromBackend(ctx context.Context, backend xkms.StorageBackend, daoSto
 		// as issuer since the DAO will normalize it.
 		issuer := extractIssuerFromKey(key, prefix)
 		if issuer == "" {
-			migrationErrors = append(migrationErrors, ErrMigration{Key: key, Cause: fmt.Errorf("cannot extract issuer from key")})
+			migrationErrors = append(migrationErrors, ErrMigration{Key: key, Cause: &MessageError{Msg: "cannot extract issuer from key"}})
 			continue
 		}
 

@@ -95,7 +95,7 @@ func newTestBarrier(t *testing.T) *seal.Barrier {
 		t.Fatalf("NewBarrier: %v", err)
 	}
 
-	if err := barrier.Initialize(context.Background(), seal.Credentials{Secret: "test-password"}); err != nil {
+	if err := barrier.Initialize(context.Background(), seal.Credentials{Secret: []byte("test-password")}); err != nil {
 		t.Fatalf("barrier.Initialize: %v", err)
 	}
 

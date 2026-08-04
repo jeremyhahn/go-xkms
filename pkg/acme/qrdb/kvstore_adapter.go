@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -91,29 +93,29 @@ func (a *kvStoreAdapter) Exists(ctx context.Context, key string) (bool, error) {
 // Remote transports do not currently support index registration; this returns
 // an error if called, indicating the caller should use a local KVStore.
 func (a *kvStoreAdapter) RegisterEntityIndexes(entityType string, indexes []xkmssdk.QRDBEntityIndex) error {
-	return fmt.Errorf("kvstore adapter: remote transport does not support index registration for entity type %q", entityType)
+	return &errs.Message{Msg: fmt.Sprintf("kvstore adapter: remote transport does not support index registration for entity type %q", entityType)}
 }
 
 // QueryIndex performs an exact-match query on a named index.
 // Remote transports do not currently support index queries.
 func (a *kvStoreAdapter) QueryIndex(ctx context.Context, indexName string, value []byte) ([][]byte, error) {
-	return nil, fmt.Errorf("kvstore adapter: remote transport does not support QueryIndex for index %q", indexName)
+	return nil, &errs.Message{Msg: fmt.Sprintf("kvstore adapter: remote transport does not support QueryIndex for index %q", indexName)}
 }
 
 // ScanIndex performs a range scan on a named index.
 // Remote transports do not currently support index scans.
 func (a *kvStoreAdapter) ScanIndex(ctx context.Context, indexName string, start, end []byte) (map[string][][]byte, error) {
-	return nil, fmt.Errorf("kvstore adapter: remote transport does not support ScanIndex for index %q", indexName)
+	return nil, &errs.Message{Msg: fmt.Sprintf("kvstore adapter: remote transport does not support ScanIndex for index %q", indexName)}
 }
 
 // QueryCompoundIndex performs an exact-match query on a compound index.
 // Remote transports do not currently support compound index queries.
 func (a *kvStoreAdapter) QueryCompoundIndex(ctx context.Context, indexName string, values [][]byte) ([][]byte, error) {
-	return nil, fmt.Errorf("kvstore adapter: remote transport does not support QueryCompoundIndex for index %q", indexName)
+	return nil, &errs.Message{Msg: fmt.Sprintf("kvstore adapter: remote transport does not support QueryCompoundIndex for index %q", indexName)}
 }
 
 // ScanCompoundIndex performs a range scan on a compound index.
 // Remote transports do not currently support compound index scans.
 func (a *kvStoreAdapter) ScanCompoundIndex(ctx context.Context, indexName string, prefixValues [][]byte, rangeStart, rangeEnd []byte) (map[string][][]byte, error) {
-	return nil, fmt.Errorf("kvstore adapter: remote transport does not support ScanCompoundIndex for index %q", indexName)
+	return nil, &errs.Message{Msg: fmt.Sprintf("kvstore adapter: remote transport does not support ScanCompoundIndex for index %q", indexName)}
 }

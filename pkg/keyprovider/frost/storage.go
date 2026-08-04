@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -110,22 +112,22 @@ func (ks *KeyStore) StoreKeyPackage(ctx context.Context, keyID string, pkg *KeyP
 	// Store metadata
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 	if err := ks.publicStorage.Put(ctx, keyPath(keyID, metadataFile), metadataBytes); err != nil {
-		return fmt.Errorf("failed to store metadata: %w", err)
+		return &errs.Wrapped{Msg: "failed to store metadata", Err: err}
 	}
 
 	// Store group public key
 	if err := ks.publicStorage.Put(ctx, keyPath(keyID, groupPublicKeyFile), pkg.GroupPublicKey); err != nil {
-		return fmt.Errorf("failed to store group public key: %w", err)
+		return &errs.Wrapped{Msg: "failed to store group public key", Err: err}
 	}
 
 	// Store verification shares
 	for participantID, share := range pkg.VerificationShares {
 		sharePath := verificationSharePath(keyID, participantID)
 		if err := ks.publicStorage.Put(ctx, sharePath, share); err != nil {
-			return fmt.Errorf("failed to store verification share for participant %d: %w", participantID, err)
+			return &errs.Wrapped{Msg: fmt.Sprintf("failed to store verification share for participant %d", participantID), Err: err}
 		}
 	}
 
@@ -140,7 +142,7 @@ func (ks *KeyStore) StoreKeyPackage(ctx context.Context, keyID string, pkg *KeyP
 	if _, err := ks.secretBackend.GenerateKey(ctx, attrs); err != nil {
 		// Clean up public components on failure
 		_ = ks.DeleteKey(ctx, keyID)
-		return fmt.Errorf("failed to store secret share: %w", err)
+		return &errs.Wrapped{Msg: "failed to store secret share", Err: err}
 	}
 
 	return nil
@@ -157,13 +159,13 @@ func (ks *KeyStore) LoadKeyPackage(ctx context.Context, keyID string, participan
 
 	var metadata KeyMetadata
 	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-		return nil, nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to unmarshal metadata", Err: err}
 	}
 
 	// Load group public key
 	groupPublicKey, err := ks.publicStorage.Get(ctx, keyPath(keyID, groupPublicKeyFile))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load group public key: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to load group public key", Err: err}
 	}
 
 	// Load verification shares
@@ -182,8 +184,7 @@ func (ks *KeyStore) LoadKeyPackage(ctx context.Context, keyID string, participan
 
 	// Ensure we have at least threshold verification shares
 	if len(verificationShares) < metadata.Threshold {
-		return nil, nil, fmt.Errorf("insufficient verification shares: have %d, need at least %d",
-			len(verificationShares), metadata.Threshold)
+		return nil, nil, &errs.Message{Msg: fmt.Sprintf("insufficient verification shares: have %d, need at least %d", len(verificationShares), metadata.Threshold)}
 	}
 
 	// Load secret share from secret backend
@@ -194,14 +195,14 @@ func (ks *KeyStore) LoadKeyPackage(ctx context.Context, keyID string, participan
 
 	secretKey, err := ks.secretBackend.GetKey(ctx, attrs)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load secret share: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to load secret share", Err: err}
 	}
 
 	// Extract secret bytes from the returned key
 	// The secret backend may return the key in different formats
 	secretBytes, ok := secretKey.([]byte)
 	if !ok {
-		return nil, nil, fmt.Errorf("unexpected secret key type: %T", secretKey)
+		return nil, nil, &errs.Message{Msg: fmt.Sprintf("unexpected secret key type: %T", secretKey)}
 	}
 
 	// Use participant ID from metadata if not specified (0 means use metadata)
@@ -236,13 +237,13 @@ func (ks *KeyStore) LoadPublicKeyPackage(ctx context.Context, keyID string) (*Pu
 
 	var metadata KeyMetadata
 	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-		return nil, nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to unmarshal metadata", Err: err}
 	}
 
 	// Load group public key
 	groupPublicKey, err := ks.publicStorage.Get(ctx, keyPath(keyID, groupPublicKeyFile))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load group public key: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to load group public key", Err: err}
 	}
 
 	// Load verification shares
@@ -261,8 +262,7 @@ func (ks *KeyStore) LoadPublicKeyPackage(ctx context.Context, keyID string) (*Pu
 
 	// Ensure we have at least threshold verification shares
 	if len(verificationShares) < metadata.Threshold {
-		return nil, nil, fmt.Errorf("insufficient verification shares: have %d, need at least %d",
-			len(verificationShares), metadata.Threshold)
+		return nil, nil, &errs.Message{Msg: fmt.Sprintf("insufficient verification shares: have %d, need at least %d", len(verificationShares), metadata.Threshold)}
 	}
 
 	pkg := &PublicKeyPackage{

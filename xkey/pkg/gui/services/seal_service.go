@@ -406,7 +406,16 @@ func (s *SealService) BestSealer() *SealerInfo {
 }
 
 // SetDefaultBackend sets the default backend used when SealRequest.Backend is empty.
+// If backend is not a recognized seal-namespace backend ID (i.e. not in
+// knownSealerMeta), auto-select the best available backend instead.
+// This guards against callers passing raw barrier strategy names
+// ("passphrase", "pkcs11") which do not exist as seal backends and would
+// cause CanSeal to always return false.
 func (s *SealService) SetDefaultBackend(backend string) {
+	if _, ok := knownSealerMeta[backend]; !ok {
+		s.autoSelectDefault()
+		return
+	}
 	s.defaultBackend = backend
 }
 
@@ -597,7 +606,7 @@ func (s *SealService) ListBlobs() (entries []SealedBlobEntry, retErr error) {
 		if r := recover(); r != nil {
 			s.log.Error("panic in ListBlobs", "recover", r)
 			entries = []SealedBlobEntry{}
-			retErr = fmt.Errorf("seal_service: panic in ListBlobs: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("seal_service: panic in ListBlobs: %v", r)}
 		}
 	}()
 
@@ -724,7 +733,7 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 		if r := recover(); r != nil {
 			s.log.Error("panic in SealData", "recover", r)
 			entry = nil
-			retErr = fmt.Errorf("seal_service: panic in SealData: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("seal_service: panic in SealData: %v", r)}
 		}
 	}()
 
@@ -877,7 +886,7 @@ func (s *SealService) UnsealData(id string, password string) (result string, ret
 		if r := recover(); r != nil {
 			s.log.Error("panic in UnsealData", "recover", r)
 			result = ""
-			retErr = fmt.Errorf("seal_service: panic in UnsealData: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("seal_service: panic in UnsealData: %v", r)}
 		}
 	}()
 

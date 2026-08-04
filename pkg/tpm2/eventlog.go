@@ -3,6 +3,9 @@ package tpm2
 import (
 	"crypto/sha1" // #nosec G505 -- SHA-1 required for TPM event log specification
 	"path/filepath"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	// #nosec G505 -- SHA-1 required for TPM event log specification compatibility
 	"crypto/sha256"
 	"crypto/sha512"
@@ -67,11 +70,11 @@ func ParseEventLog(filePath string) ([]Event, error) {
 func ParseEventLogWithOptions(filePath string, opts ParseEventLogOptions) ([]Event, error) {
 	cleanPath := filepath.Clean(filePath)
 	if !filepath.IsAbs(cleanPath) {
-		return nil, fmt.Errorf("event log path must be absolute: %s", filePath)
+		return nil, &errs.Message{Msg: fmt.Sprintf("event log path must be absolute: %s", filePath)}
 	}
 	file, err := os.Open(cleanPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %v", err)
+		return nil, &errs.Message{Msg: fmt.Sprintf("failed to open file: %v", err)}
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
@@ -95,21 +98,21 @@ func ParseEventLogWithOptions(filePath string, opts ParseEventLogOptions) ([]Eve
 			if err == io.EOF {
 				break
 			}
-			return nil, fmt.Errorf("error reading PCR index: %v", err)
+			return nil, &errs.Message{Msg: fmt.Sprintf("error reading PCR index: %v", err)}
 		}
 		e.PCRIndex = int(pcrIndex)
 
 		// Read event type
 		var eventType uint32
 		if err := binary.Read(file, binary.LittleEndian, &eventType); err != nil {
-			return nil, fmt.Errorf("error reading event type: %v", err)
+			return nil, &errs.Message{Msg: fmt.Sprintf("error reading event type: %v", err)}
 		}
 		e.EventType = parseEventType(eventType)
 
 		// Read digest count
 		var digestCount uint32
 		if err := binary.Read(file, binary.LittleEndian, &digestCount); err != nil {
-			return nil, fmt.Errorf("error reading digest count: %v", err)
+			return nil, &errs.Message{Msg: fmt.Sprintf("error reading digest count: %v", err)}
 		}
 		e.DigestCount = int(digestCount)
 
@@ -117,7 +120,7 @@ func ParseEventLogWithOptions(filePath string, opts ParseEventLogOptions) ([]Eve
 		for i := 0; i < e.DigestCount; i++ {
 			var algID uint16
 			if err := binary.Read(file, binary.LittleEndian, &algID); err != nil {
-				return nil, fmt.Errorf("error reading digest algorithm ID: %v", err)
+				return nil, &errs.Message{Msg: fmt.Sprintf("error reading digest algorithm ID: %v", err)}
 			}
 
 			// Get digest size for the algorithm
@@ -132,7 +135,7 @@ func ParseEventLogWithOptions(filePath string, opts ParseEventLogOptions) ([]Eve
 						// Skip the unknown digest bytes
 						skipBytes := make([]byte, estimatedSize)
 						if _, err := file.Read(skipBytes); err != nil {
-							return nil, fmt.Errorf("error skipping unknown algorithm digest (0x%04x): %v", algID, err)
+							return nil, &errs.Message{Msg: fmt.Sprintf("error skipping unknown algorithm digest (0x%04x): %v", algID, err)}
 						}
 						// Add the digest with unknown algorithm marker
 						digest := Digest{
@@ -143,19 +146,19 @@ func ParseEventLogWithOptions(filePath string, opts ParseEventLogOptions) ([]Eve
 					} else {
 						// Cannot determine size, this is unrecoverable for this digest
 						// but we can try to continue if the event structure is valid
-						return nil, fmt.Errorf("unknown algorithm ID: 0x%04x (cannot determine digest size)", algID)
+						return nil, &errs.Message{Msg: fmt.Sprintf("unknown algorithm ID: 0x%04x (cannot determine digest size)", algID)}
 					}
 				} else {
-					return nil, fmt.Errorf("unknown algorithm ID: 0x%04x", algID)
+					return nil, &errs.Message{Msg: fmt.Sprintf("unknown algorithm ID: 0x%04x", algID)}
 				}
 			} else {
 				digestBytes := make([]byte, digestSize)
 				n, err := file.Read(digestBytes)
 				if err != nil {
-					return nil, fmt.Errorf("error reading digest: %v", err)
+					return nil, &errs.Message{Msg: fmt.Sprintf("error reading digest: %v", err)}
 				}
 				if n != digestSize {
-					return nil, fmt.Errorf("error reading digest: expected %d bytes, got %d", digestSize, n)
+					return nil, &errs.Message{Msg: fmt.Sprintf("error reading digest: expected %d bytes, got %d", digestSize, n)}
 				}
 				digest := Digest{
 					AlgorithmId: parseAlgorithmId(algID),
@@ -168,7 +171,7 @@ func ParseEventLogWithOptions(filePath string, opts ParseEventLogOptions) ([]Eve
 		// Read event size
 		var eventSize uint32
 		if err := binary.Read(file, binary.LittleEndian, &eventSize); err != nil {
-			return nil, fmt.Errorf("error reading event size: %v", err)
+			return nil, &errs.Message{Msg: fmt.Sprintf("error reading event size: %v", err)}
 		}
 		e.EventSize = int(eventSize)
 
@@ -177,10 +180,10 @@ func ParseEventLogWithOptions(filePath string, opts ParseEventLogOptions) ([]Eve
 			eventBytes := make([]byte, eventSize)
 			n, err := file.Read(eventBytes)
 			if err != nil {
-				return nil, fmt.Errorf("error reading event data: %v", err)
+				return nil, &errs.Message{Msg: fmt.Sprintf("error reading event data: %v", err)}
 			}
 			if n != int(eventSize) {
-				return nil, fmt.Errorf("error reading event data: expected %d bytes, got %d", eventSize, n)
+				return nil, &errs.Message{Msg: fmt.Sprintf("error reading event data: expected %d bytes, got %d", eventSize, n)}
 			}
 			e.EventString = parseEventString(eventBytes)
 		}
@@ -387,7 +390,7 @@ func GetHashFunction(algorithmId string) (hash.Hash, error) {
 	case "sha512":
 		return sha512.New(), nil
 	default:
-		return nil, fmt.Errorf("unsupported hash algorithm: %s", algorithmId)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", algorithmId)}
 	}
 }
 

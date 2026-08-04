@@ -48,4 +48,10 @@ var (
 
 	// ErrKeyNotDecrypter is returned when a key doesn't support decryption operations.
 	ErrKeyNotDecrypter = errors.New("pkcs8: key does not support decryption")
+
+	// ErrPlaintextKeyNotAllowed is returned when a key would be persisted in
+	// unencrypted PKCS#8 form but the backend's AllowPlaintextKeys policy is
+	// false (the secure default). Configure a password on the key or set
+	// AllowPlaintextKeys: true in pkcs8.Config to acknowledge the risk.
+	ErrPlaintextKeyNotAllowed = errors.New("pkcs8: plaintext key persistence is not allowed; configure a key password or set AllowPlaintextKeys: true")
 )

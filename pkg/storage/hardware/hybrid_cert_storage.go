@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
@@ -121,7 +123,7 @@ func (a *BackendCertStorageAdapter) SaveCertChain(id string, chain []*x509.Certi
 	var chainData []byte
 	for i, cert := range chain {
 		if cert == nil {
-			return fmt.Errorf("certificate at index %d is nil: %w", i, storage.ErrInvalidData)
+			return &errs.Wrapped{Msg: fmt.Sprintf("certificate at index %d is nil", i), Err: storage.ErrInvalidData}
 		}
 		chainData = append(chainData, cert.Raw...)
 	}
@@ -355,11 +357,11 @@ func (h *HybridCertStorage) SaveCert(id string, cert *x509.Certificate) error {
 			return nil
 		}
 		// Both failed - return combined error
-		return fmt.Errorf("hardware storage failed: %w; external storage failed: %v", hwErr, extErr)
+		return &errs.Affix{Prefix: "hardware storage failed: ", Err: hwErr, Suffix: fmt.Sprintf("; external storage failed: %v", extErr)}
 	}
 
 	// Hardware error is not capacity-related, return it
-	return fmt.Errorf("hardware storage failed: %w", hwErr)
+	return &errs.Wrapped{Msg: "hardware storage failed", Err: hwErr}
 }
 
 // GetCert retrieves a certificate by trying hardware storage first,
@@ -401,11 +403,11 @@ func (h *HybridCertStorage) GetCert(id string) (*x509.Certificate, error) {
 			return nil, storage.ErrNotFound
 		}
 		// Return external error
-		return nil, fmt.Errorf("external storage failed: %w", extErr)
+		return nil, &errs.Wrapped{Msg: "external storage failed", Err: extErr}
 	}
 
 	// Return hardware error
-	return nil, fmt.Errorf("hardware storage failed: %w", hwErr)
+	return nil, &errs.Wrapped{Msg: "hardware storage failed", Err: hwErr}
 }
 
 // DeleteCert removes a certificate from both hardware and external storage.
@@ -445,7 +447,7 @@ func (h *HybridCertStorage) DeleteCert(id string) error {
 	}
 
 	// Both failed with real errors
-	return fmt.Errorf("hardware delete failed: %w; external delete failed: %v", hwErr, extErr)
+	return &errs.Affix{Prefix: "hardware delete failed: ", Err: hwErr, Suffix: fmt.Sprintf("; external delete failed: %v", extErr)}
 }
 
 // SaveCertChain saves a certificate chain by trying hardware storage first,
@@ -475,7 +477,7 @@ func (h *HybridCertStorage) SaveCertChain(id string, chain []*x509.Certificate) 
 	// Validate all certs in chain are non-nil
 	for i, cert := range chain {
 		if cert == nil {
-			return fmt.Errorf("certificate at index %d is nil: %w", i, storage.ErrInvalidData)
+			return &errs.Wrapped{Msg: fmt.Sprintf("certificate at index %d is nil", i), Err: storage.ErrInvalidData}
 		}
 	}
 
@@ -493,11 +495,11 @@ func (h *HybridCertStorage) SaveCertChain(id string, chain []*x509.Certificate) 
 			return nil
 		}
 		// Both failed
-		return fmt.Errorf("hardware storage failed: %w; external storage failed: %v", hwErr, extErr)
+		return &errs.Affix{Prefix: "hardware storage failed: ", Err: hwErr, Suffix: fmt.Sprintf("; external storage failed: %v", extErr)}
 	}
 
 	// Hardware error is not capacity-related
-	return fmt.Errorf("hardware storage failed: %w", hwErr)
+	return &errs.Wrapped{Msg: "hardware storage failed", Err: hwErr}
 }
 
 // GetCertChain retrieves a certificate chain by trying hardware storage first,
@@ -535,10 +537,10 @@ func (h *HybridCertStorage) GetCertChain(id string) ([]*x509.Certificate, error)
 		if extErr == storage.ErrNotFound {
 			return nil, storage.ErrNotFound
 		}
-		return nil, fmt.Errorf("external storage failed: %w", extErr)
+		return nil, &errs.Wrapped{Msg: "external storage failed", Err: extErr}
 	}
 
-	return nil, fmt.Errorf("hardware storage failed: %w", hwErr)
+	return nil, &errs.Wrapped{Msg: "hardware storage failed", Err: hwErr}
 }
 
 // ListCerts returns a deduplicated list of all certificate IDs from both
@@ -564,7 +566,7 @@ func (h *HybridCertStorage) ListCerts() ([]string, error) {
 
 	// If both fail, return error
 	if hwErr != nil && extErr != nil {
-		return nil, fmt.Errorf("hardware list failed: %w; external list failed: %v", hwErr, extErr)
+		return nil, &errs.Affix{Prefix: "hardware list failed: ", Err: hwErr, Suffix: fmt.Sprintf("; external list failed: %v", extErr)}
 	}
 
 	// Use a map to deduplicate
@@ -625,7 +627,7 @@ func (h *HybridCertStorage) CertExists(id string) (bool, error) {
 
 	// If both had errors, return combined error
 	if hwErr != nil && extErr != nil {
-		return false, fmt.Errorf("hardware check failed: %w; external check failed: %v", hwErr, extErr)
+		return false, &errs.Affix{Prefix: "hardware check failed: ", Err: hwErr, Suffix: fmt.Sprintf("; external check failed: %v", extErr)}
 	}
 
 	// Neither exists and no errors
@@ -657,15 +659,15 @@ func (h *HybridCertStorage) Close() error {
 
 	// Return combined error if both failed
 	if hwErr != nil && extErr != nil {
-		return fmt.Errorf("hardware close failed: %w; external close failed: %v", hwErr, extErr)
+		return &errs.Affix{Prefix: "hardware close failed: ", Err: hwErr, Suffix: fmt.Sprintf("; external close failed: %v", extErr)}
 	}
 
 	// Return whichever error occurred
 	if hwErr != nil {
-		return fmt.Errorf("hardware close failed: %w", hwErr)
+		return &errs.Wrapped{Msg: "hardware close failed", Err: hwErr}
 	}
 	if extErr != nil {
-		return fmt.Errorf("external close failed: %w", extErr)
+		return &errs.Wrapped{Msg: "external close failed", Err: extErr}
 	}
 
 	return nil

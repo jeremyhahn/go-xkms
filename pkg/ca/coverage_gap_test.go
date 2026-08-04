@@ -591,11 +591,11 @@ func TestImportIssuingCAs_HTTPServerDER(t *testing.T) {
 	require.NoError(t, err)
 
 	tpl := &x509.Certificate{
-		SerialNumber:            big.NewInt(9999),
-		Subject:                 pkix.Name{CommonName: "aia-leaf"},
-		NotBefore:               time.Now().Add(-time.Hour),
-		NotAfter:                time.Now().Add(24 * time.Hour),
-		IssuingCertificateURL:   []string{srv.URL + "/issuer.der"},
+		SerialNumber:          big.NewInt(9999),
+		Subject:               pkix.Name{CommonName: "aia-leaf"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IssuingCertificateURL: []string{srv.URL + "/issuer.der"},
 	}
 	// Self-sign the leaf for simplicity (only the AIA URLs matter here).
 	certDER, err := x509.CreateCertificate(rand.Reader, tpl, root, &key.PublicKey, ca)

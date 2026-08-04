@@ -144,7 +144,7 @@ func (g *Gadget) Start(ctx context.Context) error {
 			hid, err := NewHIDGadgetTransport(g.hidDevPath, g.logger)
 			if err != nil {
 				return NewGadgetError("Start",
-					fmt.Errorf("hid transport: %w", err))
+					&WrappedError{Msg: "hid transport", Err: err})
 			}
 			g.hid = hid
 		}
@@ -167,14 +167,14 @@ func (g *Gadget) Stop() error {
 
 	if g.hid != nil {
 		if err := g.hid.Close(); err != nil && firstErr == nil {
-			firstErr = NewGadgetError("Stop", fmt.Errorf("hid close: %w", err))
+			firstErr = NewGadgetError("Stop", &WrappedError{Msg: "hid close", Err: err})
 		}
 		g.hid = nil
 	}
 
 	if g.ccid != nil {
 		if err := g.ccid.Close(); err != nil && firstErr == nil {
-			firstErr = NewGadgetError("Stop", fmt.Errorf("ccid close: %w", err))
+			firstErr = NewGadgetError("Stop", &WrappedError{Msg: "ccid close", Err: err})
 		}
 		g.ccid = nil
 	}
@@ -188,7 +188,7 @@ func (g *Gadget) Stop() error {
 			}
 			if err := g.fs.Unmount(mountDir, 0); err != nil && firstErr == nil {
 				firstErr = NewGadgetError("Stop",
-					fmt.Errorf("unmount %s: %w", mountDir, err))
+					&WrappedError{Msg: fmt.Sprintf("unmount %s", mountDir), Err: err})
 			}
 		}
 	}
@@ -236,12 +236,12 @@ func (g *Gadget) initCCID(ctx context.Context, fn *FunctionConfig) error {
 
 	if err := g.fs.MkdirAll(mountDir, 0755); err != nil {
 		return NewGadgetError("Start",
-			fmt.Errorf("mkdir %s: %w", mountDir, err))
+			&WrappedError{Msg: fmt.Sprintf("mkdir %s", mountDir), Err: err})
 	}
 
 	if err := g.fs.Mount(funcNameCCID, mountDir, "functionfs", 0, ""); err != nil {
 		return NewGadgetError("Start",
-			fmt.Errorf("%w: %v", ErrFunctionFSMountFailed, err))
+			&SentinelCauseError{Sentinel: ErrFunctionFSMountFailed, Cause: err})
 	}
 
 	transport, err := NewFunctionFSTransport(mountDir, g.fs, g.logger)
@@ -265,7 +265,7 @@ func (g *Gadget) writeHIDReportDescriptor() error {
 
 	if err := g.fs.WriteFile(reportDescPath, fido2HIDReportDescriptor, 0644); err != nil {
 		return NewGadgetError("Start",
-			fmt.Errorf("write report_desc: %w", err))
+			&WrappedError{Msg: "write report_desc", Err: err})
 	}
 
 	g.logger.Info("wrote HID report descriptor",

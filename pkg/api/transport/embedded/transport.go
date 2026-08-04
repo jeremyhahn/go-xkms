@@ -677,6 +677,15 @@ func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *transp
 	return t.service.BarrierGenerateRecoveryKeys(ctx, req)
 }
 
+// BarrierEnableEncryption migrates a previously-unencrypted barrier to a keyed
+// strategy in place.
+func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.BarrierEnableEncryption(ctx, req)
+}
+
 // BarrierRecoverWithKeys unseals the barrier using recovery keys.
 func (t *Transport) BarrierRecoverWithKeys(ctx context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
 	if !t.connected {
@@ -1084,6 +1093,30 @@ func (t *Transport) TenantBarrierUnseal(ctx context.Context, req *transport.Tena
 		return ErrNotConnected
 	}
 	return t.service.TenantBarrierUnseal(ctx, req)
+}
+
+// TenantBarrierStatus reports the status of a per-tenant barrier.
+func (t *Transport) TenantBarrierStatus(ctx context.Context, tenantID string) (*transport.TenantBarrierStatusResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TenantBarrierStatus(ctx, tenantID)
+}
+
+// UpdateTenantEntitlements updates a tenant's feature entitlements.
+func (t *Transport) UpdateTenantEntitlements(ctx context.Context, req *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.UpdateTenantEntitlements(ctx, req)
+}
+
+// UpdateTenantQuotas updates a tenant's resource quotas.
+func (t *Transport) UpdateTenantQuotas(ctx context.Context, req *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.UpdateTenantQuotas(ctx, req)
 }
 
 // GetInitStatus returns the current init ceremony state.

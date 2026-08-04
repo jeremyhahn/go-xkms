@@ -73,5 +73,5 @@ Backends are conditionally compiled via build tags:
 - `Dockerfile.rest`, `.grpc`, `.quic`, `.mcp` — protocol-specific
 - `Dockerfile.cli` — xkmsctl
 - `.devcontainer/` — dev environment with all deps
-- `docker-compose.emulators.yml` — LocalStack, Azure emulator
+- `docker-compose.emulators.yml` — Floci, Azure emulator
 - Each `test/integration/<pkg>/` has its own `docker-compose.yml`

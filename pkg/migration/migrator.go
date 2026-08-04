@@ -21,6 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -38,10 +40,10 @@ type defaultMigrator struct {
 // Returns an error if either backend is nil.
 func NewMigrator(source, dest types.KeyProvider) (Migrator, error) {
 	if source == nil {
-		return nil, fmt.Errorf("%w: source", ErrNilBackend)
+		return nil, &errs.Detail{Err: ErrNilBackend, Detail: "source"}
 	}
 	if dest == nil {
-		return nil, fmt.Errorf("%w: destination", ErrNilBackend)
+		return nil, &errs.Detail{Err: ErrNilBackend, Detail: "destination"}
 	}
 
 	return &defaultMigrator{
@@ -96,29 +98,29 @@ func (m *defaultMigrator) MigrateKey(ctx context.Context, attrs *types.KeyAttrib
 	// Step 1: Export the key from source backend
 	wrapped, err := m.exportKey(ctx, sourceExportBackend, attrs, opts)
 	if err != nil {
-		return fmt.Errorf("failed to export key: %w", err)
+		return &errs.Wrapped{Msg: "failed to export key", Err: err}
 	}
 
 	// Step 2: Import the key into destination backend
 	if err := m.importKey(ctx, destImportBackend, attrs, wrapped); err != nil {
-		return fmt.Errorf("failed to import key: %w", err)
+		return &errs.Wrapped{Msg: "failed to import key", Err: err}
 	}
 
 	// Step 3: Validate migration if requested
 	if !opts.SkipVerification {
 		result, err := m.ValidateMigration(ctx, attrs)
 		if err != nil {
-			return fmt.Errorf("migration validation failed: %w", err)
+			return &errs.Wrapped{Msg: "migration validation failed", Err: err}
 		}
 		if !result.IsValid {
-			return fmt.Errorf("%w: %s", ErrVerificationFailed, result.Message)
+			return &errs.Detail{Err: ErrVerificationFailed, Detail: fmt.Sprintf("%s", result.Message)}
 		}
 	}
 
 	// Step 4: Delete from source if requested
 	if opts.DeleteSourceAfterVerification {
 		if err := m.source.DeleteKey(ctx, attrs); err != nil {
-			return fmt.Errorf("failed to delete source key after migration: %w", err)
+			return &errs.Wrapped{Msg: "failed to delete source key after migration", Err: err}
 		}
 	}
 
@@ -145,7 +147,7 @@ func (m *defaultMigrator) MigrateAll(ctx context.Context, filter *KeyFilter, opt
 	// Get all keys from source backend
 	allKeys, err := m.source.ListKeys(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list keys from source backend: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list keys from source backend", Err: err}
 	}
 
 	// Filter keys based on criteria
@@ -182,7 +184,7 @@ func (m *defaultMigrator) MigrationPlan(ctx context.Context, filter *KeyFilter) 
 	// Get all keys from source backend
 	allKeys, err := m.source.ListKeys(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list keys from source backend: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list keys from source backend", Err: err}
 	}
 
 	// Filter keys based on criteria
@@ -288,7 +290,7 @@ func (m *defaultMigrator) importKey(ctx context.Context, backend backend.ImportE
 	// Get import parameters with the same algorithm that was used for export
 	params, err := backend.GetImportParameters(ctx, attrs, wrapped.Algorithm)
 	if err != nil {
-		return fmt.Errorf("failed to get import parameters: %w", err)
+		return &errs.Wrapped{Msg: "failed to get import parameters", Err: err}
 	}
 
 	// Update wrapped key with import token from destination backend

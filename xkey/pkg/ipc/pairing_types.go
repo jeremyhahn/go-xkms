@@ -49,19 +49,19 @@ type PairingResult struct {
 // Validate checks the PairingPayload for correctness.
 func (p *PairingPayload) Validate() error {
 	if p.Action == "" {
-		return fmt.Errorf("%w: pairing action is required", ErrInvalidMessage)
+		return &DetailError{Err: ErrInvalidMessage, Detail: ": pairing action is required"}
 	}
 	if !validPairingActions[p.Action] {
-		return fmt.Errorf("%w: unknown pairing action %q", ErrInvalidMessage, p.Action)
+		return &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": unknown pairing action %q", p.Action)}
 	}
 	switch p.Action {
 	case ActionPairingNotifyCode:
 		if p.Code == "" {
-			return fmt.Errorf("%w: code is required for %s action", ErrInvalidMessage, p.Action)
+			return &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": code is required for %s action", p.Action)}
 		}
 	case ActionPairingCompleted:
 		if p.Origin == "" {
-			return fmt.Errorf("%w: origin is required for %s action", ErrInvalidMessage, p.Action)
+			return &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": origin is required for %s action", p.Action)}
 		}
 	}
 	return nil

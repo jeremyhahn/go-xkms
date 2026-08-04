@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -71,7 +73,7 @@ func (s *ThresholdSigner) Sign(rand io.Reader, digest []byte, opts crypto.Signer
 	// Reconstruct the full key from shares
 	privKey, err := s.reconstructKey()
 	if err != nil {
-		return nil, fmt.Errorf("failed to reconstruct key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to reconstruct key", Err: err}
 	}
 
 	// Sign using the reconstructed key
@@ -87,7 +89,7 @@ func (s *ThresholdSigner) Sign(rand io.Reader, digest []byte, opts crypto.Signer
 		if signer, ok := privKey.(crypto.Signer); ok {
 			return signer.Sign(rand, digest, opts)
 		}
-		return nil, fmt.Errorf("unsupported key type: %T", privKey)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %T", privKey)}
 	}
 }
 
@@ -144,7 +146,7 @@ func (s *ThresholdSigner) reconstructKey() (crypto.PrivateKey, error) {
 	// Combine shares to reconstruct key
 	keyBytes, err := qrdbsdk.ShamirCombine(shares)
 	if err != nil {
-		return nil, fmt.Errorf("failed to combine shares: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to combine shares", Err: err}
 	}
 
 	// Unmarshal the reconstructed key
@@ -166,11 +168,10 @@ func (s *ThresholdSigner) unmarshalPrivateKey(keyBytes []byte) (crypto.PrivateKe
 		return x509.ParseECPrivateKey(keyBytes)
 	case x509.Ed25519:
 		if len(keyBytes) != ed25519.PrivateKeySize {
-			return nil, fmt.Errorf("invalid Ed25519 key size: got %d, want %d",
-				len(keyBytes), ed25519.PrivateKeySize)
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid Ed25519 key size: got %d, want %d", len(keyBytes), ed25519.PrivateKeySize)}
 		}
 		return ed25519.PrivateKey(keyBytes), nil
 	default:
-		return nil, fmt.Errorf("unsupported key algorithm: %s", s.attrs.KeyAlgorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key algorithm: %s", s.attrs.KeyAlgorithm)}
 	}
 }

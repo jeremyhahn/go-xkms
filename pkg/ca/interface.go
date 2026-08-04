@@ -13,7 +13,7 @@
 
 // Package ca provides a TrustedCA implementation for certificate authority operations.
 //
-// TrustedCA is the foundation library that go-trusted-ca embeds for ACME/TCG operations,
+// TrustedCA is the foundation library that the go-xkms ACME server embeds for ACME/TCG operations,
 // and that go-qrdb uses for certificate management. It provides a complete
 // certificate authority implementation with support for:
 //

@@ -121,7 +121,7 @@ func executeCeremony(
 
 	result, err := cs.Initialize(ctx, caInstance)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCeremonyInitFailed, err)
+		return nil, &WrappedError{Sentinel: ErrCeremonyInitFailed, Err: err}
 	}
 
 	if err := persistCABundle(env.dataDir, result); err != nil {
@@ -158,7 +158,7 @@ func newCeremonyCA(ctx context.Context, env *ceremonyEnv) (ca.TrustedCA, error) 
 	keyStorage := storage.NewMemory()
 	swBackend, err := software.NewBackend(&software.Config{KeyStorage: keyStorage})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCABackendCreateFailed, err)
+		return nil, &WrappedError{Sentinel: ErrCABackendCreateFailed, Err: err}
 	}
 
 	keystore, err := xkms.New(&xkms.BackendConfig{
@@ -166,14 +166,14 @@ func newCeremonyCA(ctx context.Context, env *ceremonyEnv) (ca.TrustedCA, error) 
 		CertStorage: storage.NewMemory(),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCAKeystoreCreateFailed, err)
+		return nil, &WrappedError{Sentinel: ErrCAKeystoreCreateFailed, Err: err}
 	}
 
 	certStore, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(storage.NewMemory()),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCACertStoreCreateFailed, err)
+		return nil, &WrappedError{Sentinel: ErrCACertStoreCreateFailed, Err: err}
 	}
 
 	profiles, err := newCeremonyProfileRegistry()
@@ -200,7 +200,7 @@ func newCeremonyCA(ctx context.Context, env *ceremonyEnv) (ca.TrustedCA, error) 
 		Profiles:  profiles,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCAConstructFailed, err)
+		return nil, &WrappedError{Sentinel: ErrCAConstructFailed, Err: err}
 	}
 
 	_ = env // reserved for future per-hostname SANs on the CA cert
@@ -275,7 +275,7 @@ func newCeremonyProfileRegistry() (ca.ProfileRegistry, error) {
 			WithDefaultValidity(spec.validityDays).
 			Build()
 		if err := registry.Register(spec.name, profile); err != nil {
-			return nil, fmt.Errorf("%w: %s: %v", ErrCAProfileRegistrationFailed, spec.name, err)
+			return nil, &WrappedDetailError{Sentinel: ErrCAProfileRegistrationFailed, Detail: spec.name, Err: err}
 		}
 	}
 	return registry, nil
@@ -290,11 +290,11 @@ func persistCABundle(dataDir string, result *initialize.InitResult) error {
 		return nil
 	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return fmt.Errorf("%w: %v", ErrCABundleWriteFailed, err)
+		return &WrappedError{Sentinel: ErrCABundleWriteFailed, Err: err}
 	}
 	path := filepath.Join(dataDir, "ca-bundle.pem")
 	if err := os.WriteFile(path, result.CACertPEM, 0o644); err != nil { //nolint:gosec // CA bundle is public material
-		return fmt.Errorf("%w: %s: %v", ErrCABundleWriteFailed, path, err)
+		return &WrappedDetailError{Sentinel: ErrCABundleWriteFailed, Detail: path, Err: err}
 	}
 	return nil
 }
@@ -309,11 +309,11 @@ func persistSPKIPin(dataDir string, result *initialize.InitResult) error {
 		return nil
 	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return fmt.Errorf("%w: %v", ErrSPKIPinWriteFailed, err)
+		return &WrappedError{Sentinel: ErrSPKIPinWriteFailed, Err: err}
 	}
 	path := filepath.Join(dataDir, "spki-pin.txt")
 	if err := os.WriteFile(path, []byte(result.SPKIPin+"\n"), 0o644); err != nil { //nolint:gosec // SPKI pin is public material
-		return fmt.Errorf("%w: %s: %v", ErrSPKIPinWriteFailed, path, err)
+		return &WrappedDetailError{Sentinel: ErrSPKIPinWriteFailed, Detail: path, Err: err}
 	}
 	return nil
 }
@@ -337,7 +337,7 @@ func writeAdminBundle(path string, result *initialize.InitResult) error {
 	// #nosec G304 -- path comes from operator-supplied flag during init
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
-		return fmt.Errorf("%w: %s: %v", ErrAdminBundleWriteFailed, path, err)
+		return &WrappedDetailError{Sentinel: ErrAdminBundleWriteFailed, Detail: path, Err: err}
 	}
 	defer func() { _ = f.Close() }()
 	if err := writeAdminBundleTo(f, bundle); err != nil {
@@ -351,7 +351,7 @@ func writeAdminBundle(path string, result *initialize.InitResult) error {
 // formatting path covers both the stdout and file destinations.
 func writeAdminBundleTo(w io.Writer, bundle []byte) error {
 	if _, err := w.Write(bundle); err != nil {
-		return fmt.Errorf("%w: %v", ErrAdminBundleWriteFailed, err)
+		return &WrappedError{Sentinel: ErrAdminBundleWriteFailed, Err: err}
 	}
 	return nil
 }

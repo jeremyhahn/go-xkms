@@ -18,13 +18,14 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // mockAdapter implements AuthenticatorAdapter for testing.
@@ -326,7 +327,7 @@ func TestRegister_AuthenticatorError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	adapterErr := fmt.Errorf("authenticator device not connected")
+	adapterErr := &errs.Message{Msg: "authenticator device not connected"}
 	adapter := &mockAdapter{
 		available: true,
 		makeCredentialFn: func(options []byte) ([]byte, error) {
@@ -643,7 +644,7 @@ func TestLogin_AuthenticatorError(t *testing.T) {
 	adapter := &mockAdapter{
 		available: true,
 		getAssertionFn: func(options []byte) ([]byte, error) {
-			return nil, fmt.Errorf("device disconnected")
+			return nil, &errs.Message{Msg: "device disconnected"}
 		},
 	}
 

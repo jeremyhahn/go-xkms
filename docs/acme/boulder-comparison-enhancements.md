@@ -1,8 +1,8 @@
-# Boulder CA Comparison: Enhancement Opportunities for go-trusted-ca
+# Boulder CA Comparison: Enhancement Opportunities for go-xkms
 
 ## Executive Summary
 
-This document compares go-trusted-ca against Boulder (Let's Encrypt's production CA) to identify security and performance enhancements. Boulder processes 2M+ certificates daily and represents production-grade CA engineering.
+This document compares go-xkms against Boulder (Let's Encrypt's production CA) to identify security and performance enhancements. Boulder processes 2M+ certificates daily and represents production-grade CA engineering.
 
 **Priority Legend:**
 - **P0 (Critical)**: Security-critical, should be implemented ASAP
@@ -18,11 +18,11 @@ This document compares go-trusted-ca against Boulder (Let's Encrypt's production
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/goodkey/good_key.go`
 
-**Current State:** go-trusted-ca performs basic key validation but lacks comprehensive checks.
+**Current State:** go-xkms performs basic key validation but lacks comprehensive checks.
 
 **Missing Features:**
 
-| Feature | Boulder | go-trusted-ca | Risk |
+| Feature | Boulder | go-xkms | Risk |
 |---------|---------|---------------|------|
 | Fermat Factorization Detection | ✅ 110 rounds | ❌ Missing | High - weak RSA keys |
 | ROCA Vulnerability Check (CVE-2017-15361) | ✅ rocacheck | ❌ Missing | Critical - Infineon HSM keys |
@@ -61,7 +61,7 @@ type KeyPolicy struct {
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/issuance/cert.go:290-373`
 
-**Current State:** go-trusted-ca does not lint certificates before signing.
+**Current State:** go-xkms does not lint certificates before signing.
 
 **Why Critical:** Zlint catches Baseline Requirements violations, encoding errors, and policy violations BEFORE signing. Without linting, invalid certificates can be issued.
 
@@ -97,7 +97,7 @@ func (l *CertLinter) LintTBS(tbsBytes []byte) (*LintResult, error)
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/ca/ca.go:533-588`
 
-**Current State:** go-trusted-ca does not verify TBS determinism.
+**Current State:** go-xkms does not verify TBS determinism.
 
 **Why Critical:** This detects bugs in signing code, HSM firmware issues, or encoding problems that could lead to misissuance. If the TBS bytes differ between lint cert and actual cert, something went wrong.
 
@@ -134,7 +134,7 @@ func VerifyTBSDeterminism(lintCertDER, actualCertDER []byte) error {
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/privatekey/privatekey.go:17-81`
 
-**Current State:** go-trusted-ca relies on go-xkms but doesn't verify private keys.
+**Current State:** the ACME CA relies on the xkms key backends but doesn't verify private keys.
 
 **Why Critical:** Attackers can create private keys with mismatched embedded public keys (key smuggling attack). This tricks CAs into signing certificates for keys the attacker doesn't control.
 
@@ -171,7 +171,7 @@ func VerifyPrivateKey(signer crypto.Signer) (crypto.PublicKey, error) {
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/policy/pa.go:32-154`
 
-**Current State:** go-trusted-ca may have basic domain validation but lacks comprehensive blocklisting.
+**Current State:** go-xkms may have basic domain validation but lacks comprehensive blocklisting.
 
 **Missing Features:**
 - Exact FQDN blocklist
@@ -210,7 +210,7 @@ func (b *Blocklist) IsIPBlocked(ip netip.Addr) (bool, string)
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/ctpolicy/ctpolicy.go:105-213`
 
-**Current State:** go-trusted-ca likely has basic CT submission but lacks policy enforcement.
+**Current State:** go-xkms likely has basic CT submission but lacks policy enforcement.
 
 **Missing Features:**
 - Multi-operator SCT requirement (≥2 operators)
@@ -249,7 +249,7 @@ func (p *CTPolicy) GetSCTs(ctx context.Context, precert []byte, expiry time.Time
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/ratelimits/gcra.go:9-107`
 
-**Current State:** go-trusted-ca uses simple token bucket in `pkg/acme/server/rate_limiter.go`.
+**Current State:** go-xkms uses simple token bucket in `pkg/acme/server/rate_limiter.go`.
 
 **Why Better:** GCRA stores only a single timestamp per bucket (vs. token count), enabling:
 - O(1) space per bucket
@@ -280,7 +280,7 @@ func (g *GCRA) Allow(now, tat time.Time, cost time.Duration) (newTAT time.Time, 
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/ratelimits/source_redis.go`
 
-**Current State:** go-trusted-ca uses in-memory rate limiting (single node only).
+**Current State:** go-xkms uses in-memory rate limiting (single node only).
 
 **Missing Features:**
 - Redis Ring with consistent hashing
@@ -313,7 +313,7 @@ func (r *RedisLimiter) BatchSpend(ctx context.Context, txns []Transaction) ([]De
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/nonce/nonce.go:184-208`
 
-**Current State:** go-trusted-ca likely stores nonces in database/memory.
+**Current State:** go-xkms likely stores nonces in database/memory.
 
 **Why Better:** Encrypted counter nonces require:
 - Zero database lookups for generation
@@ -346,7 +346,7 @@ func (s *EncryptedNonceService) Generate() (string, error) {
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/ratelimits/limiter.go:100-102`
 
-**Current State:** go-trusted-ca likely returns exact Retry-After values.
+**Current State:** go-xkms likely returns exact Retry-After values.
 
 **Why Important:** Without jitter, all rate-limited clients retry at exactly the same time (thundering herd).
 
@@ -366,7 +366,7 @@ func jitteredRetryAfter(d time.Duration) time.Duration {
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/grpc/interceptors.go:99-122`
 
-**Current State:** go-trusted-ca may not subtract return overhead from deadlines.
+**Current State:** go-xkms may not subtract return overhead from deadlines.
 
 **Why Important:** Without this, sub-RPCs don't have time for error reporting.
 
@@ -398,7 +398,7 @@ func DeadlineInterceptor(returnOverhead time.Duration) grpc.UnaryServerIntercept
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/ca/ca.go:314-456`
 
-**Current State:** go-trusted-ca may sign certificates directly.
+**Current State:** go-xkms may sign certificates directly.
 
 **Why Important:** Two-phase issuance enables:
 1. Lint validation before committing to sign
@@ -430,7 +430,7 @@ func DeadlineInterceptor(returnOverhead time.Duration) grpc.UnaryServerIntercept
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/errors/errors.go:33-159`
 
-**Current State:** go-trusted-ca uses standard errors that may lose type information across gRPC.
+**Current State:** go-xkms uses standard errors that may lose type information across gRPC.
 
 **Why Important:** Typed errors enable:
 - Semantic error handling across services
@@ -473,7 +473,7 @@ func (e *TrustedCAError) ACMEProblem() *acme.Problem
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/log/log.go:163-220`
 
-**Current State:** go-trusted-ca has structured audit logging but may lack integrity verification.
+**Current State:** go-xkms has structured audit logging but may lack integrity verification.
 
 **Why Important:** CRC32 checksums detect log corruption/tampering.
 
@@ -502,7 +502,7 @@ func (l *Logger) formatWithChecksum(msg string) string {
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/va/va.go:84-289`
 
-**Current State:** go-trusted-ca validates from single perspective.
+**Current State:** go-xkms validates from single perspective.
 
 **Why Important:** CABF BRs Section 3.2.2.9 requires multi-perspective validation:
 - 2-5 perspectives: max 1 failure allowed
@@ -537,7 +537,7 @@ func maxAllowedFailures(perspectiveCount int) int {
 
 **Boulder Implementation:** `/home/jhahn/sources/boulder/crl/updater/updater.go`
 
-**Current State:** go-trusted-ca may generate monolithic CRLs.
+**Current State:** go-xkms may generate monolithic CRLs.
 
 **Why Important:** Sharded CRLs enable:
 - Parallel generation per shard

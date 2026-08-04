@@ -23,6 +23,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // MCPClient wraps TCP connection for MCP JSON-RPC testing
@@ -35,7 +37,7 @@ type MCPClient struct {
 func NewMCPClient(addr string) (*MCPClient, error) {
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to connect", Err: err}
 	}
 
 	return &MCPClient{
@@ -63,13 +65,13 @@ func (c *MCPClient) Call(method string, params interface{}) (map[string]interfac
 
 	requestBytes, err := json.Marshal(request)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal request", Err: err}
 	}
 
 	// Send request with newline delimiter
 	_, err = c.conn.Write(append(requestBytes, '\n'))
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to send request", Err: err}
 	}
 
 	// Read response (use large buffer for responses with PEM data)
@@ -77,19 +79,19 @@ func (c *MCPClient) Call(method string, params interface{}) (map[string]interfac
 	c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, err := c.conn.Read(buf)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to read response", Err: err}
 	}
 
 	// Parse response
 	var response map[string]interface{}
 	decoder := json.NewDecoder(bytes.NewReader(buf[:n]))
 	if err := decoder.Decode(&response); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode response", Err: err}
 	}
 
 	// Check for error in response
 	if errObj, ok := response["error"]; ok {
-		return nil, fmt.Errorf("JSON-RPC error: %v", errObj)
+		return nil, &errs.Message{Msg: fmt.Sprintf("JSON-RPC error: %v", errObj)}
 	}
 
 	return response, nil

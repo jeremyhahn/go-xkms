@@ -162,17 +162,17 @@ type initFlags struct {
 func parseOfficerFlag(value string) (string, string, error) {
 	idx := strings.Index(value, ":")
 	if idx < 0 {
-		return "", "", fmt.Errorf("%w: %q", ErrInvalidOfficerFormat, value)
+		return "", "", &WrappedDetailError{Sentinel: ErrInvalidOfficerFormat, Detail: strconv.Quote(value)}
 	}
 
 	username := strings.TrimSpace(value[:idx])
 	csrPath := strings.TrimSpace(value[idx+1:])
 
 	if username == "" {
-		return "", "", fmt.Errorf("%w: %q", ErrEmptyOfficerUsername, value)
+		return "", "", &WrappedDetailError{Sentinel: ErrEmptyOfficerUsername, Detail: strconv.Quote(value)}
 	}
 	if csrPath == "" {
-		return "", "", fmt.Errorf("%w: %q", ErrEmptyCSRPath, value)
+		return "", "", &WrappedDetailError{Sentinel: ErrEmptyCSRPath, Detail: strconv.Quote(value)}
 	}
 
 	return username, csrPath, nil
@@ -185,32 +185,32 @@ func readAndValidateCSR(path string) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", ErrCSRFileNotFound, path)
+			return nil, &WrappedDetailError{Sentinel: ErrCSRFileNotFound, Detail: path}
 		}
-		return nil, fmt.Errorf("%w: %s: %v", ErrCSRReadFailed, path, err)
+		return nil, &WrappedDetailError{Sentinel: ErrCSRReadFailed, Detail: path, Err: err}
 	}
 	if info.IsDir() {
-		return nil, fmt.Errorf("%w: %s is a directory", ErrCSRReadFailed, path)
+		return nil, &WrappedDetailError{Sentinel: ErrCSRReadFailed, Detail: path + " is a directory"}
 	}
 
 	// #nosec G304 - CSR path is provided by admin during init ceremony
 	pemData, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrCSRReadFailed, path, err)
+		return nil, &WrappedDetailError{Sentinel: ErrCSRReadFailed, Detail: path, Err: err}
 	}
 
 	block, _ := pem.Decode(pemData)
 	if block == nil {
-		return nil, fmt.Errorf("%w: %s", ErrCSRDecodeFailed, path)
+		return nil, &WrappedDetailError{Sentinel: ErrCSRDecodeFailed, Detail: path}
 	}
 
 	csr, err := x509.ParseCertificateRequest(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrCSRParseFailed, path, err)
+		return nil, &WrappedDetailError{Sentinel: ErrCSRParseFailed, Detail: path, Err: err}
 	}
 
 	if err := csr.CheckSignature(); err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrCSRSignatureInvalid, path, err)
+		return nil, &WrappedDetailError{Sentinel: ErrCSRSignatureInvalid, Detail: path, Err: err}
 	}
 
 	return pemData, nil

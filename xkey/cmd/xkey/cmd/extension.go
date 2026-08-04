@@ -214,7 +214,7 @@ func runExtensionInstall(cmd *cobra.Command, args []string) error {
 
 	binaryPath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrExtensionInstallFailed, err)
+		return &SentinelCauseError{Sentinel: ErrExtensionInstallFailed, Cause: err}
 	}
 
 	// Apply the allowed-origin override if provided. This sets the
@@ -225,7 +225,7 @@ func runExtensionInstall(cmd *cobra.Command, args []string) error {
 
 	for _, browser := range browsers {
 		if installErr := nativemsg.InstallManifest(browser, binaryPath); installErr != nil {
-			return fmt.Errorf("%w: %s: %v", ErrExtensionInstallFailed, browser, installErr)
+			return &DetailError{Err: ErrExtensionInstallFailed, Detail: fmt.Sprintf(": %s: %v", browser, installErr)}
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Installed native messaging manifest for %s\n", browser)
 	}
@@ -247,7 +247,7 @@ func runExtensionUninstall(cmd *cobra.Command, args []string) error {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "No manifest found for %s (already removed)\n", browser)
 				continue
 			}
-			return fmt.Errorf("%w: %s: %v", ErrExtensionUninstallFailed, browser, uninstallErr)
+			return &DetailError{Err: ErrExtensionUninstallFailed, Detail: fmt.Sprintf(": %s: %v", browser, uninstallErr)}
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Uninstalled native messaging manifest for %s\n", browser)
 	}
@@ -323,26 +323,26 @@ func runExtensionHost(cmd *cobra.Command, args []string) error {
 	if !noPairing {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			return fmt.Errorf("%w: cannot determine home directory: %v", ErrExtensionHostFailed, err)
+			return &DetailError{Err: ErrExtensionHostFailed, Detail: fmt.Sprintf(": cannot determine home directory: %v", err)}
 		}
 		// Use the same path as the GUI: ~/.xkey/data/extension/pairing.json.
 		// The GUI creates this directory in initializeDataDir().
 		pairingDir := filepath.Join(homeDir, ".xkey", "data", "extension")
 		if mkErr := os.MkdirAll(pairingDir, 0700); mkErr != nil {
-			return fmt.Errorf("%w: cannot create pairing directory: %v", ErrExtensionHostFailed, mkErr)
+			return &DetailError{Err: ErrExtensionHostFailed, Detail: fmt.Sprintf(": cannot create pairing directory: %v", mkErr)}
 		}
 		statePath := filepath.Join(pairingDir, "pairing.json")
 		var pairingErr error
 		pairing, pairingErr = nativemsg.NewPairingVerifier(statePath)
 		if pairingErr != nil {
-			return fmt.Errorf("%w: %v", ErrExtensionHostFailed, pairingErr)
+			return &SentinelCauseError{Sentinel: ErrExtensionHostFailed, Cause: pairingErr}
 		}
 	}
 
 	host := nativemsg.NewHost(socketPath, logger, pairing)
 	if err := host.Run(ctx); err != nil {
 		logger.Error("native messaging host exited with error", "error", err)
-		return fmt.Errorf("%w: %v", ErrExtensionHostFailed, err)
+		return &SentinelCauseError{Sentinel: ErrExtensionHostFailed, Cause: err}
 	}
 
 	return nil
@@ -353,13 +353,13 @@ func runExtensionHost(cmd *cobra.Command, args []string) error {
 func runExtensionUnpair(cmd *cobra.Command, args []string) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("%w: cannot determine home directory: %v", ErrExtensionUnpairFailed, err)
+		return &DetailError{Err: ErrExtensionUnpairFailed, Detail: fmt.Sprintf(": cannot determine home directory: %v", err)}
 	}
 
 	statePath := filepath.Join(homeDir, ".xkey", "data", "extension", "pairing.json")
 	pairing, err := nativemsg.NewPairingVerifier(statePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrExtensionUnpairFailed, err)
+		return &SentinelCauseError{Sentinel: ErrExtensionUnpairFailed, Cause: err}
 	}
 
 	if !pairing.IsPaired() {
@@ -368,7 +368,7 @@ func runExtensionUnpair(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := pairing.Unpair(); err != nil {
-		return fmt.Errorf("%w: %v", ErrExtensionUnpairFailed, err)
+		return &SentinelCauseError{Sentinel: ErrExtensionUnpairFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Extension unpaired successfully")
@@ -380,13 +380,13 @@ func runExtensionUnpair(cmd *cobra.Command, args []string) error {
 func runExtensionPairStatus(cmd *cobra.Command, args []string) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("%w: cannot determine home directory: %v", ErrExtensionUnpairFailed, err)
+		return &DetailError{Err: ErrExtensionUnpairFailed, Detail: fmt.Sprintf(": cannot determine home directory: %v", err)}
 	}
 
 	statePath := filepath.Join(homeDir, ".xkey", "data", "extension", "pairing.json")
 	pairing, err := nativemsg.NewPairingVerifier(statePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrExtensionUnpairFailed, err)
+		return &SentinelCauseError{Sentinel: ErrExtensionUnpairFailed, Cause: err}
 	}
 
 	states := pairing.GetStates()

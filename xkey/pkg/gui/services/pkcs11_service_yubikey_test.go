@@ -6,10 +6,11 @@
 package services
 
 import (
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

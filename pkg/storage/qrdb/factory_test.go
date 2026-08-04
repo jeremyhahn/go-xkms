@@ -16,9 +16,10 @@ package qrdb
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // roundTrip exercises all Backend operations on the given backend.
@@ -293,7 +294,7 @@ func TestFactoryError_Unwrap_ReturnsUnderlyingError(t *testing.T) {
 
 func TestFactoryError_Unwrap_ErrorsIs(t *testing.T) {
 	sentinel := errors.New("sentinel")
-	fe := &FactoryError{Engine: "file", Err: fmt.Errorf("wrapped: %w", sentinel)}
+	fe := &FactoryError{Engine: "file", Err: &errs.Wrapped{Msg: "wrapped", Err: sentinel}}
 
 	if !errors.Is(fe, sentinel) {
 		t.Fatal("errors.Is should unwrap through FactoryError to reach the sentinel")

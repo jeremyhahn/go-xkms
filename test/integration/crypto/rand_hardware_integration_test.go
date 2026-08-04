@@ -23,6 +23,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/rand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -134,7 +136,7 @@ func TestRandTPM2HardwareIntegration(t *testing.T) {
 				for i := 0; i < iterationsPerGoroutine; i++ {
 					randomBytes, err := resolver.Rand(32)
 					if err != nil {
-						errChan <- fmt.Errorf("goroutine %d, iteration %d: %w", goroutineID, i, err)
+						errChan <- &errs.Wrapped{Msg: fmt.Sprintf("goroutine %d, iteration %d", goroutineID, i), Err: err}
 						return
 					}
 					results <- randomBytes

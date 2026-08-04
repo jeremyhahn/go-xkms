@@ -63,14 +63,14 @@ var keyGenerateCmd = &cobra.Command{
 func generateKey(cfg *Config, printer *Printer, keyID, keyType, algorithm, keyAlgorithm string, keySize int, curve string, exportable bool) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -102,7 +102,7 @@ func generateKey(cfg *Config, printer *Printer, keyID, keyType, algorithm, keyAl
 
 	resp, err := cl.GenerateKey(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to generate key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGenerateKeyFailed, Err: err})
 		return
 	}
 
@@ -131,14 +131,14 @@ var keyListCmd = &cobra.Command{
 func listKeys(cfg *Config, printer *Printer) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -146,7 +146,7 @@ func listKeys(cfg *Config, printer *Printer) {
 
 	resp, err := cl.ListKeys(ctx, cfg.Backend)
 	if err != nil {
-		handleError(fmt.Errorf("failed to list keys: %w", err))
+		handleError(&WrappedError{Sentinel: ErrListKeysFailed, Err: err})
 		return
 	}
 
@@ -187,14 +187,14 @@ var keyGetCmd = &cobra.Command{
 func getKey(cfg *Config, printer *Printer, keyID string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -202,7 +202,7 @@ func getKey(cfg *Config, printer *Printer, keyID string) {
 
 	resp, err := cl.GetKey(ctx, cfg.Backend, keyID)
 	if err != nil {
-		handleError(fmt.Errorf("failed to get key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGetKeyFailed, Err: err})
 		return
 	}
 
@@ -238,14 +238,14 @@ var keyDeleteCmd = &cobra.Command{
 func deleteKey(cfg *Config, printer *Printer, keyID string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -253,7 +253,7 @@ func deleteKey(cfg *Config, printer *Printer, keyID string) {
 
 	resp, err := cl.DeleteKey(ctx, cfg.Backend, keyID)
 	if err != nil {
-		handleError(fmt.Errorf("failed to delete key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrDeleteKeyFailed, Err: err})
 		return
 	}
 
@@ -262,7 +262,7 @@ func deleteKey(cfg *Config, printer *Printer, keyID string) {
 			handleError(err)
 		}
 	} else {
-		handleError(fmt.Errorf("failed to delete key: %s", resp.Message))
+		handleError(&WrappedDetailError{Sentinel: ErrDeleteKeyFailed, Detail: resp.Message})
 	}
 }
 
@@ -290,14 +290,14 @@ var keySignCmd = &cobra.Command{
 func sign(cfg *Config, printer *Printer, keyID, data, hashAlg string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -312,7 +312,7 @@ func sign(cfg *Config, printer *Printer, keyID, data, hashAlg string) {
 
 	resp, err := cl.Sign(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to sign data: %w", err))
+		handleError(&WrappedError{Sentinel: ErrSignDataFailed, Err: err})
 		return
 	}
 
@@ -348,14 +348,14 @@ var keyVerifyCmd = &cobra.Command{
 func verify(cfg *Config, printer *Printer, keyID, data, signatureBase64, hashAlg string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -363,7 +363,7 @@ func verify(cfg *Config, printer *Printer, keyID, data, signatureBase64, hashAlg
 
 	signature, err := base64.StdEncoding.DecodeString(signatureBase64)
 	if err != nil {
-		handleError(fmt.Errorf("failed to decode signature: %w", err))
+		handleError(&WrappedError{Sentinel: ErrDecodeSignatureFailed, Err: err})
 		return
 	}
 
@@ -377,7 +377,7 @@ func verify(cfg *Config, printer *Printer, keyID, data, signatureBase64, hashAlg
 
 	resp, err := cl.Verify(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to verify signature: %w", err))
+		handleError(&WrappedError{Sentinel: ErrVerifySignatureFailed, Err: err})
 		return
 	}
 
@@ -386,7 +386,7 @@ func verify(cfg *Config, printer *Printer, keyID, data, signatureBase64, hashAlg
 			handleError(err)
 		}
 	} else {
-		handleError(fmt.Errorf("signature is invalid: %s", resp.Message))
+		handleError(&WrappedDetailError{Sentinel: ErrSignatureInvalid, Detail: resp.Message})
 	}
 }
 
@@ -414,14 +414,14 @@ var keyEncryptCmd = &cobra.Command{
 func encrypt(cfg *Config, printer *Printer, keyID, plaintext, aad string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -438,7 +438,7 @@ func encrypt(cfg *Config, printer *Printer, keyID, plaintext, aad string) {
 
 	resp, err := cl.Encrypt(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to encrypt data: %w", err))
+		handleError(&WrappedError{Sentinel: ErrEncryptDataFailed, Err: err})
 		return
 	}
 
@@ -482,14 +482,14 @@ var keyDecryptCmd = &cobra.Command{
 func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -497,7 +497,7 @@ func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag s
 
 	ciphertextBytes, err := base64.StdEncoding.DecodeString(ciphertext)
 	if err != nil {
-		handleError(fmt.Errorf("failed to decode ciphertext: %w", err))
+		handleError(&WrappedError{Sentinel: ErrDecodeCiphertextFailed, Err: err})
 		return
 	}
 
@@ -514,7 +514,7 @@ func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag s
 	if nonce != "" {
 		nonceBytes, err := base64.StdEncoding.DecodeString(nonce)
 		if err != nil {
-			handleError(fmt.Errorf("failed to decode nonce: %w", err))
+			handleError(&WrappedError{Sentinel: ErrNonceDecode, Err: err})
 			return
 		}
 		req.Nonce = nonceBytes
@@ -523,7 +523,7 @@ func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag s
 	if tag != "" {
 		tagBytes, err := base64.StdEncoding.DecodeString(tag)
 		if err != nil {
-			handleError(fmt.Errorf("failed to decode tag: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDecodeTagFailed, Err: err})
 			return
 		}
 		req.Tag = tagBytes
@@ -531,7 +531,7 @@ func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag s
 
 	resp, err := cl.Decrypt(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to decrypt data: %w", err))
+		handleError(&WrappedError{Sentinel: ErrDecryptDataFailed, Err: err})
 		return
 	}
 
@@ -566,14 +566,14 @@ var keyEncryptAsymCmd = &cobra.Command{
 func encryptAsym(cfg *Config, printer *Printer, keyID, plaintext, hashAlg string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -588,7 +588,7 @@ func encryptAsym(cfg *Config, printer *Printer, keyID, plaintext, hashAlg string
 
 	resp, err := cl.EncryptAsym(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to encrypt data: %w", err))
+		handleError(&WrappedError{Sentinel: ErrEncryptDataFailed, Err: err})
 		return
 	}
 
@@ -622,14 +622,14 @@ var keyRotateCmd = &cobra.Command{
 func rotateKey(cfg *Config, printer *Printer, keyID string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -642,7 +642,7 @@ func rotateKey(cfg *Config, printer *Printer, keyID string) {
 
 	_, err = cl.RotateKey(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to rotate key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrRotateKeyFailed, Err: err})
 		return
 	}
 
@@ -669,7 +669,7 @@ var keyImportCmd = &cobra.Command{
 		cleanPath := filepath.Clean(wrappedKeyFile)
 		wrappedKeyData, err := os.ReadFile(cleanPath)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read wrapped key file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrReadWrappedKeyFileFailed, Err: err})
 			return
 		}
 
@@ -678,7 +678,7 @@ var keyImportCmd = &cobra.Command{
 		// Deserialize WrappedKeyMaterial from JSON
 		var wrapped client.WrappedKeyMaterial
 		if err := json.Unmarshal(wrappedKeyData, &wrapped); err != nil {
-			handleError(fmt.Errorf("failed to deserialize wrapped key material: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDeserializeWrappedKeyMaterialFailed, Err: err})
 			return
 		}
 
@@ -692,14 +692,14 @@ var keyImportCmd = &cobra.Command{
 func importKey(cfg *Config, printer *Printer, keyID string, wrapped *client.WrappedKeyMaterial) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -714,7 +714,7 @@ func importKey(cfg *Config, printer *Printer, keyID string, wrapped *client.Wrap
 
 	_, err = cl.ImportKey(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to import key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrImportKeyFailed, Err: err})
 		return
 	}
 
@@ -750,14 +750,14 @@ var keyExportCmd = &cobra.Command{
 func exportKey(cfg *Config, printer *Printer, keyID, outputFile string, algorithm client.WrappingAlgorithm) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -771,7 +771,7 @@ func exportKey(cfg *Config, printer *Printer, keyID, outputFile string, algorith
 
 	resp, err := cl.ExportKey(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to export key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrExportKeyFailed, Err: err})
 		return
 	}
 
@@ -786,12 +786,12 @@ func exportKey(cfg *Config, printer *Printer, keyID, outputFile string, algorith
 	// Serialize to JSON and write to file
 	wrappedData, err := json.MarshalIndent(wrapped, "", "  ")
 	if err != nil {
-		handleError(fmt.Errorf("failed to serialize wrapped key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrSerializeWrappedKeyFailed, Err: err})
 		return
 	}
 
 	if err := os.WriteFile(outputFile, wrappedData, 0600); err != nil {
-		handleError(fmt.Errorf("failed to write wrapped key file: %w", err))
+		handleError(&WrappedError{Sentinel: ErrWriteWrappedKeyFileFailed, Err: err})
 		return
 	}
 
@@ -836,14 +836,14 @@ var keyCopyCmd = &cobra.Command{
 func copyKey(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBackend, keyType, keyAlgorithm string, keySize int, curve string, algorithm client.WrappingAlgorithm) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -868,7 +868,7 @@ func copyKey(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBackend,
 
 	_, err = cl.CopyKey(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to copy key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCopyKeyFailed, Err: err})
 		return
 	}
 
@@ -909,14 +909,14 @@ var keyGetImportParamsCmd = &cobra.Command{
 func getImportParams(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm string, keySize int, curve string, algorithm client.WrappingAlgorithm, outputFile string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -939,7 +939,7 @@ func getImportParams(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm
 
 	resp, err := cl.GetImportParameters(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to get import parameters: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGetImportParametersFailed, Err: err})
 		return
 	}
 
@@ -958,12 +958,12 @@ func getImportParams(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm
 	if outputFile != "" {
 		paramsData, err := json.MarshalIndent(params, "", "  ")
 		if err != nil {
-			handleError(fmt.Errorf("failed to serialize import parameters: %w", err))
+			handleError(&WrappedError{Sentinel: ErrSerializeImportParametersFailed, Err: err})
 			return
 		}
 
 		if err := os.WriteFile(outputFile, paramsData, 0600); err != nil {
-			handleError(fmt.Errorf("failed to write parameters file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrWriteParametersFileFailed, Err: err})
 			return
 		}
 
@@ -997,7 +997,7 @@ var keyWrapCmd = &cobra.Command{
 		cleanPath := filepath.Clean(keyMaterialFile)
 		keyMaterial, err := os.ReadFile(cleanPath)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read key material file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrReadKeyMaterialFileFailed, Err: err})
 			return
 		}
 
@@ -1007,13 +1007,13 @@ var keyWrapCmd = &cobra.Command{
 		cleanPath = filepath.Clean(paramsFile)
 		paramsData, err := os.ReadFile(cleanPath)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read parameters file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrReadParametersFileFailed, Err: err})
 			return
 		}
 
 		var params client.ImportParameters
 		if err := json.Unmarshal(paramsData, &params); err != nil {
-			handleError(fmt.Errorf("failed to deserialize import parameters: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDeserializeImportParametersFailed, Err: err})
 			return
 		}
 
@@ -1027,14 +1027,14 @@ var keyWrapCmd = &cobra.Command{
 func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *client.ImportParameters, outputFile string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -1045,7 +1045,7 @@ func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *client.I
 	if pubKey, ok := params.WrappingPublicKey.([]byte); ok {
 		wrappingPubKeyBytes = pubKey
 	} else {
-		handleError(fmt.Errorf("wrapping public key has unexpected type: %T", params.WrappingPublicKey))
+		handleError(&WrappedDetailError{Sentinel: ErrWrappingKeyUnexpectedType, Detail: fmt.Sprintf("%T", params.WrappingPublicKey)})
 		return
 	}
 
@@ -1058,7 +1058,7 @@ func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *client.I
 
 	resp, err := cl.WrapKey(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to wrap key material: %w", err))
+		handleError(&WrappedError{Sentinel: ErrWrapKeyMaterialFailed, Err: err})
 		return
 	}
 
@@ -1073,12 +1073,12 @@ func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *client.I
 	// Serialize and write wrapped key
 	wrappedData, err := json.MarshalIndent(wrapped, "", "  ")
 	if err != nil {
-		handleError(fmt.Errorf("failed to serialize wrapped key: %w", err))
+		handleError(&WrappedError{Sentinel: ErrSerializeWrappedKeyFailed, Err: err})
 		return
 	}
 
 	if err := os.WriteFile(outputFile, wrappedData, 0600); err != nil {
-		handleError(fmt.Errorf("failed to write wrapped key file: %w", err))
+		handleError(&WrappedError{Sentinel: ErrWriteWrappedKeyFileFailed, Err: err})
 		return
 	}
 
@@ -1106,13 +1106,13 @@ var keyUnwrapCmd = &cobra.Command{
 		cleanPath := filepath.Clean(wrappedKeyFile)
 		wrappedData, err := os.ReadFile(cleanPath)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read wrapped key file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrReadWrappedKeyFileFailed, Err: err})
 			return
 		}
 
 		var wrapped client.WrappedKeyMaterial
 		if err := json.Unmarshal(wrappedData, &wrapped); err != nil {
-			handleError(fmt.Errorf("failed to deserialize wrapped key: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDeserializeWrappedKeyFailed, Err: err})
 			return
 		}
 
@@ -1122,13 +1122,13 @@ var keyUnwrapCmd = &cobra.Command{
 		cleanPath = filepath.Clean(paramsFile)
 		paramsData, err := os.ReadFile(cleanPath)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read parameters file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrReadParametersFileFailed, Err: err})
 			return
 		}
 
 		var params client.ImportParameters
 		if err := json.Unmarshal(paramsData, &params); err != nil {
-			handleError(fmt.Errorf("failed to deserialize import parameters: %w", err))
+			handleError(&WrappedError{Sentinel: ErrDeserializeImportParametersFailed, Err: err})
 			return
 		}
 
@@ -1142,14 +1142,14 @@ var keyUnwrapCmd = &cobra.Command{
 func unwrapKey(cfg *Config, printer *Printer, wrapped *client.WrappedKeyMaterial, params *client.ImportParameters, outputFile string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -1163,7 +1163,7 @@ func unwrapKey(cfg *Config, printer *Printer, wrapped *client.WrappedKeyMaterial
 
 	resp, err := cl.UnwrapKey(ctx, req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to unwrap key material: %w", err))
+		handleError(&WrappedError{Sentinel: ErrUnwrapKeyMaterialFailed, Err: err})
 		return
 	}
 
@@ -1171,7 +1171,7 @@ func unwrapKey(cfg *Config, printer *Printer, wrapped *client.WrappedKeyMaterial
 
 	// Write unwrapped key material
 	if err := os.WriteFile(outputFile, resp.KeyMaterial, 0600); err != nil {
-		handleError(fmt.Errorf("failed to write key material file: %w", err))
+		handleError(&WrappedError{Sentinel: ErrWriteKeyMaterialFileFailed, Err: err})
 		return
 	}
 
@@ -1264,12 +1264,12 @@ func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize in
 	// Parse key type and algorithm
 	kt := client.ParseKeyType(keyType)
 	if kt == 0 {
-		return nil, fmt.Errorf("invalid key type: %s", keyType)
+		return nil, &WrappedDetailError{Sentinel: ErrInvalidKeyType, Detail: keyType}
 	}
 
 	ka, err := client.ParseKeyAlgorithm(keyAlgorithm)
 	if err != nil {
-		return nil, fmt.Errorf("invalid key algorithm: %s", keyAlgorithm)
+		return nil, &WrappedDetailError{Sentinel: ErrInvalidKeyAlgorithm, Detail: keyAlgorithm}
 	}
 
 	attrs := &client.KeyAttributes{
@@ -1285,7 +1285,7 @@ func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize in
 	switch ka {
 	case x509.RSA:
 		if keySize < 2048 {
-			return nil, fmt.Errorf("RSA key size must be at least 2048 bits")
+			return nil, ErrRSAKeySizeTooSmall
 		}
 		attrs.RSAAttributes = &client.RSAAttributes{
 			KeySize: keySize,
@@ -1294,7 +1294,7 @@ func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize in
 	case x509.ECDSA:
 		parsedCurve, err := client.ParseCurve(curve)
 		if err != nil {
-			return nil, fmt.Errorf("invalid curve: %s", curve)
+			return nil, &WrappedDetailError{Sentinel: ErrInvalidCurve, Detail: curve}
 		}
 		attrs.ECCAttributes = &client.ECCAttributes{
 			Curve: parsedCurve,
@@ -1322,7 +1322,7 @@ func buildSymmetricKeyAttributes(keyID, algorithm string, keySize int) (*client.
 		// Parse algorithm string
 		symmetricAlgorithm = client.SymmetricAlgorithm(algorithm)
 		if !symmetricAlgorithm.IsValid() {
-			return nil, fmt.Errorf("invalid algorithm: %s", algorithm)
+			return nil, &WrappedDetailError{Sentinel: ErrInvalidAlgorithm, Detail: algorithm}
 		}
 	} else {
 		// Derive from key size
@@ -1334,7 +1334,7 @@ func buildSymmetricKeyAttributes(keyID, algorithm string, keySize int) (*client.
 		case 256:
 			symmetricAlgorithm = client.SymmetricAES256GCM
 		default:
-			return nil, fmt.Errorf("invalid AES key size: %d (valid: 128, 192, 256)", keySize)
+			return nil, &WrappedDetailError{Sentinel: ErrInvalidAESKeySize, Detail: fmt.Sprintf("%d (valid: 128, 192, 256)", keySize)}
 		}
 	}
 

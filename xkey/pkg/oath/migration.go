@@ -51,12 +51,12 @@ func MigrateFromBackend(ctx context.Context, backend xkms.StorageBackend, prefix
 		return ErrNilBackend
 	}
 	if daoStore == nil {
-		return fmt.Errorf("oath: nil DAO store for migration")
+		return &MessageError{Msg: "oath: nil DAO store for migration"}
 	}
 
 	keys, err := backend.List(ctx, prefix)
 	if err != nil {
-		return fmt.Errorf("oath: failed to list legacy keys: %w", err)
+		return &WrappedError{Msg: "oath: failed to list legacy keys", Err: err}
 	}
 
 	for _, key := range keys {

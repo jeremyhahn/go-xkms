@@ -27,11 +27,19 @@ var validBanks = map[string]struct{}{
 	"SHA1":   {},
 	"SHA256": {},
 	"SHA384": {},
+	"SHA512": {},
 }
 
 // PolicyStore defines the interface for PCR policy persistence.
 type PolicyStore interface {
 	Create(ctx context.Context, name, bank string, pcrs map[uint][]byte) (*PCRPolicyEntity, error)
+	// Save persists entity as-is, creating it if it does not already exist
+	// or overwriting it if it does. Unlike Create, Save does not reset
+	// CreatedAt (it is populated only when zero) and does not require a
+	// non-empty PCR map, so callers that need to preserve metadata across
+	// updates (e.g. AutoUnseal or the original CreatedAt) can fetch the
+	// existing entity, mutate it, and Save it back.
+	Save(ctx context.Context, entity *PCRPolicyEntity) error
 	Get(ctx context.Context, name string) (*PCRPolicyEntity, error)
 	List(ctx context.Context) ([]*PCRPolicyEntity, error)
 	Page(ctx context.Context, q qrdbsdk.PageQuery) (qrdbsdk.PageResult[*PCRPolicyEntity], error)
@@ -103,21 +111,41 @@ func (s *DAOStore) Create(ctx context.Context, name, bank string, pcrs map[uint]
 		return nil, ErrNoPCRs
 	}
 
-	now := time.Now().UTC()
 	entity := &PCRPolicyEntity{
-		Name:      name,
-		Bank:      bank,
-		PCRs:      pcrs,
-		CreatedAt: now,
-		UpdatedAt: now,
+		Name: name,
+		Bank: bank,
+		PCRs: pcrs,
 	}
-	entity.SetEntityID(s.computeID(name))
-
-	if err := s.dao.Save(ctx, entity); err != nil {
+	if err := s.Save(ctx, entity); err != nil {
 		return nil, err
 	}
 
 	return entity, nil
+}
+
+// Save persists entity, creating it if it does not already exist or
+// overwriting it if it does. See the PolicyStore interface doc for the
+// distinction from Create.
+func (s *DAOStore) Save(ctx context.Context, entity *PCRPolicyEntity) error {
+	if s.closed.Load() {
+		return ErrStoreClosed
+	}
+	if entity == nil || entity.Name == "" {
+		return ErrInvalidName
+	}
+	if entity.Bank != "" {
+		if _, ok := validBanks[entity.Bank]; !ok {
+			return ErrInvalidBank
+		}
+	}
+
+	entity.SetEntityID(s.computeID(entity.Name))
+	if entity.CreatedAt.IsZero() {
+		entity.CreatedAt = time.Now().UTC()
+	}
+	entity.UpdatedAt = time.Now().UTC()
+
+	return s.dao.Save(ctx, entity)
 }
 
 // Get retrieves a policy by its unique name.

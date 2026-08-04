@@ -17,9 +17,10 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
-	"fmt"
 	"net"
 	"strings"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
@@ -176,7 +177,7 @@ func (ca *CA) GetCACertificatePEM() ([]byte, error) {
 func (ca *CA) IssueEKCertificateRaw(ctx context.Context, commonName, organization string, ekPubDER []byte) (certDER []byte, err error) {
 	pubKey, err := x509.ParsePKIXPublicKey(ekPubDER)
 	if err != nil {
-		return nil, fmt.Errorf("parse EK public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "parse EK public key", Err: err}
 	}
 
 	request := &CertificateRequest{
@@ -200,7 +201,7 @@ func (ca *CA) IssueEKCertificateRaw(ctx context.Context, commonName, organizatio
 func (ca *CA) IssueAKCertificateRaw(ctx context.Context, commonName, organization string, pubDER []byte) (certDER []byte, err error) {
 	pubKey, err := x509.ParsePKIXPublicKey(pubDER)
 	if err != nil {
-		return nil, fmt.Errorf("parse AK public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "parse AK public key", Err: err}
 	}
 
 	request := &CertificateRequest{
@@ -226,7 +227,7 @@ func (ca *CA) SignTCGCSRIDevIDRaw(ctx context.Context, commonName, organization 
 	// Unmarshal the packed bytes into a TCG_CSR_IDEVID structure.
 	tcgCSR, err := tpm2.UnmarshalIDevIDCSR(packedCSR)
 	if err != nil {
-		return nil, nil, fmt.Errorf("unmarshal TCG CSR: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "unmarshal TCG CSR", Err: err}
 	}
 
 	request := &CertificateRequest{

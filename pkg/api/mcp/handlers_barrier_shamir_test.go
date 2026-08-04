@@ -16,10 +16,11 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	quicraftShamir "github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -42,7 +43,7 @@ type testCaptureDistributor struct {
 func (c *testCaptureDistributor) SealAndDistribute(_ context.Context, secret []byte, threshold, total int) (int, error) {
 	raw, err := quicraftShamir.Split(secret, threshold, total)
 	if err != nil {
-		return 0, fmt.Errorf("shamir split failed: %w", err)
+		return 0, &errs.Wrapped{Msg: "shamir split failed", Err: err}
 	}
 	c.mu.Lock()
 	c.shares = make([]string, len(raw))
@@ -747,6 +748,48 @@ func TestBarrierDeleteRecoveryKeys(t *testing.T) {
 		resultMap := result.(map[string]interface{})
 		assert.True(t, resultMap["success"].(bool))
 		assert.Equal(t, "recovery keys deleted", resultMap["message"])
+	})
+}
+
+// TestBarrierHasRecoveryKeys tests the barrier.hasRecoveryKeys handler, which
+// reports whether recovery keys have been provisioned. This is the MCP-transport
+// peer of the gRPC/unix BarrierHasRecoveryKeys RPC.
+func TestBarrierHasRecoveryKeys(t *testing.T) {
+	t.Run("returns error when barrier not configured", func(t *testing.T) {
+		server := createTestServer(t)
+		defer cleanupXKMS()
+
+		req := makeReq("barrier.hasRecoveryKeys", nil)
+		_, err := server.handleBarrierHasRecoveryKeys(context.Background(), req)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+	})
+
+	t.Run("reports false before and true after generating recovery keys", func(t *testing.T) {
+		server, _, _, _ := createTestBarrierServer(t)
+		defer cleanupXKMS()
+
+		// Initialize the barrier.
+		initReq := makeReq("barrier.initializeShamir", BarrierInitializeShamirParams{})
+		_, err := server.handleBarrierInitializeShamir(context.Background(), initReq)
+		require.NoError(t, err)
+
+		// No recovery keys yet.
+		beforeReq := makeReq("barrier.hasRecoveryKeys", nil)
+		beforeResult, err := server.handleBarrierHasRecoveryKeys(context.Background(), beforeReq)
+		require.NoError(t, err)
+		assert.False(t, beforeResult.(map[string]interface{})["has_keys"].(bool))
+
+		// Generate recovery keys.
+		genReq := makeReq("barrier.generateRecoveryKeys", BarrierGenerateRecoveryKeysParams{Threshold: 2, Total: 3})
+		_, err = server.handleBarrierGenerateRecoveryKeys(context.Background(), genReq)
+		require.NoError(t, err)
+
+		// Now they are reported as present.
+		afterReq := makeReq("barrier.hasRecoveryKeys", nil)
+		afterResult, err := server.handleBarrierHasRecoveryKeys(context.Background(), afterReq)
+		require.NoError(t, err)
+		assert.True(t, afterResult.(map[string]interface{})["has_keys"].(bool))
 	})
 }
 

@@ -66,8 +66,31 @@ type XKMSService struct {
 	// ErrNotConfigured) until wired by the server or application.
 	barrier         *seal.Barrier
 	barrierRegistry *seal.BarrierRegistry
-	pinManager      qrdbsdk.PINBackend
-	passwordStore   *staticpw.BackendStore
+
+	// encMigrator enables at-rest encryption on a previously-unencrypted
+	// barrier by migrating it to a keyed strategy in place. It is the embedded
+	// go-qrdb node (which satisfies EncryptionMigrator). Nil in wiring that has
+	// no migratable backend, in which case BarrierEnableEncryption reports
+	// ErrNotConfigured.
+	encMigrator EncryptionMigrator
+
+	// migrationsInFlight tracks enable-encryption migrations currently running,
+	// keyed by barrier scope, so BarrierEnableEncryption is single-flight per
+	// scope. Concurrent migrations on the same scope would race on the barrier's
+	// swap/in-place rewrite and corrupt it. The zero value is ready to use;
+	// entries are added before the goroutine launches and removed when it exits.
+	migrationsInFlight sync.Map
+
+	// tenantService is go-qrdb's canonical TenantService, composed over the
+	// barrier registry with xkms hardware seal strategies injected. When set it
+	// owns tenant lifecycle: entitlement-gated isolation modes, system-managed
+	// auto-unseal, quotas, and per-tenant hardware/cloud barrier sealing. The
+	// tenant servicer methods delegate to it. It is nil in legacy wiring, where
+	// the servicer falls back to direct barrierRegistry operations.
+	tenantService qrdbsdk.ServiceTenantServicer
+
+	pinManager    qrdbsdk.PINBackend
+	passwordStore *staticpw.BackendStore
 
 	// users and roles are the embedded qrdb node's identity clients. xkms
 	// presents its own user-management API on top of them, so callers only
@@ -162,6 +185,10 @@ func (s *XKMSService) SPIFFETrustDomain() string {
 // SetBarrier sets the barrier subsystem for seal/unseal operations.
 func (s *XKMSService) SetBarrier(b *seal.Barrier) { s.barrier = b }
 
+// SetEncryptionMigrator sets the encryption-migration subsystem used by
+// BarrierEnableEncryption. It is the embedded go-qrdb node.
+func (s *XKMSService) SetEncryptionMigrator(m EncryptionMigrator) { s.encMigrator = m }
+
 // SetPINManager sets the PIN backend subsystem.
 func (s *XKMSService) SetPINManager(p qrdbsdk.PINBackend) { s.pinManager = p }
 
@@ -212,6 +239,16 @@ func (s *XKMSService) SetClusterClient(c ClusterReader, shardID, nodeID uint64) 
 
 // SetBarrierRegistry sets the barrier registry for multi-tenant barrier management.
 func (s *XKMSService) SetBarrierRegistry(r *seal.BarrierRegistry) { s.barrierRegistry = r }
+
+// SetTenantService injects go-qrdb's TenantService so the tenant servicer
+// delegates lifecycle (entitlement-gated isolation, system-managed auto-unseal,
+// quotas, per-tenant hardware barrier sealing) to the canonical implementation
+// instead of operating the barrier registry directly.
+func (s *XKMSService) SetTenantService(t qrdbsdk.ServiceTenantServicer) { s.tenantService = t }
+
+// TenantService returns the composed go-qrdb TenantService, or nil when the
+// service was wired with the legacy barrier-registry-only path.
+func (s *XKMSService) TenantService() qrdbsdk.ServiceTenantServicer { return s.tenantService }
 
 // SetPasswordStoreManager sets the per-tenant password store manager.
 func (s *XKMSService) SetPasswordStoreManager(m *staticpw.TenantPasswordStoreManager) {

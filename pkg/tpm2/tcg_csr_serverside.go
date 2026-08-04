@@ -9,6 +9,8 @@ import (
 	"math"
 	"math/big"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 )
 
@@ -40,7 +42,7 @@ func VerifyTCG_CSR_IDevID_Stateless(
 
 	// Validate hash algorithm ID bounds before conversion (G115)
 	if unpacked.CsrContents.HashAlgoId > math.MaxUint16 {
-		return nil, nil, fmt.Errorf("hash algorithm ID too large: %d", unpacked.CsrContents.HashAlgoId)
+		return nil, nil, &errs.Message{Msg: fmt.Sprintf("hash algorithm ID too large: %d", unpacked.CsrContents.HashAlgoId)}
 	}
 
 	// Parse TPM hash algorithm
@@ -143,7 +145,7 @@ func VerifyTCG_CSR_IAK_Stateless(
 
 	// Validate hash algorithm ID bounds before conversion (G115)
 	if unpacked.CsrContents.HashAlgoId > math.MaxUint16 {
-		return nil, nil, fmt.Errorf("hash algorithm ID too large: %d", unpacked.CsrContents.HashAlgoId)
+		return nil, nil, &errs.Message{Msg: fmt.Sprintf("hash algorithm ID too large: %d", unpacked.CsrContents.HashAlgoId)}
 	}
 
 	// Parse TPM hash algorithm

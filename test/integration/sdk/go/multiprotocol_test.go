@@ -32,7 +32,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // ProtocolType represents a supported SDK protocol.
@@ -1019,13 +1021,13 @@ func generateTestCertificatePEM() (string, error) {
 	// Generate a new ECDSA private key
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate private key: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to generate private key", Err: err}
 	}
 
 	// Create a self-signed certificate template
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return "", fmt.Errorf("failed to generate serial number: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to generate serial number", Err: err}
 	}
 
 	template := x509.Certificate{
@@ -1044,7 +1046,7 @@ func generateTestCertificatePEM() (string, error) {
 	// Create the certificate (self-signed)
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
 	if err != nil {
-		return "", fmt.Errorf("failed to create certificate: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to create certificate", Err: err}
 	}
 
 	// Encode to PEM

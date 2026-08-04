@@ -15,7 +15,8 @@ package config
 
 import (
 	"errors"
-	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // Error types returned when validating the ACME configuration section.
@@ -112,6 +113,16 @@ type ACMEChallengesConfig struct {
 
 	// DNS01 enables the dns-01 challenge verifier (RFC 8555 Section 8.4).
 	DNS01 bool `yaml:"dns01"`
+
+	// Enroll01 enables the enroll-01 TPM-attestation challenge: TCG-CSR-IDEVID
+	// device enrollment proven via TPM2_MakeCredential/ActivateCredential. The
+	// issued IAK + IDevID certificates root device identity in the TPM.
+	Enroll01 bool `yaml:"enroll01"`
+
+	// Endorse01 enables the endorse-01 challenge: EK-certificate issuance for
+	// TPMs without a manufacturer EK cert. Server-side verification is a no-op;
+	// issuance is gated by External Account Binding (EAB).
+	Endorse01 bool `yaml:"endorse01"`
 }
 
 // ACMETLSConfig configures TLS for the ACME listener. These values are only
@@ -157,8 +168,8 @@ func (c *ACMEConfig) Validate() error {
 	if !c.ReuseTLS && (c.TLS.CertFile == "" || c.TLS.KeyFile == "") {
 		return ErrACMEMissingTLS
 	}
-	if !c.Challenges.HTTP01 && !c.Challenges.DNS01 {
-		return fmt.Errorf("acme: at least one challenge type must be enabled (challenges.http01 or challenges.dns01)")
+	if !c.Challenges.HTTP01 && !c.Challenges.DNS01 && !c.Challenges.Enroll01 && !c.Challenges.Endorse01 {
+		return &errs.Message{Msg: "acme: at least one challenge type must be enabled (challenges.http01, dns01, enroll01, or endorse01)"}
 	}
 	return nil
 }

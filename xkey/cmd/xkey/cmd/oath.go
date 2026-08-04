@@ -223,7 +223,7 @@ func runOATHAdd(cmd *cobra.Command, args []string) error {
 
 	store, err := oath.NewFileStore(storePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOATHStoreOpenFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
@@ -233,7 +233,7 @@ func runOATHAdd(cmd *cobra.Command, args []string) error {
 		// Parse from URI
 		cred, err = oath.ParseURI(uri)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrOATHInvalidURI, err)
+			return &SentinelCauseError{Sentinel: ErrOATHInvalidURI, Cause: err}
 		}
 		// Allow name override
 		if name != "" {
@@ -261,12 +261,12 @@ func runOATHAdd(cmd *cobra.Command, args []string) error {
 		}
 
 		if err := cred.Validate(); err != nil {
-			return fmt.Errorf("%w: %v", ErrOATHInvalidCredential, err)
+			return &SentinelCauseError{Sentinel: ErrOATHInvalidCredential, Cause: err}
 		}
 	}
 
 	if err := store.Add(cred); err != nil {
-		return fmt.Errorf("%w: %v", ErrOATHAddFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOATHAddFailed, Cause: err}
 	}
 
 	fmt.Printf("Added OATH credential: %s\n", cred.Name)
@@ -286,13 +286,13 @@ func runOATHList(cmd *cobra.Command, args []string) error {
 			fmt.Println("No OATH credentials found.")
 			return nil
 		}
-		return fmt.Errorf("%w: %v", ErrOATHStoreOpenFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
 	creds, err := store.List()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOATHListFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOATHListFailed, Cause: err}
 	}
 
 	if len(creds) == 0 {
@@ -334,7 +334,7 @@ func runOATHGenerate(cmd *cobra.Command, args []string) error {
 
 	store, err := oath.NewFileStore(storePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOATHStoreOpenFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
@@ -342,7 +342,7 @@ func runOATHGenerate(cmd *cobra.Command, args []string) error {
 		// Generate for all credentials
 		creds, err := store.List()
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrOATHListFailed, err)
+			return &SentinelCauseError{Sentinel: ErrOATHListFailed, Cause: err}
 		}
 
 		if len(creds) == 0 {
@@ -434,7 +434,7 @@ func runOATHRemove(cmd *cobra.Command, args []string) error {
 
 	store, err := oath.NewFileStore(storePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOATHStoreOpenFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
@@ -516,7 +516,7 @@ func runOATHScan(cmd *cobra.Command, args []string) error {
 			fmt.Println("Found QR code(s) but none contain valid otpauth:// URIs.")
 			return ErrOATHNoQRFound
 		}
-		return fmt.Errorf("%w: %v", ErrOATHScanFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOATHScanFailed, Cause: err}
 	}
 
 	// Handle multiple results
@@ -550,7 +550,7 @@ func runOATHScan(cmd *cobra.Command, args []string) error {
 	// Parse the URI
 	cred, err := oath.ParseURI(selectedResult.URI)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOATHInvalidURI, err)
+		return &SentinelCauseError{Sentinel: ErrOATHInvalidURI, Cause: err}
 	}
 
 	// Apply name override if specified
@@ -578,7 +578,7 @@ func runOATHScan(cmd *cobra.Command, args []string) error {
 		fmt.Print("Add this credential? [Y/n]: ")
 		confirm, err := reader.ReadString('\n')
 		if err != nil {
-			return fmt.Errorf("failed to read input: %w", err)
+			return &WrappedError{Msg: "failed to read input", Err: err}
 		}
 		confirm = strings.TrimSpace(strings.ToLower(confirm))
 		if confirm != "" && confirm != "y" && confirm != "yes" {
@@ -590,12 +590,12 @@ func runOATHScan(cmd *cobra.Command, args []string) error {
 	// Open store and add credential
 	store, err := oath.NewFileStore(storePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOATHStoreOpenFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
 	}
 	defer func() { _ = store.Close() }()
 
 	if err := store.Add(cred); err != nil {
-		return fmt.Errorf("%w: %v", ErrOATHAddFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOATHAddFailed, Cause: err}
 	}
 
 	fmt.Printf("Added OATH credential: %s\n", cred.Name)

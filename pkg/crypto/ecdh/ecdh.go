@@ -43,6 +43,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -55,33 +57,32 @@ import (
 // For actual encryption keys, use DeriveKey() with the returned shared secret.
 func DeriveSharedSecret(privateKey *ecdsa.PrivateKey, publicKey *ecdsa.PublicKey) ([]byte, error) {
 	if privateKey == nil {
-		return nil, fmt.Errorf("private key cannot be nil")
+		return nil, &errs.Message{Msg: "private key cannot be nil"}
 	}
 	if publicKey == nil {
-		return nil, fmt.Errorf("public key cannot be nil")
+		return nil, &errs.Message{Msg: "public key cannot be nil"}
 	}
 
 	// Check that curves match
 	if privateKey.Curve != publicKey.Curve {
-		return nil, fmt.Errorf("curve mismatch: private key uses %s, public key uses %s",
-			privateKey.Curve.Params().Name, publicKey.Curve.Params().Name)
+		return nil, &errs.Message{Msg: fmt.Sprintf("curve mismatch: private key uses %s, public key uses %s", privateKey.Curve.Params().Name, publicKey.Curve.Params().Name)}
 	}
 
 	// Convert ECDSA keys to crypto/ecdh keys
 	ecdhPriv, err := ecdsaToECDH(privateKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert private key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to convert private key", Err: err}
 	}
 
 	ecdhPub, err := ecdsaPublicToECDH(publicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to convert public key", Err: err}
 	}
 
 	// Perform ECDH
 	sharedSecret, err := ecdhPriv.ECDH(ecdhPub)
 	if err != nil {
-		return nil, fmt.Errorf("ECDH operation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "ECDH operation failed", Err: err}
 	}
 
 	return sharedSecret, nil
@@ -105,10 +106,10 @@ func DeriveSharedSecret(privateKey *ecdsa.PrivateKey, publicKey *ecdsa.PublicKey
 //	macKey, _ := DeriveKey(secret, nil, []byte("hmac-sha256"), 32)
 func DeriveKey(sharedSecret, salt, info []byte, keyLength int) ([]byte, error) {
 	if sharedSecret == nil {
-		return nil, fmt.Errorf("shared secret cannot be nil")
+		return nil, &errs.Message{Msg: "shared secret cannot be nil"}
 	}
 	if keyLength <= 0 {
-		return nil, fmt.Errorf("key length must be positive, got %d", keyLength)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key length must be positive, got %d", keyLength)}
 	}
 
 	// Create HKDF reader using SHA-256
@@ -117,7 +118,7 @@ func DeriveKey(sharedSecret, salt, info []byte, keyLength int) ([]byte, error) {
 	// Derive key
 	derivedKey := make([]byte, keyLength)
 	if _, err := io.ReadFull(hkdfReader, derivedKey); err != nil {
-		return nil, fmt.Errorf("HKDF derivation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "HKDF derivation failed", Err: err}
 	}
 
 	return derivedKey, nil
@@ -129,7 +130,7 @@ func ecdsaToECDH(key *ecdsa.PrivateKey) (*ecdh.PrivateKey, error) {
 	// Use the native ECDH() method for conversion (Go 1.20+)
 	ecdhKey, err := key.ECDH()
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert ECDSA to ECDH private key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to convert ECDSA to ECDH private key", Err: err}
 	}
 	return ecdhKey, nil
 }
@@ -140,7 +141,7 @@ func ecdsaPublicToECDH(key *ecdsa.PublicKey) (*ecdh.PublicKey, error) {
 	// Use the native ECDH() method for conversion (Go 1.20+)
 	ecdhKey, err := key.ECDH()
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert ECDSA to ECDH public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to convert ECDSA to ECDH public key", Err: err}
 	}
 	return ecdhKey, nil
 }

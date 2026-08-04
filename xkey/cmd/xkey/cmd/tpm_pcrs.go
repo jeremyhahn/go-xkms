@@ -115,8 +115,7 @@ func runTPMPCRs(cmd *cobra.Command, args []string) error {
 		case "sha1", "sha256", "sha384", "sha512":
 			// Valid
 		default:
-			return fmt.Errorf("%w: invalid bank '%s' (valid: sha1, sha256, sha384, sha512)",
-				ErrInvalidPCRBank, pcrsBank)
+			return &DetailError{Err: ErrInvalidPCRBank, Detail: fmt.Sprintf(": invalid bank '%s' (valid: sha1, sha256, sha384, sha512)", pcrsBank)}
 		}
 	}
 
@@ -130,7 +129,7 @@ func runTPMPCRs(cmd *cobra.Command, args []string) error {
 	// Read PCRs
 	banks, err := tpm.ReadPCRs(indices)
 	if err != nil {
-		return fmt.Errorf("%w: failed to read PCRs: %v", ErrTPMOperationFailed, err)
+		return &DetailError{Err: ErrTPMOperationFailed, Detail: fmt.Sprintf(": failed to read PCRs: %v", err)}
 	}
 
 	// Build output
@@ -184,21 +183,21 @@ func parsePCRIndicesForPCRs(pcrString string) ([]uint, error) {
 		if strings.Contains(part, "-") {
 			rangeParts := strings.Split(part, "-")
 			if len(rangeParts) != 2 {
-				return nil, fmt.Errorf("%w: invalid range '%s'", ErrInvalidPCRIndices, part)
+				return nil, &DetailError{Err: ErrInvalidPCRIndices, Detail: fmt.Sprintf(": invalid range '%s'", part)}
 			}
 
 			start, err := strconv.ParseUint(strings.TrimSpace(rangeParts[0]), 10, 32)
 			if err != nil {
-				return nil, fmt.Errorf("%w: invalid range start '%s'", ErrInvalidPCRIndices, rangeParts[0])
+				return nil, &DetailError{Err: ErrInvalidPCRIndices, Detail: fmt.Sprintf(": invalid range start '%s'", rangeParts[0])}
 			}
 
 			end, err := strconv.ParseUint(strings.TrimSpace(rangeParts[1]), 10, 32)
 			if err != nil {
-				return nil, fmt.Errorf("%w: invalid range end '%s'", ErrInvalidPCRIndices, rangeParts[1])
+				return nil, &DetailError{Err: ErrInvalidPCRIndices, Detail: fmt.Sprintf(": invalid range end '%s'", rangeParts[1])}
 			}
 
 			if start > end || end > 23 {
-				return nil, fmt.Errorf("%w: invalid range %d-%d", ErrInvalidPCRIndices, start, end)
+				return nil, &DetailError{Err: ErrInvalidPCRIndices, Detail: fmt.Sprintf(": invalid range %d-%d", start, end)}
 			}
 
 			for i := start; i <= end; i++ {
@@ -207,11 +206,11 @@ func parsePCRIndicesForPCRs(pcrString string) ([]uint, error) {
 		} else {
 			idx, err := strconv.ParseUint(part, 10, 32)
 			if err != nil {
-				return nil, fmt.Errorf("%w: invalid PCR index '%s'", ErrInvalidPCRIndices, part)
+				return nil, &DetailError{Err: ErrInvalidPCRIndices, Detail: fmt.Sprintf(": invalid PCR index '%s'", part)}
 			}
 
 			if idx > 23 {
-				return nil, fmt.Errorf("%w: PCR index %d out of range (0-23)", ErrInvalidPCRIndices, idx)
+				return nil, &DetailError{Err: ErrInvalidPCRIndices, Detail: fmt.Sprintf(": PCR index %d out of range (0-23)", idx)}
 			}
 
 			pcrs = append(pcrs, uint(idx))
@@ -219,7 +218,7 @@ func parsePCRIndicesForPCRs(pcrString string) ([]uint, error) {
 	}
 
 	if len(pcrs) == 0 {
-		return nil, fmt.Errorf("%w: no valid PCR indices specified", ErrInvalidPCRIndices)
+		return nil, &DetailError{Err: ErrInvalidPCRIndices, Detail: ": no valid PCR indices specified"}
 	}
 
 	return pcrs, nil

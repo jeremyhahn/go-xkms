@@ -26,11 +26,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
-	"github.com/jeremyhahn/go-xkms/pkg/health"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/verification"
@@ -53,9 +54,9 @@ type HandlerContext struct {
 
 // HealthChecker defines the interface for health checking.
 type HealthChecker interface {
-	Live(ctx context.Context) health.CheckResult
-	Ready(ctx context.Context) []health.CheckResult
-	Startup(ctx context.Context) health.CheckResult
+	Live(ctx context.Context) qrdbsdk.HealthCheckResult
+	Ready(ctx context.Context) []qrdbsdk.HealthCheckResult
+	Startup(ctx context.Context) qrdbsdk.HealthCheckResult
 }
 
 // NewHandlerContext creates a new handler context.
@@ -215,7 +216,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 
 	// Validate KeyID for security (prevent path traversal, injection)
 	if err := ValidateKeyID(req.KeyID); err != nil {
-		writeError(w, fmt.Errorf("invalid key ID: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid key ID", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -226,7 +227,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 
 	// Validate backend name
 	if err := ValidateBackendName(req.Backend); err != nil {
-		writeError(w, fmt.Errorf("invalid backend: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -310,7 +311,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 		// Check if backend supports symmetric operations
 		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 		if !ok {
-			writeError(w, fmt.Errorf("backend does not support symmetric key generation"), http.StatusBadRequest)
+			writeError(w, &errs.Message{Msg: "backend does not support symmetric key generation"}, http.StatusBadRequest)
 			return
 		}
 
@@ -507,6 +508,19 @@ func (h *HandlerContext) GetKeyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // SignHandler handles POST /api/v1/keys/{id}/sign requests.
+// backendFromRequest resolves the target backend for a crypto request from
+// either the "backend" URL query parameter or the decoded request body's
+// backend field. The query parameter wins when both are present. Every crypto
+// *Request DTO advertises a body "backend" field, so accepting it keeps these
+// handlers consistent with GenerateKey (which reads the body) and avoids a
+// confusing 400 for clients that follow the DTO instead of the query string.
+func backendFromRequest(r *http.Request, bodyBackend string) string {
+	if q := r.URL.Query().Get("backend"); q != "" {
+		return q
+	}
+	return bodyBackend
+}
+
 func (h *HandlerContext) SignHandler(w http.ResponseWriter, r *http.Request) {
 	keyID := chi.URLParam(r, "id")
 	if keyID == "" {
@@ -514,15 +528,15 @@ func (h *HandlerContext) SignHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backendID := r.URL.Query().Get("backend")
-	if backendID == "" {
-		writeError(w, ErrMissingBackend, http.StatusBadRequest)
-		return
-	}
-
 	var req SignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+
+	backendID := backendFromRequest(r, req.Backend)
+	if backendID == "" {
+		writeError(w, ErrMissingBackend, http.StatusBadRequest)
 		return
 	}
 
@@ -611,15 +625,15 @@ func (h *HandlerContext) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backendID := r.URL.Query().Get("backend")
-	if backendID == "" {
-		writeError(w, ErrMissingBackend, http.StatusBadRequest)
-		return
-	}
-
 	var req VerifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+
+	backendID := backendFromRequest(r, req.Backend)
+	if backendID == "" {
+		writeError(w, ErrMissingBackend, http.StatusBadRequest)
 		return
 	}
 
@@ -834,15 +848,15 @@ func (h *HandlerContext) EncryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	backendID := r.URL.Query().Get("backend")
-	if backendID == "" {
-		writeError(w, ErrMissingBackend, http.StatusBadRequest)
-		return
-	}
-
 	var req EncryptRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+
+	backendID := backendFromRequest(r, req.Backend)
+	if backendID == "" {
+		writeError(w, ErrMissingBackend, http.StatusBadRequest)
 		return
 	}
 
@@ -876,7 +890,7 @@ func (h *HandlerContext) EncryptHandler(w http.ResponseWriter, r *http.Request) 
 	// Get the backend and check if it supports symmetric encryption
 	symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 	if !ok {
-		writeError(w, fmt.Errorf("backend does not support symmetric encryption"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "backend does not support symmetric encryption"}, http.StatusBadRequest)
 		return
 	}
 
@@ -916,15 +930,15 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	backendID := r.URL.Query().Get("backend")
-	if backendID == "" {
-		writeError(w, ErrMissingBackend, http.StatusBadRequest)
-		return
-	}
-
 	var req DecryptRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+
+	backendID := backendFromRequest(r, req.Backend)
+	if backendID == "" {
+		writeError(w, ErrMissingBackend, http.StatusBadRequest)
 		return
 	}
 
@@ -961,7 +975,7 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		// Symmetric decryption path
 		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 		if !ok {
-			writeError(w, fmt.Errorf("backend does not support symmetric decryption"), http.StatusBadRequest)
+			writeError(w, &errs.Message{Msg: "backend does not support symmetric decryption"}, http.StatusBadRequest)
 			return
 		}
 
@@ -1030,15 +1044,15 @@ func (h *HandlerContext) EncryptAsymHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	backendID := r.URL.Query().Get("backend")
-	if backendID == "" {
-		writeError(w, ErrMissingBackend, http.StatusBadRequest)
-		return
-	}
-
 	var req EncryptAsymRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+
+	backendID := backendFromRequest(r, req.Backend)
+	if backendID == "" {
+		writeError(w, ErrMissingBackend, http.StatusBadRequest)
 		return
 	}
 
@@ -1083,7 +1097,7 @@ func (h *HandlerContext) EncryptAsymHandler(w http.ResponseWriter, r *http.Reque
 	case crypto.Signer:
 		publicKey = k.Public()
 	default:
-		writeError(w, fmt.Errorf("key does not support public key extraction"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "key does not support public key extraction"}, http.StatusBadRequest)
 		return
 	}
 
@@ -1100,7 +1114,7 @@ func (h *HandlerContext) EncryptAsymHandler(w http.ResponseWriter, r *http.Reque
 	case "1", "sha1":
 		hashFunc = crypto.SHA1
 	default:
-		writeError(w, fmt.Errorf("unsupported hash algorithm: %s", req.Hash), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", req.Hash)}, http.StatusBadRequest)
 		return
 	}
 
@@ -1122,7 +1136,7 @@ func (h *HandlerContext) EncryptAsymHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	default:
-		writeError(w, fmt.Errorf("asymmetric encryption only supported for RSA keys, got: %T", pub), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: fmt.Sprintf("asymmetric encryption only supported for RSA keys, got: %T", pub)}, http.StatusBadRequest)
 		return
 	}
 
@@ -1163,7 +1177,7 @@ func (h *HandlerContext) SaveCertHandler(w http.ResponseWriter, r *http.Request)
 	cert, err := encoding.DecodeCertificatePEM([]byte(req.CertificatePEM))
 	if err != nil {
 		log.Printf("Failed to parse certificate: %v", err)
-		writeError(w, fmt.Errorf("invalid certificate PEM: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid certificate PEM", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -1365,7 +1379,7 @@ func (h *HandlerContext) SaveCertChainHandler(w http.ResponseWriter, r *http.Req
 		cert, err := encoding.DecodeCertificatePEM([]byte(certPEM))
 		if err != nil {
 			log.Printf("Failed to parse certificate at index %d: %v", i, err)
-			writeError(w, fmt.Errorf("invalid certificate PEM at index %d: %w", i, err), http.StatusBadRequest)
+			writeError(w, &errs.Wrapped{Msg: fmt.Sprintf("invalid certificate PEM at index %d", i), Err: err}, http.StatusBadRequest)
 			return
 		}
 		chain = append(chain, cert)
@@ -1535,7 +1549,7 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 
 	// Validate backend name
 	if err := ValidateBackendName(req.Backend); err != nil {
-		writeError(w, fmt.Errorf("invalid backend: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -1546,7 +1560,7 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 
 	// Validate KeyID for security
 	if err := ValidateKeyID(req.KeyID); err != nil {
-		writeError(w, fmt.Errorf("invalid key ID: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid key ID", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -1555,7 +1569,7 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 		return
 	}
 	if req.Algorithm == "" {
-		writeError(w, fmt.Errorf("missing wrapping algorithm"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing wrapping algorithm"}, http.StatusBadRequest)
 		return
 	}
 
@@ -1569,7 +1583,7 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 	// Check if backend supports import/export
 	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
-		writeError(w, fmt.Errorf("backend does not support import/export operations"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "backend does not support import/export operations"}, http.StatusBadRequest)
 		return
 	}
 
@@ -1624,15 +1638,15 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Validate required fields
 	if len(req.KeyMaterial) == 0 {
-		writeError(w, fmt.Errorf("missing key material"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing key material"}, http.StatusBadRequest)
 		return
 	}
 	if req.WrappingPublicKeyPEM == "" {
-		writeError(w, fmt.Errorf("missing wrapping public key"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing wrapping public key"}, http.StatusBadRequest)
 		return
 	}
 	if req.Algorithm == "" {
-		writeError(w, fmt.Errorf("missing wrapping algorithm"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing wrapping algorithm"}, http.StatusBadRequest)
 		return
 	}
 
@@ -1640,7 +1654,7 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 	wrappingKey, err := encoding.DecodePublicKeyPEM([]byte(req.WrappingPublicKeyPEM))
 	if err != nil {
 		log.Printf("Failed to decode wrapping public key: %v", err)
-		writeError(w, fmt.Errorf("invalid wrapping public key: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid wrapping public key", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -1667,7 +1681,7 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if importExportBackend == nil {
-		writeError(w, fmt.Errorf("no backend supports import/export operations"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "no backend supports import/export operations"}, http.StatusBadRequest)
 		return
 	}
 
@@ -1698,15 +1712,15 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 
 	// Validate required fields
 	if len(req.WrappedKey) == 0 {
-		writeError(w, fmt.Errorf("missing wrapped key"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing wrapped key"}, http.StatusBadRequest)
 		return
 	}
 	if req.WrappingPublicKeyPEM == "" {
-		writeError(w, fmt.Errorf("missing wrapping public key"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing wrapping public key"}, http.StatusBadRequest)
 		return
 	}
 	if req.Algorithm == "" {
-		writeError(w, fmt.Errorf("missing wrapping algorithm"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing wrapping algorithm"}, http.StatusBadRequest)
 		return
 	}
 
@@ -1714,7 +1728,7 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 	wrappingKey, err := encoding.DecodePublicKeyPEM([]byte(req.WrappingPublicKeyPEM))
 	if err != nil {
 		log.Printf("Failed to decode wrapping public key: %v", err)
-		writeError(w, fmt.Errorf("invalid wrapping public key: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid wrapping public key", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -1746,7 +1760,7 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	if importExportBackend == nil {
-		writeError(w, fmt.Errorf("no backend supports import/export operations"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "no backend supports import/export operations"}, http.StatusBadRequest)
 		return
 	}
 
@@ -1781,7 +1795,7 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 
 	// Validate backend name
 	if err := ValidateBackendName(req.Backend); err != nil {
-		writeError(w, fmt.Errorf("invalid backend: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -1792,7 +1806,7 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 
 	// Validate KeyID for security
 	if err := ValidateKeyID(req.KeyID); err != nil {
-		writeError(w, fmt.Errorf("invalid key ID: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid key ID", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -1801,11 +1815,11 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if len(req.WrappedKey) == 0 {
-		writeError(w, fmt.Errorf("missing wrapped key"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing wrapped key"}, http.StatusBadRequest)
 		return
 	}
 	if req.Algorithm == "" {
-		writeError(w, fmt.Errorf("missing wrapping algorithm"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing wrapping algorithm"}, http.StatusBadRequest)
 		return
 	}
 
@@ -1819,7 +1833,7 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 	// Check if backend supports import/export
 	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
-		writeError(w, fmt.Errorf("backend does not support import/export operations"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "backend does not support import/export operations"}, http.StatusBadRequest)
 		return
 	}
 
@@ -1886,7 +1900,7 @@ func (h *HandlerContext) ExportKeyHandler(w http.ResponseWriter, r *http.Request
 
 	// Validate wrapping algorithm
 	if req.Algorithm == "" {
-		writeError(w, fmt.Errorf("missing wrapping algorithm"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing wrapping algorithm"}, http.StatusBadRequest)
 		return
 	}
 
@@ -1899,7 +1913,7 @@ func (h *HandlerContext) ExportKeyHandler(w http.ResponseWriter, r *http.Request
 	// Check if backend supports import/export
 	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
-		writeError(w, fmt.Errorf("backend does not support import/export operations"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "backend does not support import/export operations"}, http.StatusBadRequest)
 		return
 	}
 
@@ -1960,55 +1974,55 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Validate required fields
 	if req.SourceBackend == "" {
-		writeError(w, fmt.Errorf("missing source_backend"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing source_backend"}, http.StatusBadRequest)
 		return
 	}
 	if req.SourceKeyID == "" {
-		writeError(w, fmt.Errorf("missing source_key_id"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing source_key_id"}, http.StatusBadRequest)
 		return
 	}
 	if req.DestBackend == "" {
-		writeError(w, fmt.Errorf("missing dest_backend"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing dest_backend"}, http.StatusBadRequest)
 		return
 	}
 	if req.DestKeyID == "" {
-		writeError(w, fmt.Errorf("missing dest_key_id"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing dest_key_id"}, http.StatusBadRequest)
 		return
 	}
 	if req.KeyType == "" {
-		writeError(w, fmt.Errorf("missing key_type"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing key_type"}, http.StatusBadRequest)
 		return
 	}
 	if req.Algorithm == "" {
-		writeError(w, fmt.Errorf("missing wrapping algorithm"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "missing wrapping algorithm"}, http.StatusBadRequest)
 		return
 	}
 
 	// Get source backend
 	sourceKS, err := h.lookupBackend(req.SourceBackend)
 	if err != nil {
-		writeError(w, fmt.Errorf("source backend not found: %w", err), http.StatusNotFound)
+		writeError(w, &errs.Wrapped{Msg: "source backend not found", Err: err}, http.StatusNotFound)
 		return
 	}
 
 	// Check if source backend supports import/export
 	sourceBackend, ok := sourceKS.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
-		writeError(w, fmt.Errorf("source backend does not support export operations"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "source backend does not support export operations"}, http.StatusBadRequest)
 		return
 	}
 
 	// Get destination backend
 	destKS, err := h.lookupBackend(req.DestBackend)
 	if err != nil {
-		writeError(w, fmt.Errorf("destination backend not found: %w", err), http.StatusNotFound)
+		writeError(w, &errs.Wrapped{Msg: "destination backend not found", Err: err}, http.StatusNotFound)
 		return
 	}
 
 	// Check if destination backend supports import/export
 	destBackend, ok := destKS.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
-		writeError(w, fmt.Errorf("destination backend does not support import operations"), http.StatusBadRequest)
+		writeError(w, &errs.Message{Msg: "destination backend does not support import operations"}, http.StatusBadRequest)
 		return
 	}
 
@@ -2029,7 +2043,7 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if sourceAttr == nil {
-		writeError(w, fmt.Errorf("source key not found: %s", req.SourceKeyID), http.StatusNotFound)
+		writeError(w, &errs.Message{Msg: fmt.Sprintf("source key not found: %s", req.SourceKeyID)}, http.StatusNotFound)
 		return
 	}
 
@@ -2082,7 +2096,7 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Validate backend name
 	if err := ValidateBackendName(req.Backend); err != nil {
-		writeError(w, fmt.Errorf("invalid backend: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -2094,7 +2108,7 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 	// Validate KeyID if provided
 	if req.KeyID != "" {
 		if err := ValidateKeyID(req.KeyID); err != nil {
-			writeError(w, fmt.Errorf("invalid key ID: %w", err), http.StatusBadRequest)
+			writeError(w, &errs.Wrapped{Msg: "invalid key ID", Err: err}, http.StatusBadRequest)
 			return
 		}
 	}
@@ -2175,7 +2189,7 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Validate backend name
 	if err := ValidateBackendName(req.Backend); err != nil {
-		writeError(w, fmt.Errorf("invalid backend: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -2187,7 +2201,7 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 	// Validate KeyID if provided
 	if req.KeyID != "" {
 		if err := ValidateKeyID(req.KeyID); err != nil {
-			writeError(w, fmt.Errorf("invalid key ID: %w", err), http.StatusBadRequest)
+			writeError(w, &errs.Wrapped{Msg: "invalid key ID", Err: err}, http.StatusBadRequest)
 			return
 		}
 	}
@@ -2273,7 +2287,7 @@ func (h *HandlerContext) CanSealHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Validate backend name
 	if err := ValidateBackendName(backendName); err != nil {
-		writeError(w, fmt.Errorf("invalid backend: %w", err), http.StatusBadRequest)
+		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
 

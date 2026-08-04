@@ -14,10 +14,11 @@
 package services
 
 import (
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"sync"
 	"testing"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -63,14 +63,14 @@ var caBundleCmd = &cobra.Command{
 func getCABundle(cfg *Config) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -78,7 +78,7 @@ func getCABundle(cfg *Config) {
 
 	resp, err := cl.GetCABundle(ctx, &client.GetCABundleRequest{})
 	if err != nil {
-		handleError(fmt.Errorf("failed to get CA bundle: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGetCABundleFailed, Err: err})
 		return
 	}
 
@@ -104,14 +104,14 @@ var caCertificateCmd = &cobra.Command{
 func getCACertificate(cfg *Config, printer *Printer) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -121,7 +121,7 @@ func getCACertificate(cfg *Config, printer *Printer) {
 		Identity: caIdentity,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to get CA certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGetCACertificateFailed, Err: err})
 		return
 	}
 
@@ -174,20 +174,20 @@ func signCSR(cfg *Config, printer *Printer) {
 	// #nosec G304 - CSR file path from CLI argument
 	csrPEM, err := os.ReadFile(caCSRFile)
 	if err != nil {
-		handleError(fmt.Errorf("failed to read CSR file: %w", err))
+		handleError(&WrappedError{Sentinel: ErrReadCSRFileFailed, Err: err})
 		return
 	}
 
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -199,7 +199,7 @@ func signCSR(cfg *Config, printer *Printer) {
 		ValidityDays: caValidity,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to sign CSR: %w", err))
+		handleError(&WrappedError{Sentinel: ErrSignCSRFailed, Err: err})
 		return
 	}
 
@@ -207,7 +207,7 @@ func signCSR(cfg *Config, printer *Printer) {
 	if caOutputFile != "" {
 		// #nosec G306 - Certificate files need to be readable
 		if err := os.WriteFile(caOutputFile, resp.CertificatePEM, 0644); err != nil {
-			handleError(fmt.Errorf("failed to write certificate: %w", err))
+			handleError(&WrappedError{Sentinel: ErrWriteCertificateFailed, Err: err})
 			return
 		}
 		printVerbose("Signed certificate written to: %s", caOutputFile)
@@ -271,14 +271,14 @@ func issueCACertificate(cfg *Config, printer *Printer) {
 
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -293,7 +293,7 @@ func issueCACertificate(cfg *Config, printer *Printer) {
 		Algorithm:    caAlgorithm,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to issue certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrIssueCertificateFailed, Err: err})
 		return
 	}
 
@@ -301,7 +301,7 @@ func issueCACertificate(cfg *Config, printer *Printer) {
 	if caOutputFile != "" {
 		// #nosec G306 - Certificate files need to be readable
 		if err := os.WriteFile(caOutputFile, resp.CertificatePEM, 0644); err != nil {
-			handleError(fmt.Errorf("failed to write certificate: %w", err))
+			handleError(&WrappedError{Sentinel: ErrWriteCertificateFailed, Err: err})
 			return
 		}
 		printVerbose("Certificate written to: %s", caOutputFile)
@@ -311,7 +311,7 @@ func issueCACertificate(cfg *Config, printer *Printer) {
 			keyFile := caOutputFile + ".key"
 			// #nosec G306 - Key files should be protected
 			if err := os.WriteFile(keyFile, resp.PrivateKeyPEM, 0600); err != nil {
-				handleError(fmt.Errorf("failed to write private key: %w", err))
+				handleError(&WrappedError{Sentinel: ErrWritePrivateKeyFailed, Err: err})
 				return
 			}
 			printVerbose("Private key written to: %s", keyFile)
@@ -394,14 +394,14 @@ Example:
 func revokeCACertificate(cfg *Config, printer *Printer) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -412,7 +412,7 @@ func revokeCACertificate(cfg *Config, printer *Printer) {
 		Reason:       caRevokeReason,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to revoke certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrRevokeCertificateFailed, Err: err})
 		return
 	}
 
@@ -449,14 +449,14 @@ Example:
 func generateCRL(cfg *Config) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -464,7 +464,7 @@ func generateCRL(cfg *Config) {
 
 	resp, err := cl.GenerateCRL(ctx, &client.GenerateCRLRequest{})
 	if err != nil {
-		handleError(fmt.Errorf("failed to generate CRL: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGenerateCRLFailed, Err: err})
 		return
 	}
 
@@ -472,7 +472,7 @@ func generateCRL(cfg *Config) {
 	if caOutputFile != "" {
 		// #nosec G306 - CRL files need to be readable
 		if err := os.WriteFile(caOutputFile, resp.CRLPEM, 0644); err != nil {
-			handleError(fmt.Errorf("failed to write CRL: %w", err))
+			handleError(&WrappedError{Sentinel: ErrWriteCRLFailed, Err: err})
 			return
 		}
 		fmt.Printf("CRL written to: %s\n", caOutputFile)
@@ -504,14 +504,14 @@ Example:
 func checkRevocationStatus(cfg *Config, printer *Printer) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -521,7 +521,7 @@ func checkRevocationStatus(cfg *Config, printer *Printer) {
 		SerialNumber: caSerial,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to check revocation status: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCheckRevocationStatusFailed, Err: err})
 		return
 	}
 

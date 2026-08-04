@@ -21,7 +21,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 
-	"github.com/jeremyhahn/go-xkms/sdk/go"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // ConnectionInfo describes the current server connection state.

@@ -154,9 +154,9 @@ type fakePublicKey struct {
 	typ string
 }
 
-func (f fakePublicKey) Type() string                              { return f.typ }
-func (f fakePublicKey) Marshal() []byte                           { return nil }
-func (f fakePublicKey) Verify(_ []byte, _ *ssh.Signature) error  { return nil }
+func (f fakePublicKey) Type() string                            { return f.typ }
+func (f fakePublicKey) Marshal() []byte                         { return nil }
+func (f fakePublicKey) Verify(_ []byte, _ *ssh.Signature) error { return nil }
 
 func TestAlgorithmFromPublicKey_Fallback_Ed25519(t *testing.T) {
 	got, err := keys.AlgorithmFromPublicKey(fakePublicKey{typ: ssh.KeyAlgoED25519})
@@ -415,13 +415,13 @@ func (b *keysPayloadBackend) Get(_ context.Context, _ string) ([]byte, error) {
 func (b *keysPayloadBackend) Scan(_ context.Context, _ string, fn func(string, []byte) error) error {
 	return fn("k", b.data)
 }
-func (b *keysPayloadBackend) Put(_ context.Context, _ string, _ []byte) error         { return nil }
+func (b *keysPayloadBackend) Put(_ context.Context, _ string, _ []byte) error { return nil }
 func (b *keysPayloadBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
 	return true, nil
 }
-func (b *keysPayloadBackend) Delete(_ context.Context, _ string) error         { return nil }
+func (b *keysPayloadBackend) Delete(_ context.Context, _ string) error           { return nil }
 func (b *keysPayloadBackend) List(_ context.Context, _ string) ([]string, error) { return nil, nil }
-func (b *keysPayloadBackend) Exists(_ context.Context, _ string) (bool, error) { return true, nil }
+func (b *keysPayloadBackend) Exists(_ context.Context, _ string) (bool, error)   { return true, nil }
 func (b *keysPayloadBackend) Close() error                                       { return nil }
 
 func TestBackendStore_Put_StorageError(t *testing.T) {

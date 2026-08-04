@@ -6,7 +6,7 @@
   import SearchBar from '$lib/components/SearchBar.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Input from '$lib/components/Input.svelte';
-  import PasswordFolderTree from '$lib/components/PasswordFolderTree.svelte';
+  import FolderTree from '$lib/components/FolderTree.svelte';
   import PasswordListItem from '$lib/components/PasswordListItem.svelte';
   import PasswordDetailPanel from '$lib/components/PasswordDetailPanel.svelte';
   import PasswordAddEditDialog from '$lib/components/PasswordAddEditDialog.svelte';
@@ -529,10 +529,11 @@
   <div class="content">
     <div class="three-panel">
         <aside class="panel-left">
-          <PasswordFolderTree
+          <FolderTree
             {folders}
             {selectedFolder}
-            {passwordCounts}
+            counts={passwordCounts}
+            allLabel="All Passwords"
             on:select={handleFolderSelect}
             on:createFolder={handleCreateFolder}
             on:createSubfolder={handleCreateSubfolder}

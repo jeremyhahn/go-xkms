@@ -30,6 +30,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 )
@@ -490,7 +492,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 	}
 
 	if dialErr != nil {
-		return fmt.Errorf("%w: %v", ErrConnectionFailed, dialErr)
+		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", dialErr)}
 	}
 
 	t.conn = conn
@@ -508,9 +510,9 @@ func (t *Transport) Connect(ctx context.Context) error {
 		t.connected = false
 		closeErr := conn.Close()
 		if closeErr != nil {
-			return fmt.Errorf("%w: health check failed: %v (close error: %v)", ErrConnectionFailed, healthErr, closeErr)
+			return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("health check failed: %v (close error: %v)", healthErr, closeErr)}
 		}
-		return fmt.Errorf("%w: health check failed: %v", ErrConnectionFailed, healthErr)
+		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("health check failed: %v", healthErr)}
 	}
 	return nil
 }
@@ -614,12 +616,12 @@ func (t *Transport) Request(ctx context.Context, method string, req, resp interf
 }
 
 // RequestStream opens a bidirectional stream (not supported for MCP).
-func (t *Transport) RequestStream(_ context.Context, _ string, _ interface{}) (transport.Stream, error) {
+func (t *Transport) RequestStream(ctx context.Context, _ string, _ interface{}) (transport.Stream, error) {
 	return nil, transport.ErrStreamNotSupported
 }
 
 // rpcCall sends a JSON-RPC 2.0 request and reads the response.
-func (t *Transport) rpcCall(_ context.Context, method string, params interface{}, result interface{}) error {
+func (t *Transport) rpcCall(ctx context.Context, method string, params interface{}, result interface{}) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
@@ -685,337 +687,337 @@ func (t *Transport) rpcCall(_ context.Context, method string, params interface{}
 }
 
 // Health checks the health of the server.
-func (t *Transport) Health(_ context.Context) (*transport.HealthResponse, error) {
+func (t *Transport) Health(ctx context.Context) (*transport.HealthResponse, error) {
 	var result transport.HealthResponse
-	if err := t.rpcCall(context.TODO(), "health", nil, &result); err != nil {
+	if err := t.rpcCall(ctx, "health", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ListBackends returns a list of available backends.
-func (t *Transport) ListBackends(_ context.Context, _ ...transport.ListOption) (*transport.ListBackendsResponse, error) {
+func (t *Transport) ListBackends(ctx context.Context, _ ...transport.ListOption) (*transport.ListBackendsResponse, error) {
 	var result transport.ListBackendsResponse
-	if err := t.rpcCall(context.TODO(), "xkms.listBackends", nil, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.listBackends", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GetBackend returns information about a specific backend.
-func (t *Transport) GetBackend(_ context.Context, backendID string) (*transport.BackendInfo, error) {
+func (t *Transport) GetBackend(ctx context.Context, backendID string) (*transport.BackendInfo, error) {
 	params := map[string]string{"backend": backendID}
 	var result transport.BackendInfo
-	if err := t.rpcCall(context.TODO(), "xkms.getBackend", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.getBackend", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GenerateKey generates a new key.
-func (t *Transport) GenerateKey(_ context.Context, req *transport.GenerateKeyRequest) (*transport.GenerateKeyResponse, error) {
+func (t *Transport) GenerateKey(ctx context.Context, req *transport.GenerateKeyRequest) (*transport.GenerateKeyResponse, error) {
 	var result transport.GenerateKeyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.generateKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.generateKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ListKeys returns a list of keys in the specified backend.
-func (t *Transport) ListKeys(_ context.Context, backend string, _ ...transport.ListOption) (*transport.ListKeysResponse, error) {
+func (t *Transport) ListKeys(ctx context.Context, backend string, _ ...transport.ListOption) (*transport.ListKeysResponse, error) {
 	params := map[string]string{"backend": backend}
 	var result transport.ListKeysResponse
-	if err := t.rpcCall(context.TODO(), "xkms.listKeys", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.listKeys", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GetKey returns information about a specific key.
-func (t *Transport) GetKey(_ context.Context, backend, keyID string) (*transport.GetKeyResponse, error) {
+func (t *Transport) GetKey(ctx context.Context, backend, keyID string) (*transport.GetKeyResponse, error) {
 	params := map[string]string{"key_id": keyID, "backend": backend}
 	var result transport.GetKeyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.getKey", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.getKey", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // DeleteKey deletes a key.
-func (t *Transport) DeleteKey(_ context.Context, backend, keyID string) (*transport.DeleteKeyResponse, error) {
+func (t *Transport) DeleteKey(ctx context.Context, backend, keyID string) (*transport.DeleteKeyResponse, error) {
 	params := map[string]string{"key_id": keyID, "backend": backend}
 	var result transport.DeleteKeyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.deleteKey", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.deleteKey", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // Sign signs data with the specified key.
-func (t *Transport) Sign(_ context.Context, req *transport.SignRequest) (*transport.SignResponse, error) {
+func (t *Transport) Sign(ctx context.Context, req *transport.SignRequest) (*transport.SignResponse, error) {
 	var result transport.SignResponse
-	if err := t.rpcCall(context.TODO(), "xkms.sign", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.sign", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // Verify verifies a signature.
-func (t *Transport) Verify(_ context.Context, req *transport.VerifyRequest) (*transport.VerifyResponse, error) {
+func (t *Transport) Verify(ctx context.Context, req *transport.VerifyRequest) (*transport.VerifyResponse, error) {
 	var result transport.VerifyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.verify", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.verify", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // Encrypt encrypts data with the specified key.
-func (t *Transport) Encrypt(_ context.Context, req *transport.EncryptRequest) (*transport.EncryptResponse, error) {
+func (t *Transport) Encrypt(ctx context.Context, req *transport.EncryptRequest) (*transport.EncryptResponse, error) {
 	var result transport.EncryptResponse
-	if err := t.rpcCall(context.TODO(), "xkms.encrypt", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.encrypt", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // Decrypt decrypts data with the specified key.
-func (t *Transport) Decrypt(_ context.Context, req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
+func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
 	var result transport.DecryptResponse
-	if err := t.rpcCall(context.TODO(), "xkms.decrypt", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.decrypt", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // EncryptAsym encrypts data with RSA public key (asymmetric encryption).
-func (t *Transport) EncryptAsym(_ context.Context, req *transport.EncryptAsymRequest) (*transport.EncryptAsymResponse, error) {
+func (t *Transport) EncryptAsym(ctx context.Context, req *transport.EncryptAsymRequest) (*transport.EncryptAsymResponse, error) {
 	var result transport.EncryptAsymResponse
-	if err := t.rpcCall(context.TODO(), "xkms.asymmetricEncrypt", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.asymmetricEncrypt", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // DeriveKey derives a key using the specified algorithm and parameters.
-func (t *Transport) DeriveKey(_ context.Context, req *transport.DeriveKeyRequest) (*transport.DeriveKeyResponse, error) {
+func (t *Transport) DeriveKey(ctx context.Context, req *transport.DeriveKeyRequest) (*transport.DeriveKeyResponse, error) {
 	var result transport.DeriveKeyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.deriveKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.deriveKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // DeriveKeyECDH performs ECDH key agreement and derives a key using a KDF.
-func (t *Transport) DeriveKeyECDH(_ context.Context, req *transport.DeriveKeyECDHRequest) (*transport.DeriveKeyECDHResponse, error) {
+func (t *Transport) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKeyECDHRequest) (*transport.DeriveKeyECDHResponse, error) {
 	var result transport.DeriveKeyECDHResponse
-	if err := t.rpcCall(context.TODO(), "xkms.deriveKeyECDH", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.deriveKeyECDH", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // AttestKey requests key attestation from a backend.
-func (t *Transport) AttestKey(_ context.Context, req *transport.AttestKeyRequest) (*transport.AttestKeyResponse, error) {
+func (t *Transport) AttestKey(ctx context.Context, req *transport.AttestKeyRequest) (*transport.AttestKeyResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.AttestKeyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.attestKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.attestKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GetCertificate returns the certificate for a key.
-func (t *Transport) GetCertificate(_ context.Context, backend, keyID string) (*transport.GetCertificateResponse, error) {
+func (t *Transport) GetCertificate(ctx context.Context, backend, keyID string) (*transport.GetCertificateResponse, error) {
 	params := map[string]string{"key_id": keyID, "backend": backend}
 	var result transport.GetCertificateResponse
-	if err := t.rpcCall(context.TODO(), "xkms.getCert", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.getCert", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // SaveCertificate saves a certificate for a key.
-func (t *Transport) SaveCertificate(_ context.Context, req *transport.SaveCertificateRequest) error {
-	return t.rpcCall(context.TODO(), "xkms.saveCert", req, nil)
+func (t *Transport) SaveCertificate(ctx context.Context, req *transport.SaveCertificateRequest) error {
+	return t.rpcCall(ctx, "xkms.saveCert", req, nil)
 }
 
 // DeleteCertificate deletes a certificate.
-func (t *Transport) DeleteCertificate(_ context.Context, backend, keyID string) error {
+func (t *Transport) DeleteCertificate(ctx context.Context, backend, keyID string) error {
 	params := map[string]string{"key_id": keyID, "backend": backend}
-	return t.rpcCall(context.TODO(), "xkms.deleteCert", params, nil)
+	return t.rpcCall(ctx, "xkms.deleteCert", params, nil)
 }
 
 // CertificateExists checks if a certificate exists for a key.
-func (t *Transport) CertificateExists(_ context.Context, backend, keyID string) (bool, error) {
+func (t *Transport) CertificateExists(ctx context.Context, backend, keyID string) (bool, error) {
 	params := map[string]string{"key_id": keyID, "backend": backend}
 	var result struct {
 		Exists bool `json:"exists"`
 	}
-	if err := t.rpcCall(context.TODO(), "xkms.certExists", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.certExists", params, &result); err != nil {
 		return false, err
 	}
 	return result.Exists, nil
 }
 
 // ImportKey imports a key.
-func (t *Transport) ImportKey(_ context.Context, req *transport.ImportKeyRequest) (*transport.ImportKeyResponse, error) {
+func (t *Transport) ImportKey(ctx context.Context, req *transport.ImportKeyRequest) (*transport.ImportKeyResponse, error) {
 	var result transport.ImportKeyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.importKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.importKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ExportKey exports a key.
-func (t *Transport) ExportKey(_ context.Context, req *transport.ExportKeyRequest) (*transport.ExportKeyResponse, error) {
+func (t *Transport) ExportKey(ctx context.Context, req *transport.ExportKeyRequest) (*transport.ExportKeyResponse, error) {
 	var result transport.ExportKeyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.exportKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.exportKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // RotateKey rotates a key.
-func (t *Transport) RotateKey(_ context.Context, req *transport.RotateKeyRequest) (*transport.RotateKeyResponse, error) {
+func (t *Transport) RotateKey(ctx context.Context, req *transport.RotateKeyRequest) (*transport.RotateKeyResponse, error) {
 	var result transport.RotateKeyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.rotateKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.rotateKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GetImportParameters gets the parameters needed to import a key.
-func (t *Transport) GetImportParameters(_ context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
+func (t *Transport) GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	var result transport.GetImportParametersResponse
-	if err := t.rpcCall(context.TODO(), "xkms.getImportParameters", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.getImportParameters", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // WrapKey wraps key material for secure transport.
-func (t *Transport) WrapKey(_ context.Context, req *transport.WrapKeyRequest) (*transport.WrapKeyResponse, error) {
+func (t *Transport) WrapKey(ctx context.Context, req *transport.WrapKeyRequest) (*transport.WrapKeyResponse, error) {
 	var result transport.WrapKeyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.wrapKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.wrapKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // UnwrapKey unwraps key material.
-func (t *Transport) UnwrapKey(_ context.Context, req *transport.UnwrapKeyRequest) (*transport.UnwrapKeyResponse, error) {
+func (t *Transport) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyRequest) (*transport.UnwrapKeyResponse, error) {
 	var result transport.UnwrapKeyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.unwrapKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.unwrapKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // WrapKeyByID wraps a key using another key, both identified by their IDs.
-func (t *Transport) WrapKeyByID(_ context.Context, req *transport.WrapKeyByIDRequest) (*transport.WrapKeyByIDResponse, error) {
+func (t *Transport) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDRequest) (*transport.WrapKeyByIDResponse, error) {
 	var result transport.WrapKeyByIDResponse
-	if err := t.rpcCall(context.TODO(), "xkms.wrapKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.wrapKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // UnwrapKeyByID unwraps key material and imports it as a new key.
-func (t *Transport) UnwrapKeyByID(_ context.Context, req *transport.UnwrapKeyByIDRequest) (*transport.UnwrapKeyByIDResponse, error) {
+func (t *Transport) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyByIDRequest) (*transport.UnwrapKeyByIDResponse, error) {
 	var result transport.UnwrapKeyByIDResponse
-	if err := t.rpcCall(context.TODO(), "xkms.unwrapKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.unwrapKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ExportKeyMaterial exports raw symmetric key material.
-func (t *Transport) ExportKeyMaterial(_ context.Context, req *transport.ExportKeyMaterialRequest) (*transport.ExportKeyMaterialResponse, error) {
+func (t *Transport) ExportKeyMaterial(ctx context.Context, req *transport.ExportKeyMaterialRequest) (*transport.ExportKeyMaterialResponse, error) {
 	var result transport.ExportKeyMaterialResponse
-	if err := t.rpcCall(context.TODO(), "xkms.exportKeyMaterial", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.exportKeyMaterial", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // CopyKey copies a key from one backend to another.
-func (t *Transport) CopyKey(_ context.Context, req *transport.CopyKeyRequest) (*transport.CopyKeyResponse, error) {
+func (t *Transport) CopyKey(ctx context.Context, req *transport.CopyKeyRequest) (*transport.CopyKeyResponse, error) {
 	var result transport.CopyKeyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.copyKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.copyKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ListCertificates lists all certificates in the specified backend.
-func (t *Transport) ListCertificates(_ context.Context, backend string, _ ...transport.ListOption) (*transport.ListCertificatesResponse, error) {
+func (t *Transport) ListCertificates(ctx context.Context, backend string, _ ...transport.ListOption) (*transport.ListCertificatesResponse, error) {
 	params := map[string]string{"backend": backend}
 	var result transport.ListCertificatesResponse
-	if err := t.rpcCall(context.TODO(), "xkms.listCerts", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.listCerts", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // SaveCertificateChain saves a certificate chain for a key.
-func (t *Transport) SaveCertificateChain(_ context.Context, req *transport.SaveCertificateChainRequest) error {
-	return t.rpcCall(context.TODO(), "xkms.saveCertChain", req, nil)
+func (t *Transport) SaveCertificateChain(ctx context.Context, req *transport.SaveCertificateChainRequest) error {
+	return t.rpcCall(ctx, "xkms.saveCertChain", req, nil)
 }
 
 // GetCertificateChain returns the certificate chain for a key.
-func (t *Transport) GetCertificateChain(_ context.Context, backend, keyID string) (*transport.GetCertificateChainResponse, error) {
+func (t *Transport) GetCertificateChain(ctx context.Context, backend, keyID string) (*transport.GetCertificateChainResponse, error) {
 	params := map[string]string{"key_id": keyID, "backend": backend}
 	var result transport.GetCertificateChainResponse
-	if err := t.rpcCall(context.TODO(), "xkms.getCertChain", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.getCertChain", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GetTLSCertificate returns the TLS certificate bundle for a key.
-func (t *Transport) GetTLSCertificate(_ context.Context, backend, keyID string) (*transport.GetTLSCertificateResponse, error) {
+func (t *Transport) GetTLSCertificate(ctx context.Context, backend, keyID string) (*transport.GetTLSCertificateResponse, error) {
 	params := map[string]string{"key_id": keyID, "backend": backend}
 	var result transport.GetTLSCertificateResponse
-	if err := t.rpcCall(context.TODO(), "xkms.getTLSCertificate", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.getTLSCertificate", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // Seal seals data using the backend's sealing mechanism.
-func (t *Transport) Seal(_ context.Context, req *transport.SealRequest) (*transport.SealResponse, error) {
+func (t *Transport) Seal(ctx context.Context, req *transport.SealRequest) (*transport.SealResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.SealResponse
-	if err := t.rpcCall(context.TODO(), "xkms.seal", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.seal", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // Unseal unseals previously sealed data.
-func (t *Transport) Unseal(_ context.Context, req *transport.UnsealRequest) (*transport.UnsealResponse, error) {
+func (t *Transport) Unseal(ctx context.Context, req *transport.UnsealRequest) (*transport.UnsealResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.UnsealResponse
-	if err := t.rpcCall(context.TODO(), "xkms.unseal", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.unseal", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // CanSeal checks if the backend supports sealing operations.
-func (t *Transport) CanSeal(_ context.Context, backend string) (*transport.CanSealResponse, error) {
+func (t *Transport) CanSeal(ctx context.Context, backend string) (*transport.CanSealResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	params := map[string]string{"backend": backend}
 	var result transport.CanSealResponse
-	if err := t.rpcCall(context.TODO(), "xkms.canSeal", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.canSeal", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1024,85 +1026,85 @@ func (t *Transport) CanSeal(_ context.Context, backend string) (*transport.CanSe
 // WebAuthn/FIDO2 Operations
 
 // BeginRegistration begins a WebAuthn registration flow.
-func (t *Transport) BeginRegistration(_ context.Context, _ *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
+func (t *Transport) BeginRegistration(ctx context.Context, _ *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // FinishRegistration completes a WebAuthn registration flow.
-func (t *Transport) FinishRegistration(_ context.Context, _ *transport.FinishRegistrationRequest) (*transport.FinishRegistrationResponse, error) {
+func (t *Transport) FinishRegistration(ctx context.Context, _ *transport.FinishRegistrationRequest) (*transport.FinishRegistrationResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // BeginAuthentication begins a WebAuthn authentication flow.
-func (t *Transport) BeginAuthentication(_ context.Context, _ *transport.BeginAuthenticationRequest) (*transport.BeginAuthenticationResponse, error) {
+func (t *Transport) BeginAuthentication(ctx context.Context, _ *transport.BeginAuthenticationRequest) (*transport.BeginAuthenticationResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // FinishAuthentication completes a WebAuthn authentication flow.
-func (t *Transport) FinishAuthentication(_ context.Context, _ *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error) {
+func (t *Transport) FinishAuthentication(ctx context.Context, _ *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // CA Operations
 
 // GetCABundle retrieves the CA certificate bundle.
-func (t *Transport) GetCABundle(_ context.Context, req *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
+func (t *Transport) GetCABundle(ctx context.Context, req *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
 	var result transport.GetCABundleResponse
-	if err := t.rpcCall(context.TODO(), "xkms.ca.bundle", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.ca.bundle", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GetCACertificate retrieves the CA certificate.
-func (t *Transport) GetCACertificate(_ context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
+func (t *Transport) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	var result transport.GetCACertificateResponse
-	if err := t.rpcCall(context.TODO(), "xkms.ca.certificate", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.ca.certificate", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // SignCSR signs a certificate signing request.
-func (t *Transport) SignCSR(_ context.Context, req *transport.SignCSRRequest) (*transport.SignCSRResponse, error) {
+func (t *Transport) SignCSR(ctx context.Context, req *transport.SignCSRRequest) (*transport.SignCSRResponse, error) {
 	var result transport.SignCSRResponse
-	if err := t.rpcCall(context.TODO(), "xkms.ca.sign-csr", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.ca.sign-csr", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // IssueCertificate issues a new certificate.
-func (t *Transport) IssueCertificate(_ context.Context, req *transport.IssueCertificateRequest) (*transport.IssueCertificateResponse, error) {
+func (t *Transport) IssueCertificate(ctx context.Context, req *transport.IssueCertificateRequest) (*transport.IssueCertificateResponse, error) {
 	var result transport.IssueCertificateResponse
-	if err := t.rpcCall(context.TODO(), "xkms.ca.issue", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.ca.issue", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // RevokeCertificate revokes a certificate.
-func (t *Transport) RevokeCertificate(_ context.Context, req *transport.RevokeCertificateRequest) (*transport.RevokeCertificateResponse, error) {
+func (t *Transport) RevokeCertificate(ctx context.Context, req *transport.RevokeCertificateRequest) (*transport.RevokeCertificateResponse, error) {
 	var result transport.RevokeCertificateResponse
-	if err := t.rpcCall(context.TODO(), "xkms.ca.revoke", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.ca.revoke", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GenerateCRL generates a certificate revocation list.
-func (t *Transport) GenerateCRL(_ context.Context, req *transport.GenerateCRLRequest) (*transport.GenerateCRLResponse, error) {
+func (t *Transport) GenerateCRL(ctx context.Context, req *transport.GenerateCRLRequest) (*transport.GenerateCRLResponse, error) {
 	var result transport.GenerateCRLResponse
-	if err := t.rpcCall(context.TODO(), "xkms.ca.crl", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.ca.crl", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // IsRevoked checks if a certificate is revoked.
-func (t *Transport) IsRevoked(_ context.Context, req *transport.IsRevokedRequest) (*transport.IsRevokedResponse, error) {
+func (t *Transport) IsRevoked(ctx context.Context, req *transport.IsRevokedRequest) (*transport.IsRevokedResponse, error) {
 	var result transport.IsRevokedResponse
-	if err := t.rpcCall(context.TODO(), "xkms.ca.is-revoked", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.ca.is-revoked", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1111,36 +1113,36 @@ func (t *Transport) IsRevoked(_ context.Context, req *transport.IsRevokedRequest
 // TCG CA Operations
 
 // IssueEKCertificate issues an Endorsement Key certificate.
-func (t *Transport) IssueEKCertificate(_ context.Context, req *transport.IssueEKCertificateRequest) (*transport.IssueEKCertificateResponse, error) {
+func (t *Transport) IssueEKCertificate(ctx context.Context, req *transport.IssueEKCertificateRequest) (*transport.IssueEKCertificateResponse, error) {
 	var result transport.IssueEKCertificateResponse
-	if err := t.rpcCall(context.TODO(), "xkms.ca.tcg.issue-ek", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.ca.tcg.issue-ek", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // IssueAKCertificate issues an Attestation Key certificate.
-func (t *Transport) IssueAKCertificate(_ context.Context, req *transport.IssueAKCertificateRequest) (*transport.IssueAKCertificateResponse, error) {
+func (t *Transport) IssueAKCertificate(ctx context.Context, req *transport.IssueAKCertificateRequest) (*transport.IssueAKCertificateResponse, error) {
 	var result transport.IssueAKCertificateResponse
-	if err := t.rpcCall(context.TODO(), "xkms.ca.tcg.issue-ak", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.ca.tcg.issue-ak", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // SignTCGCSR signs a TCG-CSR-IDEVID for device identity enrollment.
-func (t *Transport) SignTCGCSR(_ context.Context, req *transport.SignTCGCSRRequest) (*transport.SignTCGCSRResponse, error) {
+func (t *Transport) SignTCGCSR(ctx context.Context, req *transport.SignTCGCSRRequest) (*transport.SignTCGCSRResponse, error) {
 	var result transport.SignTCGCSRResponse
-	if err := t.rpcCall(context.TODO(), "xkms.ca.tcg.sign-csr", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.ca.tcg.sign-csr", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // EnrollDevice performs complete TCG device enrollment.
-func (t *Transport) EnrollDevice(_ context.Context, req *transport.EnrollDeviceRequest) (*transport.EnrollDeviceResponse, error) {
+func (t *Transport) EnrollDevice(ctx context.Context, req *transport.EnrollDeviceRequest) (*transport.EnrollDeviceResponse, error) {
 	var result transport.EnrollDeviceResponse
-	if err := t.rpcCall(context.TODO(), "xkms.ca.tcg.enroll", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.ca.tcg.enroll", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1149,84 +1151,84 @@ func (t *Transport) EnrollDevice(_ context.Context, req *transport.EnrollDeviceR
 // PIV Operations
 
 // ListPIVSlots returns the list of PIV slots and their status.
-func (t *Transport) ListPIVSlots(_ context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {
+func (t *Transport) ListPIVSlots(ctx context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.ListPIVSlotsResponse
-	if err := t.rpcCall(context.TODO(), "xkms.listPIVSlots", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.listPIVSlots", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GetPIVCertificate retrieves the certificate from a PIV slot.
-func (t *Transport) GetPIVCertificate(_ context.Context, req *transport.GetPIVCertificateRequest) (*transport.GetPIVCertificateResponse, error) {
+func (t *Transport) GetPIVCertificate(ctx context.Context, req *transport.GetPIVCertificateRequest) (*transport.GetPIVCertificateResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.GetPIVCertificateResponse
-	if err := t.rpcCall(context.TODO(), "xkms.getPIVCertificate", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.getPIVCertificate", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // StorePIVCertificate stores a certificate into a PIV slot.
-func (t *Transport) StorePIVCertificate(_ context.Context, req *transport.StorePIVCertificateRequest) error {
+func (t *Transport) StorePIVCertificate(ctx context.Context, req *transport.StorePIVCertificateRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.storePIVCertificate", req, nil)
+	return t.rpcCall(ctx, "xkms.storePIVCertificate", req, nil)
 }
 
 // DeletePIVCertificate removes the certificate from a PIV slot.
-func (t *Transport) DeletePIVCertificate(_ context.Context, req *transport.DeletePIVCertificateRequest) error {
+func (t *Transport) DeletePIVCertificate(ctx context.Context, req *transport.DeletePIVCertificateRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.deletePIVCertificate", req, nil)
+	return t.rpcCall(ctx, "xkms.deletePIVCertificate", req, nil)
 }
 
 // GeneratePIVKey generates a new key pair in a PIV slot.
-func (t *Transport) GeneratePIVKey(_ context.Context, req *transport.GeneratePIVKeyRequest) (*transport.GeneratePIVKeyResponse, error) {
+func (t *Transport) GeneratePIVKey(ctx context.Context, req *transport.GeneratePIVKeyRequest) (*transport.GeneratePIVKeyResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.GeneratePIVKeyResponse
-	if err := t.rpcCall(context.TODO(), "xkms.generatePIVKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.generatePIVKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ImportPIVCertificate imports a certificate into a PIV slot.
-func (t *Transport) ImportPIVCertificate(_ context.Context, req *transport.StorePIVCertificateRequest) error {
+func (t *Transport) ImportPIVCertificate(ctx context.Context, req *transport.StorePIVCertificateRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.importPIVCertificate", req, nil)
+	return t.rpcCall(ctx, "xkms.importPIVCertificate", req, nil)
 }
 
 // ExportPIVCertificate exports the certificate from a PIV slot.
-func (t *Transport) ExportPIVCertificate(_ context.Context, req *transport.GetPIVCertificateRequest) (*transport.GetPIVCertificateResponse, error) {
+func (t *Transport) ExportPIVCertificate(ctx context.Context, req *transport.GetPIVCertificateRequest) (*transport.GetPIVCertificateResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.GetPIVCertificateResponse
-	if err := t.rpcCall(context.TODO(), "xkms.exportPIVCertificate", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.exportPIVCertificate", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GeneratePIVCSR generates a Certificate Signing Request for a PIV slot key.
-func (t *Transport) GeneratePIVCSR(_ context.Context, req *transport.GeneratePIVCSRRequest) (*transport.GeneratePIVCSRResponse, error) {
+func (t *Transport) GeneratePIVCSR(ctx context.Context, req *transport.GeneratePIVCSRRequest) (*transport.GeneratePIVCSRResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.GeneratePIVCSRResponse
-	if err := t.rpcCall(context.TODO(), "xkms.generatePIVCSR", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.generatePIVCSR", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1235,132 +1237,145 @@ func (t *Transport) GeneratePIVCSR(_ context.Context, req *transport.GeneratePIV
 // Barrier Operations
 
 // BarrierInitialize initializes the barrier by generating a root key and sealing it.
-func (t *Transport) BarrierInitialize(_ context.Context, req *transport.BarrierInitializeRequest) error {
+func (t *Transport) BarrierInitialize(ctx context.Context, req *transport.BarrierInitializeRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "barrier.initialize", req, nil)
+	return t.rpcCall(ctx, "barrier.initialize", req, nil)
 }
 
 // BarrierUnseal unseals the barrier by loading and decrypting the root key.
-func (t *Transport) BarrierUnseal(_ context.Context, req *transport.BarrierUnsealRequest) error {
+func (t *Transport) BarrierUnseal(ctx context.Context, req *transport.BarrierUnsealRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "barrier.unseal", req, nil)
+	return t.rpcCall(ctx, "barrier.unseal", req, nil)
 }
 
 // BarrierSeal transitions the barrier to sealed state, zeroing the DEK.
-func (t *Transport) BarrierSeal(_ context.Context) error {
+func (t *Transport) BarrierSeal(ctx context.Context) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "barrier.seal", nil, nil)
+	return t.rpcCall(ctx, "barrier.seal", nil, nil)
 }
 
 // BarrierStatus returns the current barrier status.
-func (t *Transport) BarrierStatus(_ context.Context) (*transport.BarrierStatusResponse, error) {
+func (t *Transport) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierStatusResponse
-	if err := t.rpcCall(context.TODO(), "barrier.status", nil, &result); err != nil {
+	if err := t.rpcCall(ctx, "barrier.status", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // BarrierInitializeShamir initializes the barrier using Shamir secret sharing.
-func (t *Transport) BarrierInitializeShamir(_ context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
+func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierInitializeShamirResponse
-	if err := t.rpcCall(context.TODO(), "barrier.initializeShamir", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "barrier.initializeShamir", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // BarrierUnsealWithShare submits a single Shamir share toward the quorum.
-func (t *Transport) BarrierUnsealWithShare(_ context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
+func (t *Transport) BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierUnsealShareResponse
-	if err := t.rpcCall(context.TODO(), "barrier.unsealShare", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "barrier.unsealShare", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // BarrierUnsealWithShares submits all Shamir shares at once.
-func (t *Transport) BarrierUnsealWithShares(_ context.Context, req *transport.BarrierUnsealSharesRequest) error {
+func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "barrier.unsealShares", req, nil)
+	return t.rpcCall(ctx, "barrier.unsealShares", req, nil)
 }
 
 // BarrierRekey rotates Shamir shares while keeping the same root key.
-func (t *Transport) BarrierRekey(_ context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
+func (t *Transport) BarrierRekey(ctx context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierRekeyResponse
-	if err := t.rpcCall(context.TODO(), "barrier.rekey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "barrier.rekey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // BarrierGenerateRecoveryKeys generates recovery keys for disaster recovery.
-func (t *Transport) BarrierGenerateRecoveryKeys(_ context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
+func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierRecoveryKeysResponse
-	if err := t.rpcCall(context.TODO(), "barrier.generateRecoveryKeys", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "barrier.generateRecoveryKeys", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// BarrierEnableEncryption migrates a previously-unencrypted barrier to a keyed
+// strategy in place.
+func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	var result transport.BarrierEnableEncryptionResponse
+	if err := t.rpcCall(ctx, "barrier.enableEncryption", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // BarrierRecoverWithKeys unseals the barrier using recovery keys.
-func (t *Transport) BarrierRecoverWithKeys(_ context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
+func (t *Transport) BarrierRecoverWithKeys(ctx context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "barrier.recoverWithKeys", req, nil)
+	return t.rpcCall(ctx, "barrier.recoverWithKeys", req, nil)
 }
 
 // BarrierDeleteRecoveryKeys deletes stored recovery key metadata.
-func (t *Transport) BarrierDeleteRecoveryKeys(_ context.Context) error {
+func (t *Transport) BarrierDeleteRecoveryKeys(ctx context.Context) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "barrier.deleteRecoveryKeys", nil, nil)
+	return t.rpcCall(ctx, "barrier.deleteRecoveryKeys", nil, nil)
 }
 
 // BarrierHasRecoveryKeys checks if recovery keys exist.
-func (t *Transport) BarrierHasRecoveryKeys(_ context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
+func (t *Transport) BarrierHasRecoveryKeys(ctx context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierHasRecoveryKeysResponse
-	if err := t.rpcCall(context.TODO(), "barrier.hasRecoveryKeys", nil, &result); err != nil {
+	if err := t.rpcCall(ctx, "barrier.hasRecoveryKeys", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // BarrierGenerateRootToken generates a one-time root token.
-func (t *Transport) BarrierGenerateRootToken(_ context.Context, req *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
+func (t *Transport) BarrierGenerateRootToken(ctx context.Context, req *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierRootTokenResponse
-	if err := t.rpcCall(context.TODO(), "barrier.generateRootToken", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "barrier.generateRootToken", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1369,170 +1384,170 @@ func (t *Transport) BarrierGenerateRootToken(_ context.Context, req *transport.B
 // PIN Operations
 
 // SetSOPIN sets the Security Officer PIN.
-func (t *Transport) SetSOPIN(_ context.Context, req *transport.SetSOPINRequest) error {
+func (t *Transport) SetSOPIN(ctx context.Context, req *transport.SetSOPINRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.setSOPIN", req, nil)
+	return t.rpcCall(ctx, "xkms.setSOPIN", req, nil)
 }
 
 // SetUserPIN sets the user PIN.
-func (t *Transport) SetUserPIN(_ context.Context, req *transport.SetUserPINRequest) error {
+func (t *Transport) SetUserPIN(ctx context.Context, req *transport.SetUserPINRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.setUserPIN", req, nil)
+	return t.rpcCall(ctx, "xkms.setUserPIN", req, nil)
 }
 
 // ChangeSOPIN changes the Security Officer PIN.
-func (t *Transport) ChangeSOPIN(_ context.Context, req *transport.ChangeSOPINRequest) error {
+func (t *Transport) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPINRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.changeSOPIN", req, nil)
+	return t.rpcCall(ctx, "xkms.changeSOPIN", req, nil)
 }
 
 // ChangeUserPIN changes the user PIN.
-func (t *Transport) ChangeUserPIN(_ context.Context, req *transport.ChangeUserPINRequest) error {
+func (t *Transport) ChangeUserPIN(ctx context.Context, req *transport.ChangeUserPINRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.changeUserPIN", req, nil)
+	return t.rpcCall(ctx, "xkms.changeUserPIN", req, nil)
 }
 
 // VerifySOPIN verifies the Security Officer PIN.
-func (t *Transport) VerifySOPIN(_ context.Context, req *transport.VerifySOPINRequest) error {
+func (t *Transport) VerifySOPIN(ctx context.Context, req *transport.VerifySOPINRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.verifySOPIN", req, nil)
+	return t.rpcCall(ctx, "xkms.verifySOPIN", req, nil)
 }
 
 // VerifyUserPIN verifies the user PIN.
-func (t *Transport) VerifyUserPIN(_ context.Context, req *transport.VerifyUserPINRequest) error {
+func (t *Transport) VerifyUserPIN(ctx context.Context, req *transport.VerifyUserPINRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.verifyUserPIN", req, nil)
+	return t.rpcCall(ctx, "xkms.verifyUserPIN", req, nil)
 }
 
 // GetLockoutStatus returns the current PIN lockout status.
-func (t *Transport) GetLockoutStatus(_ context.Context) (*transport.LockoutStatusResponse, error) {
+func (t *Transport) GetLockoutStatus(ctx context.Context) (*transport.LockoutStatusResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.LockoutStatusResponse
-	if err := t.rpcCall(context.TODO(), "xkms.getLockoutStatus", nil, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.getLockoutStatus", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ResetLockout resets the PIN lockout counter.
-func (t *Transport) ResetLockout(_ context.Context, req *transport.ResetLockoutRequest) error {
+func (t *Transport) ResetLockout(ctx context.Context, req *transport.ResetLockoutRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.resetLockout", req, nil)
+	return t.rpcCall(ctx, "xkms.resetLockout", req, nil)
 }
 
 // Password Store Operations
 
 // PasswordAdd adds a new static password.
-func (t *Transport) PasswordAdd(_ context.Context, req *transport.PasswordAddRequest) (*transport.PasswordAddResponse, error) {
+func (t *Transport) PasswordAdd(ctx context.Context, req *transport.PasswordAddRequest) (*transport.PasswordAddResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordAddResponse
-	if err := t.rpcCall(context.TODO(), "xkms.passwordAdd", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.passwordAdd", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // PasswordGet retrieves a password entry.
-func (t *Transport) PasswordGet(_ context.Context, req *transport.PasswordGetRequest) (*transport.PasswordGetResponse, error) {
+func (t *Transport) PasswordGet(ctx context.Context, req *transport.PasswordGetRequest) (*transport.PasswordGetResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordGetResponse
-	if err := t.rpcCall(context.TODO(), "xkms.passwordGet", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.passwordGet", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // PasswordList lists password entries.
-func (t *Transport) PasswordList(_ context.Context, req *transport.PasswordListRequest) (*transport.PasswordListResponse, error) {
+func (t *Transport) PasswordList(ctx context.Context, req *transport.PasswordListRequest) (*transport.PasswordListResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordListResponse
-	if err := t.rpcCall(context.TODO(), "xkms.passwordList", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.passwordList", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // PasswordUpdate updates a password entry.
-func (t *Transport) PasswordUpdate(_ context.Context, req *transport.PasswordUpdateRequest) error {
+func (t *Transport) PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.passwordUpdate", req, nil)
+	return t.rpcCall(ctx, "xkms.passwordUpdate", req, nil)
 }
 
 // PasswordDelete deletes a password entry.
-func (t *Transport) PasswordDelete(_ context.Context, req *transport.PasswordDeleteRequest) error {
+func (t *Transport) PasswordDelete(ctx context.Context, req *transport.PasswordDeleteRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.passwordDelete", req, nil)
+	return t.rpcCall(ctx, "xkms.passwordDelete", req, nil)
 }
 
 // PasswordStoreUnlock unlocks the password store.
-func (t *Transport) PasswordStoreUnlock(_ context.Context, req *transport.PasswordStoreUnlockRequest) error {
+func (t *Transport) PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.passwordStoreUnlock", req, nil)
+	return t.rpcCall(ctx, "xkms.passwordStoreUnlock", req, nil)
 }
 
 // PasswordStoreLock locks the password store.
-func (t *Transport) PasswordStoreLock(_ context.Context) error {
+func (t *Transport) PasswordStoreLock(ctx context.Context) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.passwordStoreLock", nil, nil)
+	return t.rpcCall(ctx, "xkms.passwordStoreLock", nil, nil)
 }
 
 // PasswordStoreStatus returns the password store status.
-func (t *Transport) PasswordStoreStatus(_ context.Context) (*transport.PasswordStoreStatusResponse, error) {
+func (t *Transport) PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordStoreStatusResponse
-	if err := t.rpcCall(context.TODO(), "xkms.passwordStoreStatus", nil, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.passwordStoreStatus", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // PasswordStoreSetAccessMode sets the password store access mode.
-func (t *Transport) PasswordStoreSetAccessMode(_ context.Context, req *transport.PasswordStoreSetAccessModeRequest) error {
+func (t *Transport) PasswordStoreSetAccessMode(ctx context.Context, req *transport.PasswordStoreSetAccessModeRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.rpcCall(context.TODO(), "xkms.passwordStoreSetAccessMode", req, nil)
+	return t.rpcCall(ctx, "xkms.passwordStoreSetAccessMode", req, nil)
 }
 
 // PasswordGenerate generates a random password.
-func (t *Transport) PasswordGenerate(_ context.Context, req *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error) {
+func (t *Transport) PasswordGenerate(ctx context.Context, req *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordGenerateResponse
-	if err := t.rpcCall(context.TODO(), "xkms.passwordGenerate", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.passwordGenerate", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1541,126 +1556,126 @@ func (t *Transport) PasswordGenerate(_ context.Context, req *transport.PasswordG
 // Platform Store Operations
 
 // SealStorePut stores a secret in the platform store.
-func (t *Transport) SealStorePut(_ context.Context, _ *transport.SealStorePutRequest) error {
+func (t *Transport) SealStorePut(ctx context.Context, _ *transport.SealStorePutRequest) error {
 	return ErrNotSupported
 }
 
 // SealStoreGet retrieves a secret from the platform store.
-func (t *Transport) SealStoreGet(_ context.Context, _ *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error) {
+func (t *Transport) SealStoreGet(ctx context.Context, _ *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // SealStoreDelete deletes a secret from the platform store.
-func (t *Transport) SealStoreDelete(_ context.Context, _ *transport.SealStoreDeleteRequest) error {
+func (t *Transport) SealStoreDelete(ctx context.Context, _ *transport.SealStoreDeleteRequest) error {
 	return ErrNotSupported
 }
 
 // SealStoreList lists all stored secret names.
-func (t *Transport) SealStoreList(_ context.Context) (*transport.SealStoreListResponse, error) {
+func (t *Transport) SealStoreList(ctx context.Context) (*transport.SealStoreListResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // SealStoreReseal reseals a secret with the current sealing key.
-func (t *Transport) SealStoreReseal(_ context.Context, _ *transport.SealStoreResealRequest) error {
+func (t *Transport) SealStoreReseal(ctx context.Context, _ *transport.SealStoreResealRequest) error {
 	return ErrNotSupported
 }
 
 // SealStoreStatus returns the platform store status.
-func (t *Transport) SealStoreStatus(_ context.Context) (*transport.SealStoreStatusResponse, error) {
+func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreStatusResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // Policy Operations
 
 // PolicyCreate creates a new PCR policy.
-func (t *Transport) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+func (t *Transport) PolicyCreate(ctx context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // PolicyGet retrieves a policy by name.
-func (t *Transport) PolicyGet(_ context.Context, _ *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+func (t *Transport) PolicyGet(ctx context.Context, _ *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // PolicyList lists all policies.
-func (t *Transport) PolicyList(_ context.Context) (*transport.PolicyListResponse, error) {
+func (t *Transport) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // PolicyDelete deletes a policy.
-func (t *Transport) PolicyDelete(_ context.Context, _ *transport.PolicyDeleteRequest) error {
+func (t *Transport) PolicyDelete(ctx context.Context, _ *transport.PolicyDeleteRequest) error {
 	return ErrNotSupported
 }
 
 // PolicyRefresh refreshes a policy with current PCR values.
-func (t *Transport) PolicyRefresh(_ context.Context, _ *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+func (t *Transport) PolicyRefresh(ctx context.Context, _ *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // PolicyVerify verifies a policy against current PCR values.
-func (t *Transport) PolicyVerify(_ context.Context, _ *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+func (t *Transport) PolicyVerify(ctx context.Context, _ *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // PolicyExport exports a policy.
-func (t *Transport) PolicyExport(_ context.Context, _ *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+func (t *Transport) PolicyExport(ctx context.Context, _ *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // CustodianGroupService methods.
 
 // CreateCustodianGroup creates a new custodian group.
-func (t *Transport) CreateCustodianGroup(_ context.Context, req *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
+func (t *Transport) CreateCustodianGroup(ctx context.Context, req *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
 	var result transport.CreateCustodianGroupResponse
-	if err := t.rpcCall(context.TODO(), "xkms.createCustodianGroup", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.createCustodianGroup", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GetCustodianGroup retrieves a custodian group by ID.
-func (t *Transport) GetCustodianGroup(_ context.Context, groupID string) (*transport.GetCustodianGroupResponse, error) {
+func (t *Transport) GetCustodianGroup(ctx context.Context, groupID string) (*transport.GetCustodianGroupResponse, error) {
 	params := map[string]string{"group_id": groupID}
 	var result transport.GetCustodianGroupResponse
-	if err := t.rpcCall(context.TODO(), "xkms.getCustodianGroup", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.getCustodianGroup", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ListCustodianGroups returns all custodian groups.
-func (t *Transport) ListCustodianGroups(_ context.Context) (*transport.ListCustodianGroupsResponse, error) {
+func (t *Transport) ListCustodianGroups(ctx context.Context) (*transport.ListCustodianGroupsResponse, error) {
 	var result transport.ListCustodianGroupsResponse
-	if err := t.rpcCall(context.TODO(), "xkms.listCustodianGroups", nil, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.listCustodianGroups", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // DeleteCustodianGroup deletes a custodian group by ID.
-func (t *Transport) DeleteCustodianGroup(_ context.Context, groupID string) error {
+func (t *Transport) DeleteCustodianGroup(ctx context.Context, groupID string) error {
 	params := map[string]string{"group_id": groupID}
-	return t.rpcCall(context.TODO(), "xkms.deleteCustodianGroup", params, nil)
+	return t.rpcCall(ctx, "xkms.deleteCustodianGroup", params, nil)
 }
 
 // AddCustodianMember adds a member to a custodian group.
-func (t *Transport) AddCustodianMember(_ context.Context, req *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
+func (t *Transport) AddCustodianMember(ctx context.Context, req *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
 	var result transport.AddCustodianMemberResponse
-	if err := t.rpcCall(context.TODO(), "xkms.addCustodianMember", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.addCustodianMember", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // RemoveCustodianMember removes a member from a custodian group.
-func (t *Transport) RemoveCustodianMember(_ context.Context, req *transport.RemoveCustodianMemberRequest) error {
-	return t.rpcCall(context.TODO(), "xkms.removeCustodianMember", req, nil)
+func (t *Transport) RemoveCustodianMember(ctx context.Context, req *transport.RemoveCustodianMemberRequest) error {
+	return t.rpcCall(ctx, "xkms.removeCustodianMember", req, nil)
 }
 
 // DistributeShares triggers share distribution for a custodian group.
-func (t *Transport) DistributeShares(_ context.Context, req *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
+func (t *Transport) DistributeShares(ctx context.Context, req *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
 	var result transport.DistributeSharesResponse
-	if err := t.rpcCall(context.TODO(), "xkms.distributeShares", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.distributeShares", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1669,28 +1684,28 @@ func (t *Transport) DistributeShares(_ context.Context, req *transport.Distribut
 // ShareService methods.
 
 // SubmitShare submits a Shamir share for storage.
-func (t *Transport) SubmitShare(_ context.Context, req *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
+func (t *Transport) SubmitShare(ctx context.Context, req *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
 	var result transport.SubmitShareResponse
-	if err := t.rpcCall(context.TODO(), "xkms.submitShare", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.submitShare", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ListShares returns all stored shares.
-func (t *Transport) ListShares(_ context.Context) (*transport.ListSharesResponse, error) {
+func (t *Transport) ListShares(ctx context.Context) (*transport.ListSharesResponse, error) {
 	var result transport.ListSharesResponse
-	if err := t.rpcCall(context.TODO(), "xkms.listShares", nil, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.listShares", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GetShareCollectionStatus returns the share collection status for a group.
-func (t *Transport) GetShareCollectionStatus(_ context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
+func (t *Transport) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
 	params := map[string]string{"group_id": groupID}
 	var result transport.ShareCollectionStatus
-	if err := t.rpcCall(context.TODO(), "xkms.getShareCollectionStatus", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.getShareCollectionStatus", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1699,91 +1714,119 @@ func (t *Transport) GetShareCollectionStatus(_ context.Context, groupID string) 
 // TenantService methods.
 
 // CreateTenant creates a new tenant.
-func (t *Transport) CreateTenant(_ context.Context, req *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
+func (t *Transport) CreateTenant(ctx context.Context, req *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
 	var result transport.CreateTenantResponse
-	if err := t.rpcCall(context.TODO(), "xkms.createTenant", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.createTenant", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GetTenant retrieves a tenant by ID.
-func (t *Transport) GetTenant(_ context.Context, tenantID string) (*transport.GetTenantResponse, error) {
+func (t *Transport) GetTenant(ctx context.Context, tenantID string) (*transport.GetTenantResponse, error) {
 	params := map[string]string{"tenant_id": tenantID}
 	var result transport.GetTenantResponse
-	if err := t.rpcCall(context.TODO(), "xkms.getTenant", params, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.getTenant", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ListTenants returns all tenants.
-func (t *Transport) ListTenants(_ context.Context) (*transport.ListTenantsResponse, error) {
+func (t *Transport) ListTenants(ctx context.Context) (*transport.ListTenantsResponse, error) {
 	var result transport.ListTenantsResponse
-	if err := t.rpcCall(context.TODO(), "xkms.listTenants", nil, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.listTenants", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // DeleteTenant deletes a tenant by ID.
-func (t *Transport) DeleteTenant(_ context.Context, tenantID string) error {
+func (t *Transport) DeleteTenant(ctx context.Context, tenantID string) error {
 	params := map[string]string{"tenant_id": tenantID}
-	return t.rpcCall(context.TODO(), "xkms.deleteTenant", params, nil)
+	return t.rpcCall(ctx, "xkms.deleteTenant", params, nil)
 }
 
 // TenantBarrierInit initializes the barrier for a tenant.
-func (t *Transport) TenantBarrierInit(_ context.Context, req *transport.TenantBarrierInitRequest) error {
-	return t.rpcCall(context.TODO(), "xkms.tenantBarrierInit", req, nil)
+func (t *Transport) TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error {
+	return t.rpcCall(ctx, "xkms.tenantBarrierInit", req, nil)
 }
 
 // TenantBarrierUnseal unseals the barrier for a tenant.
-func (t *Transport) TenantBarrierUnseal(_ context.Context, req *transport.TenantBarrierUnsealRequest) error {
-	return t.rpcCall(context.TODO(), "xkms.tenantBarrierUnseal", req, nil)
+func (t *Transport) TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error {
+	return t.rpcCall(ctx, "xkms.tenantBarrierUnseal", req, nil)
+}
+
+// TenantBarrierStatus reports the status of a per-tenant barrier.
+func (t *Transport) TenantBarrierStatus(ctx context.Context, tenantID string) (*transport.TenantBarrierStatusResponse, error) {
+	params := map[string]string{"tenant_id": tenantID}
+	var result transport.TenantBarrierStatusResponse
+	if err := t.rpcCall(ctx, "xkms.tenantBarrierStatus", params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateTenantEntitlements updates a tenant's feature entitlements.
+func (t *Transport) UpdateTenantEntitlements(ctx context.Context, req *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	var result transport.UpdateTenantEntitlementsResponse
+	if err := t.rpcCall(ctx, "xkms.updateTenantEntitlements", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateTenantQuotas updates a tenant's resource quotas.
+func (t *Transport) UpdateTenantQuotas(ctx context.Context, req *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	var result transport.UpdateTenantQuotasResponse
+	if err := t.rpcCall(ctx, "xkms.updateTenantQuotas", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // Init Ceremony Methods
 
 // GetInitStatus returns the current init ceremony state.
-func (t *Transport) GetInitStatus(_ context.Context) (*transport.InitStatusResponse, error) {
+func (t *Transport) GetInitStatus(ctx context.Context) (*transport.InitStatusResponse, error) {
 	var result transport.InitStatusResponse
-	if err := t.rpcCall(context.TODO(), "init.getStatus", nil, &result); err != nil {
+	if err := t.rpcCall(ctx, "init.getStatus", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ClaimCertBegin begins the certificate claim process for an officer.
-func (t *Transport) ClaimCertBegin(_ context.Context, req *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
+func (t *Transport) ClaimCertBegin(ctx context.Context, req *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
 	var result transport.ClaimCertBeginResponse
-	if err := t.rpcCall(context.TODO(), "init.claimCertBegin", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "init.claimCertBegin", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ClaimCertComplete completes the certificate claim by verifying the officer's signature.
-func (t *Transport) ClaimCertComplete(_ context.Context, req *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
+func (t *Transport) ClaimCertComplete(ctx context.Context, req *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
 	var result transport.ClaimCertCompleteResponse
-	if err := t.rpcCall(context.TODO(), "init.claimCertComplete", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "init.claimCertComplete", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ClaimShare retrieves the Shamir share for the named officer.
-func (t *Transport) ClaimShare(_ context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (t *Transport) ClaimShare(ctx context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
 	var result transport.ClaimShareResponse
-	if err := t.rpcCall(context.TODO(), "init.claimShare", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "init.claimShare", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // SignCSRInit signs a CSR during initialization with SO authorization.
-func (t *Transport) SignCSRInit(_ context.Context, req *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
+func (t *Transport) SignCSRInit(ctx context.Context, req *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
 	var result transport.SignCSRInitResponse
-	if err := t.rpcCall(context.TODO(), "init.signCSR", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "init.signCSR", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1792,18 +1835,18 @@ func (t *Transport) SignCSRInit(_ context.Context, req *transport.SignCSRInitReq
 // Credential Management Methods
 
 // SubmitCredential submits a credential for manual mode.
-func (t *Transport) SubmitCredential(_ context.Context, req *transport.CredentialSubmitRequest) (*transport.CredentialSubmitResponse, error) {
+func (t *Transport) SubmitCredential(ctx context.Context, req *transport.CredentialSubmitRequest) (*transport.CredentialSubmitResponse, error) {
 	var result transport.CredentialSubmitResponse
-	if err := t.rpcCall(context.TODO(), "credentials.submit", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "credentials.submit", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // GetCredentialStrategy returns the configured credential strategy.
-func (t *Transport) GetCredentialStrategy(_ context.Context) (*transport.CredentialStrategyResponse, error) {
+func (t *Transport) GetCredentialStrategy(ctx context.Context) (*transport.CredentialStrategyResponse, error) {
 	var result transport.CredentialStrategyResponse
-	if err := t.rpcCall(context.TODO(), "credentials.strategy", nil, &result); err != nil {
+	if err := t.rpcCall(ctx, "credentials.strategy", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1816,42 +1859,42 @@ func (t *Transport) GetCredentialStrategy(_ context.Context) (*transport.Credent
 // Client interface satisfied.
 
 // CreateUser is not supported over the MCP transport.
-func (t *Transport) CreateUser(_ context.Context, _ *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+func (t *Transport) CreateUser(ctx context.Context, _ *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // ListUsers is not supported over the MCP transport.
-func (t *Transport) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
+func (t *Transport) ListUsers(ctx context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // GetUser is not supported over the MCP transport.
-func (t *Transport) GetUser(_ context.Context, _ string) (*transport.GetUserResponse, error) {
+func (t *Transport) GetUser(ctx context.Context, _ string) (*transport.GetUserResponse, error) {
 	return nil, ErrNotSupported
 }
 
 // DeleteUser is not supported over the MCP transport.
-func (t *Transport) DeleteUser(_ context.Context, _ string) error {
+func (t *Transport) DeleteUser(ctx context.Context, _ string) error {
 	return ErrNotSupported
 }
 
 // EnableUser is not supported over the MCP transport.
-func (t *Transport) EnableUser(_ context.Context, _ string) error {
+func (t *Transport) EnableUser(ctx context.Context, _ string) error {
 	return ErrNotSupported
 }
 
 // DisableUser is not supported over the MCP transport.
-func (t *Transport) DisableUser(_ context.Context, _ string) error {
+func (t *Transport) DisableUser(ctx context.Context, _ string) error {
 	return ErrNotSupported
 }
 
 // BindUserCert is not supported over the MCP transport.
-func (t *Transport) BindUserCert(_ context.Context, _, _ string, _ int64) error {
+func (t *Transport) BindUserCert(ctx context.Context, _, _ string, _ int64) error {
 	return ErrNotSupported
 }
 
 // ListUserCredentials is not supported over the MCP transport.
-func (t *Transport) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
+func (t *Transport) ListUserCredentials(ctx context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
 	return nil, ErrNotSupported
 }
 

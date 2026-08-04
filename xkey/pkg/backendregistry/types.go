@@ -119,6 +119,7 @@ const (
 	CapSealing     Capability = "sealing"
 	CapAttestation Capability = "attestation"
 	CapEncryption  Capability = "encryption"
+	CapSSH         Capability = "ssh"
 )
 
 // String returns the human-readable name for a Capability.
@@ -138,6 +139,7 @@ var capabilityNames = map[Capability]string{
 	CapSealing:     "sealing",
 	CapAttestation: "attestation",
 	CapEncryption:  "encryption",
+	CapSSH:         "ssh",
 }
 
 // ValidCapabilities contains all valid Capability values for validation.
@@ -150,6 +152,7 @@ var ValidCapabilities = map[Capability]struct{}{
 	CapSealing:     {},
 	CapAttestation: {},
 	CapEncryption:  {},
+	CapSSH:         {},
 }
 
 // RegisteredBackend represents a cryptographic backend registered in the registry.

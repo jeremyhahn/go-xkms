@@ -243,7 +243,7 @@ func runDeviceSync(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -254,7 +254,7 @@ func runDeviceSync(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -270,7 +270,7 @@ func runDeviceSync(cmd *cobra.Command, args []string) error {
 	// Connect to phone
 	phoneBackend, err := connectToPhone(device, timeout, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceSyncFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
 	defer phoneBackend.Close()
 
@@ -279,7 +279,7 @@ func runDeviceSync(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceSyncFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
 
 	// Sync each selected store
@@ -325,7 +325,7 @@ func runDeviceSyncStatus(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -336,7 +336,7 @@ func runDeviceSyncStatus(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -346,7 +346,7 @@ func runDeviceSyncStatus(cmd *cobra.Command, args []string) error {
 	// Connect to phone
 	phoneBackend, err := connectToPhone(device, timeout, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceSyncFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
 	defer phoneBackend.Close()
 
@@ -355,7 +355,7 @@ func runDeviceSyncStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceSyncFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
 
 	// Display sync status
@@ -386,7 +386,7 @@ func runDeviceSyncPush(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -397,7 +397,7 @@ func runDeviceSyncPush(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -413,7 +413,7 @@ func runDeviceSyncPush(cmd *cobra.Command, args []string) error {
 	// Connect to phone
 	phoneBackend, err := connectToPhone(device, timeout, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceSyncFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
 	defer phoneBackend.Close()
 
@@ -422,7 +422,7 @@ func runDeviceSyncPush(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceSyncFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
 
 	// Push each selected store
@@ -467,7 +467,7 @@ func runDeviceSyncPull(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -478,7 +478,7 @@ func runDeviceSyncPull(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -494,7 +494,7 @@ func runDeviceSyncPull(cmd *cobra.Command, args []string) error {
 	// Connect to phone
 	phoneBackend, err := connectToPhone(device, timeout, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceSyncFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
 	defer phoneBackend.Close()
 
@@ -503,7 +503,7 @@ func runDeviceSyncPull(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceSyncFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
 
 	// Pull each selected store

@@ -16,11 +16,12 @@ package grpc
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/correlation"
@@ -999,7 +1000,7 @@ func TestErrorHandlingUnaryInterceptor(t *testing.T) {
 		}
 
 		handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-			return nil, fmt.Errorf("plain error")
+			return nil, &errs.Message{Msg: "plain error"}
 		}
 
 		_, err := errorHandlingUnaryInterceptor(ctx, nil, info, handler)
@@ -1063,7 +1064,7 @@ func TestErrorHandlingStreamInterceptor(t *testing.T) {
 		}
 
 		handler := func(srv interface{}, ss grpc.ServerStream) error {
-			return fmt.Errorf("plain error")
+			return &errs.Message{Msg: "plain error"}
 		}
 
 		err := errorHandlingStreamInterceptor(nil, stream, info, handler)

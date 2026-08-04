@@ -16,7 +16,6 @@ package unix
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -24,11 +23,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"google.golang.org/grpc"
 
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // DefaultSocketPath is the default path for the Unix socket
@@ -61,6 +63,15 @@ type GRPCConfig struct {
 	// root. It is forwarded to the keystore gRPC service; when nil the
 	// service reports ErrNotInitialized on every operation.
 	XKMSService *xkms.XKMSService
+
+	// SSHClient is the shared SSH SDK client forwarded to the keystore gRPC
+	// service so SSH RPCs are served over the unix socket. Optional; when nil
+	// the SSH RPCs return codes.Unavailable.
+	SSHClient sdkssh.Client
+
+	// SSHHostKeys is the host-key pin store forwarded to the keystore gRPC
+	// service for the SSHConsole stream's host verification. Optional.
+	SSHHostKeys sdkssh.HostKeyStore
 }
 
 // GRPCServer represents a gRPC server listening on a Unix domain socket
@@ -70,12 +81,19 @@ type GRPCServer struct {
 	listener net.Listener
 	logger   *slog.Logger
 	mu       sync.RWMutex
+
+	// stopped records that Stop ran. Start checks it under mu before
+	// serving so a Stop that races ahead of Start (before s.server is
+	// assigned) still prevents the server from starting; without this,
+	// Stop would find a nil server, do nothing, and the subsequent
+	// Serve would block forever with nothing left to stop it.
+	stopped bool
 }
 
 // NewGRPCServer creates a new gRPC Unix socket server
 func NewGRPCServer(cfg *GRPCConfig) (*GRPCServer, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("config is required")
+		return nil, &errs.Message{Msg: "config is required"}
 	}
 
 	if cfg.SocketPath == "" {
@@ -119,25 +137,25 @@ func (s *GRPCServer) Start() error {
 	// Ensure the socket directory exists
 	socketDir := filepath.Dir(s.config.SocketPath)
 	if err := os.MkdirAll(socketDir, 0750); err != nil {
-		return fmt.Errorf("failed to create socket directory: %w", err)
+		return &errs.Wrapped{Msg: "failed to create socket directory", Err: err}
 	}
 
 	// Remove existing socket file if present
 	if err := os.Remove(s.config.SocketPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove existing socket: %w", err)
+		return &errs.Wrapped{Msg: "failed to remove existing socket", Err: err}
 	}
 
 	// Create Unix socket listener
 	listener, err := net.Listen("unix", s.config.SocketPath)
 	if err != nil {
-		return fmt.Errorf("failed to create Unix socket listener: %w", err)
+		return &errs.Wrapped{Msg: "failed to create Unix socket listener", Err: err}
 	}
 	s.listener = listener
 
 	// Set socket permissions
 	if err := os.Chmod(s.config.SocketPath, s.config.SocketMode); err != nil {
 		_ = s.listener.Close()
-		return fmt.Errorf("failed to set socket permissions: %w", err)
+		return &errs.Wrapped{Msg: "failed to set socket permissions", Err: err}
 	}
 
 	s.logger.Info("gRPC Unix socket created", slog.String("path", s.config.SocketPath))
@@ -151,10 +169,22 @@ func (s *GRPCServer) Start() error {
 	}
 
 	s.mu.Lock()
+	if s.stopped {
+		// Stop already ran; do not start serving a listener nothing can
+		// stop. Release the socket and return as a clean shutdown.
+		s.mu.Unlock()
+		_ = listener.Close()
+		if err := os.Remove(s.config.SocketPath); err != nil && !os.IsNotExist(err) {
+			s.logger.Warn("Failed to remove socket file", slog.String("error", err.Error()))
+		}
+		return nil
+	}
 	s.server = grpc.NewServer(opts...)
 
 	// Register the keystore service with the injected XKMS service.
 	service := grpcinternal.NewService(nil, nil, s.config.XKMSService)
+	service.SetSSHClient(s.config.SSHClient)
+	service.SetSSHHostKeyStore(s.config.SSHHostKeys)
 	pb.RegisterKeystoreServiceServer(s.server, service)
 	s.mu.Unlock()
 
@@ -162,7 +192,7 @@ func (s *GRPCServer) Start() error {
 
 	// Start serving
 	if err := s.server.Serve(s.listener); err != nil {
-		return fmt.Errorf("gRPC Unix socket server error: %w", err)
+		return &errs.Wrapped{Msg: "gRPC Unix socket server error", Err: err}
 	}
 
 	return nil
@@ -172,9 +202,10 @@ func (s *GRPCServer) Start() error {
 func (s *GRPCServer) Stop(ctx context.Context) error {
 	s.logger.Info("Stopping gRPC Unix socket server...")
 
-	s.mu.RLock()
+	s.mu.Lock()
+	s.stopped = true
 	srv := s.server
-	s.mu.RUnlock()
+	s.mu.Unlock()
 
 	if srv != nil {
 		// Create a channel to signal when graceful stop completes

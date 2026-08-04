@@ -18,6 +18,8 @@ import (
 	"crypto/x509"
 	"fmt"
 	"strings"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // PutIfAbsent stores certificate data for key only when no certificate already
@@ -30,7 +32,7 @@ func (a *HardwareBackendAdapter) PutIfAbsent(_ context.Context, key string, valu
 	defer a.mu.Unlock()
 
 	if !strings.HasPrefix(key, "certs/") {
-		return false, fmt.Errorf("hardware storage only supports certificate keys (certs/*): got %s", key)
+		return false, &errs.Message{Msg: fmt.Sprintf("hardware storage only supports certificate keys (certs/*): got %s", key)}
 	}
 
 	// Certificate chain.
@@ -48,7 +50,7 @@ func (a *HardwareBackendAdapter) PutIfAbsent(_ context.Context, key string, valu
 
 		chain, err := parseDERChain(value)
 		if err != nil {
-			return false, fmt.Errorf("failed to parse certificate chain: %w", err)
+			return false, &errs.Wrapped{Msg: "failed to parse certificate chain", Err: err}
 		}
 		if err := a.hardware.SaveCertChain(id, chain); err != nil {
 			return false, err
@@ -71,7 +73,7 @@ func (a *HardwareBackendAdapter) PutIfAbsent(_ context.Context, key string, valu
 
 		cert, err := x509.ParseCertificate(value)
 		if err != nil {
-			return false, fmt.Errorf("failed to parse certificate: %w", err)
+			return false, &errs.Wrapped{Msg: "failed to parse certificate", Err: err}
 		}
 		if err := a.hardware.SaveCert(id, cert); err != nil {
 			return false, err
@@ -79,5 +81,5 @@ func (a *HardwareBackendAdapter) PutIfAbsent(_ context.Context, key string, valu
 		return true, nil
 	}
 
-	return false, fmt.Errorf("unsupported key format: %s", key)
+	return false, &errs.Message{Msg: fmt.Sprintf("unsupported key format: %s", key)}
 }

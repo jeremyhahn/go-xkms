@@ -35,6 +35,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
@@ -134,7 +136,7 @@ func acquireModule(libPath string) (*moduleRef, error) {
 	ctx := p11.New(libPath)
 	if ctx == nil {
 		return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11,
-			fmt.Errorf("pkcs11: failed to load library: %s", libPath))
+			&errs.Message{Msg: fmt.Sprintf("pkcs11: failed to load library: %s", libPath)})
 	}
 
 	ownsInit := true
@@ -142,7 +144,7 @@ func acquireModule(libPath string) (*moduleRef, error) {
 		if !isPKCS11Error(err, p11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
 			ctx.Destroy()
 			return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11,
-				fmt.Errorf("pkcs11: Initialize: %w", err))
+				&errs.Wrapped{Msg: "pkcs11: Initialize", Err: err})
 		}
 		ownsInit = false
 	}
@@ -172,7 +174,7 @@ func releaseModule(libPath string) error {
 	if ref.ownsInit {
 		if ferr := ref.ctx.Finalize(); ferr != nil {
 			err = pivcert.NewStorageTypeError("Close", pivcert.StorageTypePKCS11,
-				fmt.Errorf("pkcs11: Finalize: %w", ferr))
+				&errs.Wrapped{Msg: "pkcs11: Finalize", Err: ferr})
 		}
 	}
 	ref.ctx.Destroy()
@@ -233,7 +235,7 @@ func New(config *pivcert.PKCS11StorageConfig) (*PKCS11CertStorage, error) {
 	if err != nil {
 		teardown()
 		return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11,
-			fmt.Errorf("pkcs11: session pool: %w", err))
+			&errs.Wrapped{Msg: "pkcs11: session pool", Err: err})
 	}
 
 	var hw hardware.HardwareCertStorage
@@ -513,7 +515,7 @@ func (p *singleSessionProvider) WithSOSession(soPin, userPin string, fn func(p11
 	if err := p.ctx.Login(p.session, p11.CKU_SO, soPin); err != nil {
 		if !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
 			_ = p.ctx.Login(p.session, p11.CKU_USER, userPin)
-			return fmt.Errorf("pkcs11: SO login: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: SO login", Err: err}
 		}
 	}
 
@@ -523,7 +525,7 @@ func (p *singleSessionProvider) WithSOSession(soPin, userPin string, fn func(p11
 	if userPin != "" {
 		if err := p.ctx.Login(p.session, p11.CKU_USER, userPin); err != nil {
 			if !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
-				return fmt.Errorf("pkcs11: user login restore: %w (original: %v)", err, fnErr)
+				return &errs.Affix{Prefix: "pkcs11: user login restore: ", Err: err, Suffix: fmt.Sprintf(" (original: %v)", fnErr)}
 			}
 		}
 	}
@@ -583,7 +585,7 @@ func (p *standalonePool) WithSOSession(soPin, userPin string, fn func(p11.Sessio
 	if err := p.ctx.Login(sess, p11.CKU_SO, soPin); err != nil {
 		if !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
 			_ = p.ctx.Login(sess, p11.CKU_USER, userPin)
-			return fmt.Errorf("pkcs11: SO login: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: SO login", Err: err}
 		}
 	}
 
@@ -593,7 +595,7 @@ func (p *standalonePool) WithSOSession(soPin, userPin string, fn func(p11.Sessio
 	if userPin != "" {
 		if err := p.ctx.Login(sess, p11.CKU_USER, userPin); err != nil {
 			if !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
-				return fmt.Errorf("pkcs11: user login restore: %w (original: %v)", err, fnErr)
+				return &errs.Affix{Prefix: "pkcs11: user login restore: ", Err: err, Suffix: fmt.Sprintf(" (original: %v)", fnErr)}
 			}
 		}
 	}
@@ -620,7 +622,7 @@ func resolveSlot(ctx *p11.Ctx, config *pivcert.PKCS11StorageConfig) (uint, error
 	slots, err := ctx.GetSlotList(true)
 	if err != nil {
 		return 0, pivcert.NewStorageTypeError("resolveSlot", pivcert.StorageTypePKCS11,
-			fmt.Errorf("pkcs11: GetSlotList: %w", err))
+			&errs.Wrapped{Msg: "pkcs11: GetSlotList", Err: err})
 	}
 	if len(slots) == 0 {
 		return 0, pivcert.NewStorageTypeError("resolveSlot", pivcert.StorageTypePKCS11, pivcert.ErrTokenNotFound)

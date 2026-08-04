@@ -23,7 +23,6 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
-	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -306,7 +305,7 @@ func TestDANEShowTLSA_DNSError(t *testing.T) {
 	defer func() { exitFunc = oldExit }()
 
 	mock := &mockResolver{
-		err: fmt.Errorf("%w: _443._tcp.norecords.example.com.: connection refused", ErrDNSQuery),
+		err: &WrappedDetailError{Sentinel: ErrDNSQuery, Detail: "_443._tcp.norecords.example.com.: connection refused"},
 	}
 	withMockResolver(t, mock)
 
@@ -321,7 +320,7 @@ func TestDANEShowTLSA_DNSNoRecords(t *testing.T) {
 	defer func() { exitFunc = oldExit }()
 
 	mock := &mockResolver{
-		err: fmt.Errorf("%w: _443._tcp.empty.example.com.", ErrDNSNoRecords),
+		err: &WrappedDetailError{Sentinel: ErrDNSNoRecords, Detail: "_443._tcp.empty.example.com."},
 	}
 	withMockResolver(t, mock)
 
@@ -537,7 +536,7 @@ func TestDANEVerifyTLSA_DNSLookupFails_FallsBackToLocal(t *testing.T) {
 	certFile := writeCertPEM(t, cert)
 
 	mock := &mockResolver{
-		err: fmt.Errorf("%w: _443._tcp.kms.example.com.: timeout", ErrDNSQuery),
+		err: &WrappedDetailError{Sentinel: ErrDNSQuery, Detail: "_443._tcp.kms.example.com.: timeout"},
 	}
 	withMockResolver(t, mock)
 

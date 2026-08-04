@@ -1,0 +1,204 @@
+- generic [ref=e3]:
+  - navigation "Main navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e9]: xKey
+      - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+        - img [ref=e11]
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: OVERVIEW
+        - button "Dashboard" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - generic [ref=e19]: Dashboard
+        - button "Pairing" [ref=e20] [cursor=pointer]:
+          - img [ref=e21]
+          - generic [ref=e23]: Pairing
+        - button "TPM 2.0" [ref=e24] [cursor=pointer]:
+          - img [ref=e25]
+          - generic [ref=e27]: TPM 2.0
+      - generic [ref=e28]:
+        - generic [ref=e29]: STORE
+        - button "Keys" [ref=e30] [cursor=pointer]:
+          - img [ref=e31]
+          - generic [ref=e33]: Keys
+        - button "Trust Store" [active] [ref=e34] [cursor=pointer]:
+          - img [ref=e35]
+          - generic [ref=e37]: Trust Store
+        - button "Certificates" [ref=e38] [cursor=pointer]:
+          - img [ref=e39]
+          - generic [ref=e41]: Certificates
+      - generic [ref=e42]:
+        - generic [ref=e43]: APPLICATIONS
+        - button "SSH" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: SSH
+        - button "FIDO2" [ref=e48] [cursor=pointer]:
+          - img [ref=e49]
+          - generic [ref=e51]: FIDO2
+        - button "OATH" [ref=e52] [cursor=pointer]:
+          - img [ref=e53]
+          - generic [ref=e55]: OATH
+        - button "PIV" [ref=e56] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: PIV
+        - button "Passwords" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e63]: Passwords
+        - button "Sealed Data" [ref=e64] [cursor=pointer]:
+          - img [ref=e65]
+          - generic [ref=e67]: Sealed Data
+        - button "Browser" [ref=e68] [cursor=pointer]:
+          - img [ref=e69]
+          - generic [ref=e71]: Browser
+      - generic [ref=e72]:
+        - generic [ref=e73]: MANAGEMENT
+        - button "Audit Log" [ref=e74] [cursor=pointer]:
+          - img [ref=e75]
+          - generic [ref=e77]: Audit Log
+        - button "Admin" [ref=e78] [cursor=pointer]:
+          - img [ref=e79]
+          - generic [ref=e81]: Admin
+      - generic [ref=e82]:
+        - generic [ref=e83]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e84] [cursor=pointer]:
+          - img [ref=e85]
+          - generic [ref=e87]: OIDC
+        - button "API Explorer" [ref=e88] [cursor=pointer]:
+          - img [ref=e89]
+          - generic [ref=e91]: API Explorer
+    - generic [ref=e92]:
+      - generic "Standalone mode" [ref=e93]:
+        - generic [ref=e95]: Standalone
+      - button "Theme" [ref=e96] [cursor=pointer]:
+        - img [ref=e97]
+        - generic [ref=e99]: Theme
+      - button "Settings" [ref=e100] [cursor=pointer]:
+        - img [ref=e101]
+        - generic [ref=e103]: Settings
+  - main [ref=e104]:
+    - generic [ref=e106]:
+      - button "Lock app" [ref=e107] [cursor=pointer]:
+        - img [ref=e108]
+        - generic [ref=e110]: Lock
+      - button "No touch pending" [disabled] [ref=e111]:
+        - img [ref=e113]
+    - generic [ref=e1287]:
+      - generic [ref=e1290]:
+        - heading "Trust Store" [level=1] [ref=e1291]
+        - paragraph [ref=e1292]: Trusted root certificates
+      - generic [ref=e1293]:
+        - generic [ref=e1294]: "3"
+        - button "Refresh" [ref=e1295] [cursor=pointer]:
+          - img [ref=e1296]
+          - generic [ref=e1298]: Refresh
+        - button "Import" [ref=e1299] [cursor=pointer]:
+          - img [ref=e1300]
+          - generic [ref=e1302]: Import
+      - generic [ref=e1303]:
+        - generic [ref=e1304]:
+          - img [ref=e1305]
+          - button "All" [ref=e1307] [cursor=pointer]
+          - button "TPM Manufacturer 0" [ref=e1308] [cursor=pointer]:
+            - text: TPM Manufacturer
+            - generic [ref=e1309]: "0"
+          - button "IDevID Issuer 0" [ref=e1310] [cursor=pointer]:
+            - text: IDevID Issuer
+            - generic [ref=e1311]: "0"
+          - button "User CA 0" [ref=e1312] [cursor=pointer]:
+            - text: User CA
+            - generic [ref=e1313]: "0"
+          - button "Bootstrap CA 0" [ref=e1314] [cursor=pointer]:
+            - text: Bootstrap CA
+            - generic [ref=e1315]: "0"
+          - button "Android Hardware 3" [ref=e1316] [cursor=pointer]:
+            - text: Android Hardware
+            - generic [ref=e1317]: "3"
+          - button "General 0" [ref=e1318] [cursor=pointer]:
+            - text: General
+            - generic [ref=e1319]: "0"
+        - table [ref=e1321]:
+          - rowgroup [ref=e1322]:
+            - row "Subject Purpose Algorithm Expires Fingerprint Actions" [ref=e1323]:
+              - columnheader "Subject" [ref=e1324] [cursor=pointer]
+              - columnheader "Purpose" [ref=e1325] [cursor=pointer]
+              - columnheader "Algorithm" [ref=e1326]
+              - columnheader "Expires" [ref=e1327] [cursor=pointer]
+              - columnheader "Fingerprint" [ref=e1328]
+              - columnheader "Actions" [ref=e1329]
+          - rowgroup [ref=e1330]:
+            - row "SERIALNUMBER=f92009e853b6b045 CA Android Hardware RSA Mar 15, 2042 cedb1cb6dc896ae5ec797348bce9286753c2b38ee71ce0fbe34a9a1248800dfc Install Browser Remove" [ref=e1331] [cursor=pointer]:
+              - cell "SERIALNUMBER=f92009e853b6b045 CA" [ref=e1332]:
+                - generic [ref=e1333]:
+                  - img [ref=e1335]
+                  - generic [ref=e1337]:
+                    - generic [ref=e1338]: SERIALNUMBER=f92009e853b6b045
+                    - generic [ref=e1340]: CA
+              - cell "Android Hardware" [ref=e1341]:
+                - generic [ref=e1342]: Android Hardware
+              - cell "RSA" [ref=e1343]
+              - cell "Mar 15, 2042" [ref=e1344]
+              - cell "cedb1cb6dc896ae5ec797348bce9286753c2b38ee71ce0fbe34a9a1248800dfc" [ref=e1345]:
+                - generic [ref=e1346]: cedb1cb6dc896ae5ec797348bce9286753c2b38ee71ce0fbe34a9a1248800dfc
+              - cell "Install Browser Remove" [ref=e1347]:
+                - generic [ref=e1348]:
+                  - button "Install" [ref=e1349]:
+                    - img [ref=e1350]
+                    - generic [ref=e1352]: Install
+                  - button "Browser" [ref=e1353]:
+                    - img [ref=e1354]
+                    - generic [ref=e1356]: Browser
+                  - button "Remove" [ref=e1357]:
+                    - img [ref=e1358]
+                    - generic [ref=e1360]: Remove
+            - row "CN=Key Attestation CA1,OU=Android,O=Google LLC,C=US CA Android Hardware ECDSA Jul 15, 2035 6d9db4ce6c5c0b293166d08986e05774a8776ceb525d9e4329520de12ba4bcc0 Install Browser Remove" [ref=e1361] [cursor=pointer]:
+              - cell "CN=Key Attestation CA1,OU=Android,O=Google LLC,C=US CA" [ref=e1362]:
+                - generic [ref=e1363]:
+                  - img [ref=e1365]
+                  - generic [ref=e1367]:
+                    - generic [ref=e1368]: CN=Key Attestation CA1,OU=Android,O=Google LLC,C=US
+                    - generic [ref=e1370]: CA
+              - cell "Android Hardware" [ref=e1371]:
+                - generic [ref=e1372]: Android Hardware
+              - cell "ECDSA" [ref=e1373]
+              - cell "Jul 15, 2035" [ref=e1374]
+              - cell "6d9db4ce6c5c0b293166d08986e05774a8776ceb525d9e4329520de12ba4bcc0" [ref=e1375]:
+                - generic [ref=e1376]: 6d9db4ce6c5c0b293166d08986e05774a8776ceb525d9e4329520de12ba4bcc0
+              - cell "Install Browser Remove" [ref=e1377]:
+                - generic [ref=e1378]:
+                  - button "Install" [ref=e1379]:
+                    - img [ref=e1380]
+                    - generic [ref=e1382]: Install
+                  - button "Browser" [ref=e1383]:
+                    - img [ref=e1384]
+                    - generic [ref=e1386]: Browser
+                  - button "Remove" [ref=e1387]:
+                    - img [ref=e1388]
+                    - generic [ref=e1390]: Remove
+            - row "SERIALNUMBER=f92009e853b6b045 CA Expired Android Hardware RSA May 24, 2026 c1984a3ef45c1e2a918551de10603c86f7051b2249c4891cae3230eabd0c97d5 Install Browser Remove" [ref=e1391] [cursor=pointer]:
+              - cell "SERIALNUMBER=f92009e853b6b045 CA Expired" [ref=e1392]:
+                - generic [ref=e1393]:
+                  - img [ref=e1395]
+                  - generic [ref=e1397]:
+                    - generic [ref=e1398]: SERIALNUMBER=f92009e853b6b045
+                    - generic [ref=e1399]:
+                      - generic [ref=e1400]: CA
+                      - generic [ref=e1401]: Expired
+              - cell "Android Hardware" [ref=e1402]:
+                - generic [ref=e1403]: Android Hardware
+              - cell "RSA" [ref=e1404]
+              - cell "May 24, 2026" [ref=e1405]
+              - cell "c1984a3ef45c1e2a918551de10603c86f7051b2249c4891cae3230eabd0c97d5" [ref=e1406]:
+                - generic [ref=e1407]: c1984a3ef45c1e2a918551de10603c86f7051b2249c4891cae3230eabd0c97d5
+              - cell "Install Browser Remove" [ref=e1408]:
+                - generic [ref=e1409]:
+                  - button "Install" [ref=e1410]:
+                    - img [ref=e1411]
+                    - generic [ref=e1413]: Install
+                  - button "Browser" [ref=e1414]:
+                    - img [ref=e1415]
+                    - generic [ref=e1417]: Browser
+                  - button "Remove" [ref=e1418]:
+                    - img [ref=e1419]
+                    - generic [ref=e1421]: Remove

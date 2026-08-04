@@ -19,7 +19,6 @@ package xkms
 import (
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"net/url"
 	"strings"
 
@@ -168,7 +167,7 @@ func New(cfg *BackendConfig) (Client, error) {
 		return embedded.New(cfg.Service, opts...)
 
 	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedProtocol, protocol)
+		return nil, &UnsupportedProtocolError{Detail: string(protocol)}
 	}
 }
 
@@ -222,7 +221,7 @@ func NewFromURL(rawURL string) (Client, error) {
 
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid URL: %w", err)
+		return nil, &InvalidURLError{Err: err}
 	}
 
 	cfg := &BackendConfig{
@@ -255,7 +254,7 @@ func NewFromURL(rawURL string) (Client, error) {
 		cfg.Protocol = ProtocolMCP
 		cfg.TLSEnabled = true
 	default:
-		return nil, fmt.Errorf("%w: scheme %s", ErrUnsupportedProtocol, u.Scheme)
+		return nil, &UnsupportedProtocolError{Detail: "scheme " + u.Scheme}
 	}
 
 	return New(cfg)
@@ -387,6 +386,8 @@ type (
 	BarrierHasRecoveryKeysResponse     = transport.BarrierHasRecoveryKeysResponse
 	BarrierGenerateRootTokenRequest    = transport.BarrierGenerateRootTokenRequest
 	BarrierRootTokenResponse           = transport.BarrierRootTokenResponse
+	BarrierEnableEncryptionRequest     = transport.BarrierEnableEncryptionRequest
+	BarrierEnableEncryptionResponse    = transport.BarrierEnableEncryptionResponse
 
 	// PIN Operations
 	SetSOPINRequest       = transport.SetSOPINRequest
@@ -464,13 +465,18 @@ type (
 	ShareCollectionStatus = transport.ShareCollectionStatus
 
 	// Tenant Operations
-	TenantInfo                 = transport.TenantInfo
-	CreateTenantRequest        = transport.CreateTenantRequest
-	CreateTenantResponse       = transport.CreateTenantResponse
-	GetTenantResponse          = transport.GetTenantResponse
-	ListTenantsResponse        = transport.ListTenantsResponse
-	TenantBarrierInitRequest   = transport.TenantBarrierInitRequest
-	TenantBarrierUnsealRequest = transport.TenantBarrierUnsealRequest
+	TenantInfo                       = transport.TenantInfo
+	CreateTenantRequest              = transport.CreateTenantRequest
+	CreateTenantResponse             = transport.CreateTenantResponse
+	GetTenantResponse                = transport.GetTenantResponse
+	ListTenantsResponse              = transport.ListTenantsResponse
+	TenantBarrierInitRequest         = transport.TenantBarrierInitRequest
+	TenantBarrierUnsealRequest       = transport.TenantBarrierUnsealRequest
+	TenantBarrierStatusResponse      = transport.TenantBarrierStatusResponse
+	UpdateTenantEntitlementsRequest  = transport.UpdateTenantEntitlementsRequest
+	UpdateTenantEntitlementsResponse = transport.UpdateTenantEntitlementsResponse
+	UpdateTenantQuotasRequest        = transport.UpdateTenantQuotasRequest
+	UpdateTenantQuotasResponse       = transport.UpdateTenantQuotasResponse
 
 	// Init Ceremony Operations
 	InitStatusResponse         = transport.InitStatusResponse

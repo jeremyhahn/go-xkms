@@ -93,6 +93,32 @@ func TestConfig_Validate(t *testing.T) {
 			errType: ErrInvalidConfig,
 		},
 		{
+			name: "valid insecure config with endpoint",
+			config: &Config{
+				ProjectID:   "test-project",
+				LocationID:  "global",
+				KeyRingID:   "test-keyring",
+				Endpoint:    "localhost:4588",
+				Insecure:    true,
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
+			},
+			wantErr: false,
+		},
+		{
+			name: "insecure without endpoint",
+			config: &Config{
+				ProjectID:   "test-project",
+				LocationID:  "global",
+				KeyRingID:   "test-keyring",
+				Insecure:    true,
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
+			},
+			wantErr: true,
+			errType: ErrInvalidConfig,
+		},
+		{
 			name: "missing project ID",
 			config: &Config{
 				LocationID:  "us-central1",

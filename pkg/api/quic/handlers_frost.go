@@ -23,6 +23,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -884,5 +886,5 @@ func (s *Server) getFrostBackend() (*frost.FrostBackend, error) {
 			}
 		}
 	}
-	return nil, fmt.Errorf("no FROST backend configured")
+	return nil, &errs.Message{Msg: "no FROST backend configured"}
 }

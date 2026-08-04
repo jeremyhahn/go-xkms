@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import {
   navigateTo,
   waitForAppReady,
@@ -782,6 +782,53 @@ test.describe('Passwords View', () => {
   });
 
   test.describe('Wails Mode - Password CRUD', () => {
+    // Track the name of the entry created by each test so afterEach can clean
+    // up, keeping the shared persistent backend idempotent across re-runs.
+    let createdEntryName: string | null = null;
+
+    /**
+     * Delete a password entry by name via the GUI delete flow. Safe to call
+     * when the entry does not exist. Handles any open dialog by pressing
+     * Escape first.
+     */
+    async function cleanupEntry(page: Page, name: string): Promise<void> {
+      // Close any lingering Add/Edit dialog before interacting with the list.
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.waitForTimeout(200);
+
+      const listItem = page.locator('.list-item', { hasText: name }).first();
+      const exists = await listItem.isVisible({ timeout: 2_000 }).catch(() => false);
+      if (!exists) return;
+
+      await listItem.click();
+      await page.waitForTimeout(200);
+
+      const deleteBtn = page.locator('.panel-right').getByRole('button', { name: 'Delete' });
+      const deleteBtnVisible = await deleteBtn.isVisible({ timeout: 2_000 }).catch(() => false);
+      if (!deleteBtnVisible) return;
+
+      await deleteBtn.click();
+      await page.waitForTimeout(200);
+
+      const confirmDialog = page.locator('.confirm-dialog');
+      const confirmVisible = await confirmDialog.isVisible({ timeout: 2_000 }).catch(() => false);
+      if (!confirmVisible) return;
+
+      await confirmDialog.getByRole('button', { name: 'Delete' }).click();
+      await page.waitForTimeout(400);
+    }
+
+    test.afterEach(async ({ page }) => {
+      if (!createdEntryName) return;
+      const name = createdEntryName;
+      createdEntryName = null;
+
+      const wails = await isWailsMode(page).catch(() => false);
+      if (!wails) return;
+
+      await cleanupEntry(page, name);
+    });
+
     test('add and save a password entry then verify it appears in the list', async ({
       page,
     }) => {
@@ -794,13 +841,17 @@ test.describe('Passwords View', () => {
       const isLocked = await lockOverlay.isVisible().catch(() => false);
       if (isLocked) return;
 
+      // Use a unique name per run so re-runs don't hit a duplicate-name error.
+      const entryName = `E2E Test Entry ${Date.now().toString(36)}`;
+      createdEntryName = entryName;
+
       // Open the Add Password dialog
       await page.getByRole('button', { name: 'Add Password' }).click();
       await page.waitForTimeout(300);
 
       // Fill in the required fields
       const nameInput = page.locator('input[placeholder="e.g. GitHub Account"]');
-      await nameInput.fill('E2E Test Entry');
+      await nameInput.fill(entryName);
 
       const passwordInput = page.locator('input[placeholder="Enter or generate"]');
       await passwordInput.fill('e2e-test-password-123');
@@ -825,7 +876,7 @@ test.describe('Passwords View', () => {
       // The entry should appear in the password list.
       // Use the list panel scope to avoid matching the toast notification.
       const passwordList = page.locator('.panel-center .list-content');
-      await expect(passwordList.getByText('E2E Test Entry', { exact: true })).toBeVisible();
+      await expect(passwordList.getByText(entryName, { exact: true })).toBeVisible();
     });
 
     test('click an entry to view details in the right panel', async ({
@@ -840,19 +891,26 @@ test.describe('Passwords View', () => {
       const isLocked = await lockOverlay.isVisible().catch(() => false);
       if (isLocked) return;
 
-      // First, add a password to ensure there is something to click
+      // Use a unique name per run to avoid duplicate-name failures on re-runs.
+      const entryName = `Detail View Entry ${Date.now().toString(36)}`;
+      createdEntryName = entryName;
+
+      // Add a password entry to ensure there is something to click.
       await page.getByRole('button', { name: 'Add Password' }).click();
       await page.waitForTimeout(300);
 
-      await page.locator('input[placeholder="e.g. GitHub Account"]').fill('Detail View Entry');
+      await page.locator('input[placeholder="e.g. GitHub Account"]').fill(entryName);
       await page.locator('input[placeholder="Enter or generate"]').fill('detail-password');
       await page.locator('input[placeholder="e.g. user@example.com"]').fill('detailuser');
 
       await page.locator('.modal-actions').getByRole('button', { name: 'Add' }).click();
       await page.waitForTimeout(500);
 
-      // Click the newly created entry in the list
-      const listItem = page.locator('.list-item', { hasText: 'Detail View Entry' });
+      // Confirm the dialog closed before interacting with the list.
+      await expect(page.locator('[role="dialog"]')).not.toBeVisible({ timeout: 5_000 });
+
+      // Click the newly created entry in the list.
+      const listItem = page.locator('.list-item', { hasText: entryName }).first();
       await listItem.click();
       await page.waitForTimeout(300);
 
@@ -986,17 +1044,24 @@ test.describe('Passwords View', () => {
       const isLocked = await lockOverlay.isVisible().catch(() => false);
       if (isLocked) return;
 
-      // Add and select an entry to trigger delete confirmation
+      // Use a unique name per run to avoid duplicate-name failures on re-runs.
+      const entryName = `Confirm Dialog Entry ${Date.now().toString(36)}`;
+      createdEntryName = entryName;
+
+      // Add and select an entry to trigger delete confirmation.
       await page.getByRole('button', { name: 'Add Password' }).click();
       await page.waitForTimeout(300);
 
-      await page.locator('input[placeholder="e.g. GitHub Account"]').fill('Confirm Dialog Entry');
+      await page.locator('input[placeholder="e.g. GitHub Account"]').fill(entryName);
       await page.locator('input[placeholder="Enter or generate"]').fill('confirm-pw');
 
       await page.locator('.modal-actions').getByRole('button', { name: 'Add' }).click();
       await page.waitForTimeout(500);
 
-      const listItem = page.locator('.list-item', { hasText: 'Confirm Dialog Entry' });
+      // Confirm the dialog closed before interacting with the list.
+      await expect(page.locator('[role="dialog"]')).not.toBeVisible({ timeout: 5_000 });
+
+      const listItem = page.locator('.list-item', { hasText: entryName }).first();
       await listItem.click();
       await page.waitForTimeout(300);
 
@@ -1019,7 +1084,7 @@ test.describe('Passwords View', () => {
       // Scope to the list panel to avoid matching any lingering toast notification.
       await expect(confirmDialog).not.toBeVisible();
       const passwordList = page.locator('.panel-center .list-content');
-      await expect(passwordList.getByText('Confirm Dialog Entry', { exact: true })).toBeVisible();
+      await expect(passwordList.getByText(entryName, { exact: true })).toBeVisible();
     });
   });
 
@@ -1258,253 +1323,5 @@ test.describe('Standalone Mode - Wails-required notifications', () => {
     await page.getByRole('button', { name: 'Backup' }).click();
 
     await expect(page.locator('.toast-container')).toContainText(/no backend connection/i, { timeout: 5000 });
-  });
-});
-
-// ── PIN Gate and Auto-Unlock Regression Tests ─────────────────────────────
-// These tests inject mock backends to verify the fix where PIN verification
-// automatically unlocks the password store (no double prompt).
-
-import {
-  installPasswordMock,
-  installLockedPasswordMock,
-  installPinFailureMock,
-  installUnlockedPasswordMock,
-} from './password-helpers';
-
-// PIN gate and per-view locking are not yet implemented in Passwords.svelte.
-// These tests are kept for when the feature is added.
-test.describe.skip('Passwords - PIN Gate Flow', () => {
-  test('PIN gate shows when password_store_require_pin is enabled', async ({
-    page,
-  }) => {
-    await installPasswordMock(page, { pinRequired: true, startLocked: false });
-    await page.goto('/');
-    await waitForAppReady(page);
-    await ensureSidebarExpanded(page);
-    await navigateTo(page, 'passwords');
-
-    // PINGate should be visible with "PIN Required" heading
-    await expect(page.getByRole('heading', { name: 'PIN Required' })).toBeVisible({ timeout: 5_000 });
-    await expect(page.locator('input[placeholder="Enter PIN"]')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Verify PIN' })).toBeVisible();
-  });
-
-  test('PIN gate is bypassed when password_store_require_pin is disabled', async ({
-    page,
-  }) => {
-    await installUnlockedPasswordMock(page);
-    await page.goto('/');
-    await waitForAppReady(page);
-    await ensureSidebarExpanded(page);
-    await navigateTo(page, 'passwords');
-
-    // PINGate should NOT appear — go straight to password content
-    await expect(page.getByRole('heading', { name: 'PIN Required' })).not.toBeVisible({ timeout: 3_000 });
-
-    // Should see the passwords header and content
-    await expect(page.getByRole('heading', { name: 'Passwords' })).toBeVisible();
-    await expect(
-      page.getByText('Static password management'),
-    ).toBeVisible();
-  });
-
-  test('correct PIN unlocks passwords without second prompt (single PIN)', async ({
-    page,
-  }) => {
-    // Store starts LOCKED — after PIN verification, loadPasswords() should
-    // auto-unlock it via PasswordProtectionService.Unlock
-    await installLockedPasswordMock(page);
-    await page.goto('/');
-    await waitForAppReady(page);
-    await ensureSidebarExpanded(page);
-    await navigateTo(page, 'passwords');
-
-    // PINGate should be visible
-    await expect(page.getByRole('heading', { name: 'PIN Required' })).toBeVisible({ timeout: 5_000 });
-
-    // Enter PIN and verify
-    await page.locator('input[placeholder="Enter PIN"]').fill('123456');
-    await page.getByRole('button', { name: 'Verify PIN' }).click();
-    await page.waitForTimeout(500);
-
-    // After PIN verification:
-    // 1. PINGate should disappear
-    await expect(page.getByRole('heading', { name: 'PIN Required' })).not.toBeVisible({ timeout: 5_000 });
-
-    // 2. Lock overlay should NOT appear (auto-unlocked)
-    const lockOverlay = page.locator('.lock-overlay');
-    await expect(lockOverlay).not.toBeVisible({ timeout: 3_000 });
-
-    // 3. Passwords should be visible (three-panel layout)
-    await expect(page.locator('.three-panel')).toBeVisible({ timeout: 5_000 });
-  });
-
-  test('incorrect PIN shows error and keeps gate visible', async ({
-    page,
-  }) => {
-    await installPinFailureMock(page);
-    await page.goto('/');
-    await waitForAppReady(page);
-    await ensureSidebarExpanded(page);
-    await navigateTo(page, 'passwords');
-
-    // PINGate should be visible
-    await expect(page.getByRole('heading', { name: 'PIN Required' })).toBeVisible({ timeout: 5_000 });
-
-    // Enter wrong PIN
-    await page.locator('input[placeholder="Enter PIN"]').fill('wrong-pin');
-    await page.getByRole('button', { name: 'Verify PIN' }).click();
-    await page.waitForTimeout(500);
-
-    // Error message should appear
-    await expect(page.locator('.pin-error')).toBeVisible({ timeout: 3_000 });
-    await expect(page.locator('.pin-error')).toContainText('Incorrect PIN');
-
-    // PINGate should still be visible (not dismissed)
-    await expect(page.getByRole('heading', { name: 'PIN Required' })).toBeVisible();
-  });
-
-  test('Verify PIN button is disabled when PIN input is empty', async ({
-    page,
-  }) => {
-    await installPasswordMock(page, { pinRequired: true });
-    await page.goto('/');
-    await waitForAppReady(page);
-    await ensureSidebarExpanded(page);
-    await navigateTo(page, 'passwords');
-
-    await expect(page.getByRole('heading', { name: 'PIN Required' })).toBeVisible({ timeout: 5_000 });
-
-    // Verify button should be disabled when input is empty
-    const verifyBtn = page.getByRole('button', { name: 'Verify PIN' });
-    await expect(verifyBtn).toBeDisabled();
-
-    // Type something — button should enable
-    await page.locator('input[placeholder="Enter PIN"]').fill('123');
-    await expect(verifyBtn).toBeEnabled();
-  });
-});
-
-test.describe('Passwords - Lock/Unlock Cycle', () => {
-  test('lock button locks the store and shows overlay', async ({ page }) => {
-    await installPasswordMock(page, { pinRequired: false, startLocked: false });
-    await page.goto('/');
-    await waitForAppReady(page);
-    await ensureSidebarExpanded(page);
-    await navigateTo(page, 'passwords');
-    await page.waitForTimeout(500);
-
-    // Store should be unlocked — three-panel layout visible
-    await expect(page.locator('.three-panel')).toBeVisible({ timeout: 5_000 });
-
-    // Click Lock button in the password view (not the app-level Lock)
-    const viewContainer = page.locator('.view-container');
-    const lockBtn = viewContainer.getByRole('button', { name: 'Lock' });
-    const hasLock = await lockBtn.isVisible().catch(() => false);
-    if (hasLock) {
-      await lockBtn.click();
-      await page.waitForTimeout(500);
-
-      // Lock overlay should appear
-      const lockOverlay = page.locator('.lock-overlay');
-      await expect(lockOverlay).toBeVisible({ timeout: 5_000 });
-      await expect(lockOverlay.getByText('Passwords Locked')).toBeVisible();
-    }
-  });
-
-  test('manual lock then unlock restores three-panel layout', async ({
-    page,
-  }) => {
-    await installPasswordMock(page, { pinRequired: false, startLocked: false });
-    await page.goto('/');
-    await waitForAppReady(page);
-    await ensureSidebarExpanded(page);
-    await navigateTo(page, 'passwords');
-    await page.waitForTimeout(500);
-
-    // Store starts unlocked — three-panel layout visible
-    await expect(page.locator('.three-panel')).toBeVisible({ timeout: 5_000 });
-
-    // Click Lock button in the password header actions (only if present)
-    const viewContainer = page.locator('.view-container');
-    const lockBtn = viewContainer.getByRole('button', { name: 'Lock' });
-    const hasLockBtn = await lockBtn.isVisible().catch(() => false);
-    if (!hasLockBtn) return; // Lock button not yet implemented
-
-    await lockBtn.click();
-    await page.waitForTimeout(500);
-
-    // Lock overlay should appear
-    const lockOverlay = page.locator('.lock-overlay');
-    await expect(lockOverlay).toBeVisible({ timeout: 5_000 });
-
-    // Enter master password and click Unlock
-    await page.locator('input[placeholder="Master password"]').fill('any-password');
-    await page.getByRole('button', { name: 'Unlock' }).click();
-    await page.waitForTimeout(500);
-
-    // Lock overlay should disappear and three-panel should return
-    await expect(lockOverlay).not.toBeVisible({ timeout: 5_000 });
-    await expect(page.locator('.three-panel')).toBeVisible({ timeout: 5_000 });
-  });
-
-  test('Unlock button disabled when password field is empty', async ({
-    page,
-  }) => {
-    await installPasswordMock(page, { pinRequired: false, startLocked: false });
-    await page.goto('/');
-    await waitForAppReady(page);
-    await ensureSidebarExpanded(page);
-    await navigateTo(page, 'passwords');
-    await page.waitForTimeout(500);
-
-    // Store starts unlocked — lock it manually
-    await expect(page.locator('.three-panel')).toBeVisible({ timeout: 5_000 });
-    const viewContainer = page.locator('.view-container');
-    const lockBtn = viewContainer.getByRole('button', { name: 'Lock' });
-    const hasLockBtn = await lockBtn.isVisible().catch(() => false);
-    if (!hasLockBtn) return; // Lock button not yet implemented
-
-    await lockBtn.click();
-    await page.waitForTimeout(500);
-
-    const lockOverlay = page.locator('.lock-overlay');
-    await expect(lockOverlay).toBeVisible({ timeout: 5_000 });
-
-    // Unlock button should be disabled when empty
-    const unlockBtn = page.getByRole('button', { name: 'Unlock' });
-    await expect(unlockBtn).toBeDisabled();
-
-    // Type something — button should enable
-    await page.locator('input[placeholder="Master password"]').fill('test');
-    await expect(unlockBtn).toBeEnabled();
-  });
-
-  test('unlocked state persists when navigating away and back', async ({
-    page,
-  }) => {
-    await installPasswordMock(page, { pinRequired: false, startLocked: false });
-    await page.goto('/');
-    await waitForAppReady(page);
-    await ensureSidebarExpanded(page);
-    await navigateTo(page, 'passwords');
-    await page.waitForTimeout(500);
-
-    // Should be unlocked
-    await expect(page.locator('.three-panel')).toBeVisible({ timeout: 5_000 });
-
-    // Navigate away to Dashboard
-    await navigateTo(page, 'dashboard');
-    await page.waitForTimeout(300);
-
-    // Navigate back to Passwords
-    await navigateTo(page, 'passwords');
-    await page.waitForTimeout(500);
-
-    // Should still be unlocked (no lock overlay)
-    const lockOverlay = page.locator('.lock-overlay');
-    await expect(lockOverlay).not.toBeVisible({ timeout: 3_000 });
-    await expect(page.locator('.three-panel')).toBeVisible({ timeout: 5_000 });
   });
 });

@@ -16,9 +16,10 @@ package services
 import (
 	"context"
 	"errors"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // Team service errors.

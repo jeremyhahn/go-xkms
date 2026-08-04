@@ -11,7 +11,7 @@ test/integration/
 ├── pkcs8/              # Software keys (PKCS#8)
 ├── pkcs11/             # Hardware Security Module (SoftHSM2)
 ├── tpm2/               # Trusted Platform Module 2.0 (simulator)
-├── awskms/             # AWS KMS (LocalStack)
+├── awskms/             # AWS KMS (Floci)
 ├── gcpkms/             # Google Cloud KMS (emulator)
 ├── azurekv/            # Azure Key Vault (Azurite)
 ├── vault/              # HashiCorp Vault (Transit engine)
@@ -75,23 +75,23 @@ make integration-test
 - **Tags**: `integration tpm2`
 - **Ports**: 2321 (command), 2322 (platform)
 
-### AWS KMS (LocalStack)
-- **Service**: LocalStack
+### AWS KMS (Floci)
+- **Service**: Floci
 - **Purpose**: Test AWS KMS cloud integration
 - **Tags**: `integration awskms`
 - **Port**: 4566
 
-### GCP KMS (Emulator)
-- **Service**: Google Cloud KMS Emulator
+### GCP KMS (Floci)
+- **Service**: Floci GCP (Cloud KMS emulator over gRPC/REST) + mock client for algorithms the emulator does not implement (EC P-384, RSA-PSS)
 - **Purpose**: Test GCP KMS cloud integration
 - **Tags**: `integration gcpkms`
-- **Port**: 8085
+- **Port**: 4588
 
-### Azure Key Vault (Azurite)
-- **Service**: Azurite (Azure Storage Emulator)
+### Azure Key Vault (Emulator)
+- **Service**: Azure Key Vault Emulator (jamesgoulddev/azure-keyvault-emulator; full /keys API with real sign/verify)
 - **Purpose**: Test Azure Key Vault integration
 - **Tags**: `integration azurekv`
-- **Ports**: 10000 (blob), 10001 (queue), 10002 (table)
+- **Port**: 4997
 
 ### HashiCorp Vault
 - **Service**: Vault (dev mode)

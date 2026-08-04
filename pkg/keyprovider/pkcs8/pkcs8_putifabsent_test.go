@@ -16,9 +16,10 @@ package pkcs8
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -30,7 +31,7 @@ import (
 // TestGenerateKey_StorageCheckError exercising storage-error propagation
 // through the path GenerateKey actually uses.
 func (m *mockStorageErrorOnExists) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
-	return false, fmt.Errorf("mock PutIfAbsent error")
+	return false, &errs.Message{Msg: "mock PutIfAbsent error"}
 }
 
 // TestGenerateKey_ConcurrentSameID verifies that the PutIfAbsent-based

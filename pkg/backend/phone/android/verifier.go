@@ -17,6 +17,8 @@ import (
 	"crypto/x509"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	attestandroid "github.com/jeremyhahn/go-xkms/pkg/attestation/android"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/phone"
 )
@@ -89,7 +91,7 @@ func (v *AndroidVerifier) VerifyAttestation(derChain [][]byte, nonce []byte) (*p
 	for i, der := range derChain {
 		cert, err := x509.ParseCertificate(der)
 		if err != nil {
-			return nil, fmt.Errorf("%w: certificate at index %d: %v", phone.ErrInvalidCertificate, i, err)
+			return nil, &errs.Detail{Err: phone.ErrInvalidCertificate, Detail: fmt.Sprintf("certificate at index %d: %v", i, err)}
 		}
 		chain = append(chain, cert)
 	}
@@ -103,7 +105,7 @@ func (v *AndroidVerifier) VerifyAttestation(derChain [][]byte, nonce []byte) (*p
 
 	desc, err := attestandroid.VerifyKeyAttestation(chain, verifyOpts)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", phone.ErrChainVerificationFailed, err)
+		return nil, &errs.Detail{Err: phone.ErrChainVerificationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return &phone.VerifiedAttestation{

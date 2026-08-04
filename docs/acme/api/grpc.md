@@ -1,6 +1,6 @@
 # gRPC API Documentation
 
-go-trusted-ca exposes its services via gRPC for high-performance service-to-service communication. This document covers the gRPC API, including service definitions, authentication, and usage examples.
+go-xkms exposes its services via gRPC for high-performance service-to-service communication. This document covers the gRPC API, including service definitions, authentication, and usage examples.
 
 ## Overview
 
@@ -31,7 +31,7 @@ syntax = "proto3";
 
 package trustedca.v1;
 
-option go_package = "github.com/jeremyhahn/go-trusted-ca/api/proto/trustedca/v1";
+option go_package = "github.com/jeremyhahn/go-xkms/api/proto/trustedca/v1";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
@@ -271,7 +271,7 @@ syntax = "proto3";
 
 package trustedca.v1;
 
-option go_package = "github.com/jeremyhahn/go-trusted-ca/api/proto/trustedca/v1";
+option go_package = "github.com/jeremyhahn/go-xkms/api/proto/trustedca/v1";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
@@ -430,7 +430,7 @@ syntax = "proto3";
 
 package trustedca.v1;
 
-option go_package = "github.com/jeremyhahn/go-trusted-ca/api/proto/trustedca/v1";
+option go_package = "github.com/jeremyhahn/go-xkms/api/proto/trustedca/v1";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
@@ -764,7 +764,7 @@ import (
     "google.golang.org/grpc/credentials"
     "google.golang.org/grpc/metadata"
 
-    pb "github.com/jeremyhahn/go-trusted-ca/api/proto/trustedca/v1"
+    pb "github.com/jeremyhahn/go-xkms/api/proto/trustedca/v1"
 )
 
 func main() {

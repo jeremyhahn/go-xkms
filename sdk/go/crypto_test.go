@@ -606,6 +606,9 @@ func (n *noopClient) BarrierRekey(context.Context, *transport.BarrierRekeyReques
 func (n *noopClient) BarrierGenerateRecoveryKeys(context.Context, *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
 	return nil, nil
 }
+func (n *noopClient) BarrierEnableEncryption(context.Context, *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	return nil, nil
+}
 func (n *noopClient) BarrierRecoverWithKeys(context.Context, *transport.BarrierRecoverWithKeysRequest) error {
 	return nil
 }
@@ -807,6 +810,15 @@ func (n *noopClient) TenantBarrierInit(context.Context, *transport.TenantBarrier
 }
 func (n *noopClient) TenantBarrierUnseal(context.Context, *transport.TenantBarrierUnsealRequest) error {
 	return nil
+}
+func (n *noopClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return nil, nil
 }
 func (n *noopClient) GetInitStatus(context.Context) (*transport.InitStatusResponse, error) {
 	return nil, nil

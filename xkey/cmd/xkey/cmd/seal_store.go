@@ -260,12 +260,12 @@ func init() {
 func connectSealStore() (SealStoreService, error) {
 	client, err := clientFactory()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSealStoreConnectFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrSealStoreConnectFailed, Cause: err}
 	}
 
 	ctx := context.Background()
 	if err := client.Connect(ctx); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSealStoreConnectFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrSealStoreConnectFailed, Cause: err}
 	}
 
 	return client, nil
@@ -291,7 +291,7 @@ func runSealStorePut(cmd *cobra.Command, args []string) error {
 	if hasFile {
 		data, err := os.ReadFile(filePath)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrSealStoreFileRead, err)
+			return &SentinelCauseError{Sentinel: ErrSealStoreFileRead, Cause: err}
 		}
 		secret = data
 	} else {
@@ -311,7 +311,7 @@ func runSealStorePut(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := client.SealStorePut(ctx, req); err != nil {
-		return fmt.Errorf("%w: %v", ErrSealStorePutFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSealStorePutFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Stored secret: %s\n", name)
@@ -336,12 +336,12 @@ func runSealStoreGet(cmd *cobra.Command, args []string) error {
 
 	resp, err := client.SealStoreGet(ctx, req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSealStoreGetFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSealStoreGetFailed, Cause: err}
 	}
 
 	if outputPath != "" {
 		if err := os.WriteFile(outputPath, resp.Secret, 0600); err != nil {
-			return fmt.Errorf("%w: %v", ErrSealStoreOutputWrite, err)
+			return &SentinelCauseError{Sentinel: ErrSealStoreOutputWrite, Cause: err}
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Secret written to: %s\n", outputPath)
 		return nil
@@ -368,7 +368,7 @@ func runSealStoreDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := client.SealStoreDelete(ctx, req); err != nil {
-		return fmt.Errorf("%w: %v", ErrSealStoreDeleteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSealStoreDeleteFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Deleted secret: %s\n", name)
@@ -386,7 +386,7 @@ func runSealStoreList(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	resp, err := client.SealStoreList(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSealStoreListFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSealStoreListFailed, Cause: err}
 	}
 
 	out := cmd.OutOrStdout()
@@ -425,7 +425,7 @@ func runSealStoreReseal(cmd *cobra.Command, args []string) error {
 		// List all secrets and reseal each one.
 		listResp, err := client.SealStoreList(ctx)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrSealStoreListFailed, err)
+			return &SentinelCauseError{Sentinel: ErrSealStoreListFailed, Cause: err}
 		}
 
 		if len(listResp.Names) == 0 {
@@ -449,7 +449,7 @@ func runSealStoreReseal(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	req := &transport.SealStoreResealRequest{Name: name}
 	if err := client.SealStoreReseal(ctx, req); err != nil {
-		return fmt.Errorf("%w: %v", ErrSealStoreResealFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSealStoreResealFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintf(out, "Resealed: %s\n", name)
@@ -467,7 +467,7 @@ func runSealStoreStatus(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	resp, err := client.SealStoreStatus(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSealStoreStatusFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSealStoreStatusFailed, Cause: err}
 	}
 
 	out := cmd.OutOrStdout()

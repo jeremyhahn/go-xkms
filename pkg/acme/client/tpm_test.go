@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -498,6 +498,7 @@ type mockXKMSTPM struct {
 	ekPublicKey  crypto.PublicKey
 	ekCert       *x509.Certificate
 	ekAttrs      *xkmssdk.KeyAttributes
+	ekError      error
 	ekCertError  error
 	ekAttrsError error
 
@@ -636,6 +637,9 @@ func (m *mockXKMSTPM) Device() string {
 }
 
 func (m *mockXKMSTPM) EK() (crypto.PublicKey, error) {
+	if m.ekError != nil {
+		return nil, m.ekError
+	}
 	return m.ekPublicKey, nil
 }
 
@@ -1167,6 +1171,20 @@ func TestXKMSTPMAdapter_EK(t *testing.T) {
 	t.Run("returns nil when no EK", func(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			ekPublicKey: nil,
+		}
+		adapter := NewXKMSTPMAdapter(mockTPM)
+
+		result := adapter.EK()
+		assert.Nil(t, result)
+	})
+
+	t.Run("returns nil when underlying TPM errors", func(t *testing.T) {
+		ecKey := newTestECDSAKey(t)
+		mockTPM := &mockXKMSTPM{
+			// Even with a public key configured, an error from the
+			// underlying TPM must make EK() return nil rather than the key.
+			ekPublicKey: &ecKey.PublicKey,
+			ekError:     errors.New("tpm communication failure"),
 		}
 		adapter := NewXKMSTPMAdapter(mockTPM)
 

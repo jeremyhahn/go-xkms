@@ -1,10 +1,10 @@
 # Docker Multi-Architecture Support
 
-This document describes the Docker multi-architecture build system for go-trusted-ca.
+This document describes the Docker multi-architecture build system for go-xkms.
 
 ## Overview
 
-The go-trusted-ca project supports multi-architecture Docker images for:
+The go-xkms project supports multi-architecture Docker images for:
 - **linux/amd64** - x86_64 systems
 - **linux/arm64** - ARM64 systems (including Apple Silicon, Raspberry Pi 4+, AWS Graviton)
 
@@ -16,10 +16,10 @@ Images are automatically built and published to GitHub Container Registry (ghcr.
 
 ```bash
 # Pull latest version
-docker pull ghcr.io/jeremyhahn/go-trusted-ca:latest
+docker pull ghcr.io/jeremyhahn/go-xkms:latest
 
 # Pull specific version
-docker pull ghcr.io/jeremyhahn/go-trusted-ca:v1.0.0
+docker pull ghcr.io/jeremyhahn/go-xkms:v1.0.0
 
 # Docker will automatically select the correct architecture for your platform
 ```
@@ -28,13 +28,13 @@ docker pull ghcr.io/jeremyhahn/go-trusted-ca:v1.0.0
 
 ```bash
 # Run with default configuration
-docker run -p 8080:8080 -p 8081:8081 ghcr.io/jeremyhahn/go-trusted-ca:latest
+docker run -p 8080:8080 -p 8081:8081 ghcr.io/jeremyhahn/go-xkms:latest
 
 # Run with custom configuration
 docker run -p 8080:8080 -p 8081:8081 \
   -v $(pwd)/config:/etc/trusted-acme \
   -v $(pwd)/data:/var/lib/trusted-acme \
-  ghcr.io/jeremyhahn/go-trusted-ca:latest
+  ghcr.io/jeremyhahn/go-xkms:latest
 ```
 
 ## Building Multi-Arch Images Locally
@@ -162,10 +162,10 @@ The Dockerfile accepts the following build arguments:
 Images include OCI-compliant labels:
 
 ```dockerfile
-org.opencontainers.image.title="go-trusted-ca"
+org.opencontainers.image.title="go-xkms"
 org.opencontainers.image.description="ACME RFC-8555 compliant server with TPM and secure keystore support"
 org.opencontainers.image.vendor="Jeremy Hahn"
-org.opencontainers.image.source="https://github.com/jeremyhahn/go-trusted-ca"
+org.opencontainers.image.source="https://github.com/jeremyhahn/go-xkms"
 org.opencontainers.image.version="v1.0.0"
 org.opencontainers.image.created="2026-01-03T..."
 org.opencontainers.image.revision="abc123"
@@ -178,10 +178,10 @@ org.opencontainers.image.platform="linux/amd64"
 
 ```bash
 # Build only for amd64
-docker buildx build --platform linux/amd64 -t go-trusted-ca:amd64 .
+docker buildx build --platform linux/amd64 -t go-xkms:amd64 .
 
 # Build only for arm64
-docker buildx build --platform linux/arm64 -t go-trusted-ca:arm64 .
+docker buildx build --platform linux/arm64 -t go-xkms:arm64 .
 ```
 
 ### Custom Build Arguments
@@ -192,7 +192,7 @@ docker buildx build \
   --build-arg VERSION=v1.2.3 \
   --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
   --build-arg VCS_REF=$(git rev-parse --short HEAD) \
-  -t go-trusted-ca:custom \
+  -t go-xkms:custom \
   .
 ```
 
@@ -200,19 +200,19 @@ docker buildx build \
 
 ```bash
 # View manifest for multi-arch image
-docker buildx imagetools inspect ghcr.io/jeremyhahn/go-trusted-ca:latest
+docker buildx imagetools inspect ghcr.io/jeremyhahn/go-xkms:latest
 
 # Example output:
-# Name:      ghcr.io/jeremyhahn/go-trusted-ca:latest
+# Name:      ghcr.io/jeremyhahn/go-xkms:latest
 # MediaType: application/vnd.docker.distribution.manifest.list.v2+json
 # Digest:    sha256:abc123...
 #
 # Manifests:
-#   Name:      ghcr.io/jeremyhahn/go-trusted-ca:latest@sha256:def456...
+#   Name:      ghcr.io/jeremyhahn/go-xkms:latest@sha256:def456...
 #   MediaType: application/vnd.docker.distribution.manifest.v2+json
 #   Platform:  linux/amd64
 #
-#   Name:      ghcr.io/jeremyhahn/go-trusted-ca:latest@sha256:789abc...
+#   Name:      ghcr.io/jeremyhahn/go-xkms:latest@sha256:789abc...
 #   MediaType: application/vnd.docker.distribution.manifest.v2+json
 #   Platform:  linux/arm64
 ```

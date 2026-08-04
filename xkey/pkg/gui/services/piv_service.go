@@ -22,10 +22,11 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"strings"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
@@ -366,7 +367,7 @@ func (s *PIVService) GenerateKeyAdvanced(opts PIVGenerateOptions) (*PIVGenerateA
 	if err != nil {
 		slog.Error("PIV generate key failed", "slot", opts.Slot, "algorithm", opts.Algorithm, "error", err)
 		if strings.Contains(err.Error(), "CKR_DEVICE_ERROR") {
-			return nil, fmt.Errorf("YubiKey device busy — close Yubico Authenticator or other apps using the YubiKey, then retry: %w", err)
+			return nil, &WrappedError{Msg: "YubiKey device busy — close Yubico Authenticator or other apps using the YubiKey, then retry", Err: err}
 		}
 		return nil, err
 	}
@@ -494,7 +495,7 @@ func (s *PIVService) ExportPublicKey(slot string) (string, error) {
 		keys, err := xkms.ListKeys(s.ctx, backend)
 		if err != nil {
 			slog.Error("PIV export public key: list keys failed", "slot", slot, "backend", backend, "error", err)
-			return "", fmt.Errorf("pivcert: export public key for slot %s: %w", slot, err)
+			return "", &WrappedError{Msg: fmt.Sprintf("pivcert: export public key for slot %s", slot), Err: err}
 		}
 		for _, ka := range keys {
 			if !strings.EqualFold(ka.PIVSlot, slot) && ka.CN != cn {
@@ -503,15 +504,15 @@ func (s *PIVService) ExportPublicKey(slot string) (string, error) {
 			signer, sErr := xkms.Signer(s.ctx, ka)
 			if sErr != nil {
 				slog.Error("PIV export public key: signer lookup failed", "slot", slot, "cn", ka.CN, "error", sErr)
-				return "", fmt.Errorf("pivcert: export public key for slot %s: %w", slot, sErr)
+				return "", &WrappedError{Msg: fmt.Sprintf("pivcert: export public key for slot %s", slot), Err: sErr}
 			}
 			pubDER, mErr := x509.MarshalPKIXPublicKey(signer.Public())
 			if mErr != nil {
-				return "", fmt.Errorf("pivcert: marshal public key: %w", mErr)
+				return "", &WrappedError{Msg: "pivcert: marshal public key", Err: mErr}
 			}
 			return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})), nil
 		}
-		return "", fmt.Errorf("pivcert: no key found in slot %s", slot)
+		return "", &MessageError{Msg: fmt.Sprintf("pivcert: no key found in slot %s", slot)}
 	}
 	return "", ErrPIVClientNotSet
 }
@@ -583,7 +584,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 		certNotFound := certErr != nil && strings.Contains(certErr.Error(), "not found")
 		if certErr != nil && !certNotFound {
 			slog.Error("PIV delete certificate failed", "slot", slot, "backend", s.backend, "error", certErr)
-			return fmt.Errorf("pivcert: delete slot %s: %w", slot, certErr)
+			return &WrappedError{Msg: fmt.Sprintf("pivcert: delete slot %s", slot), Err: certErr}
 		}
 
 		// Delete the underlying key too so the slot becomes fully empty (the
@@ -595,7 +596,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 		if listErr != nil {
 			slog.Error("PIV delete: remote list keys failed", "slot", slot, "backend", s.backend, "error", listErr)
 			if certNotFound {
-				return fmt.Errorf("pivcert: delete slot %s: cert absent, key listing failed: %v: %w", slot, listErr, ErrPIVNoCertificate)
+				return &WrappedError{Msg: fmt.Sprintf("pivcert: delete slot %s: cert absent, key listing failed: %v", slot, listErr), Err: ErrPIVNoCertificate}
 			}
 			return nil
 		}
@@ -606,7 +607,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 			}
 			if _, delErr := s.client.DeleteKey(s.ctx, s.backend, k.KeyID); delErr != nil {
 				slog.Error("PIV delete key failed", "slot", slot, "keyID", k.KeyID, "error", delErr)
-				return fmt.Errorf("pivcert: delete key for slot %s: %w", slot, delErr)
+				return &WrappedError{Msg: fmt.Sprintf("pivcert: delete key for slot %s", slot), Err: delErr}
 			}
 			keyDeleted = true
 			slog.Info("audit", "component", "audit",
@@ -618,7 +619,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 		// Nothing in the slot at all — report not found only when both cert
 		// and key were absent.
 		if certNotFound && !keyDeleted {
-			return fmt.Errorf("pivcert: slot %s has neither certificate nor key: %w", slot, ErrPIVNoCertificate)
+			return &WrappedError{Msg: fmt.Sprintf("pivcert: slot %s has neither certificate nor key", slot), Err: ErrPIVNoCertificate}
 		}
 		return nil
 	}
@@ -633,7 +634,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 		certNotFound := certErr != nil && strings.Contains(certErr.Error(), "not found")
 		if certErr != nil && !certNotFound {
 			slog.Error("PIV delete certificate failed", "slot", slot, "backend", backend, "error", certErr)
-			return fmt.Errorf("pivcert: delete slot %s: %w", slot, certErr)
+			return &WrappedError{Msg: fmt.Sprintf("pivcert: delete slot %s", slot), Err: certErr}
 		}
 
 		// Now delete the underlying key from the key backend.
@@ -643,7 +644,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 			slog.Error("PIV delete: list keys failed", "slot", slot, "backend", backend, "error", listErr)
 			// If the cert was deleted but we cannot list keys, surface partial success.
 			if certNotFound {
-				return fmt.Errorf("pivcert: delete slot %s: cert absent, key listing failed: %v: %w", slot, listErr, ErrPIVNoCertificate)
+				return &WrappedError{Msg: fmt.Sprintf("pivcert: delete slot %s: cert absent, key listing failed: %v", slot, listErr), Err: ErrPIVNoCertificate}
 			}
 			return nil
 		}
@@ -656,7 +657,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 			}
 			if err := xkms.DeleteKey(s.ctx, ka); err != nil {
 				slog.Error("PIV delete key failed", "slot", slot, "cn", ka.CN, "error", err)
-				return fmt.Errorf("pivcert: delete key for slot %s: %w", slot, err)
+				return &WrappedError{Msg: fmt.Sprintf("pivcert: delete key for slot %s", slot), Err: err}
 			}
 			keyDeleted = true
 			slog.Info("audit", "component", "audit",
@@ -668,7 +669,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 		// Nothing in the slot at all — report not found only when both cert
 		// and key were absent.
 		if certNotFound && !keyDeleted {
-			return fmt.Errorf("pivcert: slot %s has neither certificate nor key: %w", slot, ErrPIVNoCertificate)
+			return &WrappedError{Msg: fmt.Sprintf("pivcert: slot %s has neither certificate nor key", slot), Err: ErrPIVNoCertificate}
 		}
 		return nil
 	}
@@ -791,7 +792,7 @@ func (s *PIVService) generateLocalKey(slot, algorithm string) (*PIVGenerateKeyRe
 	if err != nil {
 		slog.Error("PIV generate local key failed", "slot", slot, "algorithm", algorithm, "error", err)
 		if strings.Contains(err.Error(), "CKR_DEVICE_ERROR") {
-			return nil, fmt.Errorf("YubiKey device busy — close Yubico Authenticator or other apps using the YubiKey, then retry: %w", err)
+			return nil, &WrappedError{Msg: "YubiKey device busy — close Yubico Authenticator or other apps using the YubiKey, then retry", Err: err}
 		}
 		return nil, err
 	}

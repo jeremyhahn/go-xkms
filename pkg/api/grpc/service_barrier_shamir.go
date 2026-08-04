@@ -18,6 +18,7 @@ import (
 	"time"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -37,7 +38,7 @@ func (s *Service) BarrierInitializeShamir(ctx context.Context, req *pb.BarrierIn
 		return nil, err
 	}
 
-	creds := seal.Credentials{Secret: req.GetSecret()}
+	creds := seal.Credentials{Secret: []byte(req.GetSecret())}
 	result, err := barrier.InitializeShamir(ctx, creds)
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier initialize shamir")
@@ -194,6 +195,24 @@ func (s *Service) BarrierDeleteRecoveryKeys(ctx context.Context, _ *emptypb.Empt
 	return &emptypb.Empty{}, nil
 }
 
+// BarrierHasRecoveryKeys reports whether recovery keys have been generated.
+func (s *Service) BarrierHasRecoveryKeys(ctx context.Context, _ *emptypb.Empty) (*pb.BarrierHasRecoveryKeysResponse, error) {
+	if barrier == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
+	}
+
+	if err := s.authorize(ctx, "seal", "status", "has-recovery-keys"); err != nil {
+		return nil, err
+	}
+
+	hasKeys, err := barrier.HasRecoveryKeys(ctx)
+	if err != nil {
+		return nil, mapBarrierError(err, "barrier has recovery keys")
+	}
+
+	return &pb.BarrierHasRecoveryKeysResponse{HasKeys: hasKeys}, nil
+}
+
 // ==================== Root Token Operations ====================
 
 // BarrierGenerateRootToken generates a one-time root token by proving
@@ -215,5 +234,39 @@ func (s *Service) BarrierGenerateRootToken(ctx context.Context, req *pb.BarrierG
 	return &pb.BarrierRootTokenResponse{
 		Token:     token.Token,
 		CreatedAt: token.CreatedAt.Format(time.RFC3339),
+	}, nil
+}
+
+// ==================== Encryption Migration ====================
+
+// BarrierEnableEncryption migrates a previously-unencrypted barrier to a keyed
+// strategy in place. The migration runs asynchronously (a system-scope
+// migration tears down and reopens the barrier this request is served on); the
+// response acknowledges the start and clients poll BarrierStatus for completion.
+func (s *Service) BarrierEnableEncryption(ctx context.Context, req *pb.BarrierEnableEncryptionRequest) (*pb.BarrierEnableEncryptionResponse, error) {
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+
+	if err := s.authorize(ctx, "seal", "enable_encryption", "enable-encryption"); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.xkmsService.BarrierEnableEncryption(ctx, &transport.BarrierEnableEncryptionRequest{
+		TenantID:        req.GetTenantId(),
+		Strategy:        req.GetStrategy(),
+		Mechanism:       req.GetMechanism(),
+		Availability:    req.GetAvailability(),
+		Passphrase:      req.GetPassphrase(),
+		ShamirThreshold: int(req.GetShamirThreshold()),
+		ShamirTotal:     int(req.GetShamirTotal()),
+	})
+	if err != nil {
+		return nil, mapBarrierError(err, "barrier enable encryption")
+	}
+
+	return &pb.BarrierEnableEncryptionResponse{
+		Status: resp.Status,
+		Scope:  resp.Scope,
 	}, nil
 }

@@ -49,6 +49,15 @@ func (s *Server) initPKCS11Backend() error {
 		return &ErrBackendCreate{Backend: "PKCS#11", Err: err}
 	}
 
+	// Establish the session pool against the (pre-initialized) token. Without
+	// this the backend constructs but every operation fails with
+	// ErrNotInitialized. Token SO-initialization is an operator action
+	// (softhsm2-util / HSM tooling), NOT a boot action — Login only
+	// authenticates with the configured user PIN.
+	if err := pkcs11Backend.Login(); err != nil {
+		return &ErrBackendCreate{Backend: "PKCS#11", Err: err}
+	}
+
 	s.keyProviders["pkcs11"] = pkcs11Backend
 	s.logger.Info("PKCS#11 backend initialized", "backend", "pkcs11", "library", s.config.Backends.PKCS11.Library, "token", s.config.Backends.PKCS11.Token)
 	return nil

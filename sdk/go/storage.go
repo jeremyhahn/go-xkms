@@ -17,6 +17,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 
 	objstorecommon "github.com/jeremyhahn/go-objstore/pkg/common"
 	objstorelocal "github.com/jeremyhahn/go-objstore/pkg/local"
@@ -101,6 +102,12 @@ var (
 	// This is a convenience wrapper that panics on error (which should never happen
 	// for memory backends). Useful for cert storage initialization.
 	NewStorageMemory = storage.NewMemory
+
+	// NewQRDBStorageBackend adapts a go-qrdb transport KV client into a
+	// replicated storage.Backend. A composition root uses it to place data (e.g.
+	// the cluster CA key under the barrier strategy) in the replicated,
+	// barrier-encrypted datastore so every node can read it.
+	NewQRDBStorageBackend = qrdbstorage.NewBackend
 
 	// NewFileStorageBackend creates a new file-based storage backend
 	// rooted at the given directory. The directory is created with 0700

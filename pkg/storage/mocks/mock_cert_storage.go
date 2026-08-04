@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
@@ -75,7 +77,7 @@ func (m *MockCertStorage) SaveCert(_ context.Context, id string, cert *x509.Cert
 	m.SaveCertCalls = append(m.SaveCertCalls, id)
 
 	if m.closed {
-		return fmt.Errorf("storage is closed")
+		return &errs.Message{Msg: "storage is closed"}
 	}
 
 	if m.SaveCertFunc != nil {
@@ -94,7 +96,7 @@ func (m *MockCertStorage) GetCert(_ context.Context, id string) (*x509.Certifica
 	m.GetCertCalls = append(m.GetCertCalls, id)
 
 	if m.closed {
-		return nil, fmt.Errorf("storage is closed")
+		return nil, &errs.Message{Msg: "storage is closed"}
 	}
 
 	if m.GetCertFunc != nil {
@@ -103,7 +105,7 @@ func (m *MockCertStorage) GetCert(_ context.Context, id string) (*x509.Certifica
 
 	cert, ok := m.certs[id]
 	if !ok {
-		return nil, fmt.Errorf("certificate not found: %s", id)
+		return nil, &errs.Message{Msg: fmt.Sprintf("certificate not found: %s", id)}
 	}
 	return cert, nil
 }
@@ -116,7 +118,7 @@ func (m *MockCertStorage) DeleteCert(_ context.Context, id string) error {
 	m.DeleteCertCalls = append(m.DeleteCertCalls, id)
 
 	if m.closed {
-		return fmt.Errorf("storage is closed")
+		return &errs.Message{Msg: "storage is closed"}
 	}
 
 	if m.DeleteCertFunc != nil {
@@ -124,7 +126,7 @@ func (m *MockCertStorage) DeleteCert(_ context.Context, id string) error {
 	}
 
 	if _, ok := m.certs[id]; !ok {
-		return fmt.Errorf("certificate not found: %s", id)
+		return &errs.Message{Msg: fmt.Sprintf("certificate not found: %s", id)}
 	}
 	delete(m.certs, id)
 	return nil
@@ -138,7 +140,7 @@ func (m *MockCertStorage) SaveCertChain(_ context.Context, id string, chain []*x
 	m.SaveCertChainCalls = append(m.SaveCertChainCalls, id)
 
 	if m.closed {
-		return fmt.Errorf("storage is closed")
+		return &errs.Message{Msg: "storage is closed"}
 	}
 
 	if m.SaveCertChainFunc != nil {
@@ -157,7 +159,7 @@ func (m *MockCertStorage) GetCertChain(_ context.Context, id string) ([]*x509.Ce
 	m.GetCertChainCalls = append(m.GetCertChainCalls, id)
 
 	if m.closed {
-		return nil, fmt.Errorf("storage is closed")
+		return nil, &errs.Message{Msg: "storage is closed"}
 	}
 
 	if m.GetCertChainFunc != nil {
@@ -166,7 +168,7 @@ func (m *MockCertStorage) GetCertChain(_ context.Context, id string) ([]*x509.Ce
 
 	chain, ok := m.chains[id]
 	if !ok {
-		return nil, fmt.Errorf("certificate chain not found: %s", id)
+		return nil, &errs.Message{Msg: fmt.Sprintf("certificate chain not found: %s", id)}
 	}
 	return chain, nil
 }
@@ -179,7 +181,7 @@ func (m *MockCertStorage) ListCerts(_ context.Context) ([]string, error) {
 	m.ListCertsCalls++
 
 	if m.closed {
-		return nil, fmt.Errorf("storage is closed")
+		return nil, &errs.Message{Msg: "storage is closed"}
 	}
 
 	if m.ListCertsFunc != nil {
@@ -201,7 +203,7 @@ func (m *MockCertStorage) CertExists(_ context.Context, id string) (bool, error)
 	m.CertExistsCalls = append(m.CertExistsCalls, id)
 
 	if m.closed {
-		return false, fmt.Errorf("storage is closed")
+		return false, &errs.Message{Msg: "storage is closed"}
 	}
 
 	if m.CertExistsFunc != nil {
@@ -256,7 +258,7 @@ func (m *MockCertStorage) Get(_ context.Context, key string) ([]byte, error) {
 	defer m.mu.RUnlock()
 
 	if m.closed {
-		return nil, fmt.Errorf("storage is closed")
+		return nil, &errs.Message{Msg: "storage is closed"}
 	}
 
 	// Track cert operations based on key pattern
@@ -323,7 +325,7 @@ func (m *MockCertStorage) Get(_ context.Context, key string) ([]byte, error) {
 
 	value, exists := m.data[key]
 	if !exists {
-		return nil, fmt.Errorf("key not found: %s", key)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", key)}
 	}
 
 	// Return a defensive copy
@@ -338,7 +340,7 @@ func (m *MockCertStorage) Put(_ context.Context, key string, value []byte) error
 	defer m.mu.Unlock()
 
 	if m.closed {
-		return fmt.Errorf("storage is closed")
+		return &errs.Message{Msg: "storage is closed"}
 	}
 
 	// Track cert operations based on key pattern
@@ -379,7 +381,7 @@ func (m *MockCertStorage) Delete(_ context.Context, key string) error {
 	defer m.mu.Unlock()
 
 	if m.closed {
-		return fmt.Errorf("storage is closed")
+		return &errs.Message{Msg: "storage is closed"}
 	}
 
 	// Track cert operations based on key pattern
@@ -393,7 +395,7 @@ func (m *MockCertStorage) Delete(_ context.Context, key string) error {
 	}
 
 	if _, exists := m.data[key]; !exists {
-		return fmt.Errorf("key not found: %s", key)
+		return &errs.Message{Msg: fmt.Sprintf("key not found: %s", key)}
 	}
 
 	delete(m.data, key)
@@ -406,7 +408,7 @@ func (m *MockCertStorage) List(_ context.Context, prefix string) ([]string, erro
 	defer m.mu.RUnlock()
 
 	if m.closed {
-		return nil, fmt.Errorf("storage is closed")
+		return nil, &errs.Message{Msg: "storage is closed"}
 	}
 
 	// Track cert list operations
@@ -433,7 +435,7 @@ func (m *MockCertStorage) Scan(_ context.Context, prefix string, fn func(key str
 	defer m.mu.RUnlock()
 
 	if m.closed {
-		return fmt.Errorf("storage is closed")
+		return &errs.Message{Msg: "storage is closed"}
 	}
 
 	for key, value := range m.data {
@@ -456,7 +458,7 @@ func (m *MockCertStorage) Exists(_ context.Context, key string) (bool, error) {
 	defer m.mu.RUnlock()
 
 	if m.closed {
-		return false, fmt.Errorf("storage is closed")
+		return false, &errs.Message{Msg: "storage is closed"}
 	}
 
 	// Track cert exists operations

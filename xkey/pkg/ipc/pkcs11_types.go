@@ -89,32 +89,32 @@ type PKCS11Result struct {
 // Validate checks the PKCS11Payload for correctness.
 func (p *PKCS11Payload) Validate() error {
 	if p.Action == "" {
-		return fmt.Errorf("%w: pkcs11 action is required", ErrInvalidMessage)
+		return &DetailError{Err: ErrInvalidMessage, Detail: ": pkcs11 action is required"}
 	}
 	switch p.Action {
 	case ActionSign:
 		if p.Sign == nil {
-			return fmt.Errorf("%w: sign params required for sign action", ErrInvalidMessage)
+			return &DetailError{Err: ErrInvalidMessage, Detail: ": sign params required for sign action"}
 		}
 		if p.Sign.KeyID == "" {
-			return fmt.Errorf("%w: key_id is required for sign", ErrInvalidMessage)
+			return &DetailError{Err: ErrInvalidMessage, Detail: ": key_id is required for sign"}
 		}
 		if p.Sign.Data == "" {
-			return fmt.Errorf("%w: data is required for sign", ErrInvalidMessage)
+			return &DetailError{Err: ErrInvalidMessage, Detail: ": data is required for sign"}
 		}
 	case ActionGetPIVCertificate:
 		if p.PIVCert == nil {
-			return fmt.Errorf("%w: piv_cert params required for get_piv_certificate", ErrInvalidMessage)
+			return &DetailError{Err: ErrInvalidMessage, Detail: ": piv_cert params required for get_piv_certificate"}
 		}
 		if p.PIVCert.Slot == "" {
-			return fmt.Errorf("%w: slot is required for get_piv_certificate", ErrInvalidMessage)
+			return &DetailError{Err: ErrInvalidMessage, Detail: ": slot is required for get_piv_certificate"}
 		}
 	case ActionListPIVSlots:
 		// PIVSlots params are optional (backend defaults)
 	case ActionBarrierStatus:
 		// No params needed
 	default:
-		return fmt.Errorf("%w: unknown pkcs11 action %q", ErrInvalidMessage, p.Action)
+		return &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": unknown pkcs11 action %q", p.Action)}
 	}
 	return nil
 }

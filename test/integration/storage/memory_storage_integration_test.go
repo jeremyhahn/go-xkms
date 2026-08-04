@@ -24,6 +24,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -237,7 +239,7 @@ func TestMemoryStorageIntegration_ConcurrentAccess(t *testing.T) {
 				if err != nil {
 					errors <- err
 				} else if string(retrieved) != string(expectedValue) {
-					errors <- fmt.Errorf("value mismatch for key %s", key)
+					errors <- &errs.Message{Msg: fmt.Sprintf("value mismatch for key %s", key)}
 				}
 			}
 		}(i)
@@ -290,7 +292,7 @@ func TestMemoryStorageIntegration_ConcurrentReadWrite(t *testing.T) {
 					key := fmt.Sprintf("shared-key-%d", id%10)
 					_, err := backend.Get(ctx, key)
 					if err != nil && err != storage.ErrNotFound {
-						errors <- fmt.Errorf("reader %d: %w", id, err)
+						errors <- &errs.Wrapped{Msg: fmt.Sprintf("reader %d", id), Err: err}
 					}
 				}
 			}
@@ -311,7 +313,7 @@ func TestMemoryStorageIntegration_ConcurrentReadWrite(t *testing.T) {
 					key := fmt.Sprintf("shared-key-%d", id%10)
 					value := []byte(fmt.Sprintf("writer-%d-value-%d", id, counter))
 					if err := backend.Put(ctx, key, value); err != nil {
-						errors <- fmt.Errorf("writer %d: %w", id, err)
+						errors <- &errs.Wrapped{Msg: fmt.Sprintf("writer %d", id), Err: err}
 					}
 					counter++
 				}

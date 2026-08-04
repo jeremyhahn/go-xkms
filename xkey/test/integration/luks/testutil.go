@@ -256,7 +256,7 @@ func execXkey(t *testing.T, binaryPath string, args []string, passphrase string)
 		return &ExecResult{
 			Stderr:   fmt.Sprintf("binary path is a directory: %s", binaryPath),
 			ExitCode: -1,
-			Err:      fmt.Errorf("binary path is a directory: %s", binaryPath),
+			Err:      &MessageError{Msg: fmt.Sprintf("binary path is a directory: %s", binaryPath)},
 		}
 	}
 

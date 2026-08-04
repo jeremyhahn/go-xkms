@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -373,6 +373,9 @@ func (m *mockTransport) BarrierRekey(ctx context.Context, req *db.BarrierRekeyRe
 	return nil, nil
 }
 func (m *mockTransport) BarrierGenerateRecoveryKeys(ctx context.Context, req *db.BarrierGenerateRecoveryKeysRequest) (*db.BarrierRecoveryKeysResponse, error) {
+	return nil, nil
+}
+func (m *mockTransport) BarrierEnableEncryption(ctx context.Context, req *db.BarrierEnableEncryptionRequest) (*db.BarrierEnableEncryptionResponse, error) {
 	return nil, nil
 }
 func (m *mockTransport) BarrierRecoverWithKeys(ctx context.Context, req *db.BarrierRecoverWithKeysRequest) error {

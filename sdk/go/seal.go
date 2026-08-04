@@ -111,3 +111,31 @@ var NewSoftwareSealStrategy = seal.NewSoftwareStrategy
 
 // ErrNoAvailableSealStrategy is returned when no sealing strategy can be selected.
 var ErrNoAvailableSealStrategy = seal.ErrNoAvailableStrategy
+
+// --- Canonical hardware-seal autodetect (owned by go-xkms) ---
+
+// SealAutodetectOptions configures the single bounded, non-provisioning TPM
+// probe used to select the best available hardware seal strategy.
+type SealAutodetectOptions = seal.AutodetectOptions
+
+// TPM2ProbeConfig is the subset of TPM2 backend config the autodetect probe
+// needs; callers map their own config onto it.
+type TPM2ProbeConfig = seal.TPM2ProbeConfig
+
+// SealAutodetectResult holds the selected hardware strategy (if any) plus the
+// underlying open sealer for reuse in sealed key stores. Close it on shutdown.
+type SealAutodetectResult = seal.AutodetectResult
+
+// BuildBestSealStrategy runs the canonical TPM probe and returns the best
+// available hardware seal strategy (nil Strategy when none — caller falls back
+// to software). This is the ONE stack-wide autodetect; consumers (go-quicbaas,
+// xkey, cluster CA key protection) call this instead of re-implementing it.
+var BuildBestSealStrategy = seal.BuildBestStrategy
+
+// ProbeSealStrategies lists the currently available seal strategy IDs (for a
+// UI such as the xkey setup wizard) sharing the one probe with
+// BuildBestSealStrategy.
+var ProbeSealStrategies = seal.ProbeStrategies
+
+// DefaultSealProbeTimeout bounds the single autodetect TPM open.
+const DefaultSealProbeTimeout = seal.DefaultProbeTimeout

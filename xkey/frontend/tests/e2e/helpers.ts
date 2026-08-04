@@ -8,6 +8,8 @@ export type ViewId =
   | 'dashboard'
   | 'pairing'
   | 'keys'
+  | 'certificates'
+  | 'ssh'
   | 'fido2'
   | 'oath'
   | 'oidc'
@@ -30,6 +32,8 @@ export const VIEW_LABELS: Record<ViewId, string> = {
   dashboard: 'Dashboard',
   pairing: 'Pairing',
   keys: 'Keys',
+  certificates: 'Certificates',
+  ssh: 'SSH',
   fido2: 'FIDO2',
   oath: 'OATH',
   oidc: 'OIDC',
@@ -53,6 +57,8 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   dashboard: 'xKey',
   pairing: 'Pairing',
   keys: 'Key Management',
+  certificates: 'Certificates',
+  ssh: 'SSH',
   fido2: 'FIDO2',
   oath: 'OATH Accounts',
   oidc: 'OIDC',
@@ -147,18 +153,95 @@ export async function isWailsMode(page: Page): Promise<boolean> {
 }
 
 /**
- * Wait for the Wails backend services to be defined on `window.go`.
- * Times out after 10 seconds if the backend is not available.
- * Call this only when you already know the page is in Wails mode.
+ * Force the app into the locked state via a direct AppLockService.Lock()
+ * RPC call, bypassing the Lock button. This emits the real `app:locked`
+ * Wails event, so the frontend's `appLocked` store (and therefore the
+ * lock overlay) updates exactly as it would from a genuine user-initiated
+ * lock. Idempotent: swallows the "already locked" error so callers don't
+ * need to know the current state.
+ */
+export async function lockAppViaBackend(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    try {
+      await (window as any).go.services.AppLockService.Lock();
+    } catch (e) {
+      const msg = String((e as { message?: string })?.message ?? e);
+      if (!msg.includes('already locked')) throw e;
+    }
+  });
+}
+
+/**
+ * Restore the app to the unlocked state via a direct
+ * AppLockService.Unlock(pin) RPC call. Used to clean up after a test
+ * deliberately locks the shared live backend, so neighbouring tests (and
+ * other spec files that reuse the same `wails dev` process) don't inherit
+ * a locked app. Idempotent: swallows the "already unlocked" error.
+ */
+export async function unlockAppViaBackend(page: Page, pin: string): Promise<void> {
+  await page.evaluate(async (p) => {
+    try {
+      await (window as any).go.services.AppLockService.Unlock(p);
+    } catch (e) {
+      const msg = String((e as { message?: string })?.message ?? e);
+      if (!msg.includes('already unlocked')) throw e;
+    }
+  }, pin);
+}
+
+/**
+ * Wait for the Wails WebSocket connection to be fully established and the
+ * backend to be ready for API calls from Svelte component onMount hooks.
+ *
+ * The simple `isWailsAvailable()` check only confirms `window.go` is defined —
+ * it does NOT wait for the Wails WebSocket to connect. In Wails dev mode,
+ * `window.go` is populated by the runtime JS immediately on page load, but
+ * API calls made before the WebSocket connects are queued and may hang
+ * indefinitely if those calls are not retried after the connection is
+ * established.
+ *
+ * This function makes a real Wails RPC round-trip via page.evaluate and awaits
+ * the response inside the browser context. Since page.evaluate does not return
+ * until the awaited Promise settles, this naturally blocks until the WebSocket
+ * is live and the Go backend has responded. After this returns, any Svelte
+ * component mounted immediately afterward that calls callBackend() in onMount
+ * will hit an already-connected WebSocket and get a fast response.
+ *
+ * No-op in Vite UI-only mode (no Wails runtime).
  */
 export async function waitForBackendReady(page: Page): Promise<void> {
+  const wails = await isWailsMode(page);
+  if (!wails) return;
+
+  // Wait for the real Wails service binding to be active.
+  // addInitScript mocks in the chip tests do NOT include AppLockService; the
+  // Wails runtime (which overwrites those mocks after page load) does. This
+  // check confirms we are talking to the real Wails binding, not a test stub.
   await page.waitForFunction(
-    () => {
-      const w = window as any;
-      return w.go && w.go.main;
-    },
-    { timeout: 10_000 },
+    () =>
+      typeof (
+        window as {
+          go?: {
+            services?: { AppLockService?: { GetStatus?: unknown } };
+          };
+        }
+      ).go?.services?.AppLockService?.GetStatus === 'function',
+    { timeout: 20_000 },
   );
+
+  // Make a real Wails RPC round-trip and await the response inside the browser
+  // context. page.evaluate with an async callback does not return until the
+  // awaited Promise settles. Because Wails queues RPC calls until the WebSocket
+  // connects, this naturally waits until the backend is live and processing.
+  await page.evaluate(async () => {
+    try {
+      await (window as any).go.services.AppLockService.GetStatus();
+    } catch {
+      // Any response — including an error — confirms the WebSocket is
+      // connected and the call queue has been flushed. We do not care about
+      // the lock state here; we just need proof of a live connection.
+    }
+  });
 }
 
 /**

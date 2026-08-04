@@ -20,7 +20,8 @@ package sealed
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -40,10 +41,10 @@ type Backend struct {
 // use the sealer's default options.
 func New(inner storage.Backend, sealer types.Sealer, sealOpts *types.SealOptions) (*Backend, error) {
 	if inner == nil {
-		return nil, fmt.Errorf("%w: inner backend is nil", ErrSealerNotAvailable)
+		return nil, &errs.Detail{Err: ErrSealerNotAvailable, Detail: "inner backend is nil"}
 	}
 	if sealer == nil {
-		return nil, fmt.Errorf("%w: sealer is nil", ErrSealerNotAvailable)
+		return nil, &errs.Detail{Err: ErrSealerNotAvailable, Detail: "sealer is nil"}
 	}
 	if !sealer.CanSeal() {
 		return nil, ErrSealerNotAvailable
@@ -65,12 +66,12 @@ func (b *Backend) Get(ctx context.Context, key string) ([]byte, error) {
 
 	var sealed types.SealedData
 	if err := json.Unmarshal(data, &sealed); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrUnmarshalFailed, err)
+		return nil, &errs.Joined{Lead: ErrUnmarshalFailed, Cause: err}
 	}
 
 	plaintext, err := b.sealer.Unseal(ctx, &sealed, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrUnsealFailed, err)
+		return nil, &errs.Joined{Lead: ErrUnsealFailed, Cause: err}
 	}
 
 	return plaintext, nil
@@ -81,12 +82,12 @@ func (b *Backend) Get(ctx context.Context, key string) ([]byte, error) {
 func (b *Backend) Put(ctx context.Context, key string, value []byte) error {
 	sealed, err := b.sealer.Seal(ctx, value, b.sealOpts)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSealFailed, err)
+		return &errs.Joined{Lead: ErrSealFailed, Cause: err}
 	}
 
 	data, err := json.Marshal(sealed)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrMarshalFailed, err)
+		return &errs.Joined{Lead: ErrMarshalFailed, Cause: err}
 	}
 
 	return b.inner.Put(ctx, key, data)
@@ -109,12 +110,12 @@ func (b *Backend) Scan(ctx context.Context, prefix string, fn func(key string, v
 	return b.inner.Scan(ctx, prefix, func(key string, data []byte) error {
 		var sealed types.SealedData
 		if err := json.Unmarshal(data, &sealed); err != nil {
-			return fmt.Errorf("%w: %w", ErrUnmarshalFailed, err)
+			return &errs.Joined{Lead: ErrUnmarshalFailed, Cause: err}
 		}
 
 		plaintext, err := b.sealer.Unseal(ctx, &sealed, nil)
 		if err != nil {
-			return fmt.Errorf("%w: %w", ErrUnsealFailed, err)
+			return &errs.Joined{Lead: ErrUnsealFailed, Cause: err}
 		}
 
 		return fn(key, plaintext)

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/flynn/noise"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // TCP server errors.
@@ -285,15 +286,31 @@ func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 		return
 	}
 
-	// Noise XX handshake as responder (3 messages):
-	// 1. Receive msg1 (initiator's ephemeral key)
-	msg1, err := tcpReceive(conn)
+	// Pre-handshake identity exchange. The initiator (pkg/pairing
+	// PerformHandshake) always sends [version|publicKey] before the Noise
+	// handshake. This reference responder keeps no trusted-device store, so it
+	// replies "unknown" (empty prologue, matching the session initialized
+	// above). A peer that skips the identity exchange is tolerated by treating
+	// its first message as Noise msg1.
+	first, err := tcpReceive(conn)
 	if err != nil {
-		s.log.Error("failed to receive handshake msg1", "remote", remoteAddr, "error", err)
+		s.log.Error("failed to receive first handshake message", "remote", remoteAddr, "error", err)
 		return
 	}
+	msg1 := first
+	if len(first) == pairing.IdentityMsgSize && first[0] == pairing.IdentityMsgVersion {
+		if err := tcpSend(conn, []byte{pairing.IdentityAckUnknown}); err != nil {
+			s.log.Error("failed to send identity ack", "remote", remoteAddr, "error", err)
+			return
+		}
+		msg1, err = tcpReceive(conn)
+		if err != nil {
+			s.log.Error("failed to receive handshake msg1", "remote", remoteAddr, "error", err)
+			return
+		}
+	}
 
-	// 2. Process msg1 and generate msg2 (e, ee, s, es)
+	// Process msg1 and generate msg2 (e, ee, s, es)
 	msg2, complete, err := session.HandshakeMessage(msg1)
 	if err != nil {
 		s.log.Error("failed to process handshake msg1", "remote", remoteAddr, "error", err)

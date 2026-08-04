@@ -169,6 +169,111 @@ func TestSealService_SetDefaultBackend(t *testing.T) {
 	assert.Equal(t, "software", svc.defaultBackend)
 }
 
+// TestSealService_SetDefaultBackend_KnownBackends verifies that known
+// seal-namespace backend IDs ("tpm2", "software") are accepted as-is
+// and stored without triggering auto-select.
+func TestSealService_SetDefaultBackend_KnownBackends(t *testing.T) {
+	tests := []struct {
+		name    string
+		backend string
+	}{
+		{"tpm2", string(xkms.BackendTypeTPM2)},
+		{"software", string(xkms.BackendTypeSoftware)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewSealService(t.TempDir())
+			svc.SetDefaultBackend(tc.backend)
+			assert.Equal(t, tc.backend, svc.defaultBackend)
+		})
+	}
+}
+
+// TestSealService_SetDefaultBackend_InvalidBackendFallsToAutoSelect verifies
+// that passing a barrier strategy name ("passphrase", "pkcs11") or any other
+// unknown value to SetDefaultBackend triggers auto-select rather than pinning
+// the seal service to a non-existent backend.
+// This is the regression test for the "No Sealing Backends Available" bug:
+// on a fresh passphrase-barrier install the wizard persisted SealerBackend="passphrase";
+// on next startup SetDefaultBackend("passphrase") caused CanSeal to always
+// return false because no SDK backend named "passphrase" exists.
+func TestSealService_SetDefaultBackend_InvalidBackendFallsToAutoSelect(t *testing.T) {
+	// Mock: only software is available.
+	mc := &sealMockClient{
+		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
+			if backend == string(xkms.BackendTypeSoftware) {
+				return &transport.CanSealResponse{CanSeal: true, Backend: backend}, nil
+			}
+			return &transport.CanSealResponse{CanSeal: false, Backend: backend}, nil
+		},
+	}
+	svc := newSealServiceWithMockClient(t, mc)
+
+	// Simulate startup with a config that stored the raw barrier strategy.
+	for _, barrierStrategy := range []string{"passphrase", "pkcs11", "shamir", "unknown"} {
+		t.Run(barrierStrategy, func(t *testing.T) {
+			svc.SetDefaultBackend(barrierStrategy)
+			// Auto-select should have run; the default should now be "software" (only available).
+			assert.Equal(t, string(xkms.BackendTypeSoftware), svc.defaultBackend,
+				"SetDefaultBackend(%q) should trigger auto-select to software", barrierStrategy)
+		})
+	}
+}
+
+// TestSealService_CanSeal_SoftwareBarrierPassphrase is the end-to-end
+// regression test for the "No Sealing Backends Available" bug. It simulates
+// the exact startup sequence on a passphrase-barrier host:
+//  1. Config was saved with SealerBackend="passphrase" (old buggy path).
+//  2. On startup, app.go calls SetDefaultBackend("passphrase").
+//  3. CanSeal() is called by the frontend.
+//
+// Expected: CanSeal returns true because SetDefaultBackend auto-selects
+// the software backend when the literal value is not a known seal backend ID.
+func TestSealService_CanSeal_SoftwareBarrierPassphrase(t *testing.T) {
+	mc := &sealMockClient{
+		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
+			if backend == string(xkms.BackendTypeSoftware) {
+				return &transport.CanSealResponse{CanSeal: true, Backend: backend}, nil
+			}
+			return &transport.CanSealResponse{CanSeal: false, Backend: backend}, nil
+		},
+	}
+	svc := newSealServiceWithMockClient(t, mc)
+
+	// app.go startup path: SetDefaultBackend called with persisted config value.
+	svc.SetDefaultBackend("passphrase")
+
+	// CanSeal must return true; auto-select resolved to "software".
+	ok, err := svc.CanSeal()
+	require.NoError(t, err)
+	assert.True(t, ok, "CanSeal should return true after SetDefaultBackend(passphrase) auto-selects software")
+
+	// AvailableSealers must include the software backend.
+	sealers := svc.AvailableSealers()
+	require.Len(t, sealers, 1)
+	assert.Equal(t, string(xkms.BackendTypeSoftware), sealers[0].ID)
+}
+
+// TestSealService_CanSeal_SealedBarrier_NoBackendAvailable verifies that when
+// the barrier is sealed (no SDK backend reports CanSeal=true), CanSeal returns
+// false and AvailableSealers returns an empty slice.
+func TestSealService_CanSeal_SealedBarrier_NoBackendAvailable(t *testing.T) {
+	mc := &sealMockClient{
+		canSealFn: func(_ context.Context, _ string) (*transport.CanSealResponse, error) {
+			return &transport.CanSealResponse{CanSeal: false}, nil
+		},
+	}
+	svc := newSealServiceWithMockClient(t, mc)
+	svc.SetDefaultBackend("passphrase") // auto-select runs but finds nothing
+
+	ok, err := svc.CanSeal()
+	require.NoError(t, err)
+	assert.False(t, ok, "CanSeal should return false when no backend is available")
+
+	sealers := svc.AvailableSealers()
+	assert.Empty(t, sealers, "AvailableSealers should be empty when barrier is sealed")
+}
+
 // ---------------------------------------------------------------------------
 // SetStorageDir & StorageDir
 // ---------------------------------------------------------------------------

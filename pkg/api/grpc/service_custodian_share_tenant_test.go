@@ -1230,3 +1230,30 @@ func TestTenantBarrierUnseal(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+// TestMapTenantError_Denials verifies that go-qrdb tenant entitlement /
+// barrier-mode / quota denials map to precise gRPC codes instead of Internal.
+func TestMapTenantError_Denials(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want codes.Code
+	}{
+		{"entitlement denied", &qrdbsdk.EntitlementError{TenantID: "t1", Feature: "barrier_mode:shamir"}, codes.PermissionDenied},
+		{"shared barrier immutable", qrdbsdk.ErrSharedBarrierImmutable, codes.FailedPrecondition},
+		{"quota exceeded", qrdbsdk.NewQuotaExceededError("keys", "ns", "t1", 10, 10, 1), codes.ResourceExhausted},
+		{"unknown error", errors.New("boom"), codes.Internal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mapTenantError(tt.err, "op")
+			if status.Code(got) != tt.want {
+				t.Errorf("mapTenantError code = %v, want %v", status.Code(got), tt.want)
+			}
+		})
+	}
+
+	if mapTenantError(nil, "op") != nil {
+		t.Error("mapTenantError(nil) must return nil")
+	}
+}

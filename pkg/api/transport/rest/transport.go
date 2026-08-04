@@ -29,6 +29,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 )
@@ -104,11 +106,11 @@ func (t *Transport) Connect(ctx context.Context) error {
 			if t.config.TLSCAFile != "" {
 				caCert, err := os.ReadFile(t.config.TLSCAFile)
 				if err != nil {
-					return fmt.Errorf("failed to read CA certificate: %w", err)
+					return &errs.Wrapped{Msg: "failed to read CA certificate", Err: err}
 				}
 				caCertPool := x509.NewCertPool()
 				if !caCertPool.AppendCertsFromPEM(caCert) {
-					return fmt.Errorf("failed to parse CA certificate")
+					return &errs.Message{Msg: "failed to parse CA certificate"}
 				}
 				tlsConfig.RootCAs = caCertPool
 			}
@@ -117,7 +119,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 			if t.config.TLSCertFile != "" && t.config.TLSKeyFile != "" {
 				cert, err := tls.LoadX509KeyPair(t.config.TLSCertFile, t.config.TLSKeyFile)
 				if err != nil {
-					return fmt.Errorf("failed to load client certificate: %w", err)
+					return &errs.Wrapped{Msg: "failed to load client certificate", Err: err}
 				}
 				tlsConfig.Certificates = []tls.Certificate{cert}
 			}
@@ -147,7 +149,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 	// Test connection with health check
 	_, err := t.Health(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrConnectionFailed, err)
+		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	t.connected = true
@@ -237,7 +239,7 @@ func (t *Transport) DoRequest(ctx context.Context, httpMethod, path string, body
 
 	if result != nil && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, result); err != nil {
-			return fmt.Errorf("failed to parse response: %w", err)
+			return &errs.Wrapped{Msg: "failed to parse response", Err: err}
 		}
 	}
 
@@ -254,7 +256,7 @@ func (t *Transport) DoRawRequest(ctx context.Context, method, path string, body 
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to marshal request body", Err: err}
 		}
 		reqBody = bytes.NewReader(data)
 	}
@@ -263,7 +265,7 @@ func (t *Transport) DoRawRequest(ctx context.Context, method, path string, body 
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create request", Err: err}
 	}
 
 	if body != nil {
@@ -282,7 +284,7 @@ func (t *Transport) DoRawRequest(ctx context.Context, method, path string, body 
 
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "request failed", Err: err}
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
@@ -292,7 +294,7 @@ func (t *Transport) DoRawRequest(ctx context.Context, method, path string, body 
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to read response body", Err: err}
 	}
 
 	if resp.StatusCode >= 400 {
@@ -301,12 +303,12 @@ func (t *Transport) DoRawRequest(ctx context.Context, method, path string, body 
 			Message string `json:"message"`
 		}
 		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Error != "" {
-			return nil, fmt.Errorf("server error: %s", errResp.Error)
+			return nil, &errs.Message{Msg: fmt.Sprintf("server error: %s", errResp.Error)}
 		}
 		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Message != "" {
-			return nil, fmt.Errorf("server error: %s", errResp.Message)
+			return nil, &errs.Message{Msg: fmt.Sprintf("server error: %s", errResp.Message)}
 		}
-		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(respBody))
+		return nil, &errs.Message{Msg: fmt.Sprintf("server returned status %d: %s", resp.StatusCode, string(respBody))}
 	}
 
 	return respBody, nil
@@ -322,7 +324,7 @@ func (t *Transport) DoRequestWithHeaders(ctx context.Context, method, path strin
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to marshal request body: %w", err)
+			return nil, nil, &errs.Wrapped{Msg: "failed to marshal request body", Err: err}
 		}
 		reqBody = bytes.NewReader(data)
 	}
@@ -331,7 +333,7 @@ func (t *Transport) DoRequestWithHeaders(ctx context.Context, method, path strin
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to create request", Err: err}
 	}
 
 	if body != nil {
@@ -355,7 +357,7 @@ func (t *Transport) DoRequestWithHeaders(ctx context.Context, method, path strin
 
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("request failed: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "request failed", Err: err}
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
@@ -365,7 +367,7 @@ func (t *Transport) DoRequestWithHeaders(ctx context.Context, method, path strin
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to read response body", Err: err}
 	}
 
 	if resp.StatusCode >= 400 {
@@ -374,12 +376,12 @@ func (t *Transport) DoRequestWithHeaders(ctx context.Context, method, path strin
 			Message string `json:"message"`
 		}
 		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Error != "" {
-			return nil, resp.Header, fmt.Errorf("server error: %s", errResp.Error)
+			return nil, resp.Header, &errs.Message{Msg: fmt.Sprintf("server error: %s", errResp.Error)}
 		}
 		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Message != "" {
-			return nil, resp.Header, fmt.Errorf("server error: %s", errResp.Message)
+			return nil, resp.Header, &errs.Message{Msg: fmt.Sprintf("server error: %s", errResp.Message)}
 		}
-		return nil, resp.Header, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(respBody))
+		return nil, resp.Header, &errs.Message{Msg: fmt.Sprintf("server returned status %d: %s", resp.StatusCode, string(respBody))}
 	}
 
 	return respBody, resp.Header, nil
@@ -395,7 +397,7 @@ func (t *Transport) DoHeadRequest(ctx context.Context, path string) (bool, error
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, reqURL, nil)
 	if err != nil {
-		return false, fmt.Errorf("failed to create request: %w", err)
+		return false, &errs.Wrapped{Msg: "failed to create request", Err: err}
 	}
 
 	// Add JWT token if configured (Bearer authentication)
@@ -410,7 +412,7 @@ func (t *Transport) DoHeadRequest(ctx context.Context, path string) (bool, error
 
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("request failed: %w", err)
+		return false, &errs.Wrapped{Msg: "request failed", Err: err}
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
@@ -430,7 +432,7 @@ func (t *Transport) Health(ctx context.Context) (*transport.HealthResponse, erro
 
 	var resp transport.HealthResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -446,7 +448,7 @@ func (t *Transport) ListBackends(ctx context.Context, opts ...transport.ListOpti
 
 	var resp transport.ListBackendsResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -462,7 +464,7 @@ func (t *Transport) GetBackend(ctx context.Context, backendID string) (*transpor
 
 	var resp transport.BackendInfo
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -477,7 +479,7 @@ func (t *Transport) GenerateKey(ctx context.Context, req *transport.GenerateKeyR
 
 	var resp transport.GenerateKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -494,7 +496,7 @@ func (t *Transport) ListKeys(ctx context.Context, backend string, opts ...transp
 
 	var resp transport.ListKeysResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -510,7 +512,7 @@ func (t *Transport) GetKey(ctx context.Context, backend, keyID string) (*transpo
 
 	var resp transport.GetKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -526,7 +528,7 @@ func (t *Transport) DeleteKey(ctx context.Context, backend, keyID string) (*tran
 
 	var resp transport.DeleteKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -549,7 +551,7 @@ func (t *Transport) Sign(ctx context.Context, req *transport.SignRequest) (*tran
 
 	var resp transport.SignResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -573,7 +575,7 @@ func (t *Transport) Verify(ctx context.Context, req *transport.VerifyRequest) (*
 
 	var resp transport.VerifyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -596,7 +598,7 @@ func (t *Transport) Encrypt(ctx context.Context, req *transport.EncryptRequest) 
 
 	var resp transport.EncryptResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -625,7 +627,7 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 
 	var resp transport.DecryptResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -648,7 +650,7 @@ func (t *Transport) EncryptAsym(ctx context.Context, req *transport.EncryptAsymR
 
 	var resp transport.EncryptAsymResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -714,7 +716,7 @@ func (t *Transport) DeriveKey(ctx context.Context, req *transport.DeriveKeyReque
 
 	var resp transport.DeriveKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -730,7 +732,7 @@ func (t *Transport) GetCertificate(ctx context.Context, backend, keyID string) (
 
 	var resp transport.GetCertificateResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -769,7 +771,7 @@ func (t *Transport) ImportKey(ctx context.Context, req *transport.ImportKeyReque
 
 	var resp transport.ImportKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -789,7 +791,7 @@ func (t *Transport) ExportKey(ctx context.Context, req *transport.ExportKeyReque
 
 	var resp transport.ExportKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -806,7 +808,7 @@ func (t *Transport) RotateKey(ctx context.Context, req *transport.RotateKeyReque
 
 	var resp transport.RotateKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -821,7 +823,7 @@ func (t *Transport) GetImportParameters(ctx context.Context, req *transport.GetI
 
 	var resp transport.GetImportParametersResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -836,7 +838,7 @@ func (t *Transport) WrapKey(ctx context.Context, req *transport.WrapKeyRequest) 
 
 	var resp transport.WrapKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -851,7 +853,7 @@ func (t *Transport) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReque
 
 	var resp transport.UnwrapKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -867,7 +869,7 @@ func (t *Transport) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDR
 
 	var resp transport.WrapKeyByIDResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -883,7 +885,7 @@ func (t *Transport) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyB
 
 	var resp transport.UnwrapKeyByIDResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -901,7 +903,7 @@ func (t *Transport) ExportKeyMaterial(ctx context.Context, req *transport.Export
 
 	var resp transport.ExportKeyMaterialResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -916,7 +918,7 @@ func (t *Transport) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKeyE
 
 	var resp transport.DeriveKeyECDHResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -931,7 +933,7 @@ func (t *Transport) CopyKey(ctx context.Context, req *transport.CopyKeyRequest) 
 
 	var resp transport.CopyKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -949,7 +951,7 @@ func (t *Transport) ListCertificates(ctx context.Context, backend string, opts .
 
 	var resp transport.ListCertificatesResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -974,7 +976,7 @@ func (t *Transport) GetCertificateChain(ctx context.Context, backend, keyID stri
 
 	var resp transport.GetCertificateChainResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -991,7 +993,7 @@ func (t *Transport) GetTLSCertificate(ctx context.Context, backend, keyID string
 
 	var resp transport.GetTLSCertificateResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1010,7 +1012,7 @@ func (t *Transport) Seal(ctx context.Context, req *transport.SealRequest) (*tran
 
 	var resp transport.SealResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1029,7 +1031,7 @@ func (t *Transport) Unseal(ctx context.Context, req *transport.UnsealRequest) (*
 
 	var resp transport.UnsealResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1049,7 +1051,7 @@ func (t *Transport) CanSeal(ctx context.Context, backend string) (*transport.Can
 
 	var resp transport.CanSealResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1064,7 +1066,7 @@ func (t *Transport) AttestKey(ctx context.Context, req *transport.AttestKeyReque
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal request", Err: err}
 	}
 
 	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/attest", body)
@@ -1074,7 +1076,7 @@ func (t *Transport) AttestKey(ctx context.Context, req *transport.AttestKeyReque
 
 	var resp transport.AttestKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1100,7 +1102,7 @@ func (t *Transport) BeginRegistration(ctx context.Context, req *transport.BeginR
 
 	var resp transport.BeginRegistrationResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 	return &resp, nil
 }
@@ -1121,7 +1123,7 @@ func (t *Transport) FinishRegistration(ctx context.Context, req *transport.Finis
 
 	var resp transport.FinishRegistrationResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 	return &resp, nil
 }
@@ -1144,7 +1146,7 @@ func (t *Transport) BeginAuthentication(ctx context.Context, req *transport.Begi
 
 	var resp transport.BeginAuthenticationResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 	return &resp, nil
 }
@@ -1165,7 +1167,7 @@ func (t *Transport) FinishAuthentication(ctx context.Context, req *transport.Fin
 
 	var resp transport.FinishAuthenticationResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 	return &resp, nil
 }
@@ -1196,7 +1198,7 @@ func (t *Transport) GetCABundle(ctx context.Context, req *transport.GetCABundleR
 
 	var resp transport.GetCABundleResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1223,7 +1225,7 @@ func (t *Transport) GetCACertificate(ctx context.Context, req *transport.GetCACe
 
 	var resp transport.GetCACertificateResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1251,7 +1253,7 @@ func (t *Transport) SignCSR(ctx context.Context, req *transport.SignCSRRequest) 
 
 	var resp transport.SignCSRResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1286,7 +1288,7 @@ func (t *Transport) IssueCertificate(ctx context.Context, req *transport.IssueCe
 
 	var resp transport.IssueCertificateResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1309,7 +1311,7 @@ func (t *Transport) RevokeCertificate(ctx context.Context, req *transport.Revoke
 
 	var resp transport.RevokeCertificateResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1331,7 +1333,7 @@ func (t *Transport) GenerateCRL(ctx context.Context, req *transport.GenerateCRLR
 
 	var resp transport.GenerateCRLResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1351,7 +1353,7 @@ func (t *Transport) IsRevoked(ctx context.Context, req *transport.IsRevokedReque
 
 	var resp transport.IsRevokedResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1379,7 +1381,7 @@ func (t *Transport) IssueEKCertificate(ctx context.Context, req *transport.Issue
 
 	var resp transport.IssueEKCertificateResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1405,7 +1407,7 @@ func (t *Transport) IssueAKCertificate(ctx context.Context, req *transport.Issue
 
 	var resp transport.IssueAKCertificateResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1431,7 +1433,7 @@ func (t *Transport) SignTCGCSR(ctx context.Context, req *transport.SignTCGCSRReq
 
 	var resp transport.SignTCGCSRResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1457,7 +1459,7 @@ func (t *Transport) EnrollDevice(ctx context.Context, req *transport.EnrollDevic
 
 	var resp transport.EnrollDeviceResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1479,7 +1481,7 @@ func (t *Transport) ListPIVSlots(ctx context.Context, req *transport.ListPIVSlot
 
 	var resp transport.ListPIVSlotsResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1500,7 +1502,7 @@ func (t *Transport) GetPIVCertificate(ctx context.Context, req *transport.GetPIV
 
 	var resp transport.GetPIVCertificateResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1544,7 +1546,7 @@ func (t *Transport) GeneratePIVKey(ctx context.Context, req *transport.GenerateP
 
 	var resp transport.GeneratePIVKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1576,7 +1578,7 @@ func (t *Transport) ExportPIVCertificate(ctx context.Context, req *transport.Get
 
 	var resp transport.GetPIVCertificateResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1596,7 +1598,7 @@ func (t *Transport) GeneratePIVCSR(ctx context.Context, req *transport.GenerateP
 
 	var resp transport.GeneratePIVCSRResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1644,7 +1646,7 @@ func (t *Transport) BarrierStatus(ctx context.Context) (*transport.BarrierStatus
 
 	var resp transport.BarrierStatusResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1661,7 +1663,7 @@ func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *transport.
 	}
 	var resp transport.BarrierInitializeShamirResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 	return &resp, nil
 }
@@ -1677,7 +1679,7 @@ func (t *Transport) BarrierUnsealWithShare(ctx context.Context, req *transport.B
 	}
 	var resp transport.BarrierUnsealShareResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 	return &resp, nil
 }
@@ -1702,7 +1704,7 @@ func (t *Transport) BarrierRekey(ctx context.Context, req *transport.BarrierReke
 	}
 	var resp transport.BarrierRekeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 	return &resp, nil
 }
@@ -1718,7 +1720,24 @@ func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *transp
 	}
 	var resp transport.BarrierRecoveryKeysResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
+}
+
+// BarrierEnableEncryption migrates a previously-unencrypted barrier to a keyed
+// strategy in place.
+func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/barrier/enable-encryption", req)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.BarrierEnableEncryptionResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 	return &resp, nil
 }
@@ -1752,7 +1771,7 @@ func (t *Transport) BarrierHasRecoveryKeys(ctx context.Context) (*transport.Barr
 	}
 	var resp transport.BarrierHasRecoveryKeysResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 	return &resp, nil
 }
@@ -1769,7 +1788,7 @@ func (t *Transport) BarrierGenerateRootToken(ctx context.Context, req *transport
 	}
 	var resp transport.BarrierRootTokenResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 	return &resp, nil
 }
@@ -1843,7 +1862,7 @@ func (t *Transport) GetLockoutStatus(ctx context.Context) (*transport.LockoutSta
 
 	var resp transport.LockoutStatusResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1873,7 +1892,7 @@ func (t *Transport) PasswordAdd(ctx context.Context, req *transport.PasswordAddR
 
 	var resp transport.PasswordAddResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1893,7 +1912,7 @@ func (t *Transport) PasswordGet(ctx context.Context, req *transport.PasswordGetR
 
 	var resp transport.PasswordGetResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1926,7 +1945,7 @@ func (t *Transport) PasswordList(ctx context.Context, req *transport.PasswordLis
 
 	var resp transport.PasswordListResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -1987,7 +2006,7 @@ func (t *Transport) PasswordStoreStatus(ctx context.Context) (*transport.Passwor
 
 	var resp transport.PasswordStoreStatusResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2016,7 +2035,7 @@ func (t *Transport) PasswordGenerate(ctx context.Context, req *transport.Passwor
 
 	var resp transport.PasswordGenerateResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2102,7 +2121,7 @@ func (t *Transport) CreateCustodianGroup(ctx context.Context, req *transport.Cre
 
 	var resp transport.CreateCustodianGroupResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2118,7 +2137,7 @@ func (t *Transport) GetCustodianGroup(ctx context.Context, groupID string) (*tra
 
 	var resp transport.GetCustodianGroupResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2133,7 +2152,7 @@ func (t *Transport) ListCustodianGroups(ctx context.Context) (*transport.ListCus
 
 	var resp transport.ListCustodianGroupsResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2155,7 +2174,7 @@ func (t *Transport) AddCustodianMember(ctx context.Context, req *transport.AddCu
 
 	var resp transport.AddCustodianMemberResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2178,7 +2197,7 @@ func (t *Transport) DistributeShares(ctx context.Context, req *transport.Distrib
 
 	var resp transport.DistributeSharesResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2195,7 +2214,7 @@ func (t *Transport) SubmitShare(ctx context.Context, req *transport.SubmitShareR
 
 	var resp transport.SubmitShareResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2210,7 +2229,7 @@ func (t *Transport) ListShares(ctx context.Context) (*transport.ListSharesRespon
 
 	var resp transport.ListSharesResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2226,7 +2245,7 @@ func (t *Transport) GetShareCollectionStatus(ctx context.Context, groupID string
 
 	var resp transport.ShareCollectionStatus
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2243,7 +2262,7 @@ func (t *Transport) CreateTenant(ctx context.Context, req *transport.CreateTenan
 
 	var resp transport.CreateTenantResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2259,7 +2278,7 @@ func (t *Transport) GetTenant(ctx context.Context, tenantID string) (*transport.
 
 	var resp transport.GetTenantResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2274,7 +2293,7 @@ func (t *Transport) ListTenants(ctx context.Context) (*transport.ListTenantsResp
 
 	var resp transport.ListTenantsResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2300,6 +2319,48 @@ func (t *Transport) TenantBarrierUnseal(ctx context.Context, req *transport.Tena
 	return err
 }
 
+// TenantBarrierStatus reports the status of a per-tenant barrier.
+func (t *Transport) TenantBarrierStatus(ctx context.Context, tenantID string) (*transport.TenantBarrierStatusResponse, error) {
+	path := fmt.Sprintf("/api/v1/tenants/%s/barrier/status", url.PathEscape(tenantID))
+	data, err := t.DoRawRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.TenantBarrierStatusResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
+}
+
+// UpdateTenantEntitlements updates a tenant's feature entitlements.
+func (t *Transport) UpdateTenantEntitlements(ctx context.Context, req *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	path := fmt.Sprintf("/api/v1/tenants/%s/entitlements", url.PathEscape(req.TenantID))
+	data, err := t.DoRawRequest(ctx, http.MethodPut, path, req)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.UpdateTenantEntitlementsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
+}
+
+// UpdateTenantQuotas updates a tenant's resource quotas.
+func (t *Transport) UpdateTenantQuotas(ctx context.Context, req *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	path := fmt.Sprintf("/api/v1/tenants/%s/quotas", url.PathEscape(req.TenantID))
+	data, err := t.DoRawRequest(ctx, http.MethodPut, path, req)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.UpdateTenantQuotasResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
+}
+
 // Init Ceremony methods.
 
 // GetInitStatus returns the current init ceremony state.
@@ -2315,7 +2376,7 @@ func (t *Transport) GetInitStatus(ctx context.Context) (*transport.InitStatusRes
 
 	var resp transport.InitStatusResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2334,7 +2395,7 @@ func (t *Transport) ClaimCertBegin(ctx context.Context, req *transport.ClaimCert
 
 	var resp transport.ClaimCertBeginResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2354,7 +2415,7 @@ func (t *Transport) ClaimCertComplete(ctx context.Context, req *transport.ClaimC
 
 	var resp transport.ClaimCertCompleteResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2373,7 +2434,7 @@ func (t *Transport) ClaimShare(ctx context.Context, req *transport.ClaimShareReq
 
 	var resp transport.ClaimShareResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2392,7 +2453,7 @@ func (t *Transport) SignCSRInit(ctx context.Context, req *transport.SignCSRInitR
 
 	var resp transport.SignCSRInitResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2413,7 +2474,7 @@ func (t *Transport) SubmitCredential(ctx context.Context, req *transport.Credent
 
 	var resp transport.CredentialSubmitResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2432,7 +2493,7 @@ func (t *Transport) GetCredentialStrategy(ctx context.Context) (*transport.Crede
 
 	var resp transport.CredentialStrategyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2462,7 +2523,7 @@ func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserReq
 
 	var user transport.UserInfo
 	if err := json.Unmarshal(data, &user); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &transport.GetUserResponse{User: user}, nil
@@ -2481,7 +2542,7 @@ func (t *Transport) ListUsers(ctx context.Context, _ ...transport.ListOption) (*
 
 	var resp transport.ListUsersResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &resp, nil
@@ -2501,7 +2562,7 @@ func (t *Transport) GetUser(ctx context.Context, username string) (*transport.Ge
 
 	var user transport.UserInfo
 	if err := json.Unmarshal(data, &user); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	return &transport.GetUserResponse{User: user}, nil
@@ -2583,7 +2644,7 @@ func (t *Transport) ListUserCredentials(ctx context.Context, username string) (*
 		} `json:"credentials"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
 	resp := &transport.ListUserCredentialsResponse{
@@ -2609,7 +2670,7 @@ func (t *Transport) ClusterStatus(ctx context.Context) (*transport.ClusterStatus
 	}
 	var resp transport.ClusterStatusResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 	return &resp, nil
 }
@@ -2622,7 +2683,7 @@ func (t *Transport) ClusterMembers(ctx context.Context) (*transport.ListClusterM
 	}
 	var resp transport.ListClusterMembersResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 	return &resp, nil
 }

@@ -25,8 +25,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/health"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -38,16 +40,16 @@ import (
 // mockHealthChecker implements HealthChecker for testing
 type mockHealthChecker_ServerTest struct{}
 
-func (m *mockHealthChecker_ServerTest) Live(ctx context.Context) health.CheckResult {
-	return health.CheckResult{Status: health.StatusHealthy}
+func (m *mockHealthChecker_ServerTest) Live(ctx context.Context) qrdbsdk.HealthCheckResult {
+	return qrdbsdk.HealthCheckResult{Status: qrdbsdk.HealthCheckStatusHealthy}
 }
 
-func (m *mockHealthChecker_ServerTest) Ready(ctx context.Context) []health.CheckResult {
-	return []health.CheckResult{{Status: health.StatusHealthy}}
+func (m *mockHealthChecker_ServerTest) Ready(ctx context.Context) []qrdbsdk.HealthCheckResult {
+	return []qrdbsdk.HealthCheckResult{{Status: qrdbsdk.HealthCheckStatusHealthy}}
 }
 
-func (m *mockHealthChecker_ServerTest) Startup(ctx context.Context) health.CheckResult {
-	return health.CheckResult{Status: health.StatusHealthy}
+func (m *mockHealthChecker_ServerTest) Startup(ctx context.Context) qrdbsdk.HealthCheckResult {
+	return qrdbsdk.HealthCheckResult{Status: qrdbsdk.HealthCheckStatusHealthy}
 }
 
 // testAuthenticator is a simple authenticator for testing that validates
@@ -63,20 +65,20 @@ func (a *testAuthenticator) Name() string {
 func (a *testAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Identity, error) {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		return nil, fmt.Errorf("no authorization header")
+		return nil, &errs.Message{Msg: "no authorization header"}
 	}
 	if !strings.HasPrefix(authHeader, "Bearer ") {
-		return nil, fmt.Errorf("invalid authorization header format")
+		return nil, &errs.Message{Msg: "invalid authorization header format"}
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	if token != a.validToken {
-		return nil, fmt.Errorf("invalid token")
+		return nil, &errs.Message{Msg: "invalid token"}
 	}
 	return &auth.Identity{Subject: "test-user"}, nil
 }
 
 func (a *testAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD) (*auth.Identity, error) {
-	return nil, fmt.Errorf("not implemented")
+	return nil, &errs.Message{Msg: "not implemented"}
 }
 
 // Helper to create a test logger

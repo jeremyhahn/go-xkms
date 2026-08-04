@@ -23,7 +23,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -365,7 +364,7 @@ func TestGetTLSCertLocal_Error_BackendCreation(t *testing.T) {
 	cfg.OutputFormat = "text"
 	cfg.Protocol = "embedded"
 	cfg.BackendFactory = func(c *Config) (types.KeyProvider, error) {
-		return nil, fmt.Errorf("backend creation failed")
+		return nil, errTestBackendCreation
 	}
 
 	// Set up global config
@@ -543,7 +542,7 @@ func TestGetTLSCertLocal_Error_GetKeyFails(t *testing.T) {
 	// Create mock backend that returns error on GetKey
 	mockBackend := mocks.NewExtendedMockBackend()
 	mockBackend.GetKeyFunc = func(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-		return nil, fmt.Errorf("get key operation failed")
+		return nil, errTestGetKeyOp
 	}
 
 	cfg := NewConfig()

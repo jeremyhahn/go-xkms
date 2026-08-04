@@ -19,13 +19,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	pkgwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/stretchr/testify/assert"
@@ -692,13 +693,13 @@ func TestHandler_HandleServiceError(t *testing.T) {
 		},
 		{
 			name:       "wrapped session not found",
-			err:        fmt.Errorf("wrapped: %w", pkgwebauthn.ErrSessionNotFound),
+			err:        &errs.Wrapped{Msg: "wrapped", Err: pkgwebauthn.ErrSessionNotFound},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   ErrorCodeInvalidSession,
 		},
 		{
 			name:       "wrapped user not found",
-			err:        fmt.Errorf("wrapped: %w", pkgwebauthn.ErrUserNotFound),
+			err:        &errs.Wrapped{Msg: "wrapped", Err: pkgwebauthn.ErrUserNotFound},
 			wantStatus: http.StatusNotFound,
 			wantCode:   ErrorCodeUserNotFound,
 		},

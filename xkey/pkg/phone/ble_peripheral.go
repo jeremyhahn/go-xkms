@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -132,12 +131,12 @@ func (p *BLEPeripheral) Start(ctx context.Context) error {
 	p.adapter = bluetooth.DefaultAdapter
 	if err := p.adapter.Enable(); err != nil {
 		p.log.Error("failed to enable bluetooth adapter", slog.String("error", err.Error()))
-		return fmt.Errorf("%w: %v", ErrPeripheralStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPeripheralStartFailed, Cause: err}
 	}
 
 	// Create the GATT service
 	if err := p.setupGATTService(); err != nil {
-		return fmt.Errorf("%w: %v", ErrPeripheralStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPeripheralStartFailed, Cause: err}
 	}
 
 	// Start advertising
@@ -147,12 +146,12 @@ func (p *BLEPeripheral) Start(ctx context.Context) error {
 		ServiceUUIDs: []bluetooth.UUID{XKeyServiceUUID},
 	}); err != nil {
 		p.log.Error("failed to configure advertisement", slog.String("error", err.Error()))
-		return fmt.Errorf("%w: %v", ErrPeripheralStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPeripheralStartFailed, Cause: err}
 	}
 
 	if err := adv.Start(); err != nil {
 		p.log.Error("failed to start advertising", slog.String("error", err.Error()))
-		return fmt.Errorf("%w: %v", ErrPeripheralStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPeripheralStartFailed, Cause: err}
 	}
 
 	p.log.Info("BLE peripheral started, advertising",
@@ -193,7 +192,7 @@ func (p *BLEPeripheral) setupGATTService() error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to add service: %w", err)
+		return &WrappedError{Msg: "failed to add service", Err: err}
 	}
 
 	p.log.Debug("GATT service configured")
@@ -230,7 +229,7 @@ func (p *BLEPeripheral) AcceptConnection(ctx context.Context) error {
 	} else {
 		key, err := GenerateStaticKey()
 		if err != nil {
-			return fmt.Errorf("failed to generate static key: %w", err)
+			return &WrappedError{Msg: "failed to generate static key", Err: err}
 		}
 		localStatic = *key
 	}
@@ -241,13 +240,13 @@ func (p *BLEPeripheral) AcceptConnection(ctx context.Context) error {
 		IsInitiator:          false, // We are the responder
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create noise session: %w", err)
+		return &WrappedError{Msg: "failed to create noise session", Err: err}
 	}
 	p.session = session
 
 	// Wait for handshake messages
 	if err := p.performHandshake(ctx); err != nil {
-		return fmt.Errorf("handshake failed: %w", err)
+		return &WrappedError{Msg: "handshake failed", Err: err}
 	}
 
 	p.connected.Store(true)
@@ -262,13 +261,13 @@ func (p *BLEPeripheral) performHandshake(ctx context.Context) error {
 	p.log.Debug("waiting for handshake message 1")
 
 	if err := p.session.InitHandshake(); err != nil {
-		return fmt.Errorf("init handshake: %w", err)
+		return &WrappedError{Msg: "init handshake", Err: err}
 	}
 
 	// Receive message 1 (initiator's ephemeral)
 	msg1, err := p.receiveMessage(ctx)
 	if err != nil {
-		return fmt.Errorf("receive msg1: %w", err)
+		return &WrappedError{Msg: "receive msg1", Err: err}
 	}
 
 	p.log.Debug("received handshake message 1", slog.Int("size", len(msg1)))
@@ -276,15 +275,15 @@ func (p *BLEPeripheral) performHandshake(ctx context.Context) error {
 	// Process msg1 and generate msg2
 	msg2, complete, err := p.session.HandshakeMessage(msg1)
 	if err != nil {
-		return fmt.Errorf("process msg1: %w", err)
+		return &WrappedError{Msg: "process msg1", Err: err}
 	}
 	if complete {
-		return fmt.Errorf("unexpected handshake completion after msg1")
+		return &MessageError{Msg: "unexpected handshake completion after msg1"}
 	}
 
 	// Send message 2
 	if err := p.sendMessage(ctx, msg2); err != nil {
-		return fmt.Errorf("send msg2: %w", err)
+		return &WrappedError{Msg: "send msg2", Err: err}
 	}
 
 	p.log.Debug("sent handshake message 2", slog.Int("size", len(msg2)))
@@ -292,7 +291,7 @@ func (p *BLEPeripheral) performHandshake(ctx context.Context) error {
 	// Receive message 3 (initiator's static)
 	msg3, err := p.receiveMessage(ctx)
 	if err != nil {
-		return fmt.Errorf("receive msg3: %w", err)
+		return &WrappedError{Msg: "receive msg3", Err: err}
 	}
 
 	p.log.Debug("received handshake message 3", slog.Int("size", len(msg3)))
@@ -300,10 +299,10 @@ func (p *BLEPeripheral) performHandshake(ctx context.Context) error {
 	// Process msg3 to complete handshake
 	_, complete, err = p.session.HandshakeMessage(msg3)
 	if err != nil {
-		return fmt.Errorf("process msg3: %w", err)
+		return &WrappedError{Msg: "process msg3", Err: err}
 	}
 	if !complete {
-		return fmt.Errorf("handshake not complete after msg3")
+		return &MessageError{Msg: "handshake not complete after msg3"}
 	}
 
 	p.log.Info("Noise handshake completed successfully")
@@ -343,7 +342,7 @@ func (p *BLEPeripheral) receiveMessage(ctx context.Context) ([]byte, error) {
 				return message, nil
 			}
 		case <-time.After(30 * time.Second):
-			return nil, fmt.Errorf("receive timeout")
+			return nil, &MessageError{Msg: "receive timeout"}
 		}
 	}
 }
@@ -353,7 +352,7 @@ func (p *BLEPeripheral) sendMessage(ctx context.Context, data []byte) error {
 	// Fragment the message if needed
 	fragments, err := p.fragmenter.Fragment(data)
 	if err != nil {
-		return fmt.Errorf("fragmentation failed: %w", err)
+		return &WrappedError{Msg: "fragmentation failed", Err: err}
 	}
 
 	for _, fragBytes := range fragments {
@@ -390,7 +389,7 @@ func (p *BLEPeripheral) processRequest(ctx context.Context, encryptedData []byte
 	// Decrypt the request
 	plaintext, err := p.session.Decrypt(encryptedData)
 	if err != nil {
-		return fmt.Errorf("decrypt failed: %w", err)
+		return &WrappedError{Msg: "decrypt failed", Err: err}
 	}
 
 	p.log.Debug("received request",
@@ -414,7 +413,7 @@ func (p *BLEPeripheral) processRequest(ctx context.Context, encryptedData []byte
 	// Encrypt and send response
 	encrypted, err := p.session.Encrypt(response)
 	if err != nil {
-		return fmt.Errorf("encrypt response failed: %w", err)
+		return &WrappedError{Msg: "encrypt response failed", Err: err}
 	}
 
 	return p.sendMessage(ctx, encrypted)

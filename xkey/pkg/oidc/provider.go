@@ -228,28 +228,28 @@ func (p *Provider) Discover(ctx context.Context) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDiscoveryFailed, Cause: err}
 	}
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDiscoveryFailed, Cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%w: HTTP %d from %s", ErrDiscoveryFailed, resp.StatusCode, discoveryURL)
+		return &DetailError{Err: ErrDiscoveryFailed, Detail: fmt.Sprintf(": HTTP %d from %s", resp.StatusCode, discoveryURL)}
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("%w: failed to read response body: %v", ErrDiscoveryFailed, err)
+		return &DetailError{Err: ErrDiscoveryFailed, Detail: fmt.Sprintf(": failed to read response body: %v", err)}
 	}
 
 	var metadata Provider
 	if err := json.Unmarshal(body, &metadata); err != nil {
-		return fmt.Errorf("%w: invalid JSON response: %v", ErrDiscoveryFailed, err)
+		return &DetailError{Err: ErrDiscoveryFailed, Detail: fmt.Sprintf(": invalid JSON response: %v", err)}
 	}
 
 	// Validate required endpoints

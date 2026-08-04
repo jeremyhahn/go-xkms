@@ -1,0 +1,63 @@
+- generic [ref=e125]:
+  - generic [ref=e126]:
+    - generic [ref=e127]:
+      - img [ref=e170]
+      - generic [ref=e129]: Welcome
+    - generic [ref=e131]:
+      - img [ref=e172]
+      - generic [ref=e133]: Deployment
+    - generic [ref=e135]:
+      - img [ref=e174]
+      - generic [ref=e137]: Mode
+    - generic [ref=e139]:
+      - img [ref=e239]
+      - generic [ref=e141]: Security
+    - generic [ref=e143]:
+      - img [ref=e286]
+      - generic [ref=e145]: Storage
+    - generic [ref=e147]:
+      - generic [ref=e148]: "6"
+      - generic [ref=e149]: Summary
+  - generic [ref=e288]:
+    - heading "Review & Apply" [level=2] [ref=e289]
+    - paragraph [ref=e290]: Review your choices before applying.
+    - generic [ref=e291]:
+      - generic [ref=e292]:
+        - generic [ref=e293]: Deployment Mode
+        - generic [ref=e294]: Personal
+        - button "Edit" [ref=e295] [cursor=pointer]
+      - generic [ref=e296]:
+        - generic [ref=e297]: Operating Mode
+        - generic [ref=e298]: Standalone
+        - button "Edit" [ref=e299] [cursor=pointer]
+      - generic [ref=e300]:
+        - generic [ref=e301]: Password Storage
+        - generic [ref=e302]: None
+        - button "Edit" [ref=e303] [cursor=pointer]
+      - generic [ref=e304]:
+        - generic [ref=e305]: Data Sealing
+        - generic [ref=e306]: Auto
+        - button "Edit" [ref=e307] [cursor=pointer]
+      - generic [ref=e308]:
+        - generic [ref=e309]: SO PIN
+        - generic [ref=e310]: Configured
+        - button "Edit" [ref=e311] [cursor=pointer]
+      - generic [ref=e312]:
+        - generic [ref=e313]: User PIN
+        - generic [ref=e314]: Configured (unified with password store)
+        - button "Edit" [ref=e315] [cursor=pointer]
+      - generic [ref=e316]:
+        - generic [ref=e317]: Hierarchy Auth
+        - generic [ref=e318]: Default (empty)
+        - button "Edit" [ref=e319] [cursor=pointer]
+      - generic [ref=e320]:
+        - generic [ref=e321]: Storage
+        - generic [ref=e322]: Standard Filesystem + Barrier (TPM 2.0 Hardware)
+        - button "Edit" [ref=e323] [cursor=pointer]
+      - generic [ref=e324]:
+        - generic [ref=e325]: Master Password
+        - generic [ref=e326]: Using User PIN
+        - button "Edit" [ref=e327] [cursor=pointer]
+    - generic [ref=e328]:
+      - button "Back" [ref=e329] [cursor=pointer]
+      - button "Apply Setup" [ref=e330] [cursor=pointer]

@@ -137,7 +137,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 			fmt.Println("No paired devices. Use 'xkey device pair' first.")
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -150,7 +150,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 	if deviceFilter != "" {
 		targetDevice = findDeviceByName(cfg, deviceFilter)
 		if targetDevice == nil {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceFilter)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceFilter)}
 		}
 	} else if cfg.DefaultDevice != "" {
 		targetDevice = findDeviceByName(cfg, cfg.DefaultDevice)
@@ -167,19 +167,19 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 	// Decode the phone's public key
 	expectedRemoteStatic, err := base64.StdEncoding.DecodeString(targetDevice.NoisePublicKey)
 	if err != nil {
-		return fmt.Errorf("failed to decode phone public key: %w", err)
+		return &WrappedError{Msg: "failed to decode phone public key", Err: err}
 	}
 
 	// Decode our local static key
 	localPrivateKey, err := base64.StdEncoding.DecodeString(targetDevice.LocalNoisePrivateKey)
 	if err != nil {
-		return fmt.Errorf("failed to decode local private key: %w", err)
+		return &WrappedError{Msg: "failed to decode local private key", Err: err}
 	}
 
 	// Reconstruct the Noise static key from stored private key
 	localStaticKey, err := phone.LoadStaticKey(localPrivateKey)
 	if err != nil {
-		return fmt.Errorf("failed to reconstruct local key: %w", err)
+		return &WrappedError{Msg: "failed to reconstruct local key", Err: err}
 	}
 
 	// Use hostname as default device name
@@ -193,7 +193,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 		tpmModule, err = initTPMForAttestation(tpmDevice, logger)
 		if err != nil {
 			if attestMode == phone.AttestationModeTPM2 {
-				return fmt.Errorf("%w: %v", ErrTPM2InitFailed, err)
+				return &SentinelCauseError{Sentinel: ErrTPM2InitFailed, Cause: err}
 			}
 			logger.Warn("TPM2 not available, using software attestation",
 				slog.String("error", err.Error()))
@@ -212,7 +212,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 	// Create the request handler that processes phone requests
 	handler, err := newListenRequestHandler(logger, tpmModule, attestMode)
 	if err != nil {
-		return fmt.Errorf("failed to create request handler: %w", err)
+		return &WrappedError{Msg: "failed to create request handler", Err: err}
 	}
 
 	// Create the BLE peripheral
@@ -227,7 +227,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, phone.ErrBLEUnavailable) {
 			return ErrDeviceBLEUnavailable
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceListenFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceListenFailed, Cause: err}
 	}
 
 	// Set up context with optional timeout
@@ -253,7 +253,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 
 	// Start the peripheral
 	if err := peripheral.Start(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceListenFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceListenFailed, Cause: err}
 	}
 	defer peripheral.Stop()
 
@@ -336,7 +336,7 @@ func newListenRequestHandler(
 		Logger: logger,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create laptop attestor: %w", err)
+		return nil, &WrappedError{Msg: "failed to create laptop attestor", Err: err}
 	}
 
 	return &listenRequestHandler{

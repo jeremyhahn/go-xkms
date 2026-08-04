@@ -226,8 +226,8 @@ func (b *Bridge) SyncCredentials(ctx context.Context, credentials []StoredCreden
 	}
 
 	if firstErr != nil {
-		return fmt.Errorf("%w: %d of %d credentials failed: %w",
-			ErrCDPCredentialFailed, failCount, len(credentials), firstErr)
+		return &SentinelCauseError{Sentinel: ErrCDPCredentialFailed,
+			Cause: &WrappedError{Msg: fmt.Sprintf("%d of %d credentials failed", failCount, len(credentials)), Err: firstErr}}
 	}
 
 	b.logger.Info("credentials synced",

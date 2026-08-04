@@ -3,6 +3,7 @@
 import {services} from '../models';
 import {audit} from '../models';
 import {context} from '../models';
+import {pcrpolicy} from '../models';
 import {truststore} from '../models';
 
 export function AssignPolicyToKey(arg1:string,arg2:string):Promise<void>;
@@ -186,6 +187,8 @@ export function SetElevatorFunc(arg1:services.ElevatorFunc):Promise<void>;
 export function SetHandleDescription(arg1:string,arg2:string):Promise<void>;
 
 export function SetPlatformPolicyService(arg1:services.PlatformPolicyService):Promise<void>;
+
+export function SetPolicyStore(arg1:pcrpolicy.PolicyStore):Promise<void>;
 
 export function SetStaticPasswordService(arg1:services.StaticPasswordService):Promise<void>;
 

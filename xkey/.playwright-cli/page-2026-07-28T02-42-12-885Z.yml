@@ -1,0 +1,148 @@
+- generic [ref=e3]:
+  - navigation "Main navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e9]: xKey
+      - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+        - img [ref=e11]
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: OVERVIEW
+        - button "Dashboard" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - generic [ref=e19]: Dashboard
+        - button "Pairing" [ref=e20] [cursor=pointer]:
+          - img [ref=e21]
+          - generic [ref=e23]: Pairing
+        - button "TPM 2.0" [ref=e24] [cursor=pointer]:
+          - img [ref=e25]
+          - generic [ref=e27]: TPM 2.0
+      - generic [ref=e28]:
+        - generic [ref=e29]: STORE
+        - button "Keys" [ref=e30] [cursor=pointer]:
+          - img [ref=e31]
+          - generic [ref=e33]: Keys
+        - button "Trust Store" [ref=e34] [cursor=pointer]:
+          - img [ref=e35]
+          - generic [ref=e37]: Trust Store
+        - button "Certificates" [ref=e38] [cursor=pointer]:
+          - img [ref=e39]
+          - generic [ref=e41]: Certificates
+      - generic [ref=e42]:
+        - generic [ref=e43]: APPLICATIONS
+        - button "SSH" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: SSH
+        - button "FIDO2" [ref=e48] [cursor=pointer]:
+          - img [ref=e49]
+          - generic [ref=e51]: FIDO2
+        - button "OATH" [ref=e52] [cursor=pointer]:
+          - img [ref=e53]
+          - generic [ref=e55]: OATH
+        - button "PIV" [ref=e56] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: PIV
+        - button "Passwords" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e63]: Passwords
+        - button "Sealed Data" [ref=e64] [cursor=pointer]:
+          - img [ref=e65]
+          - generic [ref=e67]: Sealed Data
+        - button "Browser" [ref=e68] [cursor=pointer]:
+          - img [ref=e69]
+          - generic [ref=e71]: Browser
+      - generic [ref=e72]:
+        - generic [ref=e73]: MANAGEMENT
+        - button "Audit Log" [ref=e74] [cursor=pointer]:
+          - img [ref=e75]
+          - generic [ref=e77]: Audit Log
+        - button "Admin" [ref=e78] [cursor=pointer]:
+          - img [ref=e79]
+          - generic [ref=e81]: Admin
+      - generic [ref=e82]:
+        - generic [ref=e83]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e84] [cursor=pointer]:
+          - img [ref=e85]
+          - generic [ref=e87]: OIDC
+        - button "API Explorer" [ref=e88] [cursor=pointer]:
+          - img [ref=e89]
+          - generic [ref=e91]: API Explorer
+    - generic [ref=e92]:
+      - generic "Standalone mode" [ref=e93]:
+        - generic [ref=e95]: Standalone
+      - button "Theme" [ref=e96] [cursor=pointer]:
+        - img [ref=e97]
+        - generic [ref=e99]: Theme
+      - button "Settings" [ref=e100] [cursor=pointer]:
+        - img [ref=e101]
+        - generic [ref=e103]: Settings
+  - main [ref=e104]:
+    - generic [ref=e106]:
+      - button "Lock app" [ref=e107] [cursor=pointer]:
+        - img [ref=e108]
+        - generic [ref=e110]: Lock
+      - button "No touch pending" [disabled] [ref=e111]:
+        - img [ref=e113]
+    - generic [ref=e464]:
+      - generic [ref=e467]:
+        - heading "OATH Accounts" [level=1] [ref=e468]
+        - paragraph [ref=e469]: TOTP and HOTP codes
+      - generic [ref=e470]:
+        - generic [ref=e471]:
+          - generic [ref=e472]:
+            - img [ref=e474]
+            - textbox "Search accounts..." [ref=e476]
+          - generic [ref=e477]:
+            - img [ref=e478]
+            - button "All Backends" [ref=e480] [cursor=pointer]
+            - button "Local software" [ref=e481] [cursor=pointer]:
+              - img [ref=e482]
+              - text: Local software
+          - button "Add Account" [active] [ref=e484] [cursor=pointer]:
+            - img [ref=e485]
+            - generic [ref=e487]: Add Account
+        - generic [ref=e488]:
+          - img [ref=e490]
+          - heading "No OATH Accounts" [level=3] [ref=e492]
+          - paragraph [ref=e493]: Add your first TOTP account to generate one-time codes for two-factor authentication.
+          - button "Add Account" [ref=e495] [cursor=pointer]:
+            - generic [ref=e496]: Add Account
+      - dialog "Add OATH Account" [ref=e497]:
+        - generic [ref=e498]:
+          - heading "Add OATH Account" [level=2] [ref=e499]
+          - button "Close dialog" [ref=e500] [cursor=pointer]:
+            - img [ref=e501]
+        - generic [ref=e504]:
+          - button "Scan QR from Screen" [ref=e506] [cursor=pointer]:
+            - img [ref=e507]
+            - generic [ref=e509]: Scan QR from Screen
+          - generic [ref=e512]: OR ENTER MANUALLY
+          - generic [ref=e514]:
+            - generic [ref=e515]: Issuer
+            - textbox "Issuer" [ref=e517]:
+              - /placeholder: e.g., GitHub, Google
+          - generic [ref=e518]:
+            - generic [ref=e519]: Account Name
+            - textbox "Account Name" [ref=e521]:
+              - /placeholder: e.g., user@example.com
+          - generic [ref=e522]:
+            - generic [ref=e523]: Secret Key
+            - textbox "Secret Key" [ref=e525]:
+              - /placeholder: Base32 encoded secret
+          - generic [ref=e526]:
+            - generic [ref=e527]:
+              - generic [ref=e528]: Digits
+              - combobox "Digits" [ref=e529] [cursor=pointer]:
+                - option "6 digits" [selected]
+                - option "8 digits"
+            - generic [ref=e530]:
+              - generic [ref=e531]: Period
+              - combobox "Period" [ref=e532] [cursor=pointer]:
+                - option "30 seconds" [selected]
+                - option "60 seconds"
+        - generic [ref=e533]:
+          - button "Cancel" [ref=e534] [cursor=pointer]:
+            - generic [ref=e535]: Cancel
+          - button "Add Account" [ref=e536] [cursor=pointer]:
+            - generic [ref=e537]: Add Account

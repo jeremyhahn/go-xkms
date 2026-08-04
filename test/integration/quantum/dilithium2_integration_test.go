@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
 	"github.com/jeremyhahn/go-xkms/pkg/quantum/dilithium2"
 	"github.com/stretchr/testify/assert"
@@ -228,14 +230,14 @@ func TestDilithium2Integration_ConcurrentOperations(t *testing.T) {
 
 			d, err := dilithium2.New()
 			if err != nil {
-				errors <- fmt.Errorf("goroutine %d: New() failed: %w", id, err)
+				errors <- &errs.Wrapped{Msg: fmt.Sprintf("goroutine %d: New() failed", id), Err: err}
 				return
 			}
 			defer d.Clean()
 
 			pubKey, err := d.GenerateKeyPair()
 			if err != nil {
-				errors <- fmt.Errorf("goroutine %d: GenerateKeyPair() failed: %w", id, err)
+				errors <- &errs.Wrapped{Msg: fmt.Sprintf("goroutine %d: GenerateKeyPair() failed", id), Err: err}
 				return
 			}
 
@@ -243,18 +245,18 @@ func TestDilithium2Integration_ConcurrentOperations(t *testing.T) {
 				message := []byte(fmt.Sprintf("Goroutine %d Message %d", id, j))
 				signature, err := d.Sign(message)
 				if err != nil {
-					errors <- fmt.Errorf("goroutine %d op %d: Sign() failed: %w", id, j, err)
+					errors <- &errs.Wrapped{Msg: fmt.Sprintf("goroutine %d op %d: Sign() failed", id, j), Err: err}
 					continue
 				}
 
 				valid, err := d.Verify(message, signature, pubKey)
 				if err != nil {
-					errors <- fmt.Errorf("goroutine %d op %d: Verify() failed: %w", id, j, err)
+					errors <- &errs.Wrapped{Msg: fmt.Sprintf("goroutine %d op %d: Verify() failed", id, j), Err: err}
 					continue
 				}
 
 				if !valid {
-					errors <- fmt.Errorf("goroutine %d op %d: signature verification failed", id, j)
+					errors <- &errs.Message{Msg: fmt.Sprintf("goroutine %d op %d: signature verification failed", id, j)}
 				}
 			}
 		}(i)

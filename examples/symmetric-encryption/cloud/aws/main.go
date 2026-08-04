@@ -30,6 +30,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/awskms"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -52,7 +54,7 @@ func awsKMSExample() error {
 	// Create AWS KMS backend
 	b, err := createAWSKMSBackend()
 	if err != nil {
-		return fmt.Errorf("failed to create AWS KMS backend: %w", err)
+		return &errs.Wrapped{Msg: "failed to create AWS KMS backend", Err: err}
 	}
 	defer func() { _ = b.Close() }()
 
@@ -68,7 +70,7 @@ func awsKMSExample() error {
 	fmt.Println("1. Generating AES-256 key in AWS KMS...")
 	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
 	if err != nil {
-		return fmt.Errorf("failed to generate key: %w", err)
+		return &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 	fmt.Printf("   ✓ Generated %s key in AWS KMS\n", key.Algorithm())
 	fmt.Println("   ✓ Key material never leaves AWS KMS")
@@ -77,7 +79,7 @@ func awsKMSExample() error {
 	fmt.Println("\n2. Creating encrypter...")
 	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	if err != nil {
-		return fmt.Errorf("failed to get encrypter: %w", err)
+		return &errs.Wrapped{Msg: "failed to get encrypter", Err: err}
 	}
 	fmt.Println("   ✓ Encrypter created")
 
@@ -94,7 +96,7 @@ func awsKMSExample() error {
 		AdditionalData: aad,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to encrypt: %w", err)
+		return &errs.Wrapped{Msg: "failed to encrypt", Err: err}
 	}
 	fmt.Printf("   ✓ Ciphertext: %s...\n", base64.StdEncoding.EncodeToString(encrypted.Ciphertext[:min(32, len(encrypted.Ciphertext))]))
 	fmt.Println("   ✓ Encryption performed in AWS KMS")
@@ -105,14 +107,14 @@ func awsKMSExample() error {
 		AdditionalData: aad,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to decrypt: %w", err)
+		return &errs.Wrapped{Msg: "failed to decrypt", Err: err}
 	}
 	fmt.Printf("   ✓ Decrypted: %q\n", decrypted)
 	fmt.Println("   ✓ Decryption performed in AWS KMS")
 
 	// Verify
 	if string(decrypted) != string(plaintext) {
-		return fmt.Errorf("decrypted data does not match original")
+		return &errs.Message{Msg: "decrypted data does not match original"}
 	}
 	fmt.Println("   ✓ Verification successful!")
 
@@ -123,7 +125,7 @@ func awsKMSExample() error {
 		AdditionalData: wrongAAD,
 	})
 	if err == nil {
-		return fmt.Errorf("expected error with wrong AAD")
+		return &errs.Message{Msg: "expected error with wrong AAD"}
 	}
 	fmt.Printf("   ✓ Correctly rejected wrong AAD: %v\n", err)
 
@@ -138,13 +140,13 @@ func createAWSKMSBackend() (types.SymmetricKeyProvider, error) {
 	// Check required environment variables
 	region := os.Getenv("AWS_REGION")
 	if region == "" {
-		return nil, fmt.Errorf("AWS_REGION environment variable not set")
+		return nil, &errs.Message{Msg: "AWS_REGION environment variable not set"}
 	}
 
 	// Create temporary storage for key metadata
 	storage, err := createTempStorage()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create storage: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create storage", Err: err}
 	}
 
 	// Create AWS KMS backend configuration
@@ -157,7 +159,7 @@ func createAWSKMSBackend() (types.SymmetricKeyProvider, error) {
 	// Create and initialize the backend
 	b, err := awskms.NewBackend(backendCfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AWS KMS backend: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create AWS KMS backend", Err: err}
 	}
 
 	return b, nil

@@ -85,7 +85,7 @@ func NewPairingVerifier(statePath string) (*PairingVerifier, error) {
 		states:    make(map[string]*PairingState),
 	}
 	if err := v.load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("nativemsg: failed to load pairing state: %w", err)
+		return nil, &WrappedError{Msg: "nativemsg: failed to load pairing state", Err: err}
 	}
 	return v, nil
 }
@@ -206,7 +206,7 @@ func (v *PairingVerifier) StartPairing(identityKey []byte, origin string) (strin
 	code, err := generatePairingCode()
 	if err != nil {
 		v.logPairingEvent(audit.OpPairingStarted, false, err, map[string]any{"origin": origin})
-		return "", fmt.Errorf("nativemsg: failed to generate pairing code: %w", err)
+		return "", &WrappedError{Msg: "nativemsg: failed to generate pairing code", Err: err}
 	}
 
 	v.mu.Lock()
@@ -334,7 +334,7 @@ func (v *PairingVerifier) VerifyParentProcess() error {
 			return nil
 		}
 	}
-	return fmt.Errorf("%w: %s", ErrParentProcessInvalid, base)
+	return &DetailError{Err: ErrParentProcessInvalid, Detail: fmt.Sprintf(": %s", base)}
 }
 
 // supportedBrowsers is the list of known browser binary names that are
@@ -402,7 +402,7 @@ func (v *PairingVerifier) loadLocked() error {
 	// Try legacy single-object format with "extension_origin" key.
 	var legacy legacyPairingState
 	if err := json.Unmarshal(data, &legacy); err != nil {
-		return fmt.Errorf("nativemsg: invalid pairing state: %w", err)
+		return &WrappedError{Msg: "nativemsg: invalid pairing state", Err: err}
 	}
 
 	if legacy.ExtensionOrigin != "" && legacy.IdentityKey != nil {
@@ -428,20 +428,20 @@ func (v *PairingVerifier) loadLocked() error {
 func (v *PairingVerifier) saveLocked() error {
 	dir := filepath.Dir(v.statePath)
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("nativemsg: failed to create pairing directory: %w", err)
+		return &WrappedError{Msg: "nativemsg: failed to create pairing directory", Err: err}
 	}
 	data, err := json.MarshalIndent(v.states, "", "  ")
 	if err != nil {
-		return fmt.Errorf("nativemsg: failed to marshal pairing state: %w", err)
+		return &WrappedError{Msg: "nativemsg: failed to marshal pairing state", Err: err}
 	}
 
 	tmpPath := v.statePath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return fmt.Errorf("nativemsg: failed to write pairing temp file: %w", err)
+		return &WrappedError{Msg: "nativemsg: failed to write pairing temp file", Err: err}
 	}
 	if err := os.Rename(tmpPath, v.statePath); err != nil {
 		_ = os.Remove(tmpPath) // Clean up temp file on rename failure.
-		return fmt.Errorf("nativemsg: failed to rename pairing temp file: %w", err)
+		return &WrappedError{Msg: "nativemsg: failed to rename pairing temp file", Err: err}
 	}
 	return nil
 }
@@ -456,7 +456,7 @@ func (v *PairingVerifier) save() error {
 // removeStateLocked deletes the state file (caller must hold mu).
 func (v *PairingVerifier) removeStateLocked() error {
 	if err := os.Remove(v.statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("nativemsg: failed to remove pairing state: %w", err)
+		return &WrappedError{Msg: "nativemsg: failed to remove pairing state", Err: err}
 	}
 	return nil
 }

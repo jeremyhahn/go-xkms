@@ -69,7 +69,7 @@ func runDeviceEnroll(cmd *cobra.Command, args []string) error {
 	name, _ := cmd.Flags().GetString("name")
 
 	if serverAddr == "" {
-		return fmt.Errorf("%w: --server is required", ErrAgentEnrollFailed)
+		return &DetailError{Err: ErrAgentEnrollFailed, Detail: ": --server is required"}
 	}
 
 	if name == "" {
@@ -84,7 +84,7 @@ func runDeviceEnroll(cmd *cobra.Command, args []string) error {
 	// Generate a key pair and CSR.
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentCSRFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAgentCSRFailed, Cause: err}
 	}
 
 	template := &x509.CertificateRequest{
@@ -95,7 +95,7 @@ func runDeviceEnroll(cmd *cobra.Command, args []string) error {
 	}
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, key)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentCSRFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAgentCSRFailed, Cause: err}
 	}
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 
@@ -121,24 +121,24 @@ func runDeviceEnroll(cmd *cobra.Command, args []string) error {
 	// added.
 	certDir := agentCertDir()
 	if err := os.MkdirAll(certDir, 0700); err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentCertWriteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAgentCertWriteFailed, Cause: err}
 	}
 
 	// Save private key.
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentCSRFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAgentCSRFailed, Cause: err}
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 	keyPath := filepath.Join(certDir, "agent-key.pem")
 	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentCertWriteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAgentCertWriteFailed, Cause: err}
 	}
 
 	// Save CSR.
 	csrPath := filepath.Join(certDir, "agent-csr.pem")
 	if err := os.WriteFile(csrPath, csrPEM, 0644); err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentCertWriteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAgentCertWriteFailed, Cause: err}
 	}
 
 	_ = logger
@@ -180,14 +180,14 @@ func runDeviceConnect(cmd *cobra.Command, args []string) error {
 
 	client, err := agent.NewClient(clientCfg, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentConnectFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAgentConnectFailed, Cause: err}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	if err := client.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentConnectFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAgentConnectFailed, Cause: err}
 	}
 
 	fmt.Printf("Connected to master at %s\n", masterAddr)

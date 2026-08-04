@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	backmocks "github.com/jeremyhahn/go-xkms/pkg/backend/mocks"
 	storagemocks "github.com/jeremyhahn/go-xkms/pkg/storage/mocks"
@@ -598,7 +600,7 @@ func TestCompositeKeyStore_GenerateRSA_EdgeCases(t *testing.T) {
 	t.Run("backend generation error", func(t *testing.T) {
 		mockBackend := backmocks.NewMockBackend()
 		mockBackend.GenerateKeyFunc = func(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-			return nil, fmt.Errorf("backend error: hardware failure")
+			return nil, &errs.Message{Msg: "backend error: hardware failure"}
 		}
 
 		ks, _ := xkms.New(&xkms.BackendConfig{
@@ -693,7 +695,7 @@ func TestCompositeKeyStore_GenerateECDSA_EdgeCases(t *testing.T) {
 	t.Run("backend generation error", func(t *testing.T) {
 		mockBackend := backmocks.NewMockBackend()
 		mockBackend.GenerateKeyFunc = func(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-			return nil, fmt.Errorf("curve not supported")
+			return nil, &errs.Message{Msg: "curve not supported"}
 		}
 
 		ks, _ := xkms.New(&xkms.BackendConfig{
@@ -758,7 +760,7 @@ func TestCompositeKeyStore_GenerateEd25519_EdgeCases(t *testing.T) {
 	t.Run("backend generation error", func(t *testing.T) {
 		mockBackend := backmocks.NewMockBackend()
 		mockBackend.GenerateKeyFunc = func(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-			return nil, fmt.Errorf("random source exhausted")
+			return nil, &errs.Message{Msg: "random source exhausted"}
 		}
 
 		ks, _ := xkms.New(&xkms.BackendConfig{
@@ -817,7 +819,7 @@ func TestCompositeKeyStore_GetKey_EdgeCases(t *testing.T) {
 	t.Run("backend get error", func(t *testing.T) {
 		mockBackend := backmocks.NewMockBackend()
 		mockBackend.GetKeyFunc = func(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-			return nil, fmt.Errorf("key storage corrupted")
+			return nil, &errs.Message{Msg: "key storage corrupted"}
 		}
 
 		ks, _ := xkms.New(&xkms.BackendConfig{
@@ -876,7 +878,7 @@ func TestCompositeKeyStore_ListKeys_EdgeCases(t *testing.T) {
 	t.Run("backend list error", func(t *testing.T) {
 		mockBackend := backmocks.NewMockBackend()
 		mockBackend.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
-			return nil, fmt.Errorf("database connection lost")
+			return nil, &errs.Message{Msg: "database connection lost"}
 		}
 
 		ks, _ := xkms.New(&xkms.BackendConfig{
@@ -956,9 +958,9 @@ func TestCompositeKeyStore_RotateKey_EdgeCases(t *testing.T) {
 		mockBackend.DeleteKeyFunc = func(attrs *types.KeyAttributes) error {
 			if !deleteAttempted {
 				deleteAttempted = true
-				return fmt.Errorf("key is locked")
+				return &errs.Message{Msg: "key is locked"}
 			}
-			return fmt.Errorf("key not found: %s", attrs.CN)
+			return &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 		}
 
 		ks, _ := xkms.New(&xkms.BackendConfig{
@@ -986,7 +988,7 @@ func TestCompositeKeyStore_RotateKey_EdgeCases(t *testing.T) {
 
 		// Now set the delete func to return error
 		mockBackend.DeleteKeyFunc = func(attrs *types.KeyAttributes) error {
-			return fmt.Errorf("key is locked")
+			return &errs.Message{Msg: "key is locked"}
 		}
 
 		_, err = ks.RotateKey(context.Background(), attrs)
@@ -1173,4 +1175,104 @@ func hasSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// ========================================================================
+// RotateKey — Symmetric Key Branch
+// ========================================================================
+
+// TestCompositeKeyStore_RotateKey_Symmetric exercises the attrs.IsSymmetric()
+// branch of compositeBackend.RotateKey, which is not reached by the
+// asymmetric (RSA/ECDSA/Ed25519) rotation tests above.
+func TestCompositeKeyStore_RotateKey_Symmetric(t *testing.T) {
+	t.Run("backend does not implement SymmetricKeyProvider", func(t *testing.T) {
+		mockBackend := backmocks.NewMockBackend()
+		// Bypass the "no existing key" delete failure so the rotation reaches
+		// the symmetric-provider type assertion.
+		mockBackend.DeleteKeyFunc = func(attrs *types.KeyAttributes) error { return nil }
+
+		ks, _ := xkms.New(&xkms.BackendConfig{
+			Backend:     mockBackend,
+			CertStorage: storagemocks.NewMockCertStorage(),
+		})
+		defer func() { _ = ks.Close() }()
+
+		attrs := &types.KeyAttributes{
+			CN:                 "sym-unsupported",
+			KeyType:            backend.KEY_TYPE_TLS,
+			StoreType:          backend.STORE_SW,
+			SymmetricAlgorithm: types.SymmetricAES256GCM,
+		}
+
+		_, err := ks.RotateKey(context.Background(), attrs)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, xkms.ErrSymmetricNotSupported) {
+			t.Errorf("expected ErrSymmetricNotSupported, got: %v", err)
+		}
+	})
+
+	t.Run("delete error propagates before symmetric generation", func(t *testing.T) {
+		mockBackend := backmocks.NewMockBackend()
+		mockBackend.DeleteKeyFunc = func(attrs *types.KeyAttributes) error {
+			return &errs.Message{Msg: "key is locked"}
+		}
+
+		ks, _ := xkms.New(&xkms.BackendConfig{
+			Backend:     mockBackend,
+			CertStorage: storagemocks.NewMockCertStorage(),
+		})
+		defer func() { _ = ks.Close() }()
+
+		attrs := &types.KeyAttributes{
+			CN:                 "sym-delete-error",
+			KeyType:            backend.KEY_TYPE_TLS,
+			StoreType:          backend.STORE_SW,
+			SymmetricAlgorithm: types.SymmetricAES256GCM,
+		}
+
+		_, err := ks.RotateKey(context.Background(), attrs)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !contains(err.Error(), "failed to delete old key during rotation") {
+			t.Errorf("expected rotation delete error, got: %v", err)
+		}
+	})
+
+	t.Run("successful symmetric rotation", func(t *testing.T) {
+		extBackend := backmocks.NewExtendedMockBackend()
+		extBackend.DeleteKeyFunc = func(attrs *types.KeyAttributes) error { return nil }
+
+		ks, err := xkms.New(&xkms.BackendConfig{
+			Backend:     extBackend,
+			CertStorage: storagemocks.NewMockCertStorage(),
+		})
+		if err != nil {
+			t.Fatalf("failed to create keystore: %v", err)
+		}
+		defer func() { _ = ks.Close() }()
+
+		attrs := &types.KeyAttributes{
+			CN:                 "sym-rotate",
+			KeyType:            backend.KEY_TYPE_TLS,
+			StoreType:          backend.STORE_SW,
+			SymmetricAlgorithm: types.SymmetricAES256GCM,
+		}
+
+		newKey, err := ks.RotateKey(context.Background(), attrs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if newKey == nil {
+			t.Fatal("expected new symmetric key, got nil")
+		}
+		if _, ok := newKey.(types.SymmetricKey); !ok {
+			t.Errorf("expected types.SymmetricKey, got %T", newKey)
+		}
+		if len(extBackend.GenerateSymmetricKeyCalls) != 1 {
+			t.Errorf("expected 1 GenerateSymmetricKey call, got %d", len(extBackend.GenerateSymmetricKeyCalls))
+		}
+	})
 }

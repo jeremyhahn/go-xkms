@@ -4,7 +4,9 @@ RFC 8555 compliant Automatic Certificate Management Environment (ACME) server wi
 
 ## Overview
 
-The ACME package provides a complete implementation of the ACME protocol for automated certificate management. It extends the standard RFC 8555 specification with support for TPM-based device attestation and enrollment challenges, enabling secure device identity provisioning aligned with TCG (Trusted Computing Group) specifications.
+The ACME package (`pkg/acme`) provides a complete implementation of the ACME protocol for automated certificate management. It extends the standard RFC 8555 specification with support for TPM-based device attestation and enrollment challenges, enabling secure device identity provisioning aligned with TCG (Trusted Computing Group) specifications.
+
+> This was formerly the standalone `go-trusted-ca` project. It is now decommissioned and absorbed into go-xkms: the CA lives in `pkg/ca` and the ACME server in `pkg/acme`.
 
 ## Key Features
 
@@ -94,7 +96,7 @@ acme:
     backend: "qrdb"
     qrdb:
       mode: standalone
-      data_dir: /var/lib/trusted-ca/data
+      data_dir: /var/lib/xkms/data
 
   multi_tenancy:
     enabled: true
@@ -110,7 +112,7 @@ acme:
 ### Client Usage
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/client"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/client"
 
 // Create ACME client
 cfg := &client.Config{
@@ -182,8 +184,8 @@ The storage factory implements the `TenantAwareFactory` interface, enabling tena
 
 ```go
 import (
-    "github.com/jeremyhahn/go-trusted-ca/pkg/qrdb/dao"
-    "github.com/jeremyhahn/go-trusted-ca/pkg/acme/storage"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/qrdb/dao"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 )
 
 // Create factory from QRDB service
@@ -218,7 +220,7 @@ The tenant middleware (`pkg/acme/server/handlers/middleware.go`) intercepts requ
 #### Configuration
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/server/handlers"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 
 middleware := handlers.NewTenantMiddleware(&handlers.TenantMiddlewareConfig{
     StorageFactory:  qrdbFactory,
@@ -282,7 +284,7 @@ When `ValidateTenant` is enabled, the middleware verifies:
 Handlers can access the tenant ID from the request context:
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/server/handlers"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     tenantID := handlers.TenantFromContext(r.Context())

@@ -47,6 +47,32 @@ func (e *InvalidAlgorithmError) Error() string {
 	return "sdk/ssh: invalid algorithm: " + e.Value
 }
 
+// BackendUnavailableError is returned when a GenerateRequest selects a
+// crypto backend but the embedded transport was constructed without a
+// BackendProvider (or a backend-backed key's signer is requested without
+// one). The Backend field names the requested backend.
+type BackendUnavailableError struct {
+	Backend string
+}
+
+// Error implements the error interface.
+func (e *BackendUnavailableError) Error() string {
+	return "sdk/ssh: no backend provider configured for backend: " + e.Backend
+}
+
+// ConsoleUnsupportedError is returned by Console on transports that cannot
+// carry an interactive byte stream (MCP, and the REST/QUIC SDK clients whose
+// console is served by the WebSocket bridge rather than the Go client).
+type ConsoleUnsupportedError struct {
+	Transport string
+}
+
+// Error implements the error interface.
+func (e *ConsoleUnsupportedError) Error() string {
+	return "sdk/ssh: interactive console is not supported over the " + e.Transport +
+		" client (use embedded/gRPC, or the WebSocket bridge for REST/QUIC)"
+}
+
 // InvalidScopeError is returned when a DTO carries an unrecognized
 // scope string.
 type InvalidScopeError struct {

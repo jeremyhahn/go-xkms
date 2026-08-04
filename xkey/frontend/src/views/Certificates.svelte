@@ -8,6 +8,7 @@
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import BackendSelector from '$lib/components/BackendSelector.svelte';
+  import BackendBadge from '$lib/components/BackendBadge.svelte';
   import {
     mdiCertificate, mdiRefresh, mdiAlert,
     mdiDownload
@@ -18,17 +19,6 @@
   let certificates: RemoteCertificateInfo[] = [];
   let selectedBackend = 'all';
   let loading = true;
-
-  const backendColors: Record<string, { bg: string; fg: string }> = {
-    software:  { bg: 'var(--color-secondary-container)', fg: 'var(--color-on-secondary-container)' },
-    tpm2:      { bg: 'var(--color-primary-container)', fg: 'var(--color-on-primary-container)' },
-    pkcs11:    { bg: 'var(--color-tertiary-container, #f3e8fd)', fg: 'var(--color-on-tertiary-container, #4a1e73)' },
-    phone:     { bg: '#fff3cd', fg: '#856404' },
-    awskms:    { bg: '#d4edda', fg: '#155724' },
-    gcpkms:    { bg: '#d4edda', fg: '#155724' },
-    azurekv:   { bg: '#cce5ff', fg: '#004085' },
-    vault:     { bg: 'var(--color-surface-container)', fg: 'var(--color-on-surface-variant)' },
-  };
 
   $: filteredCertificates = selectedBackend === 'all'
     ? certificates
@@ -70,11 +60,6 @@
     } catch {
       return iso;
     }
-  }
-
-  function getBackendStyle(backend: string): string {
-    const colors = backendColors[backend] ?? backendColors['vault'];
-    return `background-color: ${colors.bg}; color: ${colors.fg};`;
   }
 
   function truncateSubject(subject: string, maxLen: number = 80): string {
@@ -131,9 +116,7 @@
                 <div class="cert-primary">
                   <span class="text-title-small cert-subject">{truncateSubject(cert.subject)}</span>
                   <div class="cert-badges">
-                    <span class="backend-badge" style={getBackendStyle(cert.backend)}>
-                      {cert.backend}
-                    </span>
+                    <BackendBadge backend={cert.backend} compact />
                     {#if cert.is_ca}
                       <span class="ca-badge">CA</span>
                     {/if}
@@ -307,19 +290,6 @@
     align-items: center;
     gap: 6px;
     flex-wrap: wrap;
-  }
-
-  .backend-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 10px;
-    border-radius: var(--radius-full);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-    white-space: nowrap;
-    font-family: var(--font-mono);
   }
 
   .ca-badge {

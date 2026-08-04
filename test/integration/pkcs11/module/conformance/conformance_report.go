@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // =============================================================================
@@ -230,7 +232,7 @@ func WriteJSONReport(report *ConformanceReport, w io.Writer) error {
 func WriteJSONReportToFile(report *ConformanceReport, filename string) error {
 	file, err := os.Create(filename)
 	if err != nil {
-		return fmt.Errorf("failed to create JSON report file: %w", err)
+		return &errs.Wrapped{Msg: "failed to create JSON report file", Err: err}
 	}
 	defer file.Close()
 
@@ -257,7 +259,7 @@ func WriteHTMLReport(report *ConformanceReport, w io.Writer) error {
 		},
 	}).Parse(htmlTemplate)
 	if err != nil {
-		return fmt.Errorf("failed to parse HTML template: %w", err)
+		return &errs.Wrapped{Msg: "failed to parse HTML template", Err: err}
 	}
 
 	return tmpl.Execute(w, report)
@@ -267,7 +269,7 @@ func WriteHTMLReport(report *ConformanceReport, w io.Writer) error {
 func WriteHTMLReportToFile(report *ConformanceReport, filename string) error {
 	file, err := os.Create(filename)
 	if err != nil {
-		return fmt.Errorf("failed to create HTML report file: %w", err)
+		return &errs.Wrapped{Msg: "failed to create HTML report file", Err: err}
 	}
 	defer file.Close()
 
@@ -348,7 +350,7 @@ func WriteTextReport(report *ConformanceReport, w io.Writer) error {
 func WriteTextReportToFile(report *ConformanceReport, filename string) error {
 	file, err := os.Create(filename)
 	if err != nil {
-		return fmt.Errorf("failed to create text report file: %w", err)
+		return &errs.Wrapped{Msg: "failed to create text report file", Err: err}
 	}
 	defer file.Close()
 

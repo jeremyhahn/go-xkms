@@ -1,0 +1,99 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - navigation "Main navigation" [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - img [ref=e8]
+          - generic [ref=e9]: xKey
+        - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+          - img [ref=e11]
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: OVERVIEW
+          - button "Dashboard" [ref=e16] [cursor=pointer]:
+            - img [ref=e17]
+            - generic [ref=e19]: Dashboard
+          - button "Pairing" [ref=e20] [cursor=pointer]:
+            - img [ref=e21]
+            - generic [ref=e23]: Pairing
+        - generic [ref=e24]:
+          - generic [ref=e25]: STORE
+          - button "Keys" [ref=e26] [cursor=pointer]:
+            - img [ref=e27]
+            - generic [ref=e29]: Keys
+          - button "Trust Store" [ref=e30] [cursor=pointer]:
+            - img [ref=e31]
+            - generic [ref=e33]: Trust Store
+          - button "Certificates" [ref=e34] [cursor=pointer]:
+            - img [ref=e35]
+            - generic [ref=e37]: Certificates
+        - generic [ref=e38]:
+          - generic [ref=e39]: APPLICATIONS
+          - button "SSH" [ref=e40] [cursor=pointer]:
+            - img [ref=e41]
+            - generic [ref=e43]: SSH
+          - button "FIDO2" [ref=e44] [cursor=pointer]:
+            - img [ref=e45]
+            - generic [ref=e47]: FIDO2
+          - button "OATH" [ref=e48] [cursor=pointer]:
+            - img [ref=e49]
+            - generic [ref=e51]: OATH
+          - button "PIV" [ref=e52] [cursor=pointer]:
+            - img [ref=e53]
+            - generic [ref=e55]: PIV
+          - button "Passwords" [ref=e56] [cursor=pointer]:
+            - img [ref=e57]
+            - generic [ref=e59]: Passwords
+          - button "Sealed Data" [ref=e60] [cursor=pointer]:
+            - img [ref=e61]
+            - generic [ref=e63]: Sealed Data
+          - button "Browser" [ref=e64] [cursor=pointer]:
+            - img [ref=e65]
+            - generic [ref=e67]: Browser
+        - generic [ref=e68]:
+          - generic [ref=e69]: MANAGEMENT
+          - button "Audit Log" [ref=e70] [cursor=pointer]:
+            - img [ref=e71]
+            - generic [ref=e73]: Audit Log
+          - button "Admin" [ref=e74] [cursor=pointer]:
+            - img [ref=e75]
+            - generic [ref=e77]: Admin
+        - generic [ref=e78]:
+          - generic [ref=e79]: DEVELOPER TOOLS
+          - button "OIDC" [ref=e80] [cursor=pointer]:
+            - img [ref=e81]
+            - generic [ref=e83]: OIDC
+          - button "API Explorer" [ref=e84] [cursor=pointer]:
+            - img [ref=e85]
+            - generic [ref=e87]: API Explorer
+      - generic [ref=e88]:
+        - generic "Standalone mode" [ref=e89]:
+          - generic [ref=e91]: Standalone
+        - button "Theme" [ref=e92] [cursor=pointer]:
+          - img [ref=e93]
+          - generic [ref=e95]: Theme
+        - button "Settings" [ref=e96] [cursor=pointer]:
+          - img [ref=e97]
+          - generic [ref=e99]: Settings
+    - main [ref=e100]:
+      - generic [ref=e102]:
+        - button "Lock app" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+          - generic [ref=e106]: Lock
+        - button "No touch pending" [disabled] [ref=e107]:
+          - img [ref=e109]
+      - generic [ref=e112]:
+        - generic [ref=e115]:
+          - heading "xKey" [level=1] [ref=e116]
+          - paragraph [ref=e117]: Virtual Security Key
+        - generic [ref=e119]:
+          - heading "Recent Activity" [level=2] [ref=e121]
+          - paragraph [ref=e123]: No recent activity
+  - dialog "App locked" [ref=e124]:
+    - generic [ref=e125]:
+      - img [ref=e127]
+      - heading "App Locked" [level=2] [ref=e129]
+      - paragraph [ref=e130]: Enter your PIN to unlock
+      - generic [ref=e131]:
+        - textbox "Enter PIN" [active] [ref=e132]
+        - button "Unlock" [disabled] [ref=e133]

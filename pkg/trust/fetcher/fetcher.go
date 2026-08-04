@@ -33,6 +33,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // DefaultTimeout is the HTTP timeout applied when Options.Timeout is zero.
@@ -123,14 +125,13 @@ type Bundle struct {
 func Fetch(ctx context.Context, rawURL string, opts Options) (*Bundle, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidURL, err)
+		return nil, &errs.Detail{Err: ErrInvalidURL, Detail: fmt.Sprintf("%v", err)}
 	}
 	if parsed.Scheme != "https" {
-		return nil, fmt.Errorf("%w: scheme must be https, got %q",
-			ErrInvalidURL, parsed.Scheme)
+		return nil, &errs.Detail{Err: ErrInvalidURL, Detail: fmt.Sprintf("scheme must be https, got %q", parsed.Scheme)}
 	}
 	if parsed.Host == "" {
-		return nil, fmt.Errorf("%w: missing host", ErrInvalidURL)
+		return nil, &errs.Detail{Err: ErrInvalidURL, Detail: "missing host"}
 	}
 
 	timeout := opts.Timeout
@@ -149,7 +150,7 @@ func Fetch(ctx context.Context, rawURL string, opts Options) (*Bundle, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidURL, err)
+		return nil, &errs.Detail{Err: ErrInvalidURL, Detail: fmt.Sprintf("%v", err)}
 	}
 	req.Header.Set("Accept", pemMediaType+", application/json;q=0.5")
 	req.Header.Set("User-Agent", "xkey-trust-fetcher/1.0")
@@ -167,13 +168,12 @@ func Fetch(ctx context.Context, rawURL string, opts Options) (*Bundle, error) {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("%w: %d %s: %s",
-			ErrHTTPStatus, resp.StatusCode, resp.Status, string(body))
+		return nil, &errs.Detail{Err: ErrHTTPStatus, Detail: fmt.Sprintf("%d %s: %s", resp.StatusCode, resp.Status, string(body))}
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrHTTPStatus, err)
+		return nil, &errs.Detail{Err: ErrHTTPStatus, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	bundlePEM, certs, err := decodeBundle(resp.Header.Get("Content-Type"), body)
@@ -243,7 +243,7 @@ func decodeBundle(contentType string, body []byte) ([]byte, []*x509.Certificate,
 		contentTypeMatches(contentType, "text/json")) {
 		var resp jsonBundleResponse
 		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, nil, fmt.Errorf("%w: %v", ErrInvalidJSON, err)
+			return nil, nil, &errs.Detail{Err: ErrInvalidJSON, Detail: fmt.Sprintf("%v", err)}
 		}
 		bundleBytes := resp.bundleBytes()
 		jsonCerts, ok := tryParsePEM(bundleBytes)

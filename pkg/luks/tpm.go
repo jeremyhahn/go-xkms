@@ -24,6 +24,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	libtpm2 "github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/linuxtpm"
@@ -59,7 +61,7 @@ func DefaultTPMOpener() TPMOpener {
 	return TPMOpenerFunc(func(ctx context.Context) (transport.TPMCloser, error) {
 		tpm, err := linuxtpm.Open("/dev/tpmrm0")
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrTPMNoTransport, err)
+			return nil, &errs.Detail{Err: ErrTPMNoTransport, Detail: fmt.Sprintf("%v", err)}
 		}
 		return tpm, nil
 	})
@@ -155,7 +157,7 @@ func (h *TPMSealer) SealPassphrase(ctx context.Context, handle string, pcrs []in
 	// 32 random bytes are sealed as the LUKS passphrase.
 	passphrase := make([]byte, 32)
 	if _, err := rand.Read(passphrase); err != nil {
-		return nil, fmt.Errorf("%w: rand: %v", ErrTPMSealFailed, err)
+		return nil, &errs.Detail{Err: ErrTPMSealFailed, Detail: fmt.Sprintf("rand: %v", err)}
 	}
 
 	tpm, err := h.opener.Open(ctx)
@@ -171,7 +173,7 @@ func (h *TPMSealer) SealPassphrase(ctx context.Context, handle string, pcrs []in
 	pcrSel := buildPCRSelection(h.pcrBank, pcrs)
 	policyDigest, err := computePCRPolicyDigest(tpm, pcrSel)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTPMPolicyFailed, err)
+		return nil, &errs.Detail{Err: ErrTPMPolicyFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Seal as a keyed-hash object under the parent SRK.
@@ -204,7 +206,7 @@ func (h *TPMSealer) SealPassphrase(ctx context.Context, handle string, pcrs []in
 
 	parentName, err := readObjectName(tpm, libtpm2.TPMHandle(parent))
 	if err != nil {
-		return nil, fmt.Errorf("%w: read parent public: %v", ErrTPMSealFailed, err)
+		return nil, &errs.Detail{Err: ErrTPMSealFailed, Detail: fmt.Sprintf("read parent public: %v", err)}
 	}
 
 	createRsp, err := (libtpm2.Create{
@@ -217,7 +219,7 @@ func (h *TPMSealer) SealPassphrase(ctx context.Context, handle string, pcrs []in
 		InPublic:    pub,
 	}).Execute(tpm)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTPMSealFailed, err)
+		return nil, &errs.Detail{Err: ErrTPMSealFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	token := &TPMToken{
@@ -230,7 +232,7 @@ func (h *TPMSealer) SealPassphrase(ctx context.Context, handle string, pcrs []in
 	}
 	tokenJSON, err := json.Marshal(token)
 	if err != nil {
-		return nil, fmt.Errorf("%w: marshal token: %v", ErrTPMSealFailed, err)
+		return nil, &errs.Detail{Err: ErrTPMSealFailed, Detail: fmt.Sprintf("marshal token: %v", err)}
 	}
 
 	return &TPMSealResult{
@@ -248,7 +250,7 @@ func (h *TPMSealer) SealPassphrase(ctx context.Context, handle string, pcrs []in
 func (h *TPMSealer) UnsealPassphrase(ctx context.Context, tokenJSON []byte) ([]byte, error) {
 	var token TPMToken
 	if err := json.Unmarshal(tokenJSON, &token); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTPMInvalidToken, err)
+		return nil, &errs.Detail{Err: ErrTPMInvalidToken, Detail: fmt.Sprintf("%v", err)}
 	}
 	publicBlob, privateBlob, err := DecodeTPMSealBlobs(token.TPM2Blob)
 	if err != nil {
@@ -272,7 +274,7 @@ func (h *TPMSealer) UnsealPassphrase(ctx context.Context, tokenJSON []byte) ([]b
 	pub := libtpm2.BytesAs2B[libtpm2.TPMTPublic](publicBlob)
 	parentName, err := readObjectName(tpm, libtpm2.TPMHandle(parent))
 	if err != nil {
-		return nil, fmt.Errorf("%w: read parent public: %v", ErrTPMUnsealFailed, err)
+		return nil, &errs.Detail{Err: ErrTPMUnsealFailed, Detail: fmt.Sprintf("read parent public: %v", err)}
 	}
 	loadRsp, err := (libtpm2.Load{
 		ParentHandle: libtpm2.AuthHandle{
@@ -284,7 +286,7 @@ func (h *TPMSealer) UnsealPassphrase(ctx context.Context, tokenJSON []byte) ([]b
 		InPublic:  pub,
 	}).Execute(tpm)
 	if err != nil {
-		return nil, fmt.Errorf("%w: load: %v", ErrTPMUnsealFailed, err)
+		return nil, &errs.Detail{Err: ErrTPMUnsealFailed, Detail: fmt.Sprintf("load: %v", err)}
 	}
 	defer h.flushContext(tpm, loadRsp.ObjectHandle)
 
@@ -292,7 +294,7 @@ func (h *TPMSealer) UnsealPassphrase(ctx context.Context, tokenJSON []byte) ([]b
 	pcrSel := buildPCRSelection(h.pcrBank, intsToInt32s(token.TPM2PCRs))
 	policySession, policyCloser, err := libtpm2.PolicySession(tpm, libtpm2.TPMAlgSHA256, 16)
 	if err != nil {
-		return nil, fmt.Errorf("%w: policy session: %v", ErrTPMUnsealFailed, err)
+		return nil, &errs.Detail{Err: ErrTPMUnsealFailed, Detail: fmt.Sprintf("policy session: %v", err)}
 	}
 	defer func() { _ = policyCloser() }()
 
@@ -300,7 +302,7 @@ func (h *TPMSealer) UnsealPassphrase(ctx context.Context, tokenJSON []byte) ([]b
 		PolicySession: policySession.Handle(),
 		Pcrs:          pcrSel,
 	}).Execute(tpm); err != nil {
-		return nil, fmt.Errorf("%w: policy pcr: %v", ErrTPMUnsealFailed, err)
+		return nil, &errs.Detail{Err: ErrTPMUnsealFailed, Detail: fmt.Sprintf("policy pcr: %v", err)}
 	}
 
 	unsealRsp, err := (libtpm2.Unseal{
@@ -311,7 +313,7 @@ func (h *TPMSealer) UnsealPassphrase(ctx context.Context, tokenJSON []byte) ([]b
 		},
 	}).Execute(tpm)
 	if err != nil {
-		return nil, fmt.Errorf("%w: unseal: %v", ErrTPMUnsealFailed, err)
+		return nil, &errs.Detail{Err: ErrTPMUnsealFailed, Detail: fmt.Sprintf("unseal: %v", err)}
 	}
 	return unsealRsp.OutData.Buffer, nil
 }
@@ -336,7 +338,7 @@ func resolveParentHandle(requested string, fallback uint32) (uint32, error) {
 		if dv, derr := strconv.ParseUint(strings.TrimSpace(requested), 10, 32); derr == nil {
 			return uint32(dv), nil
 		}
-		return 0, fmt.Errorf("%w: %q", ErrTPMInvalidHandle, requested)
+		return 0, &errs.Detail{Err: ErrTPMInvalidHandle, Detail: fmt.Sprintf("%q", requested)}
 	}
 	return uint32(v), nil
 }
@@ -468,14 +470,14 @@ func EncodeTPMSealBlobs(public, private []byte) string {
 func DecodeTPMSealBlobs(s string) ([]byte, []byte, error) {
 	raw, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: tpm2-blob: %v", ErrTPMInvalidToken, err)
+		return nil, nil, &errs.Detail{Err: ErrTPMInvalidToken, Detail: fmt.Sprintf("tpm2-blob: %v", err)}
 	}
 	if len(raw) < 4 {
-		return nil, nil, fmt.Errorf("%w: tpm2-blob too short", ErrTPMInvalidToken)
+		return nil, nil, &errs.Detail{Err: ErrTPMInvalidToken, Detail: "tpm2-blob too short"}
 	}
 	pl := int(raw[0])<<24 | int(raw[1])<<16 | int(raw[2])<<8 | int(raw[3])
 	if pl < 0 || 4+pl > len(raw) {
-		return nil, nil, fmt.Errorf("%w: tpm2-blob length mismatch", ErrTPMInvalidToken)
+		return nil, nil, &errs.Detail{Err: ErrTPMInvalidToken, Detail: "tpm2-blob length mismatch"}
 	}
 	return raw[4 : 4+pl], raw[4+pl:], nil
 }

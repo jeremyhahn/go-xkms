@@ -64,10 +64,10 @@ func (a *ADBHelper) Connect() error {
 	target := fmt.Sprintf("%s:5555", a.host)
 	out, err := a.run("connect", target)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrADBConnectionFailed, out)
+		return &DetailError{Err: ErrADBConnectionFailed, Detail: fmt.Sprintf(": %s", out)}
 	}
 	if !strings.Contains(out, "connected") {
-		return fmt.Errorf("%w: unexpected output: %s", ErrADBConnectionFailed, out)
+		return &DetailError{Err: ErrADBConnectionFailed, Detail: fmt.Sprintf(": unexpected output: %s", out)}
 	}
 	return nil
 }
@@ -91,10 +91,10 @@ func (a *ADBHelper) WaitForBoot(timeout time.Duration) error {
 func (a *ADBHelper) InstallAPK(apkPath string) error {
 	out, err := a.run("install", "-r", apkPath)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrADBInstallFailed, out)
+		return &DetailError{Err: ErrADBInstallFailed, Detail: fmt.Sprintf(": %s", out)}
 	}
 	if !strings.Contains(out, "Success") {
-		return fmt.Errorf("%w: %s", ErrADBInstallFailed, out)
+		return &DetailError{Err: ErrADBInstallFailed, Detail: fmt.Sprintf(": %s", out)}
 	}
 	return nil
 }
@@ -107,7 +107,7 @@ func (a *ADBHelper) LaunchActivity(component string, extras map[string]string) e
 	}
 	out, err := a.run(args...)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrADBCommandFailed, out)
+		return &DetailError{Err: ErrADBCommandFailed, Detail: fmt.Sprintf(": %s", out)}
 	}
 	return nil
 }
@@ -122,7 +122,7 @@ func (a *ADBHelper) SetPreference(pkg, key, value string) error {
 		"--es", "value", value,
 	)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrADBCommandFailed, out)
+		return &DetailError{Err: ErrADBCommandFailed, Detail: fmt.Sprintf(": %s", out)}
 	}
 	return nil
 }

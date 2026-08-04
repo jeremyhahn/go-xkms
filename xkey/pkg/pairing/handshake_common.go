@@ -110,7 +110,7 @@ func PerformHandshake(ctx context.Context, cfg *HandshakeConfig) error {
 	// Initialize handshake state
 	if err := cfg.Session.InitHandshake(); err != nil {
 		logger.Error("failed to initialize handshake", "error", err)
-		return fmt.Errorf("%w: init: %v", ErrNoiseHandshakeFailed, err)
+		return &DetailError{Err: ErrNoiseHandshakeFailed, Detail: fmt.Sprintf(": init: %v", err)}
 	}
 
 	// Step 1: Generate and send first message (e)
@@ -118,16 +118,16 @@ func PerformHandshake(ctx context.Context, cfg *HandshakeConfig) error {
 	msg1, complete, err := cfg.Session.HandshakeMessage(nil)
 	if err != nil {
 		logger.Error("failed to generate message 1", "error", err)
-		return fmt.Errorf("%w: write msg1: %v", ErrNoiseHandshakeFailed, err)
+		return &DetailError{Err: ErrNoiseHandshakeFailed, Detail: fmt.Sprintf(": write msg1: %v", err)}
 	}
 	if complete {
-		return fmt.Errorf("%w: unexpected completion after msg1", ErrNoiseHandshakeFailed)
+		return &DetailError{Err: ErrNoiseHandshakeFailed, Detail: ": unexpected completion after msg1"}
 	}
 
 	logger.Debug("sending handshake message 1", "size", len(msg1))
 	if err := cfg.Transport.Send(ctx, msg1); err != nil {
 		logger.Error("failed to send message 1", "error", err)
-		return fmt.Errorf("%w: send msg1: %v", ErrNoiseHandshakeFailed, err)
+		return &DetailError{Err: ErrNoiseHandshakeFailed, Detail: fmt.Sprintf(": send msg1: %v", err)}
 	}
 
 	// Step 2: Receive response (e, ee, s, es)
@@ -135,7 +135,7 @@ func PerformHandshake(ctx context.Context, cfg *HandshakeConfig) error {
 	msg2, err := cfg.Transport.Receive(ctx)
 	if err != nil {
 		logger.Error("failed to receive message 2", "error", err)
-		return fmt.Errorf("%w: recv msg2: %v", ErrNoiseHandshakeFailed, err)
+		return &DetailError{Err: ErrNoiseHandshakeFailed, Detail: fmt.Sprintf(": recv msg2: %v", err)}
 	}
 
 	logger.Debug("received handshake message 2",
@@ -172,7 +172,7 @@ func PerformHandshake(ctx context.Context, cfg *HandshakeConfig) error {
 			"msg2_size", len(msg2),
 			"msg2_hex", hex.EncodeToString(msg2),
 		)
-		return fmt.Errorf("%w: read msg2: %v", ErrNoiseHandshakeFailed, err)
+		return &DetailError{Err: ErrNoiseHandshakeFailed, Detail: fmt.Sprintf(": read msg2: %v", err)}
 	}
 
 	// Send message 3 if we have one
@@ -180,7 +180,7 @@ func PerformHandshake(ctx context.Context, cfg *HandshakeConfig) error {
 		logger.Debug("sending handshake message 3", "size", len(msg3))
 		if err := cfg.Transport.Send(ctx, msg3); err != nil {
 			logger.Error("failed to send message 3", "error", err)
-			return fmt.Errorf("%w: send msg3: %v", ErrNoiseHandshakeFailed, err)
+			return &DetailError{Err: ErrNoiseHandshakeFailed, Detail: fmt.Sprintf(": send msg3: %v", err)}
 		}
 	}
 
@@ -190,7 +190,7 @@ func PerformHandshake(ctx context.Context, cfg *HandshakeConfig) error {
 		msg4, err := cfg.Transport.Receive(ctx)
 		if err != nil {
 			logger.Error("failed to receive message 4", "error", err)
-			return fmt.Errorf("%w: recv msg4: %v", ErrNoiseHandshakeFailed, err)
+			return &DetailError{Err: ErrNoiseHandshakeFailed, Detail: fmt.Sprintf(": recv msg4: %v", err)}
 		}
 
 		msg4 = stripEnvelopeHeader(msg4, cfg, logger)
@@ -199,7 +199,7 @@ func PerformHandshake(ctx context.Context, cfg *HandshakeConfig) error {
 		_, complete, err = cfg.Session.HandshakeMessage(msg4)
 		if err != nil {
 			logger.Error("failed to process message 4", "error", err)
-			return fmt.Errorf("%w: read msg4: %v", ErrNoiseHandshakeFailed, err)
+			return &DetailError{Err: ErrNoiseHandshakeFailed, Detail: fmt.Sprintf(": read msg4: %v", err)}
 		}
 		if !complete {
 			return ErrNoiseHandshakeFailed
@@ -298,18 +298,18 @@ func performIdentityExchange(ctx context.Context, cfg *HandshakeConfig, logger *
 
 	if err := cfg.Transport.Send(ctx, identityMsg); err != nil {
 		logger.Error("failed to send identity message", "error", err)
-		return nil, fmt.Errorf("%w: send identity: %v", ErrNoiseHandshakeFailed, err)
+		return nil, &DetailError{Err: ErrNoiseHandshakeFailed, Detail: fmt.Sprintf(": send identity: %v", err)}
 	}
 
 	// Receive identity acknowledgment
 	ack, err := cfg.Transport.Receive(ctx)
 	if err != nil {
 		logger.Error("failed to receive identity ack", "error", err)
-		return nil, fmt.Errorf("%w: recv identity ack: %v", ErrNoiseHandshakeFailed, err)
+		return nil, &DetailError{Err: ErrNoiseHandshakeFailed, Detail: fmt.Sprintf(": recv identity ack: %v", err)}
 	}
 
 	if len(ack) == 0 {
-		return nil, fmt.Errorf("%w: empty identity ack", ErrNoiseHandshakeFailed)
+		return nil, &DetailError{Err: ErrNoiseHandshakeFailed, Detail: ": empty identity ack"}
 	}
 
 	// Parse acknowledgment
@@ -321,12 +321,12 @@ func performIdentityExchange(ctx context.Context, cfg *HandshakeConfig, logger *
 	}
 
 	if status != IdentityAckKnown {
-		return nil, fmt.Errorf("%w: invalid identity ack status: %d", ErrNoiseHandshakeFailed, status)
+		return nil, &DetailError{Err: ErrNoiseHandshakeFailed, Detail: fmt.Sprintf(": invalid identity ack status: %d", status)}
 	}
 
 	// Known device - extract fingerprint
 	if len(ack) != IdentityAckKnownSize {
-		return nil, fmt.Errorf("%w: invalid identity ack size: %d", ErrNoiseHandshakeFailed, len(ack))
+		return nil, &DetailError{Err: ErrNoiseHandshakeFailed, Detail: fmt.Sprintf(": invalid identity ack size: %d", len(ack))}
 	}
 
 	receivedFingerprint := ack[1:]
@@ -341,7 +341,7 @@ func performIdentityExchange(ctx context.Context, cfg *HandshakeConfig, logger *
 				"expected", hex.EncodeToString(cfg.ExpectedDeviceFingerprint),
 				"received", hex.EncodeToString(receivedFingerprint),
 			)
-			return nil, fmt.Errorf("%w: device fingerprint mismatch", ErrUntrustedDevice)
+			return nil, &DetailError{Err: ErrUntrustedDevice, Detail: ": device fingerprint mismatch"}
 		}
 		logger.Debug("device fingerprint verified")
 	}

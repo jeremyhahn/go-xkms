@@ -24,6 +24,8 @@ import (
 	"io"
 	"math/big"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/miekg/pkcs11"
 )
 
@@ -88,13 +90,13 @@ func (s *pkcs11ECDSASigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts
 		if err := s.pool.Ctx().SignInit(session, []*pkcs11.Mechanism{
 			pkcs11.NewMechanism(pkcs11.CKM_ECDSA, nil),
 		}, s.privateHandle); err != nil {
-			return fmt.Errorf("pkcs11: ECDSA SignInit: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: ECDSA SignInit", Err: err}
 		}
 
 		var err error
 		rawSig, err = s.pool.Ctx().Sign(session, digest)
 		if err != nil {
-			return fmt.Errorf("pkcs11: ECDSA Sign: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: ECDSA Sign", Err: err}
 		}
 		return nil
 	})
@@ -105,7 +107,7 @@ func (s *pkcs11ECDSASigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts
 	// PKCS#11 CKM_ECDSA returns raw R||S (each component is half the signature length).
 	// Convert to ASN.1 DER encoding.
 	if len(rawSig)%2 != 0 {
-		return nil, fmt.Errorf("pkcs11: ECDSA raw signature has odd length: %d", len(rawSig))
+		return nil, &errs.Message{Msg: fmt.Sprintf("pkcs11: ECDSA raw signature has odd length: %d", len(rawSig))}
 	}
 	componentLen := len(rawSig) / 2
 	r := new(big.Int).SetBytes(rawSig[:componentLen])
@@ -124,17 +126,17 @@ func exportECDSAPublicKey(pool *SessionPool, pubHandle pkcs11.ObjectHandle) (*ec
 			pkcs11.NewAttribute(pkcs11.CKA_EC_POINT, nil),
 		})
 		if err != nil {
-			return fmt.Errorf("pkcs11: get ECDSA public key attributes: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: get ECDSA public key attributes", Err: err}
 		}
 
 		if len(attrs) < 2 || len(attrs[0].Value) == 0 || len(attrs[1].Value) == 0 {
-			return fmt.Errorf("%w: missing EC params or point", ErrInvalidKeyAttributes)
+			return &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "missing EC params or point"}
 		}
 
 		// Parse curve from OID
 		curve, ok := oidToCurve[string(attrs[0].Value)]
 		if !ok {
-			return fmt.Errorf("%w: unknown EC curve OID", ErrUnsupportedKeyAlgorithm)
+			return &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: "unknown EC curve OID"}
 		}
 
 		// Parse EC point
@@ -161,7 +163,7 @@ func exportECDSAPublicKey(pool *SessionPool, pubHandle pkcs11.ObjectHandle) (*ec
 		// Parse uncompressed point: 0x04 || X || Y
 		x, y := elliptic.Unmarshal(curve, pointBytes)
 		if x == nil {
-			return fmt.Errorf("%w: invalid EC point encoding", ErrInvalidKeyAttributes)
+			return &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "invalid EC point encoding"}
 		}
 
 		pub = &ecdsa.PublicKey{
@@ -204,12 +206,12 @@ func buildYubiKeyECDSATemplates(id, encodedOID []byte) (pub, priv []*pkcs11.Attr
 func generateECDSAKeyPair(pool *SessionPool, id, label []byte, curve elliptic.Curve, isYubiKeyPIV bool, soPIN, userPIN string) (*pkcs11ECDSASigner, error) {
 	oid, ok := curveToOID[curve]
 	if !ok {
-		return nil, fmt.Errorf("%w: unsupported curve: %s", ErrUnsupportedKeyAlgorithm, curve.Params().Name)
+		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("unsupported curve: %s", curve.Params().Name)}
 	}
 
 	encodedOID, err := asn1.Marshal(oid)
 	if err != nil {
-		return nil, fmt.Errorf("pkcs11: marshal curve OID: %w", err)
+		return nil, &errs.Wrapped{Msg: "pkcs11: marshal curve OID", Err: err}
 	}
 
 	var pubTemplate, privTemplate []*pkcs11.Attribute
@@ -250,19 +252,19 @@ func generateECDSAKeyPair(pool *SessionPool, id, label []byte, curve elliptic.Cu
 	}
 	if isYubiKeyPIV {
 		if soPIN == "" {
-			return nil, fmt.Errorf("pkcs11: generate ECDSA key pair: %w", ErrSOPINRequired)
+			return nil, &errs.Wrapped{Msg: "pkcs11: generate ECDSA key pair", Err: ErrSOPINRequired}
 		}
 		err = pool.WithSOSession(soPIN, userPIN, genFn)
 	} else {
 		err = pool.WithSession(genFn)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("pkcs11: generate ECDSA key pair: %w", err)
+		return nil, &errs.Wrapped{Msg: "pkcs11: generate ECDSA key pair", Err: err}
 	}
 
 	pub, err := exportECDSAPublicKey(pool, pubHandle)
 	if err != nil {
-		return nil, fmt.Errorf("pkcs11: export ECDSA public key after generation: %w", err)
+		return nil, &errs.Wrapped{Msg: "pkcs11: export ECDSA public key after generation", Err: err}
 	}
 
 	return &pkcs11ECDSASigner{
@@ -285,15 +287,15 @@ func findECDSASigner(pool *SessionPool, id []byte) (*pkcs11ECDSASigner, error) {
 			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
 			pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 		}); err != nil {
-			return fmt.Errorf("pkcs11: FindObjectsInit for ECDSA private key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjectsInit for ECDSA private key", Err: err}
 		}
 		privObjs, _, err := pool.Ctx().FindObjects(session, 1)
 		if err != nil {
 			pool.Ctx().FindObjectsFinal(session)
-			return fmt.Errorf("pkcs11: FindObjects for ECDSA private key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjects for ECDSA private key", Err: err}
 		}
 		if err := pool.Ctx().FindObjectsFinal(session); err != nil {
-			return fmt.Errorf("pkcs11: FindObjectsFinal for ECDSA private key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjectsFinal for ECDSA private key", Err: err}
 		}
 		if len(privObjs) == 0 {
 			return nil // not found
@@ -306,15 +308,15 @@ func findECDSASigner(pool *SessionPool, id []byte) (*pkcs11ECDSASigner, error) {
 			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
 			pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 		}); err != nil {
-			return fmt.Errorf("pkcs11: FindObjectsInit for ECDSA public key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjectsInit for ECDSA public key", Err: err}
 		}
 		pubObjs, _, err := pool.Ctx().FindObjects(session, 1)
 		if err != nil {
 			pool.Ctx().FindObjectsFinal(session)
-			return fmt.Errorf("pkcs11: FindObjects for ECDSA public key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjects for ECDSA public key", Err: err}
 		}
 		if err := pool.Ctx().FindObjectsFinal(session); err != nil {
-			return fmt.Errorf("pkcs11: FindObjectsFinal for ECDSA public key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjectsFinal for ECDSA public key", Err: err}
 		}
 		if len(pubObjs) == 0 {
 			return nil

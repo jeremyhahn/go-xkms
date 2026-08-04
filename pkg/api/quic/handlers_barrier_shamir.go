@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
@@ -91,7 +92,7 @@ func (s *Server) handleBarrierInitializeShamir(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	creds := seal.Credentials{Secret: req.Secret}
+	creds := seal.Credentials{Secret: []byte(req.Secret)}
 	result, err := s.barrier.InitializeShamir(r.Context(), creds)
 	if err != nil {
 		sendBarrierError(s, w, err)
@@ -327,6 +328,40 @@ func (s *Server) handleBarrierGenerateRecoveryKeys(w http.ResponseWriter, r *htt
 		"total_shares": result.TotalShares,
 		"share_count":  result.ShareCount,
 	})
+}
+
+// handleBarrierEnableEncryption handles POST /api/v1/barrier/enable-encryption
+// requests. It migrates a previously-unencrypted barrier to a keyed strategy in
+// place. The migration runs asynchronously; the response acknowledges the start
+// and clients poll the barrier status endpoint for completion.
+func (s *Server) handleBarrierEnableEncryption(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if s.xkmsService == nil {
+		s.sendError(w, http.StatusServiceUnavailable, ErrBarrierNotConfigured.Error())
+		return
+	}
+
+	if !s.authorize(w, r, "seal", "enable_encryption") {
+		return
+	}
+
+	var req transport.BarrierEnableEncryptionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+
+	resp, err := s.xkmsService.BarrierEnableEncryption(r.Context(), &req)
+	if err != nil {
+		sendBarrierError(s, w, err)
+		return
+	}
+
+	s.sendJSON(w, http.StatusOK, resp)
 }
 
 // handleBarrierRecoverWithKeys handles POST /api/v1/barrier/recovery-keys/recover requests.

@@ -8,6 +8,8 @@ package threshold
 import (
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -44,7 +46,7 @@ type Config struct {
 // Validate validates the threshold backend configuration.
 func (c *Config) Validate() error {
 	if c.KeyStorage == nil {
-		return fmt.Errorf("key storage is required")
+		return &errs.Message{Msg: "key storage is required"}
 	}
 
 	// Use KeyStorage for shares if ShareStorage not specified
@@ -53,30 +55,27 @@ func (c *Config) Validate() error {
 	}
 
 	if c.DefaultThreshold < 2 {
-		return fmt.Errorf("default threshold must be at least 2, got %d", c.DefaultThreshold)
+		return &errs.Message{Msg: fmt.Sprintf("default threshold must be at least 2, got %d", c.DefaultThreshold)}
 	}
 
 	if c.DefaultTotal < c.DefaultThreshold {
-		return fmt.Errorf("default total (%d) must be >= default threshold (%d)",
-			c.DefaultTotal, c.DefaultThreshold)
+		return &errs.Message{Msg: fmt.Sprintf("default total (%d) must be >= default threshold (%d)", c.DefaultTotal, c.DefaultThreshold)}
 	}
 
 	if c.DefaultThreshold > 255 {
-		return fmt.Errorf("default threshold cannot exceed 255, got %d", c.DefaultThreshold)
+		return &errs.Message{Msg: fmt.Sprintf("default threshold cannot exceed 255, got %d", c.DefaultThreshold)}
 	}
 
 	if c.DefaultTotal > 255 {
-		return fmt.Errorf("default total cannot exceed 255, got %d", c.DefaultTotal)
+		return &errs.Message{Msg: fmt.Sprintf("default total cannot exceed 255, got %d", c.DefaultTotal)}
 	}
 
 	if len(c.Participants) > 0 && len(c.Participants) != c.DefaultTotal {
-		return fmt.Errorf("participants length (%d) must match default total (%d)",
-			len(c.Participants), c.DefaultTotal)
+		return &errs.Message{Msg: fmt.Sprintf("participants length (%d) must match default total (%d)", len(c.Participants), c.DefaultTotal)}
 	}
 
 	if c.LocalShareID != 0 && (c.LocalShareID < 1 || c.LocalShareID > c.DefaultTotal) {
-		return fmt.Errorf("local share ID (%d) must be between 1 and total (%d)",
-			c.LocalShareID, c.DefaultTotal)
+		return &errs.Message{Msg: fmt.Sprintf("local share ID (%d) must be between 1 and total (%d)", c.LocalShareID, c.DefaultTotal)}
 	}
 
 	if c.DefaultAlgorithm == "" {

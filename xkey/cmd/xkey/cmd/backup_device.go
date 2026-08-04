@@ -102,7 +102,7 @@ func runBackupToDevice(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -113,7 +113,7 @@ func runBackupToDevice(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -123,16 +123,16 @@ func runBackupToDevice(cmd *cobra.Command, args []string) error {
 	// Decode pairing keys
 	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
 	if err != nil {
-		return fmt.Errorf("invalid local noise key: %w", err)
+		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
-		return fmt.Errorf("invalid phone noise key: %w", err)
+		return &WrappedError{Msg: "invalid phone noise key", Err: err}
 	}
 
 	localKey, err := phone.LoadStaticKey(localPrivateKey)
 	if err != nil {
-		return fmt.Errorf("invalid local noise key: %w", err)
+		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
 
 	// Connect to phone
@@ -146,7 +146,7 @@ func runBackupToDevice(cmd *cobra.Command, args []string) error {
 		Logger:               logger,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupToDeviceFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupToDeviceFailed, Cause: err}
 	}
 	defer phoneBackend.Close()
 
@@ -155,7 +155,7 @@ func runBackupToDevice(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupToDeviceFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupToDeviceFailed, Cause: err}
 	}
 
 	// Send backup to phone for storage
@@ -168,15 +168,15 @@ func runBackupToDevice(cmd *cobra.Command, args []string) error {
 
 	resp, err := phoneBackend.SendRequest(ctx, req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupToDeviceFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupToDeviceFailed, Cause: err}
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("%w: [%d] %s", ErrBackupToDeviceFailed, resp.Error.Code, resp.Error.Message)
+		return &DetailError{Err: ErrBackupToDeviceFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
 	result, err := phone.DecodeResult[phone.LocalCreateBackupResult](resp)
 	if err != nil {
-		return fmt.Errorf("failed to decode backup result: %w", err)
+		return &WrappedError{Msg: "failed to decode backup result", Err: err}
 	}
 
 	if result.Success {
@@ -201,7 +201,7 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -212,7 +212,7 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -222,16 +222,16 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) error {
 	// Decode pairing keys
 	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
 	if err != nil {
-		return fmt.Errorf("invalid local noise key: %w", err)
+		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
-		return fmt.Errorf("invalid phone noise key: %w", err)
+		return &WrappedError{Msg: "invalid phone noise key", Err: err}
 	}
 
 	localKey, err := phone.LoadStaticKey(localPrivateKey)
 	if err != nil {
-		return fmt.Errorf("invalid local noise key: %w", err)
+		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
 
 	// Connect to phone
@@ -245,7 +245,7 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) error {
 		Logger:               logger,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupFromDeviceFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupFromDeviceFailed, Cause: err}
 	}
 	defer phoneBackend.Close()
 
@@ -254,7 +254,7 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupFromDeviceFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupFromDeviceFailed, Cause: err}
 	}
 
 	// Request latest backup from phone
@@ -265,15 +265,15 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) error {
 
 	resp, err := phoneBackend.SendRequest(ctx, req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupFromDeviceFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupFromDeviceFailed, Cause: err}
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("%w: [%d] %s", ErrBackupFromDeviceFailed, resp.Error.Code, resp.Error.Message)
+		return &DetailError{Err: ErrBackupFromDeviceFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
 	result, err := phone.DecodeResult[phone.LocalRestoreBackupResult](resp)
 	if err != nil {
-		return fmt.Errorf("failed to decode restore result: %w", err)
+		return &WrappedError{Msg: "failed to decode restore result", Err: err}
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "  Backup ID:  %s\n", result.BackupID)

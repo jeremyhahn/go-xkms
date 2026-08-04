@@ -29,6 +29,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/azurekv"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,6 +66,9 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 	if vaultURI == "" {
 		t.Fatal("AZURE_KEYVAULT_URI not set - skipping real Azure Key Vault tests")
 	}
+
+	// Create context for Azure Key Vault operations
+	ctx := context.Background()
 
 	// Create storage backends
 	keyStorage := storage.New()
@@ -195,7 +199,7 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 		require.NoError(t, err, "Failed to create key")
 
 		// List keys
-		keys, err := b.ListKeys()
+		keys, err := b.ListKeys(ctx)
 		require.NoError(t, err, "Failed to list keys from real Azure Key Vault")
 		require.NotNil(t, keys, "Keys list should not be nil")
 		require.NotEmpty(t, keys, "Should have at least 1 key")
@@ -220,7 +224,7 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 		require.NoError(t, err, "Failed to create key")
 
 		// Get Signer interface
-		signer, err := b.Signer(attrs)
+		signer, err := b.Signer(ctx, attrs)
 		require.NoError(t, err, "Failed to get Signer from real Azure Key Vault")
 		require.NotNil(t, signer, "Signer should not be nil")
 
@@ -255,7 +259,7 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 			t.Fatal("RSA key creation not supported")
 		}
 
-		signer, err := b.Signer(attrs)
+		signer, err := b.Signer(ctx, attrs)
 		require.NoError(t, err)
 
 		message := []byte("Azure KV RSA-PSS test")
@@ -294,7 +298,7 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 		require.NoError(t, err, "Failed to create encryption key")
 
 		// Get Decrypter interface
-		decrypter, err := b.Decrypter(attrs)
+		decrypter, err := b.Decrypter(ctx, attrs)
 		require.NoError(t, err, "Failed to get Decrypter from real Azure Key Vault")
 		require.NotNil(t, decrypter, "Decrypter should not be nil")
 
@@ -329,7 +333,7 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 		createdKeys = append(createdKeys, sourceAttrs)
 
 		// Test getting import parameters
-		params, err := ieb.GetImportParameters(sourceAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		params, err := ieb.GetImportParameters(ctx, sourceAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		if err != nil {
 			t.Logf("GetImportParameters not fully supported yet: %v", err)
 			return
@@ -359,11 +363,11 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 		createdKeys = append(createdKeys, attrs)
 
 		// Generate symmetric key
-		_, err := symBackend.GenerateSymmetricKey(attrs)
+		_, err := symBackend.GenerateSymmetricKey(ctx, attrs)
 		require.NoError(t, err, "Failed to generate symmetric key in real Azure Key Vault")
 
 		// Get encrypter
-		encrypter, err := symBackend.SymmetricEncrypter(attrs)
+		encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 		require.NoError(t, err, "Failed to get symmetric encrypter")
 		require.NotNil(t, encrypter, "Encrypter should not be nil")
 

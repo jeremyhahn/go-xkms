@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -45,14 +44,14 @@ var backendsListCmd = &cobra.Command{
 func listBackends(cfg *Config, printer *Printer) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -60,7 +59,7 @@ func listBackends(cfg *Config, printer *Printer) {
 
 	resp, err := cl.ListBackends(ctx)
 	if err != nil {
-		handleError(fmt.Errorf("failed to list backends: %w", err))
+		handleError(&WrappedError{Sentinel: ErrListBackendsFailed, Err: err})
 		return
 	}
 
@@ -93,14 +92,14 @@ var backendsInfoCmd = &cobra.Command{
 func backendInfo(cfg *Config, printer *Printer, backendName string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -108,7 +107,7 @@ func backendInfo(cfg *Config, printer *Printer, backendName string) {
 
 	info, err := cl.GetBackend(ctx, backendName)
 	if err != nil {
-		handleError(fmt.Errorf("failed to get backend info: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGetBackendInfoFailed, Err: err})
 		return
 	}
 

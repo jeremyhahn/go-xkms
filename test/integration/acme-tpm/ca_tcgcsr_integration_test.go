@@ -584,4 +584,3 @@ func TestSignTCGCSRIDevID_MultipleDevices(t *testing.T) {
 
 	t.Logf("Successfully enrolled %d devices with unique certificates", deviceCount)
 }
-

@@ -272,6 +272,54 @@ func TestGRPCServer_StopWithoutStart(t *testing.T) {
 	}
 }
 
+// TestGRPCServer_StopBeforeStart verifies the Stop/Start race guard: when
+// Stop runs before Start has created the underlying gRPC server, a
+// subsequent Start must return promptly instead of serving a listener that
+// nothing can ever stop (which would hang the daemon's shutdown WaitGroup).
+func TestGRPCServer_StopBeforeStart(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	cfg := &GRPCConfig{
+		SocketPath: filepath.Join(tmpDir, "test-grpc.sock"),
+	}
+
+	server, err := NewGRPCServer(cfg)
+	if err != nil {
+		t.Fatalf("NewGRPCServer() error = %v", err)
+	}
+
+	// Stop first — simulates Shutdown winning the race against the
+	// startUnix goroutine before Start assigned the gRPC server.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.Stop(ctx); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	// Start after Stop must return quickly as a clean shutdown, not
+	// block in Serve.
+	done := make(chan error, 1)
+	go func() { done <- server.Start() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Start() after Stop() error = %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start() after Stop() did not return; stopped guard not honored")
+	}
+
+	// The socket must not be left behind.
+	if _, err := os.Stat(cfg.SocketPath); !os.IsNotExist(err) {
+		t.Errorf("socket file still exists after Start-after-Stop, stat err = %v", err)
+	}
+}
+
 func TestGRPCServer_StartInvalidSocketPath(t *testing.T) {
 	// Use a path under /dev/null which cannot have subdirectories
 	cfg := &GRPCConfig{

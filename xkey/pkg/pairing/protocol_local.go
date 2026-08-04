@@ -77,6 +77,11 @@ type LocalGenerateKeyParams struct {
 	BiometricRequired        bool   `json:"biometricRequired,omitempty"`
 	AuthDurationSeconds      int    `json:"authDurationSeconds,omitempty"`
 	UserVerificationRequired bool   `json:"userVerificationRequired,omitempty"`
+	// Exportable requests a software-backed (exportable) key instead of a
+	// hardware-backed Keystore key. Only valid for symmetric algorithms; the
+	// phone refuses exportable asymmetric keys (hardware-backing is required
+	// for asymmetric keys on a security key).
+	Exportable bool `json:"exportable,omitempty"`
 }
 
 // LocalGenerateKeyResult contains the result of local.generateKey.

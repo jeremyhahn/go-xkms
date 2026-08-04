@@ -98,7 +98,7 @@ func runTPMQuote(cmd *cobra.Command, args []string) error {
 	if quoteNonce != "" {
 		nonce, err = hex.DecodeString(quoteNonce)
 		if err != nil {
-			return fmt.Errorf("%w: nonce must be hex-encoded", ErrInvalidNonce)
+			return &DetailError{Err: ErrInvalidNonce, Detail: ": nonce must be hex-encoded"}
 		}
 	}
 
@@ -111,14 +111,14 @@ func runTPMQuote(cmd *cobra.Command, args []string) error {
 
 	// Check for IAK
 	if _, err := tpm.IAKAttributes(); err != nil {
-		return fmt.Errorf("IAK not found - run 'tpm provision' first: %w", err)
+		return &WrappedError{Msg: "IAK not found - run 'tpm provision' first", Err: err}
 	}
 
 	// Generate quote
 	fmt.Printf("Generating quote for PCRs: %v\n", pcrs)
 	quote, err := tpm.Quote(pcrs, nonce)
 	if err != nil {
-		return fmt.Errorf("%w: failed to generate quote: %v", ErrTPMOperationFailed, err)
+		return &DetailError{Err: ErrTPMOperationFailed, Detail: fmt.Sprintf(": failed to generate quote: %v", err)}
 	}
 
 	// Build result
@@ -166,18 +166,18 @@ func parsePCRIndices(pcrString string) ([]uint, error) {
 
 		idx, err := strconv.ParseUint(part, 10, 32)
 		if err != nil {
-			return nil, fmt.Errorf("%w: invalid PCR index '%s'", ErrInvalidPCRIndices, part)
+			return nil, &DetailError{Err: ErrInvalidPCRIndices, Detail: fmt.Sprintf(": invalid PCR index '%s'", part)}
 		}
 
 		if idx > 23 {
-			return nil, fmt.Errorf("%w: PCR index %d out of range (0-23)", ErrInvalidPCRIndices, idx)
+			return nil, &DetailError{Err: ErrInvalidPCRIndices, Detail: fmt.Sprintf(": PCR index %d out of range (0-23)", idx)}
 		}
 
 		pcrs = append(pcrs, uint(idx))
 	}
 
 	if len(pcrs) == 0 {
-		return nil, fmt.Errorf("%w: no valid PCR indices specified", ErrInvalidPCRIndices)
+		return nil, &DetailError{Err: ErrInvalidPCRIndices, Detail: ": no valid PCR indices specified"}
 	}
 
 	return pcrs, nil
@@ -235,12 +235,12 @@ func writeQuoteToFile(result *QuoteResult, eventLog []byte) error {
 	// Marshal to JSON
 	data, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal quote: %w", err)
+		return &WrappedError{Msg: "failed to marshal quote", Err: err}
 	}
 
 	// Write to file
 	if err := os.WriteFile(quoteOutputFile, data, 0600); err != nil {
-		return fmt.Errorf("%w: %v", ErrExportFailed, err)
+		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
 	fmt.Printf("Quote written to: %s\n", quoteOutputFile)

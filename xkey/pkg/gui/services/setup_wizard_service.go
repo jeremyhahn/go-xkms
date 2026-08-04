@@ -20,13 +20,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"math/big"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
@@ -520,8 +521,21 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 	s.emitProgress(2, "Configuring PINs")
 	userPINSet := false
 	soPINSet := false
+	// soPINSupported reflects the active PIN backend's capability, not a
+	// hardcoded strategy comparison — see PINService.SOPINSupported. The
+	// tpm2 backend binds all authorization to the PlatformSRK auth value
+	// and always rejects SetSOPIN/ChangeSOPIN/VerifySOPIN, so attempting
+	// them here would just produce failed audit events on every install.
+	soPINSupported := true
+	if s.pinSvc != nil {
+		soPINSupported = s.pinSvc.SOPINSupported()
+	}
 	if choices.SOPin != "" && s.pinSvc != nil {
-		if err := s.pinSvc.SetSOPIN("", choices.SOPin); err != nil {
+		if !soPINSupported {
+			result.Warnings = append(result.Warnings, fmt.Sprintf(
+				"SO PIN is not applicable for the %s PIN backend (authorization is bound to platform hardware instead of a separate SO PIN)",
+				s.pinSvc.Strategy()))
+		} else if err := s.pinSvc.SetSOPIN("", choices.SOPin); err != nil {
 			result.Warnings = append(result.Warnings,
 				fmt.Sprintf("SO PIN setup: %v", err))
 		} else {
@@ -591,6 +605,18 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 		result.Warnings = append(result.Warnings, "platform policy service unavailable")
 	}
 
+	// requestedSealerBackend captures the user's explicit strategy choice before
+	// auto-fill may overwrite an empty value with the best available sealer.
+	// An empty string means "no explicit preference"; "tpm2" / "pkcs11" means
+	// the user or quick-setup explicitly requested hardware-backed sealing.
+	requestedSealerBackend := choices.SealerBackend
+	// requestedHardware is true when the user expressed intent for hardware-backed
+	// sealing via a direct backend choice or via the password store mode selection.
+	// It is used to detect a silent hardware->passphrase downgrade after barrier init.
+	requestedHardware := requestedSealerBackend == "tpm2" ||
+		requestedSealerBackend == "pkcs11" ||
+		choices.PasswordStoreMode == "tpm_sealed"
+
 	// Auto-fill sealer backend from best available when not explicitly chosen.
 	// Must resolve BEFORE barrier init because the barrier strategy depends on it.
 	if choices.SealerBackend == "" && s.sealSvc != nil {
@@ -645,8 +671,60 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 			"use_user_pin_as_master", choices.UseUserPinAsMaster,
 			"has_barrier_pw", barrierPW != "",
 			"has_user_pin", choices.UserPin != "")
+		barrierErrCount := len(result.Errors)
 		barrierInitialized, barrierStrategy = s.initBarrier(
 			barrierPW, choices.SealerBackend, result)
+
+		// Graceful hardware->software fallback. When a hardware sealing strategy
+		// (tpm2 / pkcs11) fails to initialize the barrier — e.g. a TPM that was
+		// provisioned by a prior install returns TPM_RC_BAD_AUTH / TPM_RC_POLICY_FAIL
+		// because its owner/SRK auth no longer matches — retry with the passphrase
+		// strategy so first-run setup can still complete with a software-encrypted
+		// barrier. Without this, the wizard can never mark setup complete and the
+		// user is trapped re-running it on every launch. The barrier is the
+		// system's at-rest encryption boundary: a working software barrier
+		// (User PIN via Argon2id + AES-256-GCM) is strictly better than leaving
+		// the install unconfigured. The original hardware-attempt errors are
+		// discarded; the fallback attempt decides success. The downgrade is
+		// surfaced as a warning by the block below (barrierStrategy == "passphrase").
+		hardwareStrategy := choices.SealerBackend == "tpm2" || choices.SealerBackend == "pkcs11"
+		if !barrierInitialized && hardwareStrategy {
+			slog.Warn("wizard: hardware barrier init failed, falling back to passphrase",
+				"strategy", choices.SealerBackend)
+			result.Errors = result.Errors[:barrierErrCount]
+			result.Success = true
+			barrierInitialized, barrierStrategy = s.initBarrier(
+				barrierPW, "passphrase", result)
+			if barrierInitialized {
+				// Persist the actual strategy so downstream config, seal-default
+				// mapping, and auto-unseal wiring all reflect passphrase/software.
+				choices.SealerBackend = "passphrase"
+			}
+		}
+
+		// Detect a silent hardware->passphrase downgrade. This happens when the
+		// user requested hardware-backed sealing (tpm2 / pkcs11 / tpm_sealed) but
+		// the hardware strategy was unavailable or failed (e.g. TPM_RC_BAD_AUTH,
+		// failed to evict platform SRK) and the auto-fill fallback selected
+		// passphrase instead. Surface an explicit warning so the frontend shows
+		// the downgrade prominently — a success toast without this warning would
+		// leave the user believing their master key is hardware-sealed when it is not.
+		if barrierInitialized && requestedHardware && barrierStrategy == "passphrase" {
+			requested := requestedSealerBackend
+			if requested == "" {
+				requested = choices.PasswordStoreMode
+			}
+			slog.Warn("wizard: sealing strategy downgraded from hardware to passphrase",
+				"requested", requested,
+				"actual", barrierStrategy)
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf(
+					"sealing strategy downgraded: requested %q but barrier initialized with %q "+
+						"(TPM hardware key sealing is not available — "+
+						"to use TPM sealing, clear the TPM or provide the correct SO PIN, "+
+						"then re-run the setup wizard)",
+					requested, barrierStrategy))
+		}
 	}
 
 	// Apply the seal-feature default backend. choices.SealerBackend is a BARRIER
@@ -681,11 +759,25 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 
 	// Retry PIN setup now that PINManager exists (created in postDataDirStartup).
 	// Step 2 may have failed because the PINManager wasn't initialized yet.
-	// The PIN backend always needs SO PIN configured for user PIN authorization,
-	// regardless of SetHierarchyAuth (which only controls TPM hierarchy passwords
-	// during provisioning at step 3).
+	// Software/PKCS#11 backends need SO PIN configured for user PIN
+	// authorization, regardless of SetHierarchyAuth (which only controls TPM
+	// hierarchy passwords during provisioning at step 3). The tpm2 backend
+	// has no SO PIN concept at all (soPINSupported is false), so this block
+	// is skipped entirely for it — see the capability check in Step 2 above.
 	if dataDirReady && s.pinSvc != nil {
-		if choices.SOPin != "" && !soPINSet {
+		// Re-evaluate SO PIN capability: initDataDirFunc re-creates the PIN
+		// manager, and the strategy may have switched (e.g. software → tpm2
+		// once the TPM barrier/platform provisioning completed). The Step 2
+		// snapshot is stale by now; retrying SetSOPIN against a backend that
+		// does not support SO PINs would emit so_pin_failed audit events on
+		// every clean install.
+		if soPINSupported && !s.pinSvc.SOPINSupported() {
+			soPINSupported = false
+			result.Warnings = append(result.Warnings, fmt.Sprintf(
+				"SO PIN is not applicable for the %s PIN backend (authorization is bound to platform hardware instead of a separate SO PIN)",
+				s.pinSvc.Strategy()))
+		}
+		if choices.SOPin != "" && !soPINSet && soPINSupported {
 			if err := s.pinSvc.SetSOPIN("", choices.SOPin); err != nil {
 				// SetSOPIN may fail when the TPM2 backend auto-detected a
 				// pre-provisioned TPM (soPINSet=true from IsProvisioned).
@@ -843,7 +935,16 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 	// forever. When no barrier service is wired (s.barrierSvc == nil,
 	// test-only path), preserve the legacy completion behavior.
 	updated.StorageType = "barrier"
-	updated.SealerBackend = choices.SealerBackend
+	// Persist the seal-namespace backend ID ("software"/"tpm2"), not the raw
+	// barrier strategy string ("passphrase"/"pkcs11"). Storing the raw strategy
+	// causes SetDefaultBackend on next startup to pin the seal service to an
+	// unknown backend, making CanSeal return false and disabling the Sealed Data
+	// view on every passphrase-barrier install.
+	if sb := sealBackendForBarrierSealer(choices.SealerBackend); sb != "" {
+		updated.SealerBackend = sb
+	} else {
+		updated.SealerBackend = choices.SealerBackend
+	}
 	barrierAttempted := s.barrierSvc != nil
 	switch {
 	case barrierInitialized:
@@ -952,7 +1053,7 @@ func (s *SetupWizardService) SkipSetup() error {
 	// Initialize data directory (plain directory, no LUKS).
 	if s.initDataDirFunc != nil {
 		if err := s.initDataDirFunc(); err != nil {
-			return fmt.Errorf("%w: %v", ErrSetupStorageFailed, err)
+			return &SentinelCauseError{Sentinel: ErrSetupStorageFailed, Cause: err}
 		}
 	}
 
@@ -964,7 +1065,7 @@ func (s *SetupWizardService) SkipSetup() error {
 		updated.StorageType = "barrier"
 	}
 	if err := s.configSave(&updated); err != nil {
-		return fmt.Errorf("%w: %v", ErrSetupStorageFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSetupStorageFailed, Cause: err}
 	}
 
 	// Emit setup skipped event.
@@ -1018,7 +1119,7 @@ func (s *SetupWizardService) GetStartupState() (result *StartupState, retErr err
 		if r := recover(); r != nil {
 			slog.Error("panic in GetStartupState", "recover", r)
 			result = nil
-			retErr = fmt.Errorf("setup_wizard: panic in GetStartupState: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("setup_wizard: panic in GetStartupState: %v", r)}
 		}
 	}()
 
@@ -1072,7 +1173,7 @@ func (s *SetupWizardService) ApplySOProvisioning(choices *SetupChoices) (result 
 		if r := recover(); r != nil {
 			slog.Error("panic in ApplySOProvisioning", "recover", r)
 			result = nil
-			retErr = fmt.Errorf("setup_wizard: panic in ApplySOProvisioning: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("setup_wizard: panic in ApplySOProvisioning: %v", r)}
 		}
 	}()
 
@@ -1238,7 +1339,7 @@ func (s *SetupWizardService) ApplyUserOnboarding(choices *UserOnboardingChoices)
 		if r := recover(); r != nil {
 			slog.Error("panic in ApplyUserOnboarding", "recover", r)
 			result = nil
-			retErr = fmt.Errorf("setup_wizard: panic in ApplyUserOnboarding: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("setup_wizard: panic in ApplyUserOnboarding: %v", r)}
 		}
 	}()
 
@@ -1372,23 +1473,23 @@ func (s *SetupWizardService) GetPolicy() (result map[string]any, retErr error) {
 		if r := recover(); r != nil {
 			slog.Error("panic in GetPolicy", "recover", r)
 			result = nil
-			retErr = fmt.Errorf("setup_wizard: panic in GetPolicy: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("setup_wizard: panic in GetPolicy: %v", r)}
 		}
 	}()
 
 	cfg, err := config.Load()
 	if err != nil {
-		return nil, fmt.Errorf("setup_wizard: %w", err)
+		return nil, &WrappedError{Msg: "setup_wizard", Err: err}
 	}
 
 	data, err := json.Marshal(cfg.Policy)
 	if err != nil {
-		return nil, fmt.Errorf("setup_wizard: policy marshal failed: %w", err)
+		return nil, &WrappedError{Msg: "setup_wizard: policy marshal failed", Err: err}
 	}
 
 	policyMap := make(map[string]any)
 	if err := json.Unmarshal(data, &policyMap); err != nil {
-		return nil, fmt.Errorf("setup_wizard: policy unmarshal failed: %w", err)
+		return nil, &WrappedError{Msg: "setup_wizard: policy unmarshal failed", Err: err}
 	}
 
 	return policyMap, nil
@@ -1401,7 +1502,7 @@ func (s *SetupWizardService) FactoryReset(soPin string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("panic in FactoryReset", "recover", r)
-			retErr = fmt.Errorf("setup_wizard: panic in FactoryReset: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("setup_wizard: panic in FactoryReset: %v", r)}
 		}
 	}()
 
@@ -1459,7 +1560,7 @@ func (s *SetupWizardService) FactoryReset(soPin string) (retErr error) {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("factory reset completed with errors: %s", strings.Join(errs, "; "))
+		return &MessageError{Msg: fmt.Sprintf("factory reset completed with errors: %s", strings.Join(errs, "; "))}
 	}
 
 	return nil

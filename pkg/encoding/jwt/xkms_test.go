@@ -24,6 +24,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 	"github.com/stretchr/testify/assert"
@@ -48,7 +50,7 @@ func (mk *mockXKMS) addKey(keyID string, key crypto.PrivateKey) {
 func (mk *mockXKMS) getKey(keyID string) (crypto.PrivateKey, error) {
 	key, ok := mk.keys[keyID]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", keyID)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyID)}
 	}
 	return key, nil
 }
@@ -60,7 +62,7 @@ func (mk *mockXKMS) getSigner(keyID string) (crypto.Signer, error) {
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("key is not a crypto.Signer")
+		return nil, &errs.Message{Msg: "key is not a crypto.Signer"}
 	}
 	return signer, nil
 }

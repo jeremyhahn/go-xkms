@@ -98,7 +98,7 @@ func (p *Printer) PrintBackendList(backends []string) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -126,7 +126,7 @@ func (p *Printer) PrintBackendInfo(backendName string, caps client.Capabilities)
 		_, _ = fmt.Fprintf(p.writer, "  Key Rotation:    %t\n", caps.KeyRotation)
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -169,7 +169,7 @@ func (p *Printer) PrintKeyList(keys []*client.KeyAttributes) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -212,7 +212,7 @@ func (p *Printer) PrintKeyInfo(key *client.KeyAttributes) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -228,7 +228,7 @@ func (p *Printer) PrintSuccess(message string) error {
 		_, _ = fmt.Fprintln(p.writer, message)
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -244,7 +244,7 @@ func (p *Printer) PrintError(err error) error {
 		_, _ = fmt.Fprintf(p.writer, "Error: %v\n", err)
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -259,7 +259,7 @@ func (p *Printer) PrintSignature(signature string) error {
 		_, _ = fmt.Fprintln(p.writer, signature)
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -274,7 +274,7 @@ func (p *Printer) PrintDecryptedData(plaintext string) error {
 		_, _ = fmt.Fprintln(p.writer, plaintext)
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -295,7 +295,7 @@ func (p *Printer) PrintEncryptedData(data *client.EncryptedData) error {
 		_, _ = fmt.Fprintf(p.writer, "Algorithm:  %s\n", data.Algorithm)
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -321,7 +321,7 @@ func (p *Printer) PrintCertificate(cert *x509.Certificate) error {
 		_, _ = fmt.Fprint(p.writer, string(pemBytes))
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -354,7 +354,7 @@ func (p *Printer) PrintCertList(certIDs []string) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -374,7 +374,7 @@ func (p *Printer) PrintCertExists(keyID string, exists bool) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -409,7 +409,7 @@ func (p *Printer) PrintCertChain(chain []*x509.Certificate) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -474,7 +474,7 @@ func (p *Printer) PrintTLSCertificate(key interface{}, cert *x509.Certificate, c
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -511,7 +511,7 @@ func (p *Printer) PrintImportParameters(params *client.ImportParameters) error {
 		return nil
 
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -526,7 +526,7 @@ func (p *Printer) PrintEncryptedAsym(ciphertext string) error {
 		_, _ = fmt.Fprintln(p.writer, ciphertext)
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -541,7 +541,7 @@ func (p *Printer) PrintMessage(message string) error {
 		_, _ = fmt.Fprintln(p.writer, message)
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -557,7 +557,7 @@ func (p *Printer) PrintPrompt(message string) error {
 		_, _ = fmt.Fprintln(p.writer, message)
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -602,7 +602,7 @@ func (p *Printer) PrintFIDO2Devices(devices []fido2Device) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -632,7 +632,7 @@ func (p *Printer) PrintFIDO2DeviceInfo(dev fido2Device) error {
 		_, _ = fmt.Fprintf(p.writer, "  Transport:     %s\n", dev.Transport)
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 
@@ -663,7 +663,7 @@ func (p *Printer) PrintFIDO2Registration(result *fido2EnrollmentResult) error {
 		_, _ = fmt.Fprintf(p.writer, "  Salt:          %s\n", base64.StdEncoding.EncodeToString(result.Salt))
 		return nil
 	default:
-		return fmt.Errorf("unknown output format: %s", p.format)
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
 }
 

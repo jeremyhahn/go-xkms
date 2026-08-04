@@ -50,6 +50,10 @@ export function SetAuditStore(arg1) {
   return window['go']['services']['AdminService']['SetAuditStore'](arg1);
 }
 
+export function SetBackendKeyLister(arg1) {
+  return window['go']['services']['AdminService']['SetBackendKeyLister'](arg1);
+}
+
 export function SetBackendRegistry(arg1) {
   return window['go']['services']['AdminService']['SetBackendRegistry'](arg1);
 }

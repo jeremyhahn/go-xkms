@@ -92,10 +92,17 @@ test.describe('Sidebar Navigation', () => {
   }
 
   test('navigates to TPM 2.0 view when TPM is available', async ({ page }) => {
+    // The TPM nav item only renders once the async TPM-availability probe
+    // resolves. Checking isVisible() immediately races that call and is
+    // virtually always false. Wait for the item to actually appear before
+    // deciding whether to skip.
     const tpmNavItem = page.locator('nav.sidebar button.nav-item', {
       has: page.locator('span.nav-label:text-is("TPM 2.0")'),
     });
-    const tpmVisible = await tpmNavItem.isVisible().catch(() => false);
+    const tpmVisible = await tpmNavItem
+      .waitFor({ state: 'visible', timeout: 10_000 })
+      .then(() => true)
+      .catch(() => false);
     test.skip(!tpmVisible, 'TPM nav item is hidden when no TPM hardware is available');
 
     await navigateTo(page, 'tpm');

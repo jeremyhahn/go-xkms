@@ -211,6 +211,31 @@ type TrustedCACertStoreFactoryFunc = pkgca.CertStoreFactoryFunc
 // TrustedCAObjectStoreFactoryFunc resolves an object store per-CA CN.
 type TrustedCAObjectStoreFactoryFunc = pkgca.ObjectStoreFactoryFunc
 
+// TrustedCAKeystoresConfig holds per-backend keystore configuration for one CA
+// identity (root or intermediate). When set on an Identity, the CA routes each
+// key in Keys[*] to the backend matching its StoreType. Aliased to
+// pkg/ca.CAKeystoresConfig.
+type TrustedCAKeystoresConfig = pkgca.CAKeystoresConfig
+
+// TrustedCAKeystoreSoftwareConfig carries per-identity configuration for the
+// software (PKCS#8) keystore backend. Aliased to pkg/ca.CAKeystoreSoftwareConfig.
+type TrustedCAKeystoreSoftwareConfig = pkgca.CAKeystoreSoftwareConfig
+
+// TrustedCAKeystoreTPM2Config carries per-identity configuration for the tpm2
+// keystore backend (SRK handle, SRK auth, platform policy). Aliased to
+// pkg/ca.CAKeystoreTPM2Config.
+type TrustedCAKeystoreTPM2Config = pkgca.CAKeystoreTPM2Config
+
+// TrustedCAKeystorePKCS11Config carries per-identity configuration for PKCS#11
+// keystore backends. Aliased to pkg/ca.CAKeystorePKCS11Config.
+type TrustedCAKeystorePKCS11Config = pkgca.CAKeystorePKCS11Config
+
+// TrustedCABackendForStoreFunc resolves an xkms.Backend for a given CA CN and
+// StoreType. It is invoked once per unique StoreType found in an identity's Keys
+// slice so each CA key lands in the backend matching its StoreType. Aliased to
+// pkg/ca.BackendForStoreFunc.
+type TrustedCABackendForStoreFunc = pkgca.BackendForStoreFunc
+
 // ---------------------------------------------------------------------------
 // TCG OID extension builder function re-exports
 // ---------------------------------------------------------------------------
@@ -361,6 +386,7 @@ var (
 	NewProfileBuilder                = pkgca.NewProfileBuilder
 	NewRevocationManager             = pkgca.NewRevocationManager
 	NewSerialGenerator               = pkgca.NewSerialGenerator
+	NewBackendStorage                = pkgca.NewBackendStorage
 	NewMemoryStorage                 = pkgca.NewMemoryStorage
 	NewDefaultCABundler              = pkgca.NewDefaultCABundler
 	NewDefaultCABundlerWithProviders = pkgca.NewDefaultCABundlerWithProviders

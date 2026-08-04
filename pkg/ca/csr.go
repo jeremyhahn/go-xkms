@@ -83,6 +83,8 @@ import (
 	"net"
 	"net/url"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -132,7 +134,7 @@ func (ca *CA) CreateCSR(ctx context.Context, request *CertificateRequest) ([]byt
 		// Get or generate key from keystore
 		signer, err = ca.getOrGenerateKey(ctx, request)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrCSRGenerationFailed, err)
+			return nil, &errs.Detail{Err: ErrCSRGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 		}
 	}
 
@@ -166,7 +168,7 @@ func (ca *CA) CreateCSR(ctx context.Context, request *CertificateRequest) ([]byt
 //	csrPEM, err := CreateCSRWithKey(request, pivSigner)
 func CreateCSRWithKey(request *CertificateRequest, signer crypto.Signer) ([]byte, error) {
 	if signer == nil {
-		return nil, fmt.Errorf("%w: signer is nil", ErrCSRGenerationFailed)
+		return nil, &errs.Detail{Err: ErrCSRGenerationFailed, Detail: "signer is nil"}
 	}
 
 	if err := validateCSRRequest(request); err != nil {
@@ -225,13 +227,13 @@ func (ca *CA) getOrGenerateKey(ctx context.Context, request *CertificateRequest)
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("key generation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "key generation failed", Err: err}
 	}
 
 	// Return as signer
 	signer, ok := privKey.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("generated key does not implement crypto.Signer")
+		return nil, &errs.Message{Msg: "generated key does not implement crypto.Signer"}
 	}
 
 	return signer, nil
@@ -248,14 +250,14 @@ func createAndSignCSR(request *CertificateRequest, signer crypto.Signer) ([]byte
 	// Determine signature algorithm
 	sigAlg, err := getSignatureAlgorithm(signer.Public())
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCSRGenerationFailed, err)
+		return nil, &errs.Detail{Err: ErrCSRGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	template.SignatureAlgorithm = sigAlg
 
 	// Create the CSR
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, signer)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCSRGenerationFailed, err)
+		return nil, &errs.Detail{Err: ErrCSRGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Encode to PEM
@@ -265,7 +267,7 @@ func createAndSignCSR(request *CertificateRequest, signer crypto.Signer) ([]byte
 // validateCSRRequest validates that the certificate request has required fields.
 func validateCSRRequest(request *CertificateRequest) error {
 	if request == nil {
-		return fmt.Errorf("%w: request is nil", ErrInvalidCSR)
+		return &errs.Detail{Err: ErrInvalidCSR, Detail: "request is nil"}
 	}
 
 	if request.Subject.CommonName == "" {
@@ -330,7 +332,7 @@ func addSANsExtension(template *x509.CertificateRequest, sans *SubjectAlternativ
 	if sans.HardwareModuleName != nil {
 		ext, err := buildHardwareModuleNameExtension(sans.HardwareModuleName)
 		if err != nil {
-			return fmt.Errorf("failed to build hardware module name extension: %w", err)
+			return &errs.Wrapped{Msg: "failed to build hardware module name extension", Err: err}
 		}
 		template.ExtraExtensions = append(template.ExtraExtensions, ext)
 	}
@@ -366,7 +368,7 @@ func buildHardwareModuleNameExtension(hwInfo *HardwareModuleInfo) (pkix.Extensio
 	// Marshal to ASN.1
 	hwNameBytes, err := asn1.Marshal(hwName)
 	if err != nil {
-		return pkix.Extension{}, fmt.Errorf("failed to marshal hardware module name: %w", err)
+		return pkix.Extension{}, &errs.Wrapped{Msg: "failed to marshal hardware module name", Err: err}
 	}
 
 	// Build the otherName structure for SAN
@@ -389,7 +391,7 @@ func buildHardwareModuleNameExtension(hwInfo *HardwareModuleInfo) (pkix.Extensio
 
 	otherNameBytes, err := asn1.MarshalWithParams(otherName, "tag:0")
 	if err != nil {
-		return pkix.Extension{}, fmt.Errorf("failed to marshal otherName: %w", err)
+		return pkix.Extension{}, &errs.Wrapped{Msg: "failed to marshal otherName", Err: err}
 	}
 
 	// Build GeneralNames sequence containing the otherName
@@ -400,7 +402,7 @@ func buildHardwareModuleNameExtension(hwInfo *HardwareModuleInfo) (pkix.Extensio
 		Bytes:      otherNameBytes,
 	})
 	if err != nil {
-		return pkix.Extension{}, fmt.Errorf("failed to marshal GeneralNames: %w", err)
+		return pkix.Extension{}, &errs.Wrapped{Msg: "failed to marshal GeneralNames", Err: err}
 	}
 
 	return pkix.Extension{
@@ -431,14 +433,14 @@ func getSignatureAlgorithm(pubKey crypto.PublicKey) (x509.SignatureAlgorithm, er
 		return x509.PureEd25519, nil
 
 	default:
-		return x509.UnknownSignatureAlgorithm, fmt.Errorf("%w: unsupported key type %T", ErrInvalidKeyAlgorithm, pubKey)
+		return x509.UnknownSignatureAlgorithm, &errs.Detail{Err: ErrInvalidKeyAlgorithm, Detail: fmt.Sprintf("unsupported key type %T", pubKey)}
 	}
 }
 
 // getECDSASignatureAlgorithm returns the appropriate signature algorithm for an ECDSA curve.
 func getECDSASignatureAlgorithm(curve elliptic.Curve) (x509.SignatureAlgorithm, error) {
 	if curve == nil {
-		return x509.UnknownSignatureAlgorithm, fmt.Errorf("%w: nil curve", ErrInvalidKeyAlgorithm)
+		return x509.UnknownSignatureAlgorithm, &errs.Detail{Err: ErrInvalidKeyAlgorithm, Detail: "nil curve"}
 	}
 
 	switch curve.Params().BitSize {

@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -43,8 +45,8 @@ type Config struct {
 	SessionToken string `yaml:"session_token,omitempty" json:"session_token,omitempty" mapstructure:"session_token"`
 
 	// Endpoint is a custom KMS endpoint URL.
-	// Optional - useful for testing with LocalStack or custom KMS endpoints.
-	// Example: "http://localhost:4566" for LocalStack
+	// Optional - useful for testing with the Floci emulator or custom KMS endpoints.
+	// Example: "http://localhost:4566" for the Floci emulator
 	Endpoint string `yaml:"endpoint,omitempty" json:"endpoint,omitempty" mapstructure:"endpoint"`
 
 	// KeyID is the default KMS key ID or ARN to use.
@@ -84,26 +86,26 @@ func (c *Config) Validate() error {
 
 	// Region is required
 	if c.Region == "" {
-		return fmt.Errorf("%w: region is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "region is required"}
 	}
 
 	// Validate region format (basic check)
 	if !isValidRegion(c.Region) {
-		return fmt.Errorf("%w: %s", ErrInvalidRegion, c.Region)
+		return &errs.Detail{Err: ErrInvalidRegion, Detail: fmt.Sprintf("%s", c.Region)}
 	}
 
 	// If static credentials are provided, both access key and secret must be present
 	if (c.AccessKeyID != "" && c.SecretAccessKey == "") ||
 		(c.AccessKeyID == "" && c.SecretAccessKey != "") {
-		return fmt.Errorf("%w: both access_key_id and secret_access_key must be provided together", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "both access_key_id and secret_access_key must be provided together"}
 	}
 
 	// Storage providers are required
 	if c.KeyStorage == nil {
-		return fmt.Errorf("%w: key storage is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "key storage is required"}
 	}
 	if c.CertStorage == nil {
-		return fmt.Errorf("%w: cert storage is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "cert storage is required"}
 	}
 
 	return nil
@@ -152,7 +154,7 @@ func isValidRegion(region string) bool {
 		return false
 	}
 
-	// Allow "local" for LocalStack testing
+	// Allow "local" for emulator testing
 	if region == "local" || region == "us-east-1-local" {
 		return true
 	}

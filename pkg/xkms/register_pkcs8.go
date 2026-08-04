@@ -33,8 +33,13 @@ func init() {
 //
 // Supported configuration keys:
 //   - "key_dir" (string): Directory for key storage. Empty or "memory" uses in-memory storage.
+//   - "allow_plaintext_keys" (bool): When true, permits persisting unencrypted
+//     PKCS#8 keys (no key password). Defaults to false (fail-closed): a key
+//     generated without a password is rejected with ErrPlaintextKeyNotAllowed.
+//     Set true only when the storage medium is encrypted out of band.
 func newPKCS8KeyProvider(config map[string]interface{}) (types.KeyProvider, error) {
 	keyDir, _ := config["key_dir"].(string)
+	allowPlaintext, _ := config["allow_plaintext_keys"].(bool)
 
 	var keyStorage storage.Backend
 	if keyDir == "" || keyDir == "memory" {
@@ -48,6 +53,7 @@ func newPKCS8KeyProvider(config map[string]interface{}) (types.KeyProvider, erro
 	}
 
 	return pkcs8.NewBackend(&pkcs8.Config{
-		KeyStorage: keyStorage,
+		KeyStorage:         keyStorage,
+		AllowPlaintextKeys: allowPlaintext,
 	})
 }

@@ -70,20 +70,20 @@ func issueEKCertificate(cfg *Config, printer *Printer) {
 	// #nosec G304 - EK public key file path from CLI argument
 	ekPubDER, err := os.ReadFile(tcgEKPubFile)
 	if err != nil {
-		handleError(fmt.Errorf("failed to read EK public key file: %w", err))
+		handleError(&WrappedError{Sentinel: ErrReadEKPublicKeyFileFailed, Err: err})
 		return
 	}
 
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -95,7 +95,7 @@ func issueEKCertificate(cfg *Config, printer *Printer) {
 		EKPublicKey:  ekPubDER,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to issue EK certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrIssueEKCertificateFailed, Err: err})
 		return
 	}
 
@@ -103,7 +103,7 @@ func issueEKCertificate(cfg *Config, printer *Printer) {
 	if tcgOutputFile != "" {
 		// #nosec G306 - Certificate files need to be readable
 		if err := os.WriteFile(tcgOutputFile, resp.CertificatePEM, 0644); err != nil {
-			handleError(fmt.Errorf("failed to write EK certificate: %w", err))
+			handleError(&WrappedError{Sentinel: ErrWriteEKCertificateFailed, Err: err})
 			return
 		}
 		printVerbose("EK certificate written to: %s", tcgOutputFile)
@@ -160,20 +160,20 @@ func issueAKCertificate(cfg *Config, printer *Printer) {
 	// #nosec G304 - Public key file path from CLI argument
 	pubDER, err := os.ReadFile(tcgPubFile)
 	if err != nil {
-		handleError(fmt.Errorf("failed to read public key file: %w", err))
+		handleError(&WrappedError{Sentinel: ErrReadPublicKeyFileFailed, Err: err})
 		return
 	}
 
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -185,7 +185,7 @@ func issueAKCertificate(cfg *Config, printer *Printer) {
 		PublicKey:    pubDER,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to issue AK certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrIssueAKCertificateFailed, Err: err})
 		return
 	}
 
@@ -193,7 +193,7 @@ func issueAKCertificate(cfg *Config, printer *Printer) {
 	if tcgOutputFile != "" {
 		// #nosec G306 - Certificate files need to be readable
 		if err := os.WriteFile(tcgOutputFile, resp.CertificatePEM, 0644); err != nil {
-			handleError(fmt.Errorf("failed to write AK certificate: %w", err))
+			handleError(&WrappedError{Sentinel: ErrWriteAKCertificateFailed, Err: err})
 			return
 		}
 		printVerbose("AK certificate written to: %s", tcgOutputFile)
@@ -250,20 +250,20 @@ func signTCGCSR(cfg *Config, printer *Printer) {
 	// #nosec G304 - TCG CSR file path from CLI argument
 	csrData, err := os.ReadFile(tcgCSRFile)
 	if err != nil {
-		handleError(fmt.Errorf("failed to read TCG CSR file: %w", err))
+		handleError(&WrappedError{Sentinel: ErrReadTCGCSRFileFailed, Err: err})
 		return
 	}
 
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -275,7 +275,7 @@ func signTCGCSR(cfg *Config, printer *Printer) {
 		TCGCSR:       csrData,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to sign TCG CSR: %w", err))
+		handleError(&WrappedError{Sentinel: ErrSignTCGCSRFailed, Err: err})
 		return
 	}
 
@@ -327,19 +327,19 @@ func signTCGCSR(cfg *Config, printer *Printer) {
 func writeTCGCSROutput(dir string, iakDER, idevidDER []byte) error {
 	// #nosec G301 - Output directory for certificates
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+		return &WrappedError{Sentinel: ErrCreateOutputDirectoryFailed, Err: err}
 	}
 
 	iakPath := filepath.Join(dir, "iak_cert.der")
 	// #nosec G306 - Certificate files need to be readable
 	if err := os.WriteFile(iakPath, iakDER, 0644); err != nil {
-		return fmt.Errorf("failed to write IAK certificate: %w", err)
+		return &WrappedError{Sentinel: ErrWriteIAKCertificateFailed, Err: err}
 	}
 
 	idevidPath := filepath.Join(dir, "idevid_cert.der")
 	// #nosec G306 - Certificate files need to be readable
 	if err := os.WriteFile(idevidPath, idevidDER, 0644); err != nil {
-		return fmt.Errorf("failed to write IDevID certificate: %w", err)
+		return &WrappedError{Sentinel: ErrWriteIDevIDCertificateFailed, Err: err}
 	}
 
 	return nil
@@ -376,20 +376,20 @@ func enrollDevice(cfg *Config, printer *Printer) {
 	// #nosec G304 - Packed CSR file path from CLI argument
 	packedCSR, err := os.ReadFile(tcgPackedCSR)
 	if err != nil {
-		handleError(fmt.Errorf("failed to read packed CSR file: %w", err))
+		handleError(&WrappedError{Sentinel: ErrReadPackedCSRFileFailed, Err: err})
 		return
 	}
 
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -401,7 +401,7 @@ func enrollDevice(cfg *Config, printer *Printer) {
 		PackedCSR:    packedCSR,
 	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to enroll device: %w", err))
+		handleError(&WrappedError{Sentinel: ErrEnrollDeviceFailed, Err: err})
 		return
 	}
 
@@ -443,26 +443,26 @@ func enrollDevice(cfg *Config, printer *Printer) {
 func writeEnrollmentOutput(dir string, resp *client.EnrollDeviceResponse) error {
 	// #nosec G301 - Output directory for enrollment artifacts
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+		return &WrappedError{Sentinel: ErrCreateOutputDirectoryFailed, Err: err}
 	}
 
 	iakPath := filepath.Join(dir, "iak_cert.der")
 	// #nosec G306 - Certificate files need to be readable
 	if err := os.WriteFile(iakPath, resp.IAKCertDER, 0644); err != nil {
-		return fmt.Errorf("failed to write IAK certificate: %w", err)
+		return &WrappedError{Sentinel: ErrWriteIAKCertificateFailed, Err: err}
 	}
 
 	idevidPath := filepath.Join(dir, "idevid_cert.der")
 	// #nosec G306 - Certificate files need to be readable
 	if err := os.WriteFile(idevidPath, resp.IDevIDCertDER, 0644); err != nil {
-		return fmt.Errorf("failed to write IDevID certificate: %w", err)
+		return &WrappedError{Sentinel: ErrWriteIDevIDCertificateFailed, Err: err}
 	}
 
 	if len(resp.CredentialBlob) > 0 {
 		blobPath := filepath.Join(dir, "credential_blob.bin")
 		// #nosec G306 - Credential blob needs to be readable by device
 		if err := os.WriteFile(blobPath, resp.CredentialBlob, 0644); err != nil {
-			return fmt.Errorf("failed to write credential blob: %w", err)
+			return &WrappedError{Sentinel: ErrWriteCredentialBlobFailed, Err: err}
 		}
 	}
 
@@ -470,7 +470,7 @@ func writeEnrollmentOutput(dir string, resp *client.EnrollDeviceResponse) error 
 		secretPath := filepath.Join(dir, "encrypted_secret.bin")
 		// #nosec G306 - Encrypted secret needs to be readable by device
 		if err := os.WriteFile(secretPath, resp.EncryptedSecret, 0644); err != nil {
-			return fmt.Errorf("failed to write encrypted secret: %w", err)
+			return &WrappedError{Sentinel: ErrWriteEncryptedSecretFailed, Err: err}
 		}
 	}
 

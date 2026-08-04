@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
@@ -437,7 +439,7 @@ func TestSymmetricEncrypt(t *testing.T) {
 						return nil, errors.New("expected encryption context")
 					}
 					if aad, ok := params.EncryptionContext["aad"]; !ok || aad != "context information" {
-						return nil, fmt.Errorf("unexpected AAD: %v", params.EncryptionContext)
+						return nil, &errs.Message{Msg: fmt.Sprintf("unexpected AAD: %v", params.EncryptionContext)}
 					}
 					return &kms.EncryptOutput{
 						CiphertextBlob: []byte("encrypted-with-aad"),

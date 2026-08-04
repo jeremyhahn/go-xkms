@@ -24,7 +24,8 @@
     mdiCreditCardOutline, mdiChip, mdiCog, mdiClipboardTextOutline,
     mdiWrenchOutline, mdiMenu, mdiWeatherSunny, mdiWeatherNight,
     mdiThemeLightDark, mdiKey, mdiChevronLeft, mdiLanConnect, mdiLockOutline,
-    mdiShieldLockOutline, mdiOpenInApp, mdiCertificate, mdiConsoleLine, mdiWeb
+    mdiShieldLockOutline, mdiOpenInApp, mdiCertificate, mdiConsoleLine, mdiWeb,
+    mdiSsh
   } from '$lib/utils/icons';
   import { isServerConnected } from '$lib/stores/connection';
 
@@ -33,6 +34,7 @@
   }
 
   import { addDevice } from '$lib/stores/pairing';
+  import { applySSHPolicies } from '$lib/stores/ssh';
   import type { PairedDevice } from '$lib/stores/pairing';
   import Dashboard from './views/Dashboard.svelte';
   import Pairing from './views/Pairing.svelte';
@@ -55,6 +57,7 @@
   import Certificates from './views/Certificates.svelte';
   import APIExplorer from './views/APIExplorer.svelte';
   import Browser from './views/Browser.svelte';
+  import SSH from './views/SSH.svelte';
 
   interface NavItem {
     id: string;
@@ -68,6 +71,7 @@
     { id: 'pairing', label: 'Pairing', icon: mdiLanConnect, section: 'main' },
     { id: 'tpm', label: 'TPM 2.0', icon: mdiChip, section: 'main' },
     { id: 'keys', label: 'Keys', icon: mdiKey, section: 'store' },
+    { id: 'ssh', label: 'SSH', icon: mdiSsh, section: 'applications' },
     { id: 'trust-store', label: 'Trust Store', icon: mdiShieldLockOutline, section: 'store' },
     { id: 'certificates', label: 'Certificates', icon: mdiCertificate, section: 'store' },
     { id: 'fido2', label: 'FIDO2', icon: mdiShieldCheckOutline, section: 'applications' },
@@ -198,6 +202,10 @@
       const dt = await callBackend<boolean>('AppService', 'GetDeveloperTools');
       if (dt !== null) setDevToolsEnabled(dt);
     }
+
+    // Re-apply the persisted SSH host-key / known-hosts policies so the
+    // backend always enforces what Settings displays across restarts.
+    void applySSHPolicies();
 
     // Check TPM availability to conditionally show/hide TPM navigation.
     // Show the TPM nav item when the device node exists, even if TPM
@@ -436,6 +444,8 @@
         <APIExplorer />
       {:else if view === 'browser'}
         <Browser />
+      {:else if view === 'ssh'}
+        <SSH />
       {/if}
     </div>
   </main>

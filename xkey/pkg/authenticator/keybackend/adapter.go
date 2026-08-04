@@ -141,7 +141,7 @@ func (a *BackendAdapter) GenerateCredentialKey(algorithm int, credentialID []byt
 			"cn", attrs.CN,
 			"algorithm", algorithm,
 			"error", err)
-		return nil, nil, fmt.Errorf("%w: %v", ErrKeyGenerationFailed, err)
+		return nil, nil, &SentinelCauseError{Sentinel: ErrKeyGenerationFailed, Cause: err}
 	}
 
 	// Refresh slot model occupancy after successful key generation.
@@ -162,7 +162,7 @@ func (a *BackendAdapter) GenerateCredentialKey(algorithm int, credentialID []byt
 		a.logger.Error("FIDO2 adapter: unsupported key type from provider",
 			"backend", a.backendType,
 			"type", fmt.Sprintf("%T", privKey))
-		return nil, nil, fmt.Errorf("%w: unsupported key type %T", ErrKeyGenerationFailed, privKey)
+		return nil, nil, &DetailError{Err: ErrKeyGenerationFailed, Detail: fmt.Sprintf(": unsupported key type %T", privKey)}
 	}
 
 	publicKeyCOSE, err := EncodeCOSEPublicKey(pubKey, algorithm)
@@ -203,7 +203,7 @@ func (a *BackendAdapter) Sign(handle KeyHandle, algorithm int, data []byte) ([]b
 		a.logger.Error("FIDO2 adapter: provider.Signer failed",
 			"backend", a.backendType,
 			"error", err)
-		return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrSigningFailed, Cause: err}
 	}
 
 	// Sign the data. For ECDSA, Go's crypto.Signer hashes internally
@@ -382,7 +382,7 @@ func (a *BackendAdapter) generateCredentialAttrs(credentialID []byte, algorithm 
 			a.logger.Error("FIDO2 adapter: no available PIV slot",
 				"backend", a.backendType,
 				"error", slotErr)
-			return nil, fmt.Errorf("%w: %v", ErrKeyGenerationFailed, slotErr)
+			return nil, &SentinelCauseError{Sentinel: ErrKeyGenerationFailed, Cause: slotErr}
 		}
 		attrs.PIVSlot = string(slot)
 		a.slotCache.Store(hex.EncodeToString(credentialID), string(slot))

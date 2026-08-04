@@ -1,6 +1,10 @@
 # QRDB Package
 
-`pkg/qrdb` integrates go-trusted-ca with [QRDB](https://github.com/jeremyhahn/go-qrdb) for distributed key-value storage via the [go-qrdb SDK](https://github.com/jeremyhahn/go-qrdb/sdk/go). It wraps the SDK client behind a `Service` interface that exposes typed accessors for all QRDB subsystems.
+`pkg/acme/qrdb` integrates the go-xkms ACME subsystem with [QRDB](https://github.com/jeremyhahn/go-qrdb) for distributed key-value storage via the [go-qrdb SDK](https://github.com/jeremyhahn/go-qrdb/sdk/go). It wraps the SDK client behind a `Service` interface that exposes typed accessors for all QRDB subsystems.
+
+> The ACME server (and its QRDB integration) was formerly the standalone
+> `go-trusted-ca` project; it is now decommissioned and absorbed into go-xkms
+> under `pkg/acme`. CA and ACME both live in go-xkms.
 
 ## Purpose
 
@@ -8,7 +12,7 @@ QRDB serves as the persistence layer for all ACME server state: accounts, orders
 
 ## Dependency Model
 
-go-trusted-ca imports only from the go-qrdb SDK:
+The ACME subsystem imports only from the go-qrdb SDK:
 
 | Import Path | Alias | Provides |
 |-------------|-------|----------|

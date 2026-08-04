@@ -27,6 +27,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -666,7 +668,7 @@ func (s *Server) getKeystoreForBackend(backendParam string) (xkms.Backend, error
 func (s *Server) findKeyByID(ctx context.Context, ks xkms.Backend, keyID string) (*types.KeyAttributes, error) {
 	keys, err := ks.ListKeys(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
 
 	for _, attr := range keys {
@@ -675,7 +677,7 @@ func (s *Server) findKeyByID(ctx context.Context, ks xkms.Backend, keyID string)
 		}
 	}
 
-	return nil, fmt.Errorf("key not found: %s", keyID)
+	return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyID)}
 }
 
 // handleGetKey handles retrieving a key

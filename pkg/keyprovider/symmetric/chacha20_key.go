@@ -16,6 +16,8 @@ package symmetric
 import (
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -57,7 +59,7 @@ func NewChaCha20Key(algorithm string, keyData []byte) (types.SymmetricKey, error
 
 	// ChaCha20 only supports 256-bit keys
 	if keySize != 256 {
-		return nil, fmt.Errorf("invalid ChaCha20 key size: %d bits (must be 256)", keySize)
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid ChaCha20 key size: %d bits (must be 256)", keySize)}
 	}
 
 	// Make a copy to prevent external modification

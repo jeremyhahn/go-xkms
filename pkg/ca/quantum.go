@@ -32,6 +32,8 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
 	"github.com/cloudflare/circl/sign/mldsa/mldsa65"
 	"github.com/cloudflare/circl/sign/mldsa/mldsa87"
@@ -139,13 +141,13 @@ func signCertificateWithQuantum(
 ) ([]byte, error) {
 
 	if template == nil {
-		return nil, &QuantumCertError{Op: "sign", Err: fmt.Errorf("template certificate is nil")}
+		return nil, &QuantumCertError{Op: "sign", Err: &errs.Message{Msg: "template certificate is nil"}}
 	}
 	if parent == nil {
-		return nil, &QuantumCertError{Op: "sign", Err: fmt.Errorf("parent certificate is nil")}
+		return nil, &QuantumCertError{Op: "sign", Err: &errs.Message{Msg: "parent certificate is nil"}}
 	}
 	if privKey == nil {
-		return nil, &QuantumCertError{Op: "sign", Err: fmt.Errorf("private key is nil")}
+		return nil, &QuantumCertError{Op: "sign", Err: &errs.Message{Msg: "private key is nil"}}
 	}
 
 	// Determine the OID based on the algorithm
@@ -161,25 +163,25 @@ func signCertificateWithQuantum(
 	// Encode the public key into SubjectPublicKeyInfo
 	subjectPKInfo, err := encodeQuantumPublicKey(pubKey)
 	if err != nil {
-		return nil, &QuantumCertError{Op: "sign", Err: fmt.Errorf("encode public key: %w", err)}
+		return nil, &QuantumCertError{Op: "sign", Err: &errs.Wrapped{Msg: "encode public key", Err: err}}
 	}
 
 	// Encode issuer name
 	issuerRaw, err := asn1.Marshal(parent.Subject.ToRDNSequence())
 	if err != nil {
-		return nil, &QuantumCertError{Op: "sign", Err: fmt.Errorf("marshal issuer: %w", err)}
+		return nil, &QuantumCertError{Op: "sign", Err: &errs.Wrapped{Msg: "marshal issuer", Err: err}}
 	}
 
 	// Encode subject name
 	subjectRaw, err := asn1.Marshal(template.Subject.ToRDNSequence())
 	if err != nil {
-		return nil, &QuantumCertError{Op: "sign", Err: fmt.Errorf("marshal subject: %w", err)}
+		return nil, &QuantumCertError{Op: "sign", Err: &errs.Wrapped{Msg: "marshal subject", Err: err}}
 	}
 
 	// Build extensions
 	extensionsRaw, err := buildCertExtensions(template)
 	if err != nil {
-		return nil, &QuantumCertError{Op: "sign", Err: fmt.Errorf("build extensions: %w", err)}
+		return nil, &QuantumCertError{Op: "sign", Err: &errs.Wrapped{Msg: "build extensions", Err: err}}
 	}
 
 	// Construct the TBSCertificate
@@ -205,13 +207,13 @@ func signCertificateWithQuantum(
 	// Marshal TBSCertificate
 	tbsRaw, err := asn1.Marshal(tbs)
 	if err != nil {
-		return nil, &QuantumCertError{Op: "sign", Err: fmt.Errorf("marshal TBS: %w", err)}
+		return nil, &QuantumCertError{Op: "sign", Err: &errs.Wrapped{Msg: "marshal TBS", Err: err}}
 	}
 
 	// Sign the TBS with ML-DSA (no pre-hashing)
 	signature, err := privKey.Sign(nil, tbsRaw, crypto.Hash(0))
 	if err != nil {
-		return nil, &QuantumCertError{Op: "sign", Err: fmt.Errorf("ML-DSA signing: %w", err)}
+		return nil, &QuantumCertError{Op: "sign", Err: &errs.Wrapped{Msg: "ML-DSA signing", Err: err}}
 	}
 
 	// Assemble the final certificate
@@ -223,7 +225,7 @@ func signCertificateWithQuantum(
 
 	certDER, err := asn1.Marshal(cert)
 	if err != nil {
-		return nil, &QuantumCertError{Op: "sign", Err: fmt.Errorf("marshal certificate: %w", err)}
+		return nil, &QuantumCertError{Op: "sign", Err: &errs.Wrapped{Msg: "marshal certificate", Err: err}}
 	}
 
 	return certDER, nil
@@ -253,10 +255,10 @@ func verifyQuantumCertificate(certDER []byte, issuerPubKey *quantum.MLDSAPublicK
 	var rawCert asn1.RawValue
 	rest, err := asn1.Unmarshal(certDER, &rawCert)
 	if err != nil {
-		return &QuantumCertError{Op: "verify", Err: fmt.Errorf("unmarshal outer: %w", err)}
+		return &QuantumCertError{Op: "verify", Err: &errs.Wrapped{Msg: "unmarshal outer", Err: err}}
 	}
 	if len(rest) > 0 {
-		return &QuantumCertError{Op: "verify", Err: fmt.Errorf("trailing data after certificate")}
+		return &QuantumCertError{Op: "verify", Err: &errs.Message{Msg: "trailing data after certificate"}}
 	}
 
 	// Parse the three certificate components
@@ -266,7 +268,7 @@ func verifyQuantumCertificate(certDER []byte, issuerPubKey *quantum.MLDSAPublicK
 		SignatureValue     asn1.BitString           `asn1:""`
 	}
 	if _, err := asn1.Unmarshal(rawCert.FullBytes, &inner); err != nil {
-		return &QuantumCertError{Op: "verify", Err: fmt.Errorf("unmarshal inner: %w", err)}
+		return &QuantumCertError{Op: "verify", Err: &errs.Wrapped{Msg: "unmarshal inner", Err: err}}
 	}
 
 	// Determine algorithm from OID
@@ -324,21 +326,21 @@ func verifyMLDSASignature(algorithm string, pubKeyBytes, message, signature []by
 	case "ML-DSA-44":
 		var pk mldsa44.PublicKey
 		if err := pk.UnmarshalBinary(pubKeyBytes); err != nil {
-			return false, fmt.Errorf("unmarshal ML-DSA-44 public key: %w", err)
+			return false, &errs.Wrapped{Msg: "unmarshal ML-DSA-44 public key", Err: err}
 		}
 		return mldsa44.Verify(&pk, message, nil, signature), nil
 
 	case "ML-DSA-65":
 		var pk mldsa65.PublicKey
 		if err := pk.UnmarshalBinary(pubKeyBytes); err != nil {
-			return false, fmt.Errorf("unmarshal ML-DSA-65 public key: %w", err)
+			return false, &errs.Wrapped{Msg: "unmarshal ML-DSA-65 public key", Err: err}
 		}
 		return mldsa65.Verify(&pk, message, nil, signature), nil
 
 	case "ML-DSA-87":
 		var pk mldsa87.PublicKey
 		if err := pk.UnmarshalBinary(pubKeyBytes); err != nil {
-			return false, fmt.Errorf("unmarshal ML-DSA-87 public key: %w", err)
+			return false, &errs.Wrapped{Msg: "unmarshal ML-DSA-87 public key", Err: err}
 		}
 		return mldsa87.Verify(&pk, message, nil, signature), nil
 
@@ -353,7 +355,7 @@ func verifyMLDSASignature(algorithm string, pubKeyBytes, message, signature []by
 func encodeQuantumPublicKey(pubKey crypto.PublicKey) (*publicKeyInfo, error) {
 	mldsaPubKey, ok := pubKey.(*quantum.MLDSAPublicKey)
 	if !ok {
-		return nil, fmt.Errorf("expected *quantum.MLDSAPublicKey, got %T", pubKey)
+		return nil, &errs.Message{Msg: fmt.Sprintf("expected *quantum.MLDSAPublicKey, got %T", pubKey)}
 	}
 
 	algOID, err := quantumAlgorithmOID(mldsaPubKey.Algorithm)

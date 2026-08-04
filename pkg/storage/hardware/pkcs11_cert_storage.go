@@ -19,6 +19,8 @@ import (
 	"crypto/x509"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/miekg/pkcs11"
 )
@@ -254,8 +256,7 @@ func (p *PKCS11CertStorage) DeleteCert(id string) error {
 			// Verify chain actually gone.
 			remaining, _ := p.findAllCertificatesWithPrefix(session, chainID)
 			if len(remaining) > 0 {
-				return fmt.Errorf("%w: chain %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')",
-					ErrDeleteNotSupportedOnToken, id)
+				return &errs.Detail{Err: ErrDeleteNotSupportedOnToken, Detail: fmt.Sprintf("chain %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')", id)}
 			}
 		} else {
 			if err := p.pool.Ctx().DestroyObject(session, handle); err != nil {
@@ -265,8 +266,7 @@ func (p *PKCS11CertStorage) DeleteCert(id string) error {
 
 			// Verify primary cert actually gone.
 			if verifyHandle, verr := p.findCertificateHandle(session, id); verr == nil && verifyHandle != 0 {
-				return fmt.Errorf("%w: cert %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')",
-					ErrDeleteNotSupportedOnToken, id)
+				return &errs.Detail{Err: ErrDeleteNotSupportedOnToken, Detail: fmt.Sprintf("cert %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')", id)}
 			}
 
 			// Also delete chain certificates if they exist (best effort).
@@ -303,7 +303,7 @@ func (p *PKCS11CertStorage) SaveCertChain(id string, chain []*x509.Certificate) 
 
 	for i, cert := range chain {
 		if cert == nil {
-			return fmt.Errorf("certificate at index %d is nil: %w", i, storage.ErrInvalidData)
+			return &errs.Wrapped{Msg: fmt.Sprintf("certificate at index %d is nil", i), Err: storage.ErrInvalidData}
 		}
 	}
 
@@ -374,7 +374,7 @@ func (p *PKCS11CertStorage) GetCertChain(id string) ([]*x509.Certificate, error)
 			}
 
 			if len(attrs) == 0 || len(attrs[0].Value) == 0 {
-				return fmt.Errorf("empty certificate at index %d: %w", i, ErrInvalidCertificate)
+				return &errs.Wrapped{Msg: fmt.Sprintf("empty certificate at index %d", i), Err: ErrInvalidCertificate}
 			}
 
 			cert, err := x509.ParseCertificate(attrs[0].Value)

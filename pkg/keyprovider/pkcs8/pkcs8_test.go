@@ -27,18 +27,24 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// Helper function to create a test backend
+// Helper function to create a test backend.
+// AllowPlaintextKeys is set to true so that tests focus on key-generation
+// mechanics without needing to supply a password for every key. Security
+// policy tests (fail-closed behavior) use dedicated backends below.
 func createTestBackend(t *testing.T) (*PKCS8Backend, storage.Backend) {
 	t.Helper()
 
 	keyStorage := storage.New()
 	config := &Config{
-		KeyStorage: keyStorage,
+		KeyStorage:         keyStorage,
+		AllowPlaintextKeys: true,
 	}
 
 	be, err := NewBackend(config)
@@ -1475,21 +1481,21 @@ type mockStorageError struct {
 
 func (m *mockStorageError) Delete(_ context.Context, key string) error {
 	if m.deleteError {
-		return fmt.Errorf("mock delete error")
+		return &errs.Message{Msg: "mock delete error"}
 	}
 	return storage.ErrNotFound
 }
 
 func (m *mockStorageError) Put(_ context.Context, key string, value []byte) error {
 	if m.saveError {
-		return fmt.Errorf("mock save error")
+		return &errs.Message{Msg: "mock save error"}
 	}
 	return m.Backend.Put(context.Background(), key, value)
 }
 
 func (m *mockStorageError) List(_ context.Context, prefix string) ([]string, error) {
 	if m.listError {
-		return nil, fmt.Errorf("mock list error")
+		return nil, &errs.Message{Msg: "mock list error"}
 	}
 	return nil, nil
 }
@@ -1765,7 +1771,7 @@ type mockStorageErrorOnExists struct {
 }
 
 func (m *mockStorageErrorOnExists) Exists(_ context.Context, key string) (bool, error) {
-	return false, fmt.Errorf("mock Exists error")
+	return false, &errs.Message{Msg: "mock Exists error"}
 }
 
 func (m *mockStorageErrorOnExists) Put(_ context.Context, key string, value []byte) error {
@@ -1818,7 +1824,7 @@ type mockStorageGetError struct {
 }
 
 func (m *mockStorageGetError) Get(_ context.Context, key string) ([]byte, error) {
-	return nil, fmt.Errorf("mock Get error")
+	return nil, &errs.Message{Msg: "mock Get error"}
 }
 
 func (m *mockStorageGetError) KeyExists(_ context.Context, id string) (bool, error) {
@@ -3176,5 +3182,88 @@ func TestGenerateECDSAKey_DirectNilCurve(t *testing.T) {
 	}
 	if !errors.Is(err, backend.ErrInvalidAttributes) {
 		t.Errorf("Expected ErrInvalidAttributes, got: %v", err)
+	}
+}
+
+// =============================================================================
+// Security policy tests
+// =============================================================================
+
+// TestGenerateKey_PlaintextNotAllowed verifies the fail-closed default: when
+// AllowPlaintextKeys is false and no password is provided, GenerateKey returns
+// ErrPlaintextKeyNotAllowed rather than persisting unencrypted key material.
+func TestGenerateKey_PlaintextNotAllowed(t *testing.T) {
+	t.Parallel()
+
+	keyStorage := storage.New()
+	be, err := NewBackend(&Config{
+		KeyStorage:         keyStorage,
+		AllowPlaintextKeys: false, // explicit; same as zero value
+	})
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	defer func() { _ = be.Close() }()
+
+	// No password supplied — must be refused.
+	attrs := createEd25519Attrs("fail-closed-test")
+
+	_, err = be.GenerateKey(context.Background(), attrs)
+	if err == nil {
+		t.Fatal("GenerateKey without password should fail when AllowPlaintextKeys=false")
+	}
+	if !errors.Is(err, ErrPlaintextKeyNotAllowed) {
+		t.Errorf("expected ErrPlaintextKeyNotAllowed, got: %v", err)
+	}
+}
+
+// TestGenerateKey_WithPassword_ProducesEncryptedPKCS8 verifies that a key
+// generated with a password is stored as encrypted PKCS#8 (not plaintext):
+//
+//	(a) the raw DER cannot be parsed by x509.ParsePKCS8PrivateKey (which
+//	    only handles unencrypted PrivateKeyInfo, not EncryptedPrivateKeyInfo)
+//	(b) GetKey fails when supplied the wrong password
+//	(c) GetKey succeeds with the correct password
+func TestGenerateKey_WithPassword_ProducesEncryptedPKCS8(t *testing.T) {
+	t.Parallel()
+
+	keyStorage := storage.New()
+	be, err := NewBackend(&Config{
+		KeyStorage:         keyStorage,
+		AllowPlaintextKeys: false,
+	})
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	defer func() { _ = be.Close() }()
+
+	const password = "correct-horse-battery-staple"
+	attrs := createEd25519Attrs("encrypted-key-test")
+	attrs.Password = types.NewPasswordFromString(password)
+
+	_, err = be.GenerateKey(context.Background(), attrs)
+	if err != nil {
+		t.Fatalf("GenerateKey with password failed: %v", err)
+	}
+
+	// (a) Raw DER must not parse as unencrypted PKCS#8 PrivateKeyInfo.
+	rawDER, err := storage.GetKey(context.Background(), keyStorage, attrs.ID())
+	if err != nil {
+		t.Fatalf("storage.GetKey: %v", err)
+	}
+	if _, parseErr := x509.ParsePKCS8PrivateKey(rawDER); parseErr == nil {
+		t.Error("raw DER parsed as plaintext PKCS#8 — key is NOT encrypted at rest")
+	}
+
+	// (b) Wrong password must fail decryption.
+	wrongAttrs := *attrs
+	wrongAttrs.Password = types.NewPasswordFromString("wrong-password")
+	if _, getErr := be.GetKey(context.Background(), &wrongAttrs); getErr == nil {
+		t.Error("GetKey with wrong password should fail")
+	}
+
+	// (c) Correct password must succeed.
+	if _, getErr := be.GetKey(context.Background(), attrs); getErr != nil {
+		t.Errorf("GetKey with correct password failed: %v", getErr)
 	}
 }

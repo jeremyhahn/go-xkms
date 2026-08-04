@@ -39,7 +39,7 @@ func init() {
 //   - "access_key_id" (string): AWS access key ID (optional, uses IAM if empty)
 //   - "secret_access_key" (string): AWS secret access key (optional)
 //   - "session_token" (string): AWS session token (optional)
-//   - "endpoint" (string): Custom KMS endpoint (optional, for LocalStack)
+//   - "endpoint" (string): Custom KMS endpoint (optional, for the Floci emulator)
 //   - "key_id" (string): Default KMS key ID or ARN (optional)
 func newAWSKMSKeyProvider(config map[string]interface{}) (types.KeyProvider, error) {
 	awsConfig := &awskms.Config{

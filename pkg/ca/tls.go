@@ -71,6 +71,8 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -150,7 +152,7 @@ func (o *TLSConfigOptions) Validate() error {
 
 	// Check for invalid version combinations
 	if o.MinVersion != 0 && o.MaxVersion != 0 && o.MinVersion > o.MaxVersion {
-		return fmt.Errorf("%w: min version cannot be greater than max version", ErrInvalidTLSOptions)
+		return &errs.Detail{Err: ErrInvalidTLSOptions, Detail: "min version cannot be greater than max version"}
 	}
 	// Client connections should specify ServerName for certificate verification
 	if !o.IsServer && o.ServerName == "" {
@@ -210,12 +212,12 @@ func (ca *CA) TLSCertificate(ctx context.Context, attrs *types.KeyAttributes) (t
 	}
 
 	if attrs == nil {
-		return tls.Certificate{}, fmt.Errorf("%w: key attributes required", ErrInvalidTLSOptions)
+		return tls.Certificate{}, &errs.Detail{Err: ErrInvalidTLSOptions, Detail: "key attributes required"}
 	}
 
 	tlsCert, err := ca.keyStore.GetTLSCertificate(ctx, attrs.CN, attrs)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("%w: %v", ErrTLSConfigFailed, err)
+		return tls.Certificate{}, &errs.Detail{Err: ErrTLSConfigFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return tlsCert, nil
@@ -510,13 +512,13 @@ func (ca *CA) MutualTLSConfig(ctx context.Context, attrs *types.KeyAttributes) (
 //	tlsConfig.VerifyPeerCertificate = ca.VerifyPeerCertificate
 func (ca *CA) VerifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 	if len(rawCerts) == 0 {
-		return fmt.Errorf("%w: no certificates presented", ErrPeerVerificationFailed)
+		return &errs.Detail{Err: ErrPeerVerificationFailed, Detail: "no certificates presented"}
 	}
 
 	// Parse the peer certificate
 	peerCert, err := x509.ParseCertificate(rawCerts[0])
 	if err != nil {
-		return fmt.Errorf("%w: failed to parse peer certificate: %v", ErrPeerVerificationFailed, err)
+		return &errs.Detail{Err: ErrPeerVerificationFailed, Detail: fmt.Sprintf("failed to parse peer certificate: %v", err)}
 	}
 
 	// Log certificate details for auditing
@@ -541,16 +543,16 @@ func (ca *CA) VerifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.
 			"subject", peerCert.Subject.String(),
 			"serial", peerCert.SerialNumber.String(),
 		)
-		return fmt.Errorf("%w: serial %s", ErrCertificateRevoked, peerCert.SerialNumber.String())
+		return &errs.Detail{Err: ErrCertificateRevoked, Detail: fmt.Sprintf("serial %s", peerCert.SerialNumber.String())}
 	}
 
 	// Check certificate validity period
 	now := time.Now()
 	if now.Before(peerCert.NotBefore) {
-		return fmt.Errorf("%w: %v", ErrCertificateNotYetValid, peerCert.Subject.String())
+		return &errs.Detail{Err: ErrCertificateNotYetValid, Detail: fmt.Sprintf("%v", peerCert.Subject.String())}
 	}
 	if now.After(peerCert.NotAfter) {
-		return fmt.Errorf("%w: %v", ErrCertificateExpired, peerCert.Subject.String())
+		return &errs.Detail{Err: ErrCertificateExpired, Detail: fmt.Sprintf("%v", peerCert.Subject.String())}
 	}
 
 	// Check intermediate certificates in the chain
@@ -575,8 +577,7 @@ func (ca *CA) VerifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.
 				"subject", intermediateCert.Subject.String(),
 				"serial", intermediateCert.SerialNumber.String(),
 			)
-			return fmt.Errorf("%w: intermediate certificate revoked: serial %s",
-				ErrCertificateRevoked, intermediateCert.SerialNumber.String())
+			return &errs.Detail{Err: ErrCertificateRevoked, Detail: fmt.Sprintf("intermediate certificate revoked: serial %s", intermediateCert.SerialNumber.String())}
 		}
 	}
 
@@ -690,7 +691,7 @@ func LoadTLSCertificate(certPEM, keyPEM []byte) (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 	if len(certs) == 0 {
-		return tls.Certificate{}, fmt.Errorf("%w: no certificates found", ErrInvalidPEM)
+		return tls.Certificate{}, &errs.Detail{Err: ErrInvalidPEM, Detail: "no certificates found"}
 	}
 
 	// Parse the private key
@@ -741,7 +742,7 @@ func LoadTLSCertificateFiles(certPath, keyPath string) (tls.Certificate, error) 
 	// Use the standard library's X509KeyPair which handles file reading
 	tlsCert, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("%w: %v", ErrTLSConfigFailed, err)
+		return tls.Certificate{}, &errs.Detail{Err: ErrTLSConfigFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Parse the leaf certificate for the Leaf field
@@ -790,13 +791,13 @@ func ParsePEMCertificateChain(pemData []byte) ([]*x509.Certificate, error) {
 
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("%w: failed to parse certificate: %v", ErrInvalidPEM, err)
+			return nil, &errs.Detail{Err: ErrInvalidPEM, Detail: fmt.Sprintf("failed to parse certificate: %v", err)}
 		}
 		certs = append(certs, cert)
 	}
 
 	if len(certs) == 0 {
-		return nil, fmt.Errorf("%w: no certificates found", ErrInvalidPEM)
+		return nil, &errs.Detail{Err: ErrInvalidPEM, Detail: "no certificates found"}
 	}
 
 	return certs, nil
@@ -810,7 +811,7 @@ func ParsePEMCertificateChain(pemData []byte) ([]*x509.Certificate, error) {
 func parsePEMPrivateKey(pemData []byte) (crypto.PrivateKey, error) {
 	block, _ := pem.Decode(pemData)
 	if block == nil {
-		return nil, fmt.Errorf("%w: no PEM block found", ErrInvalidPEM)
+		return nil, &errs.Detail{Err: ErrInvalidPEM, Detail: "no PEM block found"}
 	}
 
 	// Try different private key formats
@@ -819,7 +820,7 @@ func parsePEMPrivateKey(pemData []byte) (crypto.PrivateKey, error) {
 		// PKCS#8 format
 		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("%w: failed to parse PKCS#8 key: %v", ErrInvalidPEM, err)
+			return nil, &errs.Detail{Err: ErrInvalidPEM, Detail: fmt.Sprintf("failed to parse PKCS#8 key: %v", err)}
 		}
 		return key, nil
 
@@ -827,7 +828,7 @@ func parsePEMPrivateKey(pemData []byte) (crypto.PrivateKey, error) {
 		// PKCS#1 RSA format
 		key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("%w: failed to parse PKCS#1 RSA key: %v", ErrInvalidPEM, err)
+			return nil, &errs.Detail{Err: ErrInvalidPEM, Detail: fmt.Sprintf("failed to parse PKCS#1 RSA key: %v", err)}
 		}
 		return key, nil
 
@@ -835,12 +836,12 @@ func parsePEMPrivateKey(pemData []byte) (crypto.PrivateKey, error) {
 		// SEC 1 EC format
 		key, err := x509.ParseECPrivateKey(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("%w: failed to parse EC key: %v", ErrInvalidPEM, err)
+			return nil, &errs.Detail{Err: ErrInvalidPEM, Detail: fmt.Sprintf("failed to parse EC key: %v", err)}
 		}
 		return key, nil
 
 	default:
-		return nil, fmt.Errorf("%w: unsupported key type: %s", ErrInvalidPEM, block.Type)
+		return nil, &errs.Detail{Err: ErrInvalidPEM, Detail: fmt.Sprintf("unsupported key type: %s", block.Type)}
 	}
 }
 
@@ -850,33 +851,33 @@ func verifyKeyMatchesCertificate(key crypto.PrivateKey, cert *x509.Certificate) 
 	case *rsa.PrivateKey:
 		pub, ok := cert.PublicKey.(*rsa.PublicKey)
 		if !ok {
-			return fmt.Errorf("%w: certificate has non-RSA public key", ErrKeyCertMismatch)
+			return &errs.Detail{Err: ErrKeyCertMismatch, Detail: "certificate has non-RSA public key"}
 		}
 		if k.N.Cmp(pub.N) != 0 {
-			return fmt.Errorf("%w: RSA key modulus mismatch", ErrKeyCertMismatch)
+			return &errs.Detail{Err: ErrKeyCertMismatch, Detail: "RSA key modulus mismatch"}
 		}
 
 	case *ecdsa.PrivateKey:
 		pub, ok := cert.PublicKey.(*ecdsa.PublicKey)
 		if !ok {
-			return fmt.Errorf("%w: certificate has non-ECDSA public key", ErrKeyCertMismatch)
+			return &errs.Detail{Err: ErrKeyCertMismatch, Detail: "certificate has non-ECDSA public key"}
 		}
 		if !k.PublicKey.Equal(pub) {
-			return fmt.Errorf("%w: ECDSA key point mismatch", ErrKeyCertMismatch)
+			return &errs.Detail{Err: ErrKeyCertMismatch, Detail: "ECDSA key point mismatch"}
 		}
 
 	case ed25519.PrivateKey:
 		pub, ok := cert.PublicKey.(ed25519.PublicKey)
 		if !ok {
-			return fmt.Errorf("%w: certificate has non-Ed25519 public key", ErrKeyCertMismatch)
+			return &errs.Detail{Err: ErrKeyCertMismatch, Detail: "certificate has non-Ed25519 public key"}
 		}
 		derivedPub := k.Public().(ed25519.PublicKey)
 		if !pub.Equal(derivedPub) {
-			return fmt.Errorf("%w: Ed25519 key mismatch", ErrKeyCertMismatch)
+			return &errs.Detail{Err: ErrKeyCertMismatch, Detail: "Ed25519 key mismatch"}
 		}
 
 	default:
-		return fmt.Errorf("%w: unsupported key type: %T", ErrKeyCertMismatch, key)
+		return &errs.Detail{Err: ErrKeyCertMismatch, Detail: fmt.Sprintf("unsupported key type: %T", key)}
 	}
 
 	return nil

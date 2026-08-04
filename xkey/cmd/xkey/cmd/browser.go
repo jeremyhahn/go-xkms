@@ -98,7 +98,7 @@ func runBrowserLaunch(cmd *cobra.Command, args []string) error {
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrBrowserLaunchFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBrowserLaunchFailed, Cause: err}
 	}
 
 	xkeyDir := filepath.Join(home, ".xkey")
@@ -110,8 +110,8 @@ func runBrowserLaunch(cmd *cobra.Command, args []string) error {
 		BaseDir: trustStorePath,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: failed to open trust store at %s: %w",
-			ErrBrowserLaunchFailed, trustStorePath, err)
+		return &SentinelCauseError{Sentinel: ErrBrowserLaunchFailed,
+			Cause: &WrappedError{Msg: fmt.Sprintf("failed to open trust store at %s", trustStorePath), Err: err}}
 	}
 	defer func() { _ = store.Close() }()
 
@@ -121,8 +121,8 @@ func runBrowserLaunch(cmd *cobra.Command, args []string) error {
 	configPath := filepath.Join(xkeyDir, "config", "browser.json")
 	browserSvc, err := services.NewBrowserService(configPath, logger)
 	if err != nil {
-		return fmt.Errorf("%w: failed to create browser service: %w",
-			ErrBrowserLaunchFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBrowserLaunchFailed,
+			Cause: &WrappedError{Msg: "failed to create browser service", Err: err}}
 	}
 
 	browsersDir := filepath.Join(xkeyDir, "browsers")
@@ -149,7 +149,7 @@ func runBrowserLaunch(cmd *cobra.Command, args []string) error {
 		SourceProfile:     browserSrcProfile,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrBrowserLaunchFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBrowserLaunchFailed, Cause: err}
 	}
 
 	if result.ExtensionsImported > 0 {

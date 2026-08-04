@@ -20,8 +20,9 @@ import (
 	"crypto"
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -46,7 +47,7 @@ import (
 //   - Other errors if attestation fails
 func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, nonce []byte) (interface{}, error) {
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("pkcs11: invalid key attributes: %w", err)
+		return nil, &errs.Wrapped{Msg: "pkcs11: invalid key attributes", Err: err}
 	}
 
 	b.mu.Lock()
@@ -60,23 +61,23 @@ func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, non
 	// This depends on the device capabilities - some HSMs don't support it
 	supportsAttestation, err := b.supportsAttestation()
 	if err != nil {
-		return nil, fmt.Errorf("pkcs11: failed to check attestation support: %w", err)
+		return nil, &errs.Wrapped{Msg: "pkcs11: failed to check attestation support", Err: err}
 	}
 
 	if !supportsAttestation {
-		return nil, fmt.Errorf("pkcs11: HSM does not support key attestation")
+		return nil, &errs.Message{Msg: "pkcs11: HSM does not support key attestation"}
 	}
 
 	// Get the key object
 	keyObj, err := b.findKeyObject(attrs)
 	if err != nil {
-		return nil, fmt.Errorf("pkcs11: failed to find key: %w", err)
+		return nil, &errs.Wrapped{Msg: "pkcs11: failed to find key", Err: err}
 	}
 
 	// Get the key's public key
 	pubKey, err := b.getPublicKeyFromObject(keyObj)
 	if err != nil {
-		return nil, fmt.Errorf("pkcs11: failed to get public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "pkcs11: failed to get public key", Err: err}
 	}
 
 	// Get the device identity certificate (if available)
@@ -100,7 +101,7 @@ func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, non
 	// Sign the attestation data with the device key (if available)
 	signature, err := b.signAttestationData(attestData)
 	if err != nil {
-		return nil, fmt.Errorf("pkcs11: failed to sign attestation: %w", err)
+		return nil, &errs.Wrapped{Msg: "pkcs11: failed to sign attestation", Err: err}
 	}
 
 	// Build certificate chain - if no device cert, use self-signed placeholder
@@ -187,14 +188,14 @@ func (b *Backend) findKeyObject(attrs *types.KeyAttributes) (interface{}, error)
 	// In reality, you'd use C_FindObjectsInit, C_FindObjects, C_FindObjectsFinal
 	// to search for keys by CKA_LABEL, CKA_ID, etc.
 
-	return nil, fmt.Errorf("pkcs11: key object lookup not implemented in attestation")
+	return nil, &errs.Message{Msg: "pkcs11: key object lookup not implemented in attestation"}
 }
 
 // getPublicKeyFromObject extracts the public key from a PKCS#11 object
 func (b *Backend) getPublicKeyFromObject(obj interface{}) (crypto.PublicKey, error) {
 	// This is a placeholder - actual implementation would use raw PKCS#11
 	// or PKCS#11 APIs to extract the public key from an object
-	return nil, fmt.Errorf("pkcs11: public key extraction not implemented")
+	return nil, &errs.Message{Msg: "pkcs11: public key extraction not implemented"}
 }
 
 // getDeviceIdentityCertificate retrieves the HSM's device identity certificate
@@ -206,7 +207,7 @@ func (b *Backend) getDeviceIdentityCertificate() (*x509.Certificate, []*x509.Cer
 	// - YubiKey: Can be retrieved via PIV interface
 	// - SmartCard-HSM: Stored in specific slots
 
-	return nil, nil, fmt.Errorf("pkcs11: certificate retrieval not implemented")
+	return nil, nil, &errs.Message{Msg: "pkcs11: certificate retrieval not implemented"}
 }
 
 // signAttestationData creates a signature over the attestation data

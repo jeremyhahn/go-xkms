@@ -16,6 +16,8 @@ package config
 import (
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -37,21 +39,21 @@ func (cfg *AuthConfig) CreateAuthenticator() (auth.Authenticator, error) {
 	case "jwt":
 		// JWT authentication requires additional configuration (public key)
 		// and is typically set up in server initialization
-		return nil, fmt.Errorf("JWT authenticator requires server-level configuration with public key")
+		return nil, &errs.Message{Msg: "JWT authenticator requires server-level configuration with public key"}
 
 	case "adaptive":
 		// Adaptive authentication requires user store and is set up in server initialization
-		return nil, fmt.Errorf("adaptive authenticator requires server-level configuration")
+		return nil, &errs.Message{Msg: "adaptive authenticator requires server-level configuration"}
 
 	default:
-		return nil, fmt.Errorf("unknown auth type: %s", cfg.Type)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unknown auth type: %s", cfg.Type)}
 	}
 }
 
 // createMTLSAuthenticator creates an mTLS authenticator from config
 func (cfg *AuthConfig) createMTLSAuthenticator() (auth.Authenticator, error) {
 	if !cfg.MTLS {
-		return nil, fmt.Errorf("mTLS authentication requested but not enabled in config")
+		return nil, &errs.Message{Msg: "mTLS authentication requested but not enabled in config"}
 	}
 
 	// Use default mTLS configuration

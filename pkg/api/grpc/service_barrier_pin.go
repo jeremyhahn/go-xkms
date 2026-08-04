@@ -153,7 +153,7 @@ func (s *Service) BarrierInitialize(ctx context.Context, req *pb.BarrierInitiali
 		return nil, err
 	}
 
-	creds := seal.Credentials{Secret: req.GetSecret()}
+	creds := seal.Credentials{Secret: []byte(req.GetSecret())}
 	if err := barrier.Initialize(ctx, creds); err != nil {
 		return nil, mapBarrierError(err, "barrier initialize")
 	}
@@ -172,7 +172,7 @@ func (s *Service) BarrierUnseal(ctx context.Context, req *pb.BarrierUnsealReques
 		return nil, err
 	}
 
-	creds := seal.Credentials{Secret: req.GetSecret()}
+	creds := seal.Credentials{Secret: []byte(req.GetSecret())}
 	if err := barrier.Unseal(ctx, creds); err != nil {
 		return nil, mapBarrierError(err, "barrier unseal")
 	}

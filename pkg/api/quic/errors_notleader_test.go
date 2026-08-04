@@ -15,12 +15,13 @@ package quic
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
@@ -34,7 +35,7 @@ func TestSendServiceError_NotLeader(t *testing.T) {
 	rec := httptest.NewRecorder()
 	src := &qrdbtransport.NotLeaderError{ShardID: 1, LeaderID: 2, LeaderAddress: "10.0.0.2:63001"}
 
-	s.sendServiceError(rec, fmt.Errorf("generate key: %w", src), http.StatusInternalServerError, "failed to generate key")
+	s.sendServiceError(rec, &errs.Wrapped{Msg: "generate key", Err: src}, http.StatusInternalServerError, "failed to generate key")
 
 	if rec.Code != http.StatusMisdirectedRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMisdirectedRequest)
@@ -59,7 +60,7 @@ func TestSendServiceError_Fallback(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 
-	s.sendServiceError(rec, fmt.Errorf("disk full"), http.StatusInternalServerError, "failed to generate key")
+	s.sendServiceError(rec, &errs.Message{Msg: "disk full"}, http.StatusInternalServerError, "failed to generate key")
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)

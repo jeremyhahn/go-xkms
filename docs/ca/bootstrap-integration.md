@@ -14,7 +14,7 @@ import bootstrap "github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 |---------|------|----------------|----------|
 | go-xkms | Server | N/A (serves bundles) | Publishes CA bundles and TLSA records |
 | xkey | Remote client | Auto (DANE -> Direct) | Connects to remote xkmsd over TLS |
-| go-trusted-ca | Embedded / Remote | Embedded or Auto | In-process CA or remote xkms server |
+| Embedded CA (library) | Embedded / Remote | Embedded or Auto | In-process CA or remote xkms server |
 | go-trusted-platform | Remote client | Auto (full chain) | Zero-touch node enrollment |
 
 ## go-xkms (Server Side)
@@ -171,13 +171,13 @@ xkmsd:
 
 When `tls.enabled` is true and no local CA bundle exists, xkey runs the bootstrap sequence before establishing the transport connection.
 
-## go-trusted-ca
+## Embedded CA / Library Consumers
 
-go-trusted-ca runs go-xkms as a library and may also connect to external xkms servers. It has two integration modes.
+An application can embed go-xkms's CA as a library (the role formerly played by the now-decommissioned go-trusted-ca, whose CA and ACME server are absorbed into go-xkms under `pkg/ca` and `pkg/acme`) and may also connect to external xkms servers. There are two integration modes.
 
 ### Embedded Mode (In-Process)
 
-When go-trusted-ca runs go-xkms as an embedded library, the CA bundle is retrieved in-process without any network communication:
+When the consumer runs go-xkms as an embedded library, the CA bundle is retrieved in-process without any network communication:
 
 ```go
 package main
@@ -216,7 +216,7 @@ The `EmbeddedBootstrapper` calls the `CABundler.CABundle()` method directly, pro
 
 ### Remote Mode (External xKMS Server)
 
-When go-trusted-ca connects to a separate xkms server, use `AutoFetch` with all available methods:
+When the consumer connects to a separate xkms server, use `AutoFetch` with all available methods:
 
 ```go
 package main
@@ -255,7 +255,7 @@ func main() {
     }
 
     // Persist the CA bundle for subsequent TLS connections.
-    if err := os.WriteFile("/etc/trusted-ca/ca-bundle.pem", resp.BundlePEM, 0644); err != nil {
+    if err := os.WriteFile("/etc/xkms/ca-bundle.pem", resp.BundlePEM, 0644); err != nil {
         log.Fatal(err)
     }
 
@@ -434,7 +434,7 @@ bootstrap:
 | 2 | Noise_NK | 32-byte Curve25519 key | No | No | Environments without DNSSEC |
 | 3 | SPKI Pin | SHA-256 hash | No | Yes | Deployments behind HTTP proxies |
 | 4 | Direct HTTPS | None (system CA) | No | Yes | Public CA or post-bootstrap |
-| -- | Embedded | None (in-process) | No | N/A | Library consumers (go-trusted-ca) |
+| -- | Embedded | None (in-process) | No | N/A | Library consumers (embedded go-xkms CA) |
 
 ## Related Documentation
 

@@ -43,7 +43,7 @@ func Open() (*Device, error) {
 		if os.IsNotExist(err) {
 			return nil, ErrUHIDNotAvailable
 		}
-		return nil, fmt.Errorf("%w: %v", ErrUHIDNotAvailable, err)
+		return nil, &SentinelCauseError{Sentinel: ErrUHIDNotAvailable, Cause: err}
 	}
 
 	return &Device{
@@ -143,10 +143,10 @@ func (d *Device) Create(cfg *CreateConfig) error {
 
 	n, err := d.file.Write(buf)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceCreationFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceCreationFailed, Cause: err}
 	}
 	if n != len(buf) {
-		return fmt.Errorf("%w: short write (%d/%d)", ErrDeviceCreationFailed, n, len(buf))
+		return &DetailError{Err: ErrDeviceCreationFailed, Detail: fmt.Sprintf(": short write (%d/%d)", n, len(buf))}
 	}
 
 	d.created.Store(true)
@@ -173,7 +173,7 @@ func (d *Device) ReadOutput() ([]byte, error) {
 	// Set read deadline if timeout is configured
 	if timeout > 0 {
 		if err := file.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-			return nil, fmt.Errorf("%w: failed to set deadline: %v", ErrReadFailed, err)
+			return nil, &DetailError{Err: ErrReadFailed, Detail: fmt.Sprintf(": failed to set deadline: %v", err)}
 		}
 	}
 
@@ -185,11 +185,11 @@ func (d *Device) ReadOutput() ([]byte, error) {
 		if os.IsTimeout(err) {
 			return nil, ErrTimeout
 		}
-		return nil, fmt.Errorf("%w: %v", ErrReadFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrReadFailed, Cause: err}
 	}
 
 	if n < uhidEventHeaderSize {
-		return nil, fmt.Errorf("%w: short read (%d bytes)", ErrInvalidPacket, n)
+		return nil, &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": short read (%d bytes)", n)}
 	}
 
 	// Parse event type
@@ -216,7 +216,7 @@ func (d *Device) ReadOutput() ([]byte, error) {
 		// We need at least the header + size field location
 		minLen := uhidEventHeaderSize + MaxReportDescriptorSize + 2
 		if n < minLen {
-			return nil, fmt.Errorf("%w: output event too short (%d bytes, need %d)", ErrInvalidPacket, n, minLen)
+			return nil, &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": output event too short (%d bytes, need %d)", n, minLen)}
 		}
 
 		// Size is at offset 4096 (after data array)
@@ -225,11 +225,11 @@ func (d *Device) ReadOutput() ([]byte, error) {
 		// rtype := buf[sizeOffset+2] // Report type (not used for basic HID)
 
 		if dataSize > MaxReportDescriptorSize {
-			return nil, fmt.Errorf("%w: data size too large (%d)", ErrInvalidPacket, dataSize)
+			return nil, &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": data size too large (%d)", dataSize)}
 		}
 
 		if dataSize == 0 {
-			return nil, fmt.Errorf("%w: zero data size", ErrInvalidPacket)
+			return nil, &DetailError{Err: ErrInvalidPacket, Detail: ": zero data size"}
 		}
 
 		// Data is at the beginning of the payload (after event header)
@@ -268,7 +268,7 @@ func (d *Device) WriteInput(data []byte) error {
 	}
 
 	if len(data) > MaxReportDescriptorSize {
-		return fmt.Errorf("%w: data too large (%d bytes)", ErrInvalidPacket, len(data))
+		return &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": data too large (%d bytes)", len(data))}
 	}
 
 	// Build the UHID_INPUT2 request
@@ -292,10 +292,10 @@ func (d *Device) WriteInput(data []byte) error {
 
 	n, err := d.file.Write(buf)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrWriteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrWriteFailed, Cause: err}
 	}
 	if n != len(buf) {
-		return fmt.Errorf("%w: short write (%d/%d)", ErrWriteFailed, n, len(buf))
+		return &DetailError{Err: ErrWriteFailed, Detail: fmt.Sprintf(": short write (%d/%d)", n, len(buf))}
 	}
 
 	return nil
@@ -348,7 +348,7 @@ func (d *Device) SetNonBlocking(nonBlocking bool) error {
 	fd := d.file.Fd()
 	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
 	if errno != 0 {
-		return fmt.Errorf("failed to get file flags: %w", errno)
+		return &WrappedError{Msg: "failed to get file flags", Err: errno}
 	}
 
 	if nonBlocking {
@@ -359,7 +359,7 @@ func (d *Device) SetNonBlocking(nonBlocking bool) error {
 
 	_, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETFL, flags)
 	if errno != 0 {
-		return fmt.Errorf("failed to set file flags: %w", errno)
+		return &WrappedError{Msg: "failed to set file flags", Err: errno}
 	}
 
 	return nil
@@ -485,29 +485,29 @@ func SerializeInput2Request(data []byte) []byte {
 // This function strips the Report ID byte and returns the raw 64-byte HID packet.
 func ParseOutputEvent(buf []byte) ([]byte, error) {
 	if len(buf) < uhidEventHeaderSize {
-		return nil, fmt.Errorf("%w: buffer too short", ErrInvalidPacket)
+		return nil, &DetailError{Err: ErrInvalidPacket, Detail: ": buffer too short"}
 	}
 
 	eventType := binary.LittleEndian.Uint32(buf[0:4])
 	if eventType != UHID_OUTPUT {
-		return nil, fmt.Errorf("%w: not an output event (type=%d)", ErrInvalidPacket, eventType)
+		return nil, &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": not an output event (type=%d)", eventType)}
 	}
 
 	// Need header + data[4096] + size[2]
 	minLen := uhidEventHeaderSize + MaxReportDescriptorSize + 2
 	if len(buf) < minLen {
-		return nil, fmt.Errorf("%w: output event too short (%d, need %d)", ErrInvalidPacket, len(buf), minLen)
+		return nil, &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": output event too short (%d, need %d)", len(buf), minLen)}
 	}
 
 	// Size is at offset 4096 after the data array
 	sizeOffset := uhidEventHeaderSize + MaxReportDescriptorSize
 	dataSize := binary.LittleEndian.Uint16(buf[sizeOffset : sizeOffset+2])
 	if dataSize > MaxReportDescriptorSize {
-		return nil, fmt.Errorf("%w: data size too large (%d)", ErrInvalidPacket, dataSize)
+		return nil, &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": data size too large (%d)", dataSize)}
 	}
 
 	if dataSize == 0 {
-		return nil, fmt.Errorf("%w: zero data size", ErrInvalidPacket)
+		return nil, &DetailError{Err: ErrInvalidPacket, Detail: ": zero data size"}
 	}
 
 	// Data is at the beginning of the payload (after event header)

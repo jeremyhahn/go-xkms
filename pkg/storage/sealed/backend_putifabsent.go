@@ -16,7 +16,8 @@ package sealed
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // PutIfAbsent seals the value exactly as Put does, then delegates the
@@ -26,12 +27,12 @@ import (
 func (b *Backend) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
 	sealed, err := b.sealer.Seal(ctx, value, b.sealOpts)
 	if err != nil {
-		return false, fmt.Errorf("%w: %w", ErrSealFailed, err)
+		return false, &errs.Joined{Lead: ErrSealFailed, Cause: err}
 	}
 
 	data, err := json.Marshal(sealed)
 	if err != nil {
-		return false, fmt.Errorf("%w: %w", ErrMarshalFailed, err)
+		return false, &errs.Joined{Lead: ErrMarshalFailed, Cause: err}
 	}
 
 	return b.inner.PutIfAbsent(ctx, key, data)

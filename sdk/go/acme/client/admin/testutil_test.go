@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,9 +16,28 @@ package admin
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport"
+)
+
+// Shared sentinel errors for transport-failure test scenarios.
+var (
+	errTestUnavailable      = errors.New("unavailable")
+	errTestNotFound         = errors.New("not found")
+	errTestForbidden        = errors.New("forbidden")
+	errTestConnRefused      = errors.New("connection refused")
+	errTestConflict         = errors.New("conflict")
+	errTestServerError      = errors.New("server error")
+	errTestInternalError    = errors.New("internal error")
+	errTestRevocationFailed = errors.New("revocation failed")
+
+	// errMockNoRequestFunc is returned by mockTransport when no request
+	// function is configured.
+	errMockNoRequestFunc = errors.New("mock: no request function configured")
+
+	// errMockStreamingUnsupported is returned by mockTransport for streaming requests.
+	errMockStreamingUnsupported = errors.New("mock: streaming not supported")
 )
 
 // mockTransport implements transport.Transport for testing.
@@ -30,11 +49,11 @@ func (m *mockTransport) Request(ctx context.Context, service, method string, req
 	if m.requestFunc != nil {
 		return m.requestFunc(ctx, service, method, req)
 	}
-	return nil, fmt.Errorf("mock: no request function configured")
+	return nil, errMockNoRequestFunc
 }
 
 func (m *mockTransport) RequestStream(_ context.Context, _, _ string, _ interface{}) (transport.Stream, error) {
-	return nil, fmt.Errorf("mock: streaming not supported")
+	return nil, errMockStreamingUnsupported
 }
 
 func (m *mockTransport) Conn() interface{} { return nil }

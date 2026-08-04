@@ -21,9 +21,10 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"fmt"
 	"math/big"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // TestCA represents a test Certificate Authority
@@ -69,13 +70,13 @@ func GenerateTestCA() (*TestCA, error) {
 	// Generate private key for CA
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate CA key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate CA key", Err: err}
 	}
 
 	// Create CA certificate template
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate serial number: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate serial number", Err: err}
 	}
 
 	notBefore := time.Now()
@@ -97,13 +98,13 @@ func GenerateTestCA() (*TestCA, error) {
 	// Self-sign the CA certificate
 	caCertDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create CA certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create CA certificate", Err: err}
 	}
 
 	// Parse the certificate
 	caCert, err := x509.ParseCertificate(caCertDER)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse CA certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse CA certificate", Err: err}
 	}
 
 	// Encode to PEM
@@ -114,7 +115,7 @@ func GenerateTestCA() (*TestCA, error) {
 
 	caKeyBytes, err := x509.MarshalECPrivateKey(caKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal CA key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal CA key", Err: err}
 	}
 
 	caKeyPEM := pem.EncodeToMemory(&pem.Block{
@@ -151,13 +152,13 @@ func GenerateTestServerCert(ca *TestCA, dnsNames ...string) (*TestCertificate, e
 	// Generate private key
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 
 	// Create certificate template
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate serial number: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate serial number", Err: err}
 	}
 
 	notBefore := time.Now()
@@ -184,13 +185,13 @@ func GenerateTestServerCert(ca *TestCA, dnsNames ...string) (*TestCertificate, e
 	// Sign with CA
 	certDER, err := x509.CreateCertificate(rand.Reader, template, ca.Cert, &key.PublicKey, ca.Key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create certificate", Err: err}
 	}
 
 	// Parse the certificate
 	cert, err := x509.ParseCertificate(certDER)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse certificate", Err: err}
 	}
 
 	// Encode to PEM
@@ -201,7 +202,7 @@ func GenerateTestServerCert(ca *TestCA, dnsNames ...string) (*TestCertificate, e
 
 	keyBytes, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal key", Err: err}
 	}
 
 	keyPEM := pem.EncodeToMemory(&pem.Block{
@@ -212,7 +213,7 @@ func GenerateTestServerCert(ca *TestCA, dnsNames ...string) (*TestCertificate, e
 	// Create tls.Certificate
 	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create TLS certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create TLS certificate", Err: err}
 	}
 
 	return &TestCertificate{
@@ -245,13 +246,13 @@ func GenerateTestClientCert(ca *TestCA, commonName string) (*TestCertificate, er
 	// Generate private key
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 
 	// Create certificate template
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate serial number: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate serial number", Err: err}
 	}
 
 	notBefore := time.Now()
@@ -277,13 +278,13 @@ func GenerateTestClientCert(ca *TestCA, commonName string) (*TestCertificate, er
 	// Sign with CA
 	certDER, err := x509.CreateCertificate(rand.Reader, template, ca.Cert, &key.PublicKey, ca.Key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create certificate", Err: err}
 	}
 
 	// Parse the certificate
 	cert, err := x509.ParseCertificate(certDER)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse certificate", Err: err}
 	}
 
 	// Encode to PEM
@@ -294,7 +295,7 @@ func GenerateTestClientCert(ca *TestCA, commonName string) (*TestCertificate, er
 
 	keyBytes, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal key", Err: err}
 	}
 
 	keyPEM := pem.EncodeToMemory(&pem.Block{
@@ -305,7 +306,7 @@ func GenerateTestClientCert(ca *TestCA, commonName string) (*TestCertificate, er
 	// Create tls.Certificate
 	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create TLS certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create TLS certificate", Err: err}
 	}
 
 	return &TestCertificate{

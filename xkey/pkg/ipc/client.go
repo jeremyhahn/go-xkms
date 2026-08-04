@@ -16,7 +16,6 @@ package ipc
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"sync/atomic"
@@ -152,23 +151,23 @@ func (c *Client) send(msg *Message) (*Response, error) {
 		if isDaemonNotRunning(err) {
 			return nil, ErrDaemonNotRunning
 		}
-		return nil, fmt.Errorf("%w: %v", ErrConnectionFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrConnectionFailed, Cause: err}
 	}
 	defer func() { _ = conn.Close() }()
 
 	if err := conn.SetDeadline(time.Now().Add(c.timeout)); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrConnectionFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrConnectionFailed, Cause: err}
 	}
 
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(msg); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrProtocolError, err)
+		return nil, &SentinelCauseError{Sentinel: ErrProtocolError, Cause: err}
 	}
 
 	var resp Response
 	decoder := json.NewDecoder(conn)
 	if err := decoder.Decode(&resp); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrProtocolError, err)
+		return nil, &SentinelCauseError{Sentinel: ErrProtocolError, Cause: err}
 	}
 
 	return &resp, nil

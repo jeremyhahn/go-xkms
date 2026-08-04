@@ -176,3 +176,31 @@ func (e ErrIncompatibleState) Error() string {
 func (e ErrIncompatibleState) Unwrap() []error {
 	return []error{ErrDeserializationFailed, e.Cause}
 }
+
+// MessageError is a typed error that carries a preformatted message. It
+// replaces inline formatted-error constructions that do not wrap a cause.
+type MessageError struct {
+	Msg string
+}
+
+// Error implements the error interface.
+func (e *MessageError) Error() string {
+	return e.Msg
+}
+
+// SentinelCauseError attaches an underlying cause to a package sentinel
+// error so errors.Is matches both the sentinel and the cause.
+type SentinelCauseError struct {
+	Sentinel error
+	Cause    error
+}
+
+// Error implements the error interface.
+func (e *SentinelCauseError) Error() string {
+	return e.Sentinel.Error() + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the sentinel and the cause for errors.Is / errors.As.
+func (e *SentinelCauseError) Unwrap() []error {
+	return []error{e.Sentinel, e.Cause}
+}

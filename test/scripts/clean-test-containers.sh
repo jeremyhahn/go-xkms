@@ -67,7 +67,7 @@ clean_containers "softhsm"
 clean_containers "vault"
 
 # Stop and remove emulator containers
-clean_containers "localstack"
+clean_containers "floci"
 clean_containers "azure"
 clean_containers "gcp"
 

@@ -326,12 +326,12 @@ func openLocalShareStore() (xkms.ShareStore, error) {
 	storePath := filepath.Join(dataDir, defaultShareStoreSubdir)
 	backend, err := xkms.NewFileStorageBackend(storePath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrShareStoreOpen, err)
+		return nil, &SentinelCauseError{Sentinel: ErrShareStoreOpen, Cause: err}
 	}
 
 	store, err := xkms.NewBackendShareStore(backend, defaultShareStorePrefix)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrShareStoreOpen, err)
+		return nil, &SentinelCauseError{Sentinel: ErrShareStoreOpen, Cause: err}
 	}
 
 	return store, nil
@@ -354,7 +354,7 @@ func runShareList(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	entries, err := store.List(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrShareStoreList, err)
+		return &SentinelCauseError{Sentinel: ErrShareStoreList, Cause: err}
 	}
 
 	out := cmd.OutOrStdout()
@@ -398,19 +398,19 @@ func runShareReceive(cmd *cobra.Command, _ []string) error {
 	// Connect to the server.
 	client, err := shareClientFactory(serverURL)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrShareReceiveConnect, err)
+		return &SentinelCauseError{Sentinel: ErrShareReceiveConnect, Cause: err}
 	}
 
 	ctx := context.Background()
 	if err := client.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrShareReceiveConnect, err)
+		return &SentinelCauseError{Sentinel: ErrShareReceiveConnect, Cause: err}
 	}
 	defer func() { _ = client.Close() }()
 
 	// List shares assigned to this user.
 	resp, err := client.ListShares(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrShareReceiveList, err)
+		return &SentinelCauseError{Sentinel: ErrShareReceiveList, Cause: err}
 	}
 
 	if len(resp.Shares) == 0 {
@@ -473,18 +473,18 @@ func runShareImport(cmd *cobra.Command, _ []string) error {
 	// Read the JSON file.
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrShareImportRead, err)
+		return &SentinelCauseError{Sentinel: ErrShareImportRead, Cause: err}
 	}
 
 	// Parse the share entry.
 	var entry xkms.ShareEntry
 	if err := json.Unmarshal(data, &entry); err != nil {
-		return fmt.Errorf("%w: %v", ErrShareImportParse, err)
+		return &SentinelCauseError{Sentinel: ErrShareImportParse, Cause: err}
 	}
 
 	// Validate the parsed entry.
 	if err := entry.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", ErrShareImportValidate, err)
+		return &SentinelCauseError{Sentinel: ErrShareImportValidate, Cause: err}
 	}
 
 	// Open local store.
@@ -497,7 +497,7 @@ func runShareImport(cmd *cobra.Command, _ []string) error {
 	// Save the share.
 	ctx := context.Background()
 	if err := store.Save(ctx, &entry); err != nil {
-		return fmt.Errorf("%w: %v", ErrShareImportSave, err)
+		return &SentinelCauseError{Sentinel: ErrShareImportSave, Cause: err}
 	}
 
 	out := cmd.OutOrStdout()
@@ -537,18 +537,18 @@ func runShareExport(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	entry, err := store.Load(ctx, serverURL, groupID, shareIndex)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrShareExportLoad, err)
+		return &SentinelCauseError{Sentinel: ErrShareExportLoad, Cause: err}
 	}
 
 	// Marshal to JSON with indentation for readability.
 	data, err := json.MarshalIndent(entry, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrShareExportWrite, err)
+		return &SentinelCauseError{Sentinel: ErrShareExportWrite, Cause: err}
 	}
 
 	// Write to file with secure permissions.
 	if err := os.WriteFile(filePath, data, 0600); err != nil {
-		return fmt.Errorf("%w: %v", ErrShareExportWrite, err)
+		return &SentinelCauseError{Sentinel: ErrShareExportWrite, Cause: err}
 	}
 
 	out := cmd.OutOrStdout()
@@ -582,17 +582,17 @@ func runShareUnseal(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	entry, err := store.Load(ctx, serverURL, groupID, shareIndex)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrShareUnsealLoad, err)
+		return &SentinelCauseError{Sentinel: ErrShareUnsealLoad, Cause: err}
 	}
 
 	// Connect to the server.
 	client, err := shareClientFactory(serverURL)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrShareUnsealConnect, err)
+		return &SentinelCauseError{Sentinel: ErrShareUnsealConnect, Cause: err}
 	}
 
 	if err := client.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrShareUnsealConnect, err)
+		return &SentinelCauseError{Sentinel: ErrShareUnsealConnect, Cause: err}
 	}
 	defer func() { _ = client.Close() }()
 
@@ -604,7 +604,7 @@ func runShareUnseal(cmd *cobra.Command, _ []string) error {
 
 	resp, err := client.BarrierUnsealWithShare(ctx, req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrShareUnsealSubmit, err)
+		return &SentinelCauseError{Sentinel: ErrShareUnsealSubmit, Cause: err}
 	}
 
 	out := cmd.OutOrStdout()
@@ -648,7 +648,7 @@ func runShareDelete(cmd *cobra.Command, _ []string) error {
 	// Delete the share.
 	ctx := context.Background()
 	if err := store.Delete(ctx, serverURL, groupID, shareIndex); err != nil {
-		return fmt.Errorf("%w: %v", ErrShareDeleteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrShareDeleteFailed, Cause: err}
 	}
 
 	out := cmd.OutOrStdout()

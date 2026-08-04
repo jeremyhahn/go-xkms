@@ -14,8 +14,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	trustresolver "github.com/jeremyhahn/go-xkms/pkg/trust/resolver"
 )
@@ -29,7 +27,7 @@ func trustConfigFromFile(path string) (*trustresolver.Config, error) {
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
-		return nil, fmt.Errorf("xkmsctl: load config %s: %w", path, err)
+		return nil, &ConfigLoadError{Path: path, Err: err}
 	}
 	return cfg.Trust, nil
 }

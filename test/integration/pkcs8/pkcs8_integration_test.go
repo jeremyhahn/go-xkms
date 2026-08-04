@@ -37,6 +37,10 @@ func createTestBackend(t *testing.T) (*pkcs8.PKCS8Backend, storage.Backend) {
 	keyStorage := storage.New()
 	config := &pkcs8.Config{
 		KeyStorage: keyStorage,
+		// This suite exercises the pkcs8 backend's crypto operations directly,
+		// without a barrier/sealed store. Permit unencrypted PKCS#8 persistence
+		// so key generation is not refused by the seal-default guard.
+		AllowPlaintextKeys: true,
 	}
 
 	be, err := pkcs8.NewBackend(config)

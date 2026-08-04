@@ -42,6 +42,15 @@ var (
 
 	// barrierStrategy is the --strategy flag for barrier init.
 	barrierStrategy string
+
+	// barrierTPMDevice is the --tpm-device flag for barrier commands. It
+	// mirrors the `tpm` command group's --device flag so the tpm2 barrier
+	// strategy can target a specific device or the in-process simulator.
+	barrierTPMDevice string
+
+	// barrierTPMSimulator is the --tpm-simulator flag for barrier commands.
+	// It mirrors the `tpm` command group's --simulator flag.
+	barrierTPMSimulator bool
 )
 
 // barrierCmd is the parent command for barrier seal/unseal operations.
@@ -72,6 +81,13 @@ Examples:
   # Initialize with a specific strategy
   xkey barrier init --strategy software
 
+  # Initialize with the tpm2 strategy against a specific device
+  xkey barrier init --strategy tpm2 --tpm-device /dev/tpm0
+
+  # Initialize with the tpm2 strategy against the in-process simulator
+  # (development/testing only; requires a simulator build)
+  xkey barrier init --strategy tpm2 --tpm-simulator
+
   # Unseal the barrier
   xkey barrier unseal
 
@@ -79,7 +95,11 @@ Examples:
   xkey barrier seal
 
   # Show barrier status
-  xkey barrier status`,
+  xkey barrier status
+
+The tpm2 strategy's device selection follows this priority: the
+--tpm-device/--tpm-simulator flags, then the TPM_DEVICE_PATH environment
+variable, then /dev/tpmrm0.`,
 }
 
 func init() {
@@ -88,6 +108,10 @@ func init() {
 	// Add persistent flags available to all barrier subcommands.
 	barrierCmd.PersistentFlags().StringVar(&barrierDataDir, "data-dir", "",
 		"data directory for barrier storage (default: ~/.xkey/data)")
+	barrierCmd.PersistentFlags().StringVar(&barrierTPMDevice, "tpm-device", "",
+		"TPM device path for the tpm2 strategy (default: $TPM_DEVICE_PATH or /dev/tpmrm0)")
+	barrierCmd.PersistentFlags().BoolVar(&barrierTPMSimulator, "tpm-simulator", false,
+		"Use the in-process TPM simulator instead of a hardware device (requires a simulator build)")
 }
 
 // resolveBarrierDataDir resolves the data directory for barrier storage.
@@ -171,7 +195,7 @@ func resolveBarrierStrategyID(dataDir string) (xkms.StrategyID, error) {
 	}
 
 	// Auto-detect: prefer hardware-backed sealing when a TPM is present.
-	if sealer, closer := probeTPMSealer(slog.Default(), dataDir); sealer != nil {
+	if sealer, closer := probeTPMSealer(slog.Default(), dataDir, barrierTPMDevice, barrierTPMSimulator); sealer != nil {
 		_ = closer.Close()
 		return xkms.StrategyTPM2, nil
 	}
@@ -186,7 +210,7 @@ func assembleBarrierStrategy(id xkms.StrategyID, dataDir string) (xkms.SealingSt
 	case xkms.StrategyPassphrase:
 		return xkms.NewSoftwareSealStrategy(), nil, nil
 	case xkms.StrategyTPM2:
-		sealer, closer := probeTPMSealer(slog.Default(), dataDir)
+		sealer, closer := probeTPMSealer(slog.Default(), dataDir, barrierTPMDevice, barrierTPMSimulator)
 		if sealer == nil {
 			return nil, nil, &BarrierError{
 				Operation: "assemble_strategy",

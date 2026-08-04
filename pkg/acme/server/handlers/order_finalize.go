@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -890,6 +890,23 @@ func (s *RestService) finalizeTCGCSR(
 		tcgCSRRequest.ExtraExtensions = append(tcgCSRRequest.ExtraExtensions, extraExts...)
 	}
 
+	// Route issuance through the dedicated cluster intermediate when configured,
+	// so Raft node transport certificates chain to a purpose-built intermediate
+	// (root signs intermediates only) rather than the CA's default issuing
+	// identity. resolveTCGSigner honors request.Signer+IssuerCert as the external
+	// issuer. Fail closed: a configured but unresolvable cluster CA must not
+	// silently fall back to the default issuer.
+	clusterSigner, clusterIssuerCert, issuerErr := s.clusterIssuerOverride(ctx)
+	if issuerErr != nil {
+		s.logger.Error("Failed to resolve cluster CA issuer for enroll-01 issuance",
+			"cluster_ca_cn", s.clusterCACN, "error", issuerErr.Error())
+		return 0, nil, common.ServerInternal("Failed to resolve cluster CA issuer")
+	}
+	if clusterSigner != nil {
+		tcgCSRRequest.Signer = clusterSigner
+		tcgCSRRequest.IssuerCert = clusterIssuerCert
+	}
+
 	// Sign the TCG-CSR-IDEVID
 	iakDER, idevidDER, err := s.ca.SignTCGCSRIDevID(ctx, tcgCSR, tcgCSRRequest)
 	if err != nil {
@@ -1027,4 +1044,26 @@ func parseCertificateRequestPermanentIdentifier(csr *x509.CertificateRequest) (s
 	}
 
 	return "", caerrors.MalformedError("no permanent identifier found in CSR")
+}
+
+// ErrClusterIssuerUnsupported is returned when cluster CA issuance is configured
+// (ClusterCACN set) but the CA does not implement ca.IdentityIssuer, so a
+// dedicated cluster intermediate cannot be resolved.
+var ErrClusterIssuerUnsupported = errors.New("handlers: cluster CA issuance configured but CA does not support identity issuers")
+
+// clusterIssuerOverride resolves the dedicated cluster intermediate that
+// enroll-01 (TCG-CSR-IDEVID) issuance should chain to. It returns the external
+// signer and issuer certificate to place on the CertificateRequest, or
+// (nil, nil, nil) when no cluster CA CN is configured (default issuance). A
+// configured CN that cannot be resolved returns an error so issuance fails
+// closed rather than silently using the default issuer.
+func (s *RestService) clusterIssuerOverride(ctx context.Context) (crypto.Signer, *x509.Certificate, error) {
+	if s.clusterCACN == "" {
+		return nil, nil, nil
+	}
+	issuer, ok := s.ca.(ca.IdentityIssuer)
+	if !ok {
+		return nil, nil, ErrClusterIssuerUnsupported
+	}
+	return issuer.IssuerForIdentity(ctx, s.clusterCACN)
 }

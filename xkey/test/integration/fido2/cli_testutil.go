@@ -384,7 +384,7 @@ func (h *FIDO2TestHelper) WaitForDevice(timeout time.Duration) (string, error) {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	return "", fmt.Errorf("no FIDO2 device appeared within %v", timeout)
+	return "", &MessageError{Msg: fmt.Sprintf("no FIDO2 device appeared within %v", timeout)}
 }
 
 // WaitForDeviceWithName polls `fido2-token -L` until a device whose display
@@ -408,10 +408,7 @@ func (h *FIDO2TestHelper) WaitForDeviceWithName(expectedName string, timeout tim
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	return Fido2TokenDevice{}, fmt.Errorf(
-		"no FIDO2 device with name containing %q appeared within %v",
-		expectedName, timeout,
-	)
+	return Fido2TokenDevice{}, &MessageError{Msg: fmt.Sprintf("no FIDO2 device with name containing %q appeared within %v", expectedName, timeout)}
 }
 
 // RunFido2Token executes `fido2-token <args>` and returns the result.
@@ -422,7 +419,7 @@ func (h *FIDO2TestHelper) RunFido2Token(args ...string) *CLICommandResult {
 	if err != nil {
 		return &CLICommandResult{
 			ExitCode: -1,
-			Err:      fmt.Errorf("fido2-token not found in PATH: %w", err),
+			Err:      &WrappedError{Msg: "fido2-token not found in PATH", Err: err},
 		}
 	}
 

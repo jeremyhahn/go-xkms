@@ -176,7 +176,9 @@ func (f *failCertStore) GetCertificate(_ string) (*x509.Certificate, error) {
 // Override CertStore so it returns our failing stub.
 // (ca.TrustedCA.CertStore returns certstore.CertStore; since mockTrustedCA
 // embeds the interface, the concrete method we define wins.)
-func (m *failCertStoreCA) CertStore() interface{ GetCertificate(string) (*x509.Certificate, error) } {
+func (m *failCertStoreCA) CertStore() interface {
+	GetCertificate(string) (*x509.Certificate, error)
+} {
 	return &failCertStore{err: m.getErr}
 }
 
@@ -468,7 +470,6 @@ func TestServer_Start_WithUnixSocket(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-
 // ============================================================================
 // Tests — startGRPC with an occupied port (listener bind error branch)
 // ============================================================================
@@ -623,16 +624,26 @@ func TestInitializeAuthentication_AdaptiveWebAuthnNoJWT_NoFile(t *testing.T) {
 // implement types.Sealer, triggering the error branch in buildHardwareSealStrategy.
 type nonSealerProvider struct{}
 
-func (n *nonSealerProvider) Type() types.BackendType                                                            { return "test" }
-func (n *nonSealerProvider) Capabilities() types.Capabilities                                                   { return types.Capabilities{} }
-func (n *nonSealerProvider) GenerateKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error)   { return nil, nil }
-func (n *nonSealerProvider) GetKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error)        { return nil, nil }
-func (n *nonSealerProvider) DeleteKey(_ context.Context, _ *types.KeyAttributes) error                          { return nil }
-func (n *nonSealerProvider) ListKeys(_ context.Context) ([]*types.KeyAttributes, error)                         { return nil, nil }
-func (n *nonSealerProvider) Signer(_ context.Context, _ *types.KeyAttributes) (crypto.Signer, error)            { return nil, nil }
-func (n *nonSealerProvider) Decrypter(_ context.Context, _ *types.KeyAttributes) (crypto.Decrypter, error)      { return nil, nil }
-func (n *nonSealerProvider) RotateKey(_ context.Context, _ *types.KeyAttributes) error                          { return nil }
-func (n *nonSealerProvider) Close() error                                                                        { return nil }
+func (n *nonSealerProvider) Type() types.BackendType          { return "test" }
+func (n *nonSealerProvider) Capabilities() types.Capabilities { return types.Capabilities{} }
+func (n *nonSealerProvider) GenerateKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return nil, nil
+}
+func (n *nonSealerProvider) GetKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return nil, nil
+}
+func (n *nonSealerProvider) DeleteKey(_ context.Context, _ *types.KeyAttributes) error { return nil }
+func (n *nonSealerProvider) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
+	return nil, nil
+}
+func (n *nonSealerProvider) Signer(_ context.Context, _ *types.KeyAttributes) (crypto.Signer, error) {
+	return nil, nil
+}
+func (n *nonSealerProvider) Decrypter(_ context.Context, _ *types.KeyAttributes) (crypto.Decrypter, error) {
+	return nil, nil
+}
+func (n *nonSealerProvider) RotateKey(_ context.Context, _ *types.KeyAttributes) error { return nil }
+func (n *nonSealerProvider) Close() error                                              { return nil }
 
 // Compile-time check that nonSealerProvider implements types.KeyProvider.
 var _ types.KeyProvider = (*nonSealerProvider)(nil)
@@ -1112,7 +1123,6 @@ func TestInitializeCA_ValidateFails(t *testing.T) {
 	// Error wraps ErrCAInit (from initializeCA's validate path).
 }
 
-
 // ============================================================================
 // Tests — getTLSConfig "request" client auth
 // ============================================================================
@@ -1134,7 +1144,6 @@ func TestBuildTLSConfig_RequestClientAuth(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, tls.RequestClientCert, tlsCfg.ClientAuth)
 }
-
 
 // ============================================================================
 // Tests — ensureTLSServerCert
@@ -1685,9 +1694,9 @@ func TestServer_Reload_ChangedLogging(t *testing.T) {
 
 func TestSealStoreType_KnownStrategies(t *testing.T) {
 	tests := []struct {
-		id       seal.StrategyID
+		id        seal.StrategyID
 		wantStore types.StoreType
-		wantHW   bool
+		wantHW    bool
 	}{
 		{seal.StrategyTPM2, types.StoreTPM2, true},
 		{seal.StrategyPKCS11, types.StorePKCS11, true},
@@ -2174,6 +2183,29 @@ func TestInitializeBarrierRegistry_WithBarrier(t *testing.T) {
 	assert.NotNil(t, server.barrierRegistry)
 }
 
+// TestInitializeBarrierRegistry_WiresTenantServiceAndVolumePool verifies that
+// the full server boot composes go-qrdb's TenantService over the barrier
+// registry and provisions the volume pool (rooted under Storage.Path), so the
+// entitlement-gated isolation + hardware-strategy seam is live without any
+// additional wiring.
+func TestInitializeBarrierRegistry_WiresTenantServiceAndVolumePool(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	cfg.Barrier.Enabled = true
+	cfg.Barrier.PreferenceOrder = []string{"software"}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer func() { _ = server.Shutdown() }()
+
+	assert.NotNil(t, server.tenantService, "TenantService must be composed over the barrier registry")
+	assert.NotNil(t, server.volumePool, "volume pool must be provisioned from Storage.Path for dedicated-isolation tenants")
+	assert.Same(t, server.tenantService, server.xkmsService.TenantService(),
+		"the composed TenantService must be injected into the XKMS service")
+}
+
 // ============================================================================
 // Tests — initializePINManager unknown strategy
 // ============================================================================
@@ -2594,7 +2626,7 @@ func TestEnsureSealKey_NotSymmetric(t *testing.T) {
 // loginSealerProvider implements both SymmetricKeyProvider and sealLoginProvider.
 type loginSealerProvider struct {
 	symProviderWithKey
-	loginErr error
+	loginErr  error
 	loginDone bool
 }
 
@@ -2983,7 +3015,7 @@ func TestStartNoiseBootstrap_WithBundler(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = false // call startNoiseBootstrap manually
-	cfg.Server.NoisePort = 0   // bind on any available port
+	cfg.Server.NoisePort = 0    // bind on any available port
 	cfg.Server.Host = "127.0.0.1"
 
 	server, err := New(cfg)
@@ -3169,9 +3201,9 @@ func TestInitializeCA_NewFromConfigFails(t *testing.T) {
 			SelectedCA: 0,
 			Identity: []ca.Identity{
 				{
-					IsRoot: true,
-					Valid:  1,
-					Subject: ca.Subject{CommonName: "Test Root CA"},
+					IsRoot:       true,
+					Valid:        1,
+					Subject:      ca.Subject{CommonName: "Test Root CA"},
 					KeystoreType: types.StoreSoftware,
 					Keys: []*types.KeyConfig{
 						{
@@ -3860,7 +3892,7 @@ type errAuditLogger struct {
 }
 
 func (e *errAuditLogger) Log(_ context.Context, _ *audit.Event) error { return nil }
-func (e *errAuditLogger) Close() error                                 { return e.closeErr }
+func (e *errAuditLogger) Close() error                                { return e.closeErr }
 
 var _ audit.Logger = (*errAuditLogger)(nil)
 

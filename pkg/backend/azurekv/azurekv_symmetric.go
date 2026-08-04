@@ -24,6 +24,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -38,15 +40,15 @@ var _ types.SymmetricKeyProvider = (*Backend)(nil)
 // so we generate the key locally and store it securely as a secret.
 func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if attrs == nil {
-		return nil, fmt.Errorf("attributes cannot be nil")
+		return nil, &errs.Message{Msg: "attributes cannot be nil"}
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid attributes: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid attributes", Err: err}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("attributes specify asymmetric algorithm: %s", attrs.KeyAlgorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("attributes specify asymmetric algorithm: %s", attrs.KeyAlgorithm)}
 	}
 
 	// Determine key size in bytes
@@ -57,7 +59,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 
 	// Validate key size
 	if keySize != 128 && keySize != 192 && keySize != 256 {
-		return nil, fmt.Errorf("invalid AES key size: %d (supported: 128, 192, or 256 bits)", keySize)
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid AES key size: %d (supported: 128, 192, or 256 bits)", keySize)}
 	}
 
 	keySizeBytes := keySize / 8
@@ -65,12 +67,12 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	// Generate random AES key
 	keyBytes := make([]byte, keySizeBytes)
 	if _, err := rand.Read(keyBytes); err != nil {
-		return nil, fmt.Errorf("failed to generate random key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate random key", Err: err}
 	}
 
 	// Store the key as a secret in Azure Key Vault
 	if err := b.storeSymmetricKeySecret(ctx, attrs.CN, keyBytes, attrs); err != nil {
-		return nil, fmt.Errorf("failed to store symmetric key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to store symmetric key", Err: err}
 	}
 
 	// Store metadata in memory
@@ -83,7 +85,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	b.mu.Lock()
@@ -111,7 +113,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 // GetSymmetricKey retrieves an existing symmetric key from Azure Key Vault.
 func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if attrs == nil {
-		return nil, fmt.Errorf("attributes cannot be nil")
+		return nil, &errs.Message{Msg: "attributes cannot be nil"}
 	}
 
 	// Check if metadata exists
@@ -120,13 +122,13 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	b.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	// Extract metadata
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to unmarshal metadata", Err: err}
 	}
 
 	keySizeFloat, _ := metadata["key_size"].(float64)
@@ -135,7 +137,7 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	// Retrieve the key from Azure Key Vault secrets
 	keyBytes, err := b.retrieveSymmetricKeySecret(ctx, attrs.CN)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve symmetric key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to retrieve symmetric key", Err: err}
 	}
 
 	return &azureSymmetricKey{
@@ -150,12 +152,12 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 // SymmetricEncrypter returns an encrypter/decrypter for symmetric operations.
 func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	if attrs == nil {
-		return nil, fmt.Errorf("attributes cannot be nil")
+		return nil, &errs.Message{Msg: "attributes cannot be nil"}
 	}
 
 	key, err := b.GetSymmetricKey(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get symmetric key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get symmetric key", Err: err}
 	}
 
 	return key.(*azureSymmetricKey), nil
@@ -178,12 +180,12 @@ func (b *Backend) storeSymmetricKeySecret(ctx context.Context, name string, keyD
 			credOptions,
 		)
 		if err != nil {
-			return fmt.Errorf("failed to create client secret credential: %w", err)
+			return &errs.Wrapped{Msg: "failed to create client secret credential", Err: err}
 		}
 
 		secretsClient, err = azsecrets.NewClient(b.config.VaultURL, cred, nil)
 		if err != nil {
-			return fmt.Errorf("failed to create secrets client: %w", err)
+			return &errs.Wrapped{Msg: "failed to create secrets client", Err: err}
 		}
 	} else {
 		// Use DefaultAzureCredential for managed identity or other auth methods
@@ -192,12 +194,12 @@ func (b *Backend) storeSymmetricKeySecret(ctx context.Context, name string, keyD
 		}
 		cred, err := azidentity.NewDefaultAzureCredential(credOptions)
 		if err != nil {
-			return fmt.Errorf("failed to create Azure credential: %w", err)
+			return &errs.Wrapped{Msg: "failed to create Azure credential", Err: err}
 		}
 
 		secretsClient, err = azsecrets.NewClient(b.config.VaultURL, cred, nil)
 		if err != nil {
-			return fmt.Errorf("failed to create secrets client: %w", err)
+			return &errs.Wrapped{Msg: "failed to create secrets client", Err: err}
 		}
 	}
 
@@ -219,7 +221,7 @@ func (b *Backend) storeSymmetricKeySecret(ctx context.Context, name string, keyD
 
 	_, err = secretsClient.SetSecret(ctx, name, params, nil)
 	if err != nil {
-		return fmt.Errorf("failed to set secret: %w", err)
+		return &errs.Wrapped{Msg: "failed to set secret", Err: err}
 	}
 
 	return nil
@@ -242,12 +244,12 @@ func (b *Backend) retrieveSymmetricKeySecret(ctx context.Context, name string) (
 			credOptions,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create client secret credential: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create client secret credential", Err: err}
 		}
 
 		secretsClient, err = azsecrets.NewClient(b.config.VaultURL, cred, nil)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create secrets client: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create secrets client", Err: err}
 		}
 	} else {
 		// Use DefaultAzureCredential for managed identity or other auth methods
@@ -256,29 +258,29 @@ func (b *Backend) retrieveSymmetricKeySecret(ctx context.Context, name string) (
 		}
 		cred, err := azidentity.NewDefaultAzureCredential(credOptions)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create Azure credential: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create Azure credential", Err: err}
 		}
 
 		secretsClient, err = azsecrets.NewClient(b.config.VaultURL, cred, nil)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create secrets client: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create secrets client", Err: err}
 		}
 	}
 
 	// Get the secret
 	resp, err := secretsClient.GetSecret(ctx, name, "", nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get secret: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get secret", Err: err}
 	}
 
 	if resp.Value == nil {
-		return nil, fmt.Errorf("secret value is nil")
+		return nil, &errs.Message{Msg: "secret value is nil"}
 	}
 
 	// Decode base64
 	keyData, err := base64.StdEncoding.DecodeString(*resp.Value)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode secret: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode secret", Err: err}
 	}
 
 	return keyData, nil
@@ -320,20 +322,20 @@ func (k *azureSymmetricKey) Encrypt(plaintext []byte, opts *types.EncryptOptions
 	// STEP 1: Check bytes limit before encryption
 	if k.backend.tracker != nil {
 		if err := k.backend.tracker.IncrementBytes(keyID, int64(len(plaintext))); err != nil {
-			return nil, fmt.Errorf("AEAD safety check failed: %w (consider rotating this key)", err)
+			return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (consider rotating this key)"}
 		}
 	}
 
 	// Create AES cipher
 	block, err := aes.NewCipher(k.keyData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	// Create GCM mode
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// STEP 2: Generate or use provided nonce
@@ -341,19 +343,19 @@ func (k *azureSymmetricKey) Encrypt(plaintext []byte, opts *types.EncryptOptions
 	if opts != nil && opts.Nonce != nil {
 		nonce = opts.Nonce
 		if len(nonce) != gcm.NonceSize() {
-			return nil, fmt.Errorf("invalid nonce size: %d (expected %d)", len(nonce), gcm.NonceSize())
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: %d (expected %d)", len(nonce), gcm.NonceSize())}
 		}
 	} else {
 		nonce = make([]byte, gcm.NonceSize())
 		if _, err := rand.Read(nonce); err != nil {
-			return nil, fmt.Errorf("failed to generate nonce: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 		}
 	}
 
 	// STEP 3: Check nonce uniqueness before encryption
 	if k.backend.tracker != nil {
 		if err := k.backend.tracker.CheckNonce(keyID, nonce); err != nil {
-			return nil, fmt.Errorf("AEAD safety check failed: %w (CRITICAL: rotate this key immediately)", err)
+			return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
 		}
 	}
 
@@ -390,19 +392,19 @@ func (k *azureSymmetricKey) Encrypt(plaintext []byte, opts *types.EncryptOptions
 // Decrypt decrypts ciphertext using AES-GCM
 func (k *azureSymmetricKey) Decrypt(encrypted *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
 	if encrypted == nil {
-		return nil, fmt.Errorf("encrypted data cannot be nil")
+		return nil, &errs.Message{Msg: "encrypted data cannot be nil"}
 	}
 
 	// Create AES cipher
 	block, err := aes.NewCipher(k.keyData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	// Create GCM mode
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// Get additional data if provided
@@ -417,7 +419,7 @@ func (k *azureSymmetricKey) Decrypt(encrypted *types.EncryptedData, opts *types.
 	// Decrypt
 	plaintext, err := gcm.Open(nil, encrypted.Nonce, ciphertextWithTag, aad)
 	if err != nil {
-		return nil, fmt.Errorf("decryption failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "decryption failed", Err: err}
 	}
 
 	return plaintext, nil

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -804,7 +804,7 @@ func TestAssumeRole(t *testing.T) {
 		mockSts := &mockStsClient{
 			assumeRoleFunc: func(ctx context.Context, params *sts.AssumeRoleInput, optFns ...func(*sts.Options)) (*sts.AssumeRoleOutput, error) {
 				assert.Equal(t, "arn:aws:iam::123456789:role/TestRole", *params.RoleArn)
-				assert.Equal(t, "go-trusted-ca", *params.RoleSessionName)
+				assert.Equal(t, "go-xkms", *params.RoleSessionName)
 				return &sts.AssumeRoleOutput{
 					Credentials: &ststypes.Credentials{
 						AccessKeyId:     aws.String("ASIATESTACCESSKEY"),
@@ -831,7 +831,7 @@ func TestAssumeRole(t *testing.T) {
 		mockSts := &mockStsClient{
 			assumeRoleWithWebIdentity: func(ctx context.Context, params *sts.AssumeRoleWithWebIdentityInput, optFns ...func(*sts.Options)) (*sts.AssumeRoleWithWebIdentityOutput, error) {
 				assert.Equal(t, "arn:aws:iam::123456789:role/TestRole", *params.RoleArn)
-				assert.Equal(t, "go-trusted-ca", *params.RoleSessionName)
+				assert.Equal(t, "go-xkms", *params.RoleSessionName)
 				assert.Equal(t, "test-web-identity-token", *params.WebIdentityToken)
 				return &sts.AssumeRoleWithWebIdentityOutput{
 					Credentials: &ststypes.Credentials{

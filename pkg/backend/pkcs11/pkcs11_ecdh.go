@@ -28,6 +28,8 @@ import (
 	"hash"
 	"io"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
@@ -183,7 +185,7 @@ func (b *Backend) DeriveKeyECDH(
 
 	// Validate KDF parameters
 	if err := kdfParams.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidKDFParams, err)
+		return nil, &errs.Detail{Err: ErrInvalidKDFParams, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	b.mu.Lock()
@@ -201,7 +203,7 @@ func (b *Backend) DeriveKeyECDH(
 	// Parse the peer's public key to extract the EC point
 	peerPoint, curve, err := parsePeerPublicKey(peerPublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse peer public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse peer public key", Err: err}
 	}
 
 	// Get slot
@@ -213,7 +215,7 @@ func (b *Backend) DeriveKeyECDH(
 	// Open session
 	session, err := b.p11ctx.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open session: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
 	defer b.p11ctx.CloseSession(session)
 
@@ -221,7 +223,7 @@ func (b *Backend) DeriveKeyECDH(
 	if b.config.PIN != "" {
 		if err := b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN); err != nil {
 			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
-				return nil, fmt.Errorf("failed to login: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 			}
 		}
 	}
@@ -241,7 +243,7 @@ func (b *Backend) DeriveKeyECDH(
 	// Apply software KDF to the shared secret
 	derivedKey, err := applyKDF(sharedSecret, kdfParams)
 	if err != nil {
-		return nil, fmt.Errorf("failed to apply KDF: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to apply KDF", Err: err}
 	}
 
 	return derivedKey, nil
@@ -256,12 +258,12 @@ func (b *Backend) ensureP11Context() error {
 
 	p := pkcs11.New(b.config.Library)
 	if p == nil {
-		return fmt.Errorf("failed to load PKCS#11 library: %s", b.config.Library)
+		return &errs.Message{Msg: fmt.Sprintf("failed to load PKCS#11 library: %s", b.config.Library)}
 	}
 
 	if err := p.Initialize(); err != nil {
 		if err != pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
-			return fmt.Errorf("failed to initialize PKCS#11: %w", err)
+			return &errs.Wrapped{Msg: "failed to initialize PKCS#11", Err: err}
 		}
 	}
 
@@ -274,7 +276,7 @@ func (b *Backend) ensureP11Context() error {
 func (b *Backend) getSlot() (uint, error) {
 	slots, err := b.p11ctx.GetSlotList(true)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get slot list: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to get slot list", Err: err}
 	}
 	if len(slots) == 0 {
 		return 0, ErrTokenNotFound
@@ -296,17 +298,17 @@ func (b *Backend) findPrivateKeyHandle(session pkcs11.SessionHandle, attrs *type
 	}
 
 	if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
-		return 0, fmt.Errorf("failed to init find objects: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to init find objects", Err: err}
 	}
 	defer b.p11ctx.FindObjectsFinal(session)
 
 	handles, _, err := b.p11ctx.FindObjects(session, 1)
 	if err != nil {
-		return 0, fmt.Errorf("failed to find objects: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to find objects", Err: err}
 	}
 
 	if len(handles) == 0 {
-		return 0, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return 0, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	return handles[0], nil
@@ -353,7 +355,7 @@ func (b *Backend) deriveECDH(
 	// Perform the derivation
 	derivedHandle, err := b.p11ctx.DeriveKey(session, mechanism, privKeyHandle, derivedTemplate)
 	if err != nil {
-		return nil, fmt.Errorf("ECDH derivation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "ECDH derivation failed", Err: err}
 	}
 	defer b.p11ctx.DestroyObject(session, derivedHandle)
 
@@ -362,11 +364,11 @@ func (b *Backend) deriveECDH(
 		pkcs11.NewAttribute(pkcs11.CKA_VALUE, nil),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract shared secret: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to extract shared secret", Err: err}
 	}
 
 	if len(secretAttrs) == 0 || len(secretAttrs[0].Value) == 0 {
-		return nil, fmt.Errorf("empty shared secret returned from HSM")
+		return nil, &errs.Message{Msg: "empty shared secret returned from HSM"}
 	}
 
 	return secretAttrs[0].Value, nil
@@ -449,7 +451,7 @@ func buildECDH1DeriveParams(kdf uint, sharedData, publicData []byte) []byte {
 // Returns the uncompressed point bytes and the curve.
 func parsePeerPublicKey(pubKeyBytes []byte) ([]byte, elliptic.Curve, error) {
 	if len(pubKeyBytes) == 0 {
-		return nil, nil, fmt.Errorf("empty public key")
+		return nil, nil, &errs.Message{Msg: "empty public key"}
 	}
 
 	// Try to parse as DER-encoded SubjectPublicKeyInfo
@@ -457,7 +459,7 @@ func parsePeerPublicKey(pubKeyBytes []byte) ([]byte, elliptic.Curve, error) {
 	if err == nil {
 		ecdsaPub, ok := pubKey.(*ecdsa.PublicKey)
 		if !ok {
-			return nil, nil, fmt.Errorf("public key is not an ECDSA key")
+			return nil, nil, &errs.Message{Msg: "public key is not an ECDSA key"}
 		}
 		// Marshal to uncompressed point format
 		point := elliptic.Marshal(ecdsaPub.Curve, ecdsaPub.X, ecdsaPub.Y)
@@ -479,13 +481,13 @@ func parsePeerPublicKey(pubKeyBytes []byte) ([]byte, elliptic.Curve, error) {
 		case 133: // P-521: 1 + 66 + 66
 			curve = elliptic.P521()
 		default:
-			return nil, nil, fmt.Errorf("unsupported EC point size: %d", pointLen)
+			return nil, nil, &errs.Message{Msg: fmt.Sprintf("unsupported EC point size: %d", pointLen)}
 		}
 
 		// Validate the point is on the curve
 		x, _ := elliptic.Unmarshal(curve, pubKeyBytes)
 		if x == nil {
-			return nil, nil, fmt.Errorf("invalid EC point: not on curve")
+			return nil, nil, &errs.Message{Msg: "invalid EC point: not on curve"}
 		}
 
 		return pubKeyBytes, curve, nil
@@ -499,7 +501,7 @@ func parsePeerPublicKey(pubKeyBytes []byte) ([]byte, elliptic.Curve, error) {
 		}
 	}
 
-	return nil, nil, fmt.Errorf("unrecognized public key format")
+	return nil, nil, &errs.Message{Msg: "unrecognized public key format"}
 }
 
 // applyKDF applies the specified key derivation function to the shared secret.
@@ -523,7 +525,7 @@ func applyKDF(sharedSecret []byte, params *types.KDFParams) ([]byte, error) {
 		return applySP80056AKDF(sharedSecret, params.Info, params.KeyLength, hashFunc)
 
 	default:
-		return nil, fmt.Errorf("unsupported KDF algorithm for ECDH: %s", params.Algorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported KDF algorithm for ECDH: %s", params.Algorithm)}
 	}
 }
 
@@ -537,7 +539,7 @@ func getHashFunc(hashName string) (func() hash.Hash, error) {
 	case "SHA-512":
 		return sha512.New, nil
 	default:
-		return nil, fmt.Errorf("unsupported hash algorithm: %s", hashName)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", hashName)}
 	}
 }
 
@@ -546,7 +548,7 @@ func applyHKDF(secret, salt, info []byte, keyLen int, hashFunc func() hash.Hash)
 	reader := hkdf.New(hashFunc, secret, salt, info)
 	key := make([]byte, keyLen)
 	if _, err := io.ReadFull(reader, key); err != nil {
-		return nil, fmt.Errorf("HKDF expansion failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "HKDF expansion failed", Err: err}
 	}
 	return key, nil
 }
@@ -559,7 +561,7 @@ func applyX963KDF(secret, sharedInfo []byte, keyLen int, hashFunc func() hash.Ha
 	reps := (keyLen + hashLen - 1) / hashLen
 
 	if reps > 0xFFFFFFFF {
-		return nil, fmt.Errorf("requested key length too large")
+		return nil, &errs.Message{Msg: "requested key length too large"}
 	}
 
 	var derivedKey []byte
@@ -592,7 +594,7 @@ func applySP80056AKDF(secret, otherInfo []byte, keyLen int, hashFunc func() hash
 	reps := (keyLen + hashLen - 1) / hashLen
 
 	if reps > 0xFFFFFFFF {
-		return nil, fmt.Errorf("requested key length too large")
+		return nil, &errs.Message{Msg: "requested key length too large"}
 	}
 
 	var derivedKey []byte

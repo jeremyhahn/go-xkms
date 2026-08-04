@@ -236,13 +236,13 @@ Example:
 func createCustodianClient(cfg *Config) (client.Client, func(), error) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create client: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrCreateClientFailed, Err: err}
 	}
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
 		_ = cl.Close()
-		return nil, nil, fmt.Errorf("failed to connect: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
 
 	cleanup := func() { _ = cl.Close() }
@@ -271,7 +271,7 @@ func custodianCreate(cfg *Config, printer *Printer, id, tenantID, name, purpose 
 
 	resp, err := cl.CreateCustodianGroup(context.Background(), req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to create custodian group: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateCustodianGroupFailed, Err: err})
 		return
 	}
 
@@ -291,7 +291,7 @@ func custodianList(cfg *Config, printer *Printer) {
 
 	resp, err := cl.ListCustodianGroups(context.Background())
 	if err != nil {
-		handleError(fmt.Errorf("failed to list custodian groups: %w", err))
+		handleError(&WrappedError{Sentinel: ErrListCustodianGroupsFailed, Err: err})
 		return
 	}
 
@@ -311,7 +311,7 @@ func custodianShow(cfg *Config, printer *Printer, groupID string) {
 
 	resp, err := cl.GetCustodianGroup(context.Background(), groupID)
 	if err != nil {
-		handleError(fmt.Errorf("failed to get custodian group: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGetCustodianGroupFailed, Err: err})
 		return
 	}
 
@@ -330,7 +330,7 @@ func custodianDelete(cfg *Config, printer *Printer, groupID string) {
 	printVerbose("Deleting custodian group %q", groupID)
 
 	if err := cl.DeleteCustodianGroup(context.Background(), groupID); err != nil {
-		handleError(fmt.Errorf("failed to delete custodian group: %w", err))
+		handleError(&WrappedError{Sentinel: ErrDeleteCustodianGroupFailed, Err: err})
 		return
 	}
 
@@ -359,7 +359,7 @@ func custodianAddMember(cfg *Config, printer *Printer, groupID, userID, username
 
 	resp, err := cl.AddCustodianMember(context.Background(), req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to add custodian member: %w", err))
+		handleError(&WrappedError{Sentinel: ErrAddCustodianMemberFailed, Err: err})
 		return
 	}
 
@@ -383,7 +383,7 @@ func custodianRemoveMember(cfg *Config, printer *Printer, groupID, userID string
 	}
 
 	if err := cl.RemoveCustodianMember(context.Background(), req); err != nil {
-		handleError(fmt.Errorf("failed to remove custodian member: %w", err))
+		handleError(&WrappedError{Sentinel: ErrRemoveCustodianMemberFailed, Err: err})
 		return
 	}
 
@@ -409,7 +409,7 @@ func custodianDistribute(cfg *Config, printer *Printer, groupID string) {
 
 	resp, err := cl.DistributeShares(context.Background(), req)
 	if err != nil {
-		handleError(fmt.Errorf("failed to distribute shares: %w", err))
+		handleError(&WrappedError{Sentinel: ErrDistributeSharesFailed, Err: err})
 		return
 	}
 

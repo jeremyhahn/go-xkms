@@ -81,7 +81,7 @@ cactl --transport unix --address /run/trusted-ca-grpc.sock status
 ### Go Client
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/api/grpc"
+import "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 
 adapter, err := grpc.NewAdapter(&api.AdapterConfig{
     GRPCAddr: "unix:///run/trusted-ca-grpc.sock",

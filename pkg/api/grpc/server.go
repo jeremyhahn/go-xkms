@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -169,7 +171,7 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+		return &errs.Wrapped{Msg: fmt.Sprintf("failed to listen on %s", addr), Err: err}
 	}
 
 	s.listener = listener
@@ -191,7 +193,7 @@ func (s *Server) Start() error {
 	}
 
 	if err := s.grpcSrv.Serve(listener); err != nil {
-		return fmt.Errorf("failed to serve: %w", err)
+		return &errs.Wrapped{Msg: "failed to serve", Err: err}
 	}
 
 	return nil
@@ -220,7 +222,7 @@ func (s *Server) Stop() error {
 	// Close the xkms service
 	if err := xkms.Close(); err != nil {
 		s.logger.Error("Failed to close xkms service", slog.String("error", err.Error()))
-		return fmt.Errorf("failed to close xkms service: %w", err)
+		return &errs.Wrapped{Msg: "failed to close xkms service", Err: err}
 	}
 
 	return nil

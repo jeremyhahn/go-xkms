@@ -4,6 +4,7 @@ import {
   waitForAppReady,
   ensureSidebarExpanded,
   isWailsMode,
+  waitForBackendReady,
 } from './helpers';
 
 /**
@@ -23,23 +24,38 @@ test.describe('Barrier Integration', () => {
 
   test.describe('Barrier Status Card', () => {
     test('barrier card shows initialized status after setup', async ({ page }) => {
+      // 180 s budget: under 4-worker parallel load AppService.GetStatus and
+      // BarrierService.GetSealInfo can each take 60–90 s to respond.
+      test.setTimeout(180_000);
       const wails = await isWailsMode(page);
       test.skip(!wails, 'Requires Wails backend');
 
-      // The barrier card moved from the Seal view to the Dashboard in the
-      // Barrier Architecture refactor (Mar 2026). Navigate to Dashboard.
+      // waitForBackendReady makes a real RPC round-trip (AppLockService.GetStatus)
+      // via page.evaluate, which does not return until the backend responds —
+      // confirming the WebSocket is live and the call queue is being drained.
+      //
+      // The Dashboard from beforeEach may have called loadData() while the
+      // WebSocket was still connecting. callBackend() catches Wails errors and
+      // returns null silently; the Dashboard has no retry mechanism. Navigating
+      // away and back forces a fresh Dashboard mount AFTER the WebSocket is
+      // confirmed connected, so the new loadData() succeeds and populates
+      // statusCards / barrierInfo.
+      await waitForBackendReady(page);
+      await navigateTo(page, 'seal');
       await navigateTo(page, 'dashboard');
-      await page.waitForTimeout(1000);
 
-      // The Dashboard barrier detail section only renders when the barrier is
-      // initialized (barrierInfo?.initialized === true). Its presence proves
-      // the barrier is configured after setup.
+      // 120 s: AppService.GetStatus + BarrierService.GetSealInfo (Promise.all)
+      // can take up to 60–90 s under 4-worker parallel load. Must remain
+      // below (test.setTimeout(180 s) − waitForBackendReady overhead).
+      await expect(page.locator('.status-card-inner').first()).toBeVisible({ timeout: 120_000 });
+
+      // The barrier-detail section renders only when barrierInfo.initialized === true.
+      // Its presence confirms the barrier is configured.
       const barrierDetail = page.locator('.barrier-detail');
       await expect(barrierDetail).toBeVisible({ timeout: 10_000 });
 
       // The StatusBadge inside the barrier detail shows the seal state.
-      // 'Disconnected' = sealed (software-passphrase barrier is sealed on fresh view),
-      // 'Verified' = unsealed. Both are valid initialized states.
+      // 'Disconnected' = sealed, 'Verified' = unsealed. Both are valid initialized states.
       const statusBadge = barrierDetail.locator('[role="status"]');
       await expect(statusBadge).toBeVisible();
       const statusText = await statusBadge.textContent();
@@ -134,13 +150,16 @@ test.describe('Barrier Integration', () => {
       await navigateTo(page, 'seal');
       await page.waitForTimeout(1000);
 
-      // Verify barrier is active (Unsealed).
-      const unsealed = page.locator('.barrier-status-unsealed');
-      const isUnsealed = await unsealed.isVisible().catch(() => false);
-      test.skip(!isUnsealed, 'Barrier not unsealed — cannot test seal operations');
+      // Seal.svelte has no barrier status card of its own (that markup only
+      // exists on Dashboard.svelte) — "barrier is active" on this page is
+      // expressed by SealService.CanSeal() gating the "Seal New Data"
+      // button's disabled state, exactly like the sibling "unseal
+      // previously sealed data" test below already does.
+      const sealButton = page.getByRole('button', { name: 'Seal New Data' });
+      const canSeal = await sealButton.isEnabled().catch(() => false);
+      test.skip(!canSeal, 'No sealing backend available — cannot test seal operations');
 
       // Open seal dialog.
-      const sealButton = page.getByRole('button', { name: 'Seal New Data' });
       await expect(sealButton).toBeEnabled();
       await sealButton.click();
 
@@ -153,9 +172,17 @@ test.describe('Barrier Integration', () => {
       await sealAction.click();
       await page.waitForTimeout(2000);
 
-      // Dialog should close and blob should appear.
+      // Dialog should close and blob should appear in the blob table. Scope
+      // to .content (the DataTable's container) — the success toast also
+      // reads 'Data sealed as "Barrier Test Secret"' and would otherwise
+      // create a strict-mode ambiguity with an unscoped getByText lookup.
+      // Use .first() rather than requiring exactly one match: this test uses
+      // a fixed label and does not delete the blob afterward, so repeated
+      // runs against the same persistent dev backend legitimately produce
+      // multiple rows with the same label — what matters is that at least
+      // one now exists.
       await expect(page.getByText('Seal Data')).not.toBeVisible();
-      await expect(page.getByText('Barrier Test Secret')).toBeVisible();
+      await expect(page.locator('.content').getByText('Barrier Test Secret').first()).toBeVisible();
     });
 
     test('unseal previously sealed data returns correct content', async ({ page }) => {

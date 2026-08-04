@@ -15,8 +15,9 @@ package luks
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // Executor performs the actual LUKS volume operations. Production
@@ -90,7 +91,7 @@ func (m *Manager) Create(ctx context.Context, sizeBytes int64, passphrase string
 		return ErrEmptyPassphrase
 	}
 	if err := m.executor.Create(ctx, m.config, sizeBytes, passphrase); err != nil {
-		return fmt.Errorf("%w: %w", ErrOperationFailed, err)
+		return &errs.Joined{Lead: ErrOperationFailed, Cause: err}
 	}
 	return nil
 }
@@ -102,7 +103,7 @@ func (m *Manager) Unlock(ctx context.Context, passphrase string) error {
 		return ErrEmptyPassphrase
 	}
 	if err := m.executor.Unlock(ctx, m.config, passphrase); err != nil {
-		return fmt.Errorf("%w: %w", ErrOperationFailed, err)
+		return &errs.Joined{Lead: ErrOperationFailed, Cause: err}
 	}
 	m.unlocked.Store(true)
 	return nil
@@ -111,7 +112,7 @@ func (m *Manager) Unlock(ctx context.Context, passphrase string) error {
 // Lock closes the LUKS device mapper entry and updates internal state.
 func (m *Manager) Lock(ctx context.Context) error {
 	if err := m.executor.Lock(ctx, m.config); err != nil {
-		return fmt.Errorf("%w: %w", ErrOperationFailed, err)
+		return &errs.Joined{Lead: ErrOperationFailed, Cause: err}
 	}
 	m.unlocked.Store(false)
 	m.mounted.Store(false)

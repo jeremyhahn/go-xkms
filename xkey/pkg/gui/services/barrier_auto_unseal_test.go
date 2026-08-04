@@ -16,9 +16,10 @@ package services
 import (
 	"context"
 	"errors"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"testing"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
@@ -35,6 +36,8 @@ type barrierMockPolicyStore struct {
 	autoUnsealPolicy *pcrpolicy.PCRPolicyEntity
 	autoUnsealErr    error
 	policies         map[string]*pcrpolicy.PCRPolicyEntity
+	saveErr          error
+	savedEntities    []*pcrpolicy.PCRPolicyEntity
 }
 
 // Compile-time interface check.
@@ -66,6 +69,18 @@ func (m *barrierMockPolicyStore) Get(_ context.Context, name string) (*pcrpolicy
 
 func (m *barrierMockPolicyStore) Create(_ context.Context, _, _ string, _ map[uint][]byte) (*pcrpolicy.PCRPolicyEntity, error) {
 	return nil, nil
+}
+
+func (m *barrierMockPolicyStore) Save(_ context.Context, entity *pcrpolicy.PCRPolicyEntity) error {
+	if m.saveErr != nil {
+		return m.saveErr
+	}
+	m.savedEntities = append(m.savedEntities, entity)
+	if m.policies == nil {
+		m.policies = make(map[string]*pcrpolicy.PCRPolicyEntity)
+	}
+	m.policies[entity.Name] = entity
+	return nil
 }
 
 func (m *barrierMockPolicyStore) List(_ context.Context) ([]*pcrpolicy.PCRPolicyEntity, error) {
@@ -181,19 +196,19 @@ func TestBarrierAutoUnsealService_TryAutoUnseal_PCRMatch(t *testing.T) {
 
 	// Use TPM2 strategy with a mock sealer so the barrier can initialize
 	// and unseal without a password (matching real auto-unseal behavior).
-	svc.barrier.SetTPMSealerFunc(func() xkms.Sealer {
+	svc.barrier.Load().SetTPMSealerFunc(func() xkms.Sealer {
 		return &mockSealer{canSeal: true}
 	})
 	svc.strategyID = "tpm2"
 
 	// Initialize the barrier with TPM2 strategy (no password needed).
-	require.NoError(t, svc.barrier.Initialize("", "tpm2"))
-	require.NoError(t, svc.barrier.Seal())
+	require.NoError(t, svc.barrier.Load().Initialize("", "tpm2"))
+	require.NoError(t, svc.barrier.Load().Seal())
 
 	ok, err := svc.TryAutoUnseal(context.Background())
 	assert.True(t, ok, "should succeed when PCR values match")
 	assert.NoError(t, err)
-	assert.True(t, svc.barrier.IsUnsealed(), "barrier should be unsealed after auto-unseal")
+	assert.True(t, svc.barrier.Load().IsUnsealed(), "barrier should be unsealed after auto-unseal")
 }
 
 func TestBarrierAutoUnsealService_TryAutoUnseal_PCRMismatch(t *testing.T) {
@@ -213,7 +228,7 @@ func TestBarrierAutoUnsealService_TryAutoUnseal_PCRMismatch(t *testing.T) {
 
 func TestBarrierAutoUnsealService_TryAutoUnseal_NilPolicyStore(t *testing.T) {
 	svc := NewBarrierAutoUnsealService(nil)
-	svc.barrier = newTestBarrierService(t)
+	svc.SetBarrier(newTestBarrierService(t))
 
 	ok, err := svc.TryAutoUnseal(context.Background())
 	assert.False(t, ok)
@@ -273,6 +288,30 @@ func TestBarrierAutoUnsealService_VerifyPCRs_Match(t *testing.T) {
 	match, err := svc.verifyPCRs(context.Background(), policy)
 	assert.True(t, match, "PCR values should match")
 	assert.NoError(t, err)
+}
+
+func TestBarrierAutoUnsealService_VerifyPCRs_DisplayFormBankMatches(t *testing.T) {
+	store := newBarrierMockPolicyStore()
+	mock := defaultBarrierAutoUnsealMock()
+	svc := newBarrierAutoUnsealSvcWithMock(t, store, mock)
+
+	// GUI-created policies persist the bank in display form ("SHA256").
+	// verifyPCRs must normalize it rather than reject it as invalid.
+	policy := testBarrierAutoUnsealPolicy()
+	policy.Bank = "SHA256"
+	match, err := svc.verifyPCRs(context.Background(), policy)
+	assert.True(t, match, "display-form bank should normalize and match")
+	assert.NoError(t, err)
+}
+
+func TestBarrierAutoUnsealService_CaptureCurrentPCRs_DisplayFormBank(t *testing.T) {
+	store := newBarrierMockPolicyStore()
+	mock := defaultBarrierAutoUnsealMock()
+	svc := newBarrierAutoUnsealSvcWithMock(t, store, mock)
+
+	pcrs, err := svc.CaptureCurrentPCRs(context.Background(), "SHA256", []uint{0, 7})
+	require.NoError(t, err)
+	require.Len(t, pcrs, 2)
 }
 
 func TestBarrierAutoUnsealService_VerifyPCRs_Mismatch(t *testing.T) {
@@ -452,6 +491,97 @@ func TestBarrierAutoUnsealService_CaptureCurrentPCRs_BankFiltering(t *testing.T)
 }
 
 // ---------------------------------------------------------------------------
+// GetAutoUnsealStatus
+// ---------------------------------------------------------------------------
+
+func TestBarrierAutoUnsealService_GetAutoUnsealStatus_NilPolicyStore(t *testing.T) {
+	svc := NewBarrierAutoUnsealService(nil)
+
+	status, err := svc.GetAutoUnsealStatus()
+	require.NoError(t, err, "nil policy store must not surface an error to the frontend")
+	require.NotNil(t, status)
+	assert.False(t, status.Available)
+	assert.NotEmpty(t, status.Reason)
+	assert.False(t, status.PolicyConfigured)
+}
+
+func TestBarrierAutoUnsealService_GetAutoUnsealStatus_StoreLookupError(t *testing.T) {
+	store := newBarrierMockPolicyStore()
+	store.autoUnsealErr = errors.New("database connection lost")
+	svc := newBarrierAutoUnsealSvcWithMock(t, store, defaultBarrierAutoUnsealMock())
+
+	status, err := svc.GetAutoUnsealStatus()
+	assert.Nil(t, status)
+	assert.Error(t, err, "a genuine store failure (not ErrPolicyNotFound) should still surface")
+}
+
+func TestBarrierAutoUnsealService_SetPolicyStore_ReflectsStoreContents(t *testing.T) {
+	svc := NewBarrierAutoUnsealService(nil)
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return defaultBarrierAutoUnsealMock() }))
+
+	// Before SetPolicyStore, the feature is unavailable.
+	status, err := svc.GetAutoUnsealStatus()
+	require.NoError(t, err)
+	assert.False(t, status.Available)
+
+	// After SetPolicyStore with a configured auto-unseal policy, the status
+	// reflects the store's contents.
+	store := newBarrierMockPolicyStore()
+	store.autoUnsealPolicy = testBarrierAutoUnsealPolicy()
+	svc.SetPolicyStore(store)
+
+	status, err = svc.GetAutoUnsealStatus()
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	assert.True(t, status.Available)
+	assert.True(t, status.PolicyConfigured)
+	assert.Equal(t, "boot-policy", status.PolicyName)
+	assert.True(t, status.PCRsMatch)
+}
+
+func TestBarrierAutoUnsealService_SetPolicyStore_NoPolicyConfigured(t *testing.T) {
+	svc := NewBarrierAutoUnsealService(nil)
+	store := newBarrierMockPolicyStore()
+	svc.SetPolicyStore(store)
+
+	status, err := svc.GetAutoUnsealStatus()
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	assert.True(t, status.Available)
+	assert.False(t, status.PolicyConfigured)
+}
+
+// ---------------------------------------------------------------------------
+// SetAutoUnsealPolicy / ClearAutoUnsealPolicy
+// ---------------------------------------------------------------------------
+
+func TestBarrierAutoUnsealService_SetAutoUnsealPolicy_NilStore(t *testing.T) {
+	svc := NewBarrierAutoUnsealService(nil)
+	err := svc.SetAutoUnsealPolicy("boot-policy")
+	assert.ErrorIs(t, err, ErrBarrierAutoUnsealNoPolicyStore)
+}
+
+func TestBarrierAutoUnsealService_SetAutoUnsealPolicy_EmptyName(t *testing.T) {
+	store := newBarrierMockPolicyStore()
+	svc := NewBarrierAutoUnsealService(store)
+	err := svc.SetAutoUnsealPolicy("")
+	assert.ErrorIs(t, err, ErrBarrierAutoUnsealEmptyPolicyName)
+}
+
+func TestBarrierAutoUnsealService_ClearAutoUnsealPolicy_NilStore(t *testing.T) {
+	svc := NewBarrierAutoUnsealService(nil)
+	err := svc.ClearAutoUnsealPolicy()
+	assert.ErrorIs(t, err, ErrBarrierAutoUnsealNoPolicyStore)
+}
+
+func TestBarrierAutoUnsealService_ClearAutoUnsealPolicy_Success(t *testing.T) {
+	store := newBarrierMockPolicyStore()
+	svc := NewBarrierAutoUnsealService(store)
+	err := svc.ClearAutoUnsealPolicy()
+	assert.NoError(t, err)
+}
+
+// ---------------------------------------------------------------------------
 // Functional options
 // ---------------------------------------------------------------------------
 
@@ -470,29 +600,29 @@ func TestBarrierAutoUnsealService_FunctionalOptions(t *testing.T) {
 		WithBarrierAutoUnsealStrategyID("software"),
 	)
 
-	assert.Equal(t, store, svc.policyStore)
-	assert.Equal(t, accessor, svc.tpmAccessor)
-	assert.Equal(t, barrier, svc.barrier)
+	assert.Equal(t, store, svc.getPolicyStore())
+	assert.Equal(t, accessor, svc.tpmAccessor.Load())
+	assert.Equal(t, barrier, svc.barrier.Load())
 	assert.Equal(t, "software", svc.strategyID)
 }
 
 func TestBarrierAutoUnsealService_SetTPMAccessor(t *testing.T) {
 	svc := NewBarrierAutoUnsealService(newBarrierMockPolicyStore())
-	assert.Nil(t, svc.tpmAccessor)
+	assert.Nil(t, svc.tpmAccessor.Load())
 
 	mock := defaultBarrierAutoUnsealMock()
 	accessor := NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock })
 	svc.SetTPMAccessor(accessor)
-	assert.Equal(t, accessor, svc.tpmAccessor)
+	assert.Equal(t, accessor, svc.tpmAccessor.Load())
 }
 
 func TestBarrierAutoUnsealService_SetBarrier(t *testing.T) {
 	svc := NewBarrierAutoUnsealService(newBarrierMockPolicyStore())
-	assert.Nil(t, svc.barrier)
+	assert.Nil(t, svc.barrier.Load())
 
 	barrier := newTestBarrierService(t)
 	svc.SetBarrier(barrier)
-	assert.Equal(t, barrier, svc.barrier)
+	assert.Equal(t, barrier, svc.barrier.Load())
 }
 
 // ---------------------------------------------------------------------------

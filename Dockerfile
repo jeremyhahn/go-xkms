@@ -164,38 +164,14 @@ COPY --from=go-qrdb --chown=testuser:testuser . /go-qrdb
 COPY --from=go-quicraft --chown=testuser:testuser . /go-quicraft
 COPY --from=go-truststrap --chown=testuser:testuser . /go-truststrap
 
-# Materialize the build-time Go workspace (mirrors ensure-gowork.sh / the
-# Makefile GOWORK_CONTENT). GOWORK is exported for all subsequent go commands.
+# Materialize the build-time Go workspace via the single canonical generator
+# (scripts/gen-gowork.sh) so the module set + version-specific replaces live in
+# one place and cannot drift from the other container contexts. GOWORK is
+# exported for all subsequent go commands. The generator only needs the go.mod
+# files already copied above plus the bind-mounted siblings at /go-<name>.
 ENV GOWORK=/tmp/go.work
-RUN cat > /tmp/go.work <<'EOF'
-go 1.26.4
-
-use (
-	/workspace
-	/workspace/sdk/go
-	/workspace/xkey
-	/go-codec
-	/go-frost
-	/go-objstore
-	/go-qrdb
-	/go-qrdb/sdk/go
-	/go-quicraft
-	/go-truststrap
-)
-
-replace (
-	github.com/jeremyhahn/go-codec v0.0.0 => /go-codec
-	github.com/jeremyhahn/go-frost v0.0.0 => /go-frost
-	github.com/jeremyhahn/go-objstore v0.0.0 => /go-objstore
-	github.com/jeremyhahn/go-qrdb v0.0.0 => /go-qrdb
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0 => /go-qrdb/sdk/go
-	github.com/jeremyhahn/go-quicraft v0.0.0 => /go-quicraft
-	github.com/jeremyhahn/go-truststrap v0.0.0 => /go-truststrap
-	github.com/jeremyhahn/go-xkms v0.0.0 => /workspace
-	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0 => /workspace/sdk/go
-	github.com/jeremyhahn/go-xkms/xkey v0.0.0 => /workspace/xkey
-)
-EOF
+COPY --chown=testuser:testuser scripts/gen-gowork.sh ./scripts/gen-gowork.sh
+RUN bash scripts/gen-gowork.sh /workspace /tmp/go.work
 
 # Download dependencies (cached if go.mod/go.sum unchanged)
 RUN go mod download

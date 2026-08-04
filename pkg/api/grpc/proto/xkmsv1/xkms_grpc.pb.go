@@ -5,7 +5,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v4.25.1
-// source: xkms.proto
+// source: pkg/api/grpc/proto/xkmsv1/xkms.proto
 
 package xkmsv1
 
@@ -99,7 +99,9 @@ const (
 	KeystoreService_BarrierGenerateRecoveryKeys_FullMethodName = "/xkms.v1.KeystoreService/BarrierGenerateRecoveryKeys"
 	KeystoreService_BarrierRecoverWithKeys_FullMethodName      = "/xkms.v1.KeystoreService/BarrierRecoverWithKeys"
 	KeystoreService_BarrierDeleteRecoveryKeys_FullMethodName   = "/xkms.v1.KeystoreService/BarrierDeleteRecoveryKeys"
+	KeystoreService_BarrierHasRecoveryKeys_FullMethodName      = "/xkms.v1.KeystoreService/BarrierHasRecoveryKeys"
 	KeystoreService_BarrierGenerateRootToken_FullMethodName    = "/xkms.v1.KeystoreService/BarrierGenerateRootToken"
+	KeystoreService_BarrierEnableEncryption_FullMethodName     = "/xkms.v1.KeystoreService/BarrierEnableEncryption"
 	KeystoreService_SetSOPIN_FullMethodName                    = "/xkms.v1.KeystoreService/SetSOPIN"
 	KeystoreService_SetUserPIN_FullMethodName                  = "/xkms.v1.KeystoreService/SetUserPIN"
 	KeystoreService_ChangeSOPIN_FullMethodName                 = "/xkms.v1.KeystoreService/ChangeSOPIN"
@@ -132,6 +134,9 @@ const (
 	KeystoreService_DeleteTenant_FullMethodName                = "/xkms.v1.KeystoreService/DeleteTenant"
 	KeystoreService_TenantBarrierInit_FullMethodName           = "/xkms.v1.KeystoreService/TenantBarrierInit"
 	KeystoreService_TenantBarrierUnseal_FullMethodName         = "/xkms.v1.KeystoreService/TenantBarrierUnseal"
+	KeystoreService_TenantBarrierStatus_FullMethodName         = "/xkms.v1.KeystoreService/TenantBarrierStatus"
+	KeystoreService_UpdateTenantEntitlements_FullMethodName    = "/xkms.v1.KeystoreService/UpdateTenantEntitlements"
+	KeystoreService_UpdateTenantQuotas_FullMethodName          = "/xkms.v1.KeystoreService/UpdateTenantQuotas"
 	KeystoreService_GetClusterStatus_FullMethodName            = "/xkms.v1.KeystoreService/GetClusterStatus"
 	KeystoreService_ListClusterMembers_FullMethodName          = "/xkms.v1.KeystoreService/ListClusterMembers"
 	KeystoreService_PasswordAdd_FullMethodName                 = "/xkms.v1.KeystoreService/PasswordAdd"
@@ -155,6 +160,20 @@ const (
 	KeystoreService_FinishRegistration_FullMethodName          = "/xkms.v1.KeystoreService/FinishRegistration"
 	KeystoreService_BeginAuthentication_FullMethodName         = "/xkms.v1.KeystoreService/BeginAuthentication"
 	KeystoreService_FinishAuthentication_FullMethodName        = "/xkms.v1.KeystoreService/FinishAuthentication"
+	KeystoreService_SSHGenerateKey_FullMethodName              = "/xkms.v1.KeystoreService/SSHGenerateKey"
+	KeystoreService_SSHImportKey_FullMethodName                = "/xkms.v1.KeystoreService/SSHImportKey"
+	KeystoreService_SSHListKeys_FullMethodName                 = "/xkms.v1.KeystoreService/SSHListKeys"
+	KeystoreService_SSHGetKey_FullMethodName                   = "/xkms.v1.KeystoreService/SSHGetKey"
+	KeystoreService_SSHDeleteKey_FullMethodName                = "/xkms.v1.KeystoreService/SSHDeleteKey"
+	KeystoreService_SSHExportPublic_FullMethodName             = "/xkms.v1.KeystoreService/SSHExportPublic"
+	KeystoreService_SSHSign_FullMethodName                     = "/xkms.v1.KeystoreService/SSHSign"
+	KeystoreService_SSHAddKnownHost_FullMethodName             = "/xkms.v1.KeystoreService/SSHAddKnownHost"
+	KeystoreService_SSHListKnownHosts_FullMethodName           = "/xkms.v1.KeystoreService/SSHListKnownHosts"
+	KeystoreService_SSHRemoveKnownHost_FullMethodName          = "/xkms.v1.KeystoreService/SSHRemoveKnownHost"
+	KeystoreService_SSHAddAuthorizedKey_FullMethodName         = "/xkms.v1.KeystoreService/SSHAddAuthorizedKey"
+	KeystoreService_SSHListAuthorizedKeys_FullMethodName       = "/xkms.v1.KeystoreService/SSHListAuthorizedKeys"
+	KeystoreService_SSHRemoveAuthorizedKey_FullMethodName      = "/xkms.v1.KeystoreService/SSHRemoveAuthorizedKey"
+	KeystoreService_SSHConsole_FullMethodName                  = "/xkms.v1.KeystoreService/SSHConsole"
 )
 
 // KeystoreServiceClient is the client API for KeystoreService service.
@@ -346,9 +365,15 @@ type KeystoreServiceClient interface {
 	BarrierRecoverWithKeys(ctx context.Context, in *BarrierRecoverWithKeysRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// BarrierDeleteRecoveryKeys removes recovery key metadata from storage.
 	BarrierDeleteRecoveryKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// BarrierHasRecoveryKeys reports whether recovery keys have been generated.
+	BarrierHasRecoveryKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BarrierHasRecoveryKeysResponse, error)
 	// BarrierGenerateRootToken generates a one-time root token by proving
 	// knowledge of the master key through Shamir share reconstruction.
 	BarrierGenerateRootToken(ctx context.Context, in *BarrierGenerateRootTokenRequest, opts ...grpc.CallOption) (*BarrierRootTokenResponse, error)
+	// BarrierEnableEncryption migrates a previously-unencrypted barrier to a
+	// keyed strategy in place. The migration runs asynchronously; the response
+	// acknowledges the start and clients poll BarrierStatus for completion.
+	BarrierEnableEncryption(ctx context.Context, in *BarrierEnableEncryptionRequest, opts ...grpc.CallOption) (*BarrierEnableEncryptionResponse, error)
 	// SetSOPIN sets the Security Officer PIN. If the SO PIN is already set,
 	// current_so_pin must match the existing PIN.
 	SetSOPIN(ctx context.Context, in *SetSOPINRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -415,6 +440,12 @@ type KeystoreServiceClient interface {
 	TenantBarrierInit(ctx context.Context, in *TenantBarrierInitRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// TenantBarrierUnseal unseals the barrier for a tenant.
 	TenantBarrierUnseal(ctx context.Context, in *TenantBarrierUnsealRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// TenantBarrierStatus reports the current state of a per-tenant barrier.
+	TenantBarrierStatus(ctx context.Context, in *TenantBarrierStatusRequest, opts ...grpc.CallOption) (*TenantBarrierStatusResponse, error)
+	// UpdateTenantEntitlements updates a tenant's feature entitlements.
+	UpdateTenantEntitlements(ctx context.Context, in *UpdateTenantEntitlementsRequest, opts ...grpc.CallOption) (*UpdateTenantEntitlementsResponse, error)
+	// UpdateTenantQuotas updates a tenant's resource quotas.
+	UpdateTenantQuotas(ctx context.Context, in *UpdateTenantQuotasRequest, opts ...grpc.CallOption) (*UpdateTenantQuotasResponse, error)
 	// GetClusterStatus returns the Raft leadership status for the configured
 	// shard. A standalone (non-clustered) node reports a single-node,
 	// non-clustered status.
@@ -462,6 +493,40 @@ type KeystoreServiceClient interface {
 	// FinishAuthentication together with the assertion JSON.
 	BeginAuthentication(ctx context.Context, in *BeginAuthenticationRequest, opts ...grpc.CallOption) (*BeginAuthenticationResponse, error)
 	FinishAuthentication(ctx context.Context, in *FinishAuthenticationRequest, opts ...grpc.CallOption) (*FinishAuthenticationResponse, error)
+	// SSHGenerateKey generates a new SSH key. When backend is set the key is
+	// created on that crypto backend (private key never leaves a hardware
+	// backend); otherwise a software key is generated server-side.
+	SSHGenerateKey(ctx context.Context, in *SSHGenerateKeyRequest, opts ...grpc.CallOption) (*SSHKeyResponse, error)
+	// SSHImportKey imports a PEM-encoded SSH private key.
+	SSHImportKey(ctx context.Context, in *SSHImportKeyRequest, opts ...grpc.CallOption) (*SSHKeyResponse, error)
+	// SSHListKeys enumerates SSH keys by (scope, owner).
+	SSHListKeys(ctx context.Context, in *SSHListKeysRequest, opts ...grpc.CallOption) (*SSHListKeysResponse, error)
+	// SSHGetKey loads metadata for a single SSH key.
+	SSHGetKey(ctx context.Context, in *SSHKeyRef, opts ...grpc.CallOption) (*SSHKeyResponse, error)
+	// SSHDeleteKey removes an SSH key (and its backend material, if any).
+	SSHDeleteKey(ctx context.Context, in *SSHKeyRef, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// SSHExportPublic returns the authorized_keys public line for a key.
+	SSHExportPublic(ctx context.Context, in *SSHKeyRef, opts ...grpc.CallOption) (*SSHPublicKeyResponse, error)
+	// SSHSign signs a digest with the key's private half (delegated to the
+	// backend for hardware-backed keys) and returns the SSH signature blob.
+	SSHSign(ctx context.Context, in *SSHSignRequest, opts ...grpc.CallOption) (*SSHSignResponse, error)
+	// SSHAddKnownHost pins a host key.
+	SSHAddKnownHost(ctx context.Context, in *SSHAddKnownHostRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// SSHListKnownHosts enumerates host-key pins.
+	SSHListKnownHosts(ctx context.Context, in *SSHListKnownHostsRequest, opts ...grpc.CallOption) (*SSHListKnownHostsResponse, error)
+	// SSHRemoveKnownHost removes a host-key pin.
+	SSHRemoveKnownHost(ctx context.Context, in *SSHRemoveKnownHostRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// SSHAddAuthorizedKey persists an authorized_keys entry.
+	SSHAddAuthorizedKey(ctx context.Context, in *SSHAddAuthorizedKeyRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// SSHListAuthorizedKeys enumerates authorized_keys entries.
+	SSHListAuthorizedKeys(ctx context.Context, in *SSHListAuthorizedKeysRequest, opts ...grpc.CallOption) (*SSHListAuthorizedKeysResponse, error)
+	// SSHRemoveAuthorizedKey removes an authorized_keys entry.
+	SSHRemoveAuthorizedKey(ctx context.Context, in *SSHAuthorizedKeyRef, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// SSHConsole opens an interactive PTY shell as a bidirectional stream. The
+	// first client message MUST be an Open; subsequent client messages carry
+	// stdin or resize; server messages carry stdout (and a final Exit). This is
+	// the gRPC/unix transport's implementation of the SSH console capability.
+	SSHConsole(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SSHConsoleClientMsg, SSHConsoleServerMsg], error)
 }
 
 type keystoreServiceClient struct {
@@ -1232,10 +1297,30 @@ func (c *keystoreServiceClient) BarrierDeleteRecoveryKeys(ctx context.Context, i
 	return out, nil
 }
 
+func (c *keystoreServiceClient) BarrierHasRecoveryKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BarrierHasRecoveryKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BarrierHasRecoveryKeysResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_BarrierHasRecoveryKeys_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) BarrierGenerateRootToken(ctx context.Context, in *BarrierGenerateRootTokenRequest, opts ...grpc.CallOption) (*BarrierRootTokenResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BarrierRootTokenResponse)
 	err := c.cc.Invoke(ctx, KeystoreService_BarrierGenerateRootToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) BarrierEnableEncryption(ctx context.Context, in *BarrierEnableEncryptionRequest, opts ...grpc.CallOption) (*BarrierEnableEncryptionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BarrierEnableEncryptionResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_BarrierEnableEncryption_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1562,6 +1647,36 @@ func (c *keystoreServiceClient) TenantBarrierUnseal(ctx context.Context, in *Ten
 	return out, nil
 }
 
+func (c *keystoreServiceClient) TenantBarrierStatus(ctx context.Context, in *TenantBarrierStatusRequest, opts ...grpc.CallOption) (*TenantBarrierStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TenantBarrierStatusResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_TenantBarrierStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) UpdateTenantEntitlements(ctx context.Context, in *UpdateTenantEntitlementsRequest, opts ...grpc.CallOption) (*UpdateTenantEntitlementsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateTenantEntitlementsResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_UpdateTenantEntitlements_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) UpdateTenantQuotas(ctx context.Context, in *UpdateTenantQuotasRequest, opts ...grpc.CallOption) (*UpdateTenantQuotasResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateTenantQuotasResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_UpdateTenantQuotas_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) GetClusterStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ClusterStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ClusterStatusResponse)
@@ -1792,6 +1907,149 @@ func (c *keystoreServiceClient) FinishAuthentication(ctx context.Context, in *Fi
 	return out, nil
 }
 
+func (c *keystoreServiceClient) SSHGenerateKey(ctx context.Context, in *SSHGenerateKeyRequest, opts ...grpc.CallOption) (*SSHKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SSHKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHGenerateKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHImportKey(ctx context.Context, in *SSHImportKeyRequest, opts ...grpc.CallOption) (*SSHKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SSHKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHImportKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHListKeys(ctx context.Context, in *SSHListKeysRequest, opts ...grpc.CallOption) (*SSHListKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SSHListKeysResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHListKeys_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHGetKey(ctx context.Context, in *SSHKeyRef, opts ...grpc.CallOption) (*SSHKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SSHKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHGetKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHDeleteKey(ctx context.Context, in *SSHKeyRef, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHDeleteKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHExportPublic(ctx context.Context, in *SSHKeyRef, opts ...grpc.CallOption) (*SSHPublicKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SSHPublicKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHExportPublic_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHSign(ctx context.Context, in *SSHSignRequest, opts ...grpc.CallOption) (*SSHSignResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SSHSignResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHSign_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHAddKnownHost(ctx context.Context, in *SSHAddKnownHostRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHAddKnownHost_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHListKnownHosts(ctx context.Context, in *SSHListKnownHostsRequest, opts ...grpc.CallOption) (*SSHListKnownHostsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SSHListKnownHostsResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHListKnownHosts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHRemoveKnownHost(ctx context.Context, in *SSHRemoveKnownHostRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHRemoveKnownHost_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHAddAuthorizedKey(ctx context.Context, in *SSHAddAuthorizedKeyRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHAddAuthorizedKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHListAuthorizedKeys(ctx context.Context, in *SSHListAuthorizedKeysRequest, opts ...grpc.CallOption) (*SSHListAuthorizedKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SSHListAuthorizedKeysResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHListAuthorizedKeys_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHRemoveAuthorizedKey(ctx context.Context, in *SSHAuthorizedKeyRef, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, KeystoreService_SSHRemoveAuthorizedKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SSHConsole(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SSHConsoleClientMsg, SSHConsoleServerMsg], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &KeystoreService_ServiceDesc.Streams[0], KeystoreService_SSHConsole_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SSHConsoleClientMsg, SSHConsoleServerMsg]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type KeystoreService_SSHConsoleClient = grpc.BidiStreamingClient[SSHConsoleClientMsg, SSHConsoleServerMsg]
+
 // KeystoreServiceServer is the server API for KeystoreService service.
 // All implementations must embed UnimplementedKeystoreServiceServer
 // for forward compatibility.
@@ -1981,9 +2239,15 @@ type KeystoreServiceServer interface {
 	BarrierRecoverWithKeys(context.Context, *BarrierRecoverWithKeysRequest) (*emptypb.Empty, error)
 	// BarrierDeleteRecoveryKeys removes recovery key metadata from storage.
 	BarrierDeleteRecoveryKeys(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
+	// BarrierHasRecoveryKeys reports whether recovery keys have been generated.
+	BarrierHasRecoveryKeys(context.Context, *emptypb.Empty) (*BarrierHasRecoveryKeysResponse, error)
 	// BarrierGenerateRootToken generates a one-time root token by proving
 	// knowledge of the master key through Shamir share reconstruction.
 	BarrierGenerateRootToken(context.Context, *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error)
+	// BarrierEnableEncryption migrates a previously-unencrypted barrier to a
+	// keyed strategy in place. The migration runs asynchronously; the response
+	// acknowledges the start and clients poll BarrierStatus for completion.
+	BarrierEnableEncryption(context.Context, *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error)
 	// SetSOPIN sets the Security Officer PIN. If the SO PIN is already set,
 	// current_so_pin must match the existing PIN.
 	SetSOPIN(context.Context, *SetSOPINRequest) (*emptypb.Empty, error)
@@ -2050,6 +2314,12 @@ type KeystoreServiceServer interface {
 	TenantBarrierInit(context.Context, *TenantBarrierInitRequest) (*emptypb.Empty, error)
 	// TenantBarrierUnseal unseals the barrier for a tenant.
 	TenantBarrierUnseal(context.Context, *TenantBarrierUnsealRequest) (*emptypb.Empty, error)
+	// TenantBarrierStatus reports the current state of a per-tenant barrier.
+	TenantBarrierStatus(context.Context, *TenantBarrierStatusRequest) (*TenantBarrierStatusResponse, error)
+	// UpdateTenantEntitlements updates a tenant's feature entitlements.
+	UpdateTenantEntitlements(context.Context, *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error)
+	// UpdateTenantQuotas updates a tenant's resource quotas.
+	UpdateTenantQuotas(context.Context, *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error)
 	// GetClusterStatus returns the Raft leadership status for the configured
 	// shard. A standalone (non-clustered) node reports a single-node,
 	// non-clustered status.
@@ -2097,6 +2367,40 @@ type KeystoreServiceServer interface {
 	// FinishAuthentication together with the assertion JSON.
 	BeginAuthentication(context.Context, *BeginAuthenticationRequest) (*BeginAuthenticationResponse, error)
 	FinishAuthentication(context.Context, *FinishAuthenticationRequest) (*FinishAuthenticationResponse, error)
+	// SSHGenerateKey generates a new SSH key. When backend is set the key is
+	// created on that crypto backend (private key never leaves a hardware
+	// backend); otherwise a software key is generated server-side.
+	SSHGenerateKey(context.Context, *SSHGenerateKeyRequest) (*SSHKeyResponse, error)
+	// SSHImportKey imports a PEM-encoded SSH private key.
+	SSHImportKey(context.Context, *SSHImportKeyRequest) (*SSHKeyResponse, error)
+	// SSHListKeys enumerates SSH keys by (scope, owner).
+	SSHListKeys(context.Context, *SSHListKeysRequest) (*SSHListKeysResponse, error)
+	// SSHGetKey loads metadata for a single SSH key.
+	SSHGetKey(context.Context, *SSHKeyRef) (*SSHKeyResponse, error)
+	// SSHDeleteKey removes an SSH key (and its backend material, if any).
+	SSHDeleteKey(context.Context, *SSHKeyRef) (*emptypb.Empty, error)
+	// SSHExportPublic returns the authorized_keys public line for a key.
+	SSHExportPublic(context.Context, *SSHKeyRef) (*SSHPublicKeyResponse, error)
+	// SSHSign signs a digest with the key's private half (delegated to the
+	// backend for hardware-backed keys) and returns the SSH signature blob.
+	SSHSign(context.Context, *SSHSignRequest) (*SSHSignResponse, error)
+	// SSHAddKnownHost pins a host key.
+	SSHAddKnownHost(context.Context, *SSHAddKnownHostRequest) (*emptypb.Empty, error)
+	// SSHListKnownHosts enumerates host-key pins.
+	SSHListKnownHosts(context.Context, *SSHListKnownHostsRequest) (*SSHListKnownHostsResponse, error)
+	// SSHRemoveKnownHost removes a host-key pin.
+	SSHRemoveKnownHost(context.Context, *SSHRemoveKnownHostRequest) (*emptypb.Empty, error)
+	// SSHAddAuthorizedKey persists an authorized_keys entry.
+	SSHAddAuthorizedKey(context.Context, *SSHAddAuthorizedKeyRequest) (*emptypb.Empty, error)
+	// SSHListAuthorizedKeys enumerates authorized_keys entries.
+	SSHListAuthorizedKeys(context.Context, *SSHListAuthorizedKeysRequest) (*SSHListAuthorizedKeysResponse, error)
+	// SSHRemoveAuthorizedKey removes an authorized_keys entry.
+	SSHRemoveAuthorizedKey(context.Context, *SSHAuthorizedKeyRef) (*emptypb.Empty, error)
+	// SSHConsole opens an interactive PTY shell as a bidirectional stream. The
+	// first client message MUST be an Open; subsequent client messages carry
+	// stdin or resize; server messages carry stdout (and a final Exit). This is
+	// the gRPC/unix transport's implementation of the SSH console capability.
+	SSHConsole(grpc.BidiStreamingServer[SSHConsoleClientMsg, SSHConsoleServerMsg]) error
 	mustEmbedUnimplementedKeystoreServiceServer()
 }
 
@@ -2335,8 +2639,14 @@ func (UnimplementedKeystoreServiceServer) BarrierRecoverWithKeys(context.Context
 func (UnimplementedKeystoreServiceServer) BarrierDeleteRecoveryKeys(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method BarrierDeleteRecoveryKeys not implemented")
 }
+func (UnimplementedKeystoreServiceServer) BarrierHasRecoveryKeys(context.Context, *emptypb.Empty) (*BarrierHasRecoveryKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BarrierHasRecoveryKeys not implemented")
+}
 func (UnimplementedKeystoreServiceServer) BarrierGenerateRootToken(context.Context, *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BarrierGenerateRootToken not implemented")
+}
+func (UnimplementedKeystoreServiceServer) BarrierEnableEncryption(context.Context, *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BarrierEnableEncryption not implemented")
 }
 func (UnimplementedKeystoreServiceServer) SetSOPIN(context.Context, *SetSOPINRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetSOPIN not implemented")
@@ -2434,6 +2744,15 @@ func (UnimplementedKeystoreServiceServer) TenantBarrierInit(context.Context, *Te
 func (UnimplementedKeystoreServiceServer) TenantBarrierUnseal(context.Context, *TenantBarrierUnsealRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method TenantBarrierUnseal not implemented")
 }
+func (UnimplementedKeystoreServiceServer) TenantBarrierStatus(context.Context, *TenantBarrierStatusRequest) (*TenantBarrierStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TenantBarrierStatus not implemented")
+}
+func (UnimplementedKeystoreServiceServer) UpdateTenantEntitlements(context.Context, *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateTenantEntitlements not implemented")
+}
+func (UnimplementedKeystoreServiceServer) UpdateTenantQuotas(context.Context, *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateTenantQuotas not implemented")
+}
 func (UnimplementedKeystoreServiceServer) GetClusterStatus(context.Context, *emptypb.Empty) (*ClusterStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetClusterStatus not implemented")
 }
@@ -2502,6 +2821,48 @@ func (UnimplementedKeystoreServiceServer) BeginAuthentication(context.Context, *
 }
 func (UnimplementedKeystoreServiceServer) FinishAuthentication(context.Context, *FinishAuthenticationRequest) (*FinishAuthenticationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FinishAuthentication not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHGenerateKey(context.Context, *SSHGenerateKeyRequest) (*SSHKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHGenerateKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHImportKey(context.Context, *SSHImportKeyRequest) (*SSHKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHImportKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHListKeys(context.Context, *SSHListKeysRequest) (*SSHListKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHListKeys not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHGetKey(context.Context, *SSHKeyRef) (*SSHKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHGetKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHDeleteKey(context.Context, *SSHKeyRef) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHDeleteKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHExportPublic(context.Context, *SSHKeyRef) (*SSHPublicKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHExportPublic not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHSign(context.Context, *SSHSignRequest) (*SSHSignResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHSign not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHAddKnownHost(context.Context, *SSHAddKnownHostRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHAddKnownHost not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHListKnownHosts(context.Context, *SSHListKnownHostsRequest) (*SSHListKnownHostsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHListKnownHosts not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHRemoveKnownHost(context.Context, *SSHRemoveKnownHostRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHRemoveKnownHost not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHAddAuthorizedKey(context.Context, *SSHAddAuthorizedKeyRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHAddAuthorizedKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHListAuthorizedKeys(context.Context, *SSHListAuthorizedKeysRequest) (*SSHListAuthorizedKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHListAuthorizedKeys not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHRemoveAuthorizedKey(context.Context, *SSHAuthorizedKeyRef) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method SSHRemoveAuthorizedKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SSHConsole(grpc.BidiStreamingServer[SSHConsoleClientMsg, SSHConsoleServerMsg]) error {
+	return status.Error(codes.Unimplemented, "method SSHConsole not implemented")
 }
 func (UnimplementedKeystoreServiceServer) mustEmbedUnimplementedKeystoreServiceServer() {}
 func (UnimplementedKeystoreServiceServer) testEmbeddedByValue()                         {}
@@ -3892,6 +4253,24 @@ func _KeystoreService_BarrierDeleteRecoveryKeys_Handler(srv interface{}, ctx con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_BarrierHasRecoveryKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).BarrierHasRecoveryKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_BarrierHasRecoveryKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).BarrierHasRecoveryKeys(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_BarrierGenerateRootToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BarrierGenerateRootTokenRequest)
 	if err := dec(in); err != nil {
@@ -3906,6 +4285,24 @@ func _KeystoreService_BarrierGenerateRootToken_Handler(srv interface{}, ctx cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(KeystoreServiceServer).BarrierGenerateRootToken(ctx, req.(*BarrierGenerateRootTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_BarrierEnableEncryption_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BarrierEnableEncryptionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).BarrierEnableEncryption(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_BarrierEnableEncryption_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).BarrierEnableEncryption(ctx, req.(*BarrierEnableEncryptionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -4486,6 +4883,60 @@ func _KeystoreService_TenantBarrierUnseal_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_TenantBarrierStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TenantBarrierStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).TenantBarrierStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_TenantBarrierStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).TenantBarrierStatus(ctx, req.(*TenantBarrierStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_UpdateTenantEntitlements_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateTenantEntitlementsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).UpdateTenantEntitlements(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_UpdateTenantEntitlements_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).UpdateTenantEntitlements(ctx, req.(*UpdateTenantEntitlementsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_UpdateTenantQuotas_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateTenantQuotasRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).UpdateTenantQuotas(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_UpdateTenantQuotas_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).UpdateTenantQuotas(ctx, req.(*UpdateTenantQuotasRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_GetClusterStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -4900,6 +5351,247 @@ func _KeystoreService_FinishAuthentication_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_SSHGenerateKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHGenerateKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHGenerateKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHGenerateKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHGenerateKey(ctx, req.(*SSHGenerateKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHImportKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHImportKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHImportKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHImportKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHImportKey(ctx, req.(*SSHImportKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHListKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHListKeysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHListKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHListKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHListKeys(ctx, req.(*SSHListKeysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHGetKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHKeyRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHGetKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHGetKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHGetKey(ctx, req.(*SSHKeyRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHDeleteKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHKeyRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHDeleteKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHDeleteKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHDeleteKey(ctx, req.(*SSHKeyRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHExportPublic_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHKeyRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHExportPublic(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHExportPublic_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHExportPublic(ctx, req.(*SSHKeyRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHSign_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHSignRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHSign(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHSign_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHSign(ctx, req.(*SSHSignRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHAddKnownHost_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHAddKnownHostRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHAddKnownHost(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHAddKnownHost_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHAddKnownHost(ctx, req.(*SSHAddKnownHostRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHListKnownHosts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHListKnownHostsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHListKnownHosts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHListKnownHosts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHListKnownHosts(ctx, req.(*SSHListKnownHostsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHRemoveKnownHost_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHRemoveKnownHostRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHRemoveKnownHost(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHRemoveKnownHost_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHRemoveKnownHost(ctx, req.(*SSHRemoveKnownHostRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHAddAuthorizedKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHAddAuthorizedKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHAddAuthorizedKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHAddAuthorizedKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHAddAuthorizedKey(ctx, req.(*SSHAddAuthorizedKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHListAuthorizedKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHListAuthorizedKeysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHListAuthorizedKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHListAuthorizedKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHListAuthorizedKeys(ctx, req.(*SSHListAuthorizedKeysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHRemoveAuthorizedKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SSHAuthorizedKeyRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SSHRemoveAuthorizedKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SSHRemoveAuthorizedKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SSHRemoveAuthorizedKey(ctx, req.(*SSHAuthorizedKeyRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SSHConsole_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(KeystoreServiceServer).SSHConsole(&grpc.GenericServerStream[SSHConsoleClientMsg, SSHConsoleServerMsg]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type KeystoreService_SSHConsoleServer = grpc.BidiStreamingServer[SSHConsoleClientMsg, SSHConsoleServerMsg]
+
 // KeystoreService_ServiceDesc is the grpc.ServiceDesc for KeystoreService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -5212,8 +5904,16 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _KeystoreService_BarrierDeleteRecoveryKeys_Handler,
 		},
 		{
+			MethodName: "BarrierHasRecoveryKeys",
+			Handler:    _KeystoreService_BarrierHasRecoveryKeys_Handler,
+		},
+		{
 			MethodName: "BarrierGenerateRootToken",
 			Handler:    _KeystoreService_BarrierGenerateRootToken_Handler,
+		},
+		{
+			MethodName: "BarrierEnableEncryption",
+			Handler:    _KeystoreService_BarrierEnableEncryption_Handler,
 		},
 		{
 			MethodName: "SetSOPIN",
@@ -5344,6 +6044,18 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _KeystoreService_TenantBarrierUnseal_Handler,
 		},
 		{
+			MethodName: "TenantBarrierStatus",
+			Handler:    _KeystoreService_TenantBarrierStatus_Handler,
+		},
+		{
+			MethodName: "UpdateTenantEntitlements",
+			Handler:    _KeystoreService_UpdateTenantEntitlements_Handler,
+		},
+		{
+			MethodName: "UpdateTenantQuotas",
+			Handler:    _KeystoreService_UpdateTenantQuotas_Handler,
+		},
+		{
 			MethodName: "GetClusterStatus",
 			Handler:    _KeystoreService_GetClusterStatus_Handler,
 		},
@@ -5435,7 +6147,66 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "FinishAuthentication",
 			Handler:    _KeystoreService_FinishAuthentication_Handler,
 		},
+		{
+			MethodName: "SSHGenerateKey",
+			Handler:    _KeystoreService_SSHGenerateKey_Handler,
+		},
+		{
+			MethodName: "SSHImportKey",
+			Handler:    _KeystoreService_SSHImportKey_Handler,
+		},
+		{
+			MethodName: "SSHListKeys",
+			Handler:    _KeystoreService_SSHListKeys_Handler,
+		},
+		{
+			MethodName: "SSHGetKey",
+			Handler:    _KeystoreService_SSHGetKey_Handler,
+		},
+		{
+			MethodName: "SSHDeleteKey",
+			Handler:    _KeystoreService_SSHDeleteKey_Handler,
+		},
+		{
+			MethodName: "SSHExportPublic",
+			Handler:    _KeystoreService_SSHExportPublic_Handler,
+		},
+		{
+			MethodName: "SSHSign",
+			Handler:    _KeystoreService_SSHSign_Handler,
+		},
+		{
+			MethodName: "SSHAddKnownHost",
+			Handler:    _KeystoreService_SSHAddKnownHost_Handler,
+		},
+		{
+			MethodName: "SSHListKnownHosts",
+			Handler:    _KeystoreService_SSHListKnownHosts_Handler,
+		},
+		{
+			MethodName: "SSHRemoveKnownHost",
+			Handler:    _KeystoreService_SSHRemoveKnownHost_Handler,
+		},
+		{
+			MethodName: "SSHAddAuthorizedKey",
+			Handler:    _KeystoreService_SSHAddAuthorizedKey_Handler,
+		},
+		{
+			MethodName: "SSHListAuthorizedKeys",
+			Handler:    _KeystoreService_SSHListAuthorizedKeys_Handler,
+		},
+		{
+			MethodName: "SSHRemoveAuthorizedKey",
+			Handler:    _KeystoreService_SSHRemoveAuthorizedKey_Handler,
+		},
 	},
-	Streams:  []grpc.StreamDesc{},
-	Metadata: "xkms.proto",
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "SSHConsole",
+			Handler:       _KeystoreService_SSHConsole_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
+	Metadata: "pkg/api/grpc/proto/xkmsv1/xkms.proto",
 }

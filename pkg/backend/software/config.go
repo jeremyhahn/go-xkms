@@ -14,7 +14,7 @@
 package software
 
 import (
-	"fmt"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -41,10 +41,10 @@ type Config struct {
 // Validate checks if the Config is valid.
 func (c *Config) Validate() error {
 	if c == nil {
-		return fmt.Errorf("config is nil")
+		return &errs.Message{Msg: "config is nil"}
 	}
 	if c.KeyStorage == nil {
-		return fmt.Errorf("KeyStorage is required")
+		return &errs.Message{Msg: "KeyStorage is required"}
 	}
 	return nil
 }

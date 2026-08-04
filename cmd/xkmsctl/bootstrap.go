@@ -123,7 +123,7 @@ func runAutoBootstrap(params *autoBootstrapParams) error {
 	ctx := context.Background()
 	bundle, err := bootstrap.Fetch(ctx, *cfg)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrAllBootstrapMethodsFailed, err)
+		return &WrappedError{Sentinel: ErrAllBootstrapMethodsFailed, Err: err}
 	}
 
 	printVerbose("Bootstrap succeeded (%d bytes)", len(bundle.PEM))
@@ -184,13 +184,13 @@ func writeCABundle(bundlePEM []byte, outputPath string) error {
 		fmt.Println("# CA bundle obtained via bootstrap")
 		_, err := os.Stdout.Write(bundlePEM)
 		if err != nil {
-			return fmt.Errorf("%w: %w", ErrBootstrapBundleWrite, err)
+			return &WrappedError{Sentinel: ErrBootstrapBundleWrite, Err: err}
 		}
 		return nil
 	}
 
 	if err := os.WriteFile(outputPath, bundlePEM, 0600); err != nil {
-		return fmt.Errorf("%w: %s: %w", ErrBootstrapBundleWrite, outputPath, err)
+		return &WrappedDetailError{Sentinel: ErrBootstrapBundleWrite, Detail: outputPath, Err: err}
 	}
 
 	fmt.Printf("CA bundle written to %s\n", outputPath)

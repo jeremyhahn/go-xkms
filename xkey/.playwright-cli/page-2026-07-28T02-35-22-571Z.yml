@@ -1,0 +1,35 @@
+- generic [ref=e217]:
+  - generic [ref=e218]:
+    - generic [ref=e219]:
+      - img [ref=e262]
+      - generic [ref=e221]: Welcome
+    - generic [ref=e223]:
+      - generic [ref=e224]: "2"
+      - generic [ref=e225]: Deployment
+    - generic [ref=e227]:
+      - generic [ref=e228]: "3"
+      - generic [ref=e229]: Mode
+    - generic [ref=e231]:
+      - generic [ref=e232]: "4"
+      - generic [ref=e233]: Security
+    - generic [ref=e235]:
+      - generic [ref=e236]: "5"
+      - generic [ref=e237]: Storage
+    - generic [ref=e239]:
+      - generic [ref=e240]: "6"
+      - generic [ref=e241]: Summary
+  - generic [ref=e264]:
+    - heading "Deployment Mode" [level=2] [ref=e265]
+    - paragraph [ref=e266]: Choose how xKey will be managed.
+    - generic [ref=e267]:
+      - button "Personal Single-user setup. All keys and credentials are managed locally with your own PINs." [ref=e268] [cursor=pointer]:
+        - img [ref=e270]
+        - generic [ref=e272]:
+          - generic [ref=e273]: Personal
+          - generic [ref=e274]: Single-user setup. All keys and credentials are managed locally with your own PINs.
+      - button "Enterprise Managed deployment. A Security Officer configures security policy, then users onboard separately." [ref=e275] [cursor=pointer]:
+        - img [ref=e277]
+        - generic [ref=e279]:
+          - generic [ref=e280]: Enterprise
+          - generic [ref=e281]: Managed deployment. A Security Officer configures security policy, then users onboard separately.
+    - button "Back" [ref=e283] [cursor=pointer]

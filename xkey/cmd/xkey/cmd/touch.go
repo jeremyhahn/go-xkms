@@ -88,11 +88,11 @@ func runTouch(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, ipc.ErrDaemonNotRunning) {
 			return ErrTouchDaemonNotRunning
 		}
-		return fmt.Errorf("%w: %v", ErrTouchFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTouchFailed, Cause: err}
 	}
 
 	if resp.Status == ipc.StatusError {
-		return fmt.Errorf("%w: %s", ErrTouchFailed, resp.Error)
+		return &DetailError{Err: ErrTouchFailed, Detail: fmt.Sprintf(": %s", resp.Error)}
 	}
 
 	// Print action result.

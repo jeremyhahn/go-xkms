@@ -15,8 +15,16 @@ package transport
 
 import (
 	"errors"
-	"fmt"
 	"testing"
+)
+
+// Sentinel errors used as underlying causes in transport error tests.
+var (
+	errTestNetwork            = errors.New("network error")
+	errTestNetworkUnreachable = errors.New("network unreachable")
+	errTestDeadlineExceeded   = errors.New("context deadline exceeded")
+	errTestUnderlying         = errors.New("underlying error")
+	errTestSome               = errors.New("some error")
 )
 
 func TestErrorCodeString(t *testing.T) {
@@ -86,7 +94,7 @@ func TestTransportErrorError(t *testing.T) {
 			err: &TransportError{
 				Code:       ErrCodeConnectionFailed,
 				Message:    "connection failed",
-				Underlying: fmt.Errorf("network unreachable"),
+				Underlying: errTestNetworkUnreachable,
 			},
 			contains: []string{"connection failed", "network unreachable"},
 		},
@@ -97,7 +105,7 @@ func TestTransportErrorError(t *testing.T) {
 				Message:    "request timed out",
 				Operation:  "GenerateKey",
 				Address:    "localhost:9000",
-				Underlying: fmt.Errorf("context deadline exceeded"),
+				Underlying: errTestDeadlineExceeded,
 			},
 			contains: []string{"GenerateKey", "request timed out", "localhost:9000", "context deadline exceeded"},
 		},
@@ -116,7 +124,7 @@ func TestTransportErrorError(t *testing.T) {
 }
 
 func TestTransportErrorUnwrap(t *testing.T) {
-	underlying := fmt.Errorf("underlying error")
+	underlying := errTestUnderlying
 	err := &TransportError{
 		Code:       ErrCodeConnectionFailed,
 		Message:    "connection failed",
@@ -275,7 +283,7 @@ func TestNewTransportErrorWithOperation(t *testing.T) {
 }
 
 func TestWrapTransportError(t *testing.T) {
-	underlying := fmt.Errorf("network error")
+	underlying := errTestNetwork
 	err := WrapTransportError(ErrCodeConnectionFailed, "connection failed", underlying)
 
 	if err.Code != ErrCodeConnectionFailed {
@@ -287,7 +295,7 @@ func TestWrapTransportError(t *testing.T) {
 }
 
 func TestWrapTransportErrorWithAddress(t *testing.T) {
-	underlying := fmt.Errorf("network error")
+	underlying := errTestNetwork
 	err := WrapTransportErrorWithAddress(ErrCodeConnectionFailed, "connection failed", "localhost:8080", underlying)
 
 	if err.Code != ErrCodeConnectionFailed {
@@ -488,7 +496,7 @@ func TestGetErrorCode(t *testing.T) {
 			&TransportError{Code: ErrCodeTimeout},
 			ErrCodeTimeout,
 		},
-		{"unknown error", fmt.Errorf("some error"), ErrCodeUnknown},
+		{"unknown error", errTestSome, ErrCodeUnknown},
 	}
 
 	for _, tt := range tests {

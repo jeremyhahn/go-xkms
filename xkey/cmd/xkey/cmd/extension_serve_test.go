@@ -14,11 +14,13 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,6 +49,8 @@ func newTestServeCmd() *cobra.Command {
 	cmd.Flags().String("pin-state", "", "")
 	cmd.Flags().Bool("no-auth", false, "")
 	cmd.Flags().Bool("no-pairing", false, "")
+	cmd.Flags().String("tpm-device", "", "")
+	cmd.Flags().Bool("tpm-simulator", false, "")
 	return cmd
 }
 
@@ -858,5 +862,108 @@ socketReady:
 		if err != nil && !errors.Is(err, context.Canceled) {
 			t.Logf("server exited with: %v (acceptable)", err)
 		}
+	}
+}
+
+// --------------------------------------------------------------------------
+// resolveTPMDevice - flag > TPM_DEVICE_PATH env > default precedence
+// --------------------------------------------------------------------------
+
+// TestResolveTPMDevice_ExplicitDevice verifies that an explicit device value
+// (as supplied by a --tpm-device flag) is returned unchanged, regardless of
+// the environment.
+func TestResolveTPMDevice_ExplicitDevice(t *testing.T) {
+	t.Setenv("TPM_DEVICE_PATH", "/dev/should-be-ignored")
+
+	device := resolveTPMDevice("/dev/custom-tpm0")
+	if device != "/dev/custom-tpm0" {
+		t.Fatalf("expected '/dev/custom-tpm0', got %q", device)
+	}
+}
+
+// TestResolveTPMDevice_EnvFallback verifies that TPM_DEVICE_PATH is honored
+// when no explicit device is supplied, matching the server-side behavior in
+// pkg/config.
+func TestResolveTPMDevice_EnvFallback(t *testing.T) {
+	t.Setenv("TPM_DEVICE_PATH", "/dev/env-tpm0")
+
+	device := resolveTPMDevice("")
+	if device != "/dev/env-tpm0" {
+		t.Fatalf("expected '/dev/env-tpm0', got %q", device)
+	}
+}
+
+// TestResolveTPMDevice_Default verifies that the default device path is used
+// when neither an explicit device nor TPM_DEVICE_PATH is supplied.
+func TestResolveTPMDevice_Default(t *testing.T) {
+	t.Setenv("TPM_DEVICE_PATH", "")
+
+	device := resolveTPMDevice("")
+	if device != defaultBarrierTPMDevice {
+		t.Fatalf("expected %q, got %q", defaultBarrierTPMDevice, device)
+	}
+}
+
+// TestResolveTPMDevice_Priority_FlagOverEnv verifies that an explicit device
+// takes priority over TPM_DEVICE_PATH when both are present.
+func TestResolveTPMDevice_Priority_FlagOverEnv(t *testing.T) {
+	t.Setenv("TPM_DEVICE_PATH", "/dev/env-tpm0")
+
+	device := resolveTPMDevice("/dev/flag-tpm0")
+	if device != "/dev/flag-tpm0" {
+		t.Fatalf("expected '/dev/flag-tpm0' (flag takes priority), got %q", device)
+	}
+}
+
+// --------------------------------------------------------------------------
+// probeTPMSealer - device stat gating and simulator skip-stat behavior
+// --------------------------------------------------------------------------
+
+// newBufferedLogger returns a slog.Logger that writes to buf, allowing tests
+// to assert on which code path was taken without touching real hardware.
+func newBufferedLogger(buf *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+// TestProbeTPMSealer_HardwareMode_DeviceNotFound verifies that, in hardware
+// mode (useSimulator=false), a missing device path short-circuits before any
+// TPM open attempt and returns (nil, nil).
+func TestProbeTPMSealer_HardwareMode_DeviceNotFound(t *testing.T) {
+	var buf bytes.Buffer
+	logger := newBufferedLogger(&buf)
+
+	sealer, closer := probeTPMSealer(logger, t.TempDir(), "/nonexistent-tpm-device-for-test", false)
+	if sealer != nil {
+		t.Fatal("expected nil sealer for missing device")
+	}
+	if closer != nil {
+		t.Fatal("expected nil closer for missing device")
+	}
+	if !strings.Contains(buf.String(), "TPM device not found") {
+		t.Fatalf("expected 'TPM device not found' log message, got: %s", buf.String())
+	}
+}
+
+// TestProbeTPMSealer_SimulatorMode_SkipsDeviceStat verifies that, in
+// simulator mode (useSimulator=true), the device stat check is skipped even
+// when the supplied device path does not exist -- the function must proceed
+// straight to opening the TPM (simulator) rather than short-circuiting on a
+// missing device file. This is the regression this fix targets: previously
+// probeTPMSealer always stat'd a hardcoded hardware device path.
+func TestProbeTPMSealer_SimulatorMode_SkipsDeviceStat(t *testing.T) {
+	var buf bytes.Buffer
+	logger := newBufferedLogger(&buf)
+
+	// The device path does not exist on disk; if the stat-skip logic were
+	// broken, probeTPMSealer would short-circuit here with the "TPM device
+	// not found" debug message instead of attempting to open the TPM.
+	sealer, closer := probeTPMSealer(logger, t.TempDir(), "/nonexistent-tpm-device-for-test", true)
+	if closer != nil {
+		defer closer.Close()
+	}
+	_ = sealer
+
+	if strings.Contains(buf.String(), "TPM device not found") {
+		t.Fatalf("expected device stat to be skipped in simulator mode, got: %s", buf.String())
 	}
 }

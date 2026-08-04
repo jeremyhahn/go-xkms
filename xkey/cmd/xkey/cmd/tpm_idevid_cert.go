@@ -60,7 +60,7 @@ Manage the Initial Device Identity certificate:
 
 IDevID certificates must be signed by a Certificate Authority.
 Self-signed IDevID certificates are not supported - use a proper CA
-(go-xkms CA, go-trusted-ca, or external CA) to issue certificates.
+(go-xkms CA or external CA) to issue certificates.
 
 Subcommands:
   import  - Import a CA-signed IDevID certificate`,
@@ -100,7 +100,7 @@ Authority. The certificate's public key must match the IDevID key
 in the TPM.
 
 Self-signed certificates are NOT accepted. The certificate must be
-issued by a trusted CA (go-xkms CA, go-trusted-ca, Android CA,
+issued by a trusted CA (go-xkms CA, Android CA,
 or external CA with compatible endpoint).
 
 Examples:
@@ -156,16 +156,16 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) error {
 	// Get IDevID attributes
 	idevidAttrs, err := tpm.IDevIDAttributes()
 	if err != nil {
-		return fmt.Errorf("%w: IDevID not found - create with 'tpm idevid create' first", ErrKeyNotFound)
+		return &DetailError{Err: ErrKeyNotFound, Detail: ": IDevID not found - create with 'tpm idevid create' first"}
 	}
 
 	// Get IDevID public key
 	idevidPubKey, idevidErr := tpm.IDevID()
 	if idevidErr != nil {
-		return fmt.Errorf("%w: %v", ErrKeyNotFound, idevidErr)
+		return &SentinelCauseError{Sentinel: ErrKeyNotFound, Cause: idevidErr}
 	}
 	if idevidPubKey == nil {
-		return fmt.Errorf("%w: failed to get IDevID public key", ErrKeyNotFound)
+		return &DetailError{Err: ErrKeyNotFound, Detail: ": failed to get IDevID public key"}
 	}
 
 	// Build CSR subject: start with OpenSSL defaults
@@ -226,7 +226,7 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) error {
 	case x509.ECDSA:
 		sigAlgo = x509.ECDSAWithSHA256
 	default:
-		return fmt.Errorf("%w: unsupported key algorithm: %v", ErrInvalidKeyAlgorithm, idevidAttrs.KeyAlgorithm)
+		return &DetailError{Err: ErrInvalidKeyAlgorithm, Detail: fmt.Sprintf(": unsupported key algorithm: %v", idevidAttrs.KeyAlgorithm)}
 	}
 
 	// Create CSR template
@@ -247,7 +247,7 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) error {
 	// Create the CSR using the TPM to sign
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, csrTemplate, signer)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrIDevIDCSRSigningFailed, err)
+		return &SentinelCauseError{Sentinel: ErrIDevIDCSRSigningFailed, Cause: err}
 	}
 
 	// Encode as PEM
@@ -264,7 +264,7 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := os.WriteFile(idevidCSRExportOutput, pemData, 0600); err != nil {
-		return fmt.Errorf("%w: %v", ErrIDevIDCSRExportFailed, err)
+		return &SentinelCauseError{Sentinel: ErrIDevIDCSRExportFailed, Cause: err}
 	}
 
 	fmt.Printf("IDevID CSR exported to: %s\n", idevidCSRExportOutput)
@@ -275,24 +275,24 @@ func runIDevIDCertImport(cmd *cobra.Command, args []string) error {
 	// Read certificate file
 	pemData, err := os.ReadFile(idevidCertImportPath)
 	if err != nil {
-		return fmt.Errorf("%w: failed to read certificate file: %v", ErrIDevIDCertImportFailed, err)
+		return &DetailError{Err: ErrIDevIDCertImportFailed, Detail: fmt.Sprintf(": failed to read certificate file: %v", err)}
 	}
 
 	// Parse PEM
 	block, _ := pem.Decode(pemData)
 	if block == nil {
-		return fmt.Errorf("%w: failed to decode PEM data", ErrIDevIDInvalidCertificate)
+		return &DetailError{Err: ErrIDevIDInvalidCertificate, Detail: ": failed to decode PEM data"}
 	}
 
 	// Parse certificate
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return fmt.Errorf("%w: failed to parse certificate: %v", ErrIDevIDInvalidCertificate, err)
+		return &DetailError{Err: ErrIDevIDInvalidCertificate, Detail: fmt.Sprintf(": failed to parse certificate: %v", err)}
 	}
 
 	// Reject self-signed certificates
 	if cert.Subject.String() == cert.Issuer.String() {
-		return fmt.Errorf("%w: self-signed certificates are not accepted - use a CA to issue IDevID certificates", ErrIDevIDInvalidCertificate)
+		return &DetailError{Err: ErrIDevIDInvalidCertificate, Detail: ": self-signed certificates are not accepted - use a CA to issue IDevID certificates"}
 	}
 
 	fmt.Println("Certificate to import:")
@@ -311,16 +311,16 @@ func runIDevIDCertImport(cmd *cobra.Command, args []string) error {
 	// Get IDevID public key
 	idevidPubKey, idevidErr := tpm.IDevID()
 	if idevidErr != nil {
-		return fmt.Errorf("%w: %v", ErrKeyNotFound, idevidErr)
+		return &SentinelCauseError{Sentinel: ErrKeyNotFound, Cause: idevidErr}
 	}
 	if idevidPubKey == nil {
-		return fmt.Errorf("%w: IDevID not found - create with 'tpm idevid create' first", ErrKeyNotFound)
+		return &DetailError{Err: ErrKeyNotFound, Detail: ": IDevID not found - create with 'tpm idevid create' first"}
 	}
 
 	// Verify certificate public key matches IDevID (unless forced)
 	if !idevidCertImportForce {
 		if !publicKeysEqual(cert.PublicKey, idevidPubKey) {
-			return fmt.Errorf("%w: use --force to override", ErrIDevIDPublicKeyMismatch)
+			return &DetailError{Err: ErrIDevIDPublicKeyMismatch, Detail: ": use --force to override"}
 		}
 		fmt.Println("Public key verification: PASSED")
 	} else {
@@ -329,7 +329,7 @@ func runIDevIDCertImport(cmd *cobra.Command, args []string) error {
 
 	// Store the certificate
 	if err := tpm.ProvisionIDevIDCert(cert); err != nil {
-		return fmt.Errorf("%w: %v", ErrIDevIDCertImportFailed, err)
+		return &SentinelCauseError{Sentinel: ErrIDevIDCertImportFailed, Cause: err}
 	}
 
 	fmt.Println()

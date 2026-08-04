@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -23,9 +23,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	trustedca "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	sdkadmin "github.com/jeremyhahn/go-xkms/sdk/go/acme/client/admin"
 	sdkerrors "github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
-	trustedca "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 )
 
 // =============================================================================
@@ -369,15 +369,15 @@ type fakeAdminClient struct {
 	statusClient   sdkadmin.StatusClient
 }
 
-func (f *fakeAdminClient) Tenant() sdkadmin.TenantClient        { return f.tenantClient }
-func (f *fakeAdminClient) TenantCA() sdkadmin.TenantCAClient    { return f.tenantCAClient }
-func (f *fakeAdminClient) EAB() sdkadmin.EABClient              { return f.eabClient }
-func (f *fakeAdminClient) Role() sdkadmin.RoleClient            { return f.roleClient }
-func (f *fakeAdminClient) User() sdkadmin.UserClient            { return f.userClient }
+func (f *fakeAdminClient) Tenant() sdkadmin.TenantClient           { return f.tenantClient }
+func (f *fakeAdminClient) TenantCA() sdkadmin.TenantCAClient       { return f.tenantCAClient }
+func (f *fakeAdminClient) EAB() sdkadmin.EABClient                 { return f.eabClient }
+func (f *fakeAdminClient) Role() sdkadmin.RoleClient               { return f.roleClient }
+func (f *fakeAdminClient) User() sdkadmin.UserClient               { return f.userClient }
 func (f *fakeAdminClient) Certificate() sdkadmin.CertificateClient { return f.certClient }
-func (f *fakeAdminClient) Account() sdkadmin.AdminAccountClient { return f.accountClient }
-func (f *fakeAdminClient) Order() sdkadmin.OrderClient          { return f.orderClient }
-func (f *fakeAdminClient) Status() sdkadmin.StatusClient        { return f.statusClient }
+func (f *fakeAdminClient) Account() sdkadmin.AdminAccountClient    { return f.accountClient }
+func (f *fakeAdminClient) Order() sdkadmin.OrderClient             { return f.orderClient }
+func (f *fakeAdminClient) Status() sdkadmin.StatusClient           { return f.statusClient }
 
 // fakeClient satisfies trustedca.Client for the handler dependency.
 type fakeClient struct {
@@ -385,21 +385,24 @@ type fakeClient struct {
 }
 
 func (f *fakeClient) Admin() trustedca.AdminClient { return f.adminClient }
+
 // The remaining Client methods are not exercised by the GUI admin/api package.
 
 var _ trustedca.Client = (*fakeClient)(nil)
 
 // Remaining trustedca.Client methods that are not used by gui/admin/api.
-func (f *fakeClient) Account() trustedca.AccountClient           { return nil }
-func (f *fakeClient) Order() trustedca.OrderClient               { return nil }
+func (f *fakeClient) Account() trustedca.AccountClient             { return nil }
+func (f *fakeClient) Order() trustedca.OrderClient                 { return nil }
 func (f *fakeClient) Authorization() trustedca.AuthorizationClient { return nil }
-func (f *fakeClient) Challenge() trustedca.ChallengeClient       { return nil }
-func (f *fakeClient) Certificate() trustedca.CertificateClient   { return nil }
-func (f *fakeClient) Directory() trustedca.DirectoryClient       { return nil }
-func (f *fakeClient) Nonce() trustedca.NonceClient               { return nil }
-func (f *fakeClient) Transport() trustedca.Transport             { return nil }
-func (f *fakeClient) Workflow(opts ...trustedca.WorkflowOption) trustedca.WorkflowInterface { return nil }
-func (f *fakeClient) Close() error                               { return nil }
+func (f *fakeClient) Challenge() trustedca.ChallengeClient         { return nil }
+func (f *fakeClient) Certificate() trustedca.CertificateClient     { return nil }
+func (f *fakeClient) Directory() trustedca.DirectoryClient         { return nil }
+func (f *fakeClient) Nonce() trustedca.NonceClient                 { return nil }
+func (f *fakeClient) Transport() trustedca.Transport               { return nil }
+func (f *fakeClient) Workflow(opts ...trustedca.WorkflowOption) trustedca.WorkflowInterface {
+	return nil
+}
+func (f *fakeClient) Close() error { return nil }
 
 // =============================================================================
 // Test helpers
@@ -2528,7 +2531,7 @@ func TestIsErrorType_Mismatch(t *testing.T) {
 func TestIsErrorType_Wrapped(t *testing.T) {
 	inner := &ErrSDKCall{Operation: "op", Detail: "detail"}
 	wrapped := errors.New("wrapper: " + inner.Error())
-	_ = wrapped // wrapping via fmt.Errorf would work; this tests false negative is fine
+	_ = wrapped // wrapping via %w would work; this tests false negative is fine
 	var target *ErrSDKCall
 	// Direct non-wrapped error
 	if !isErrorType(inner, &target) {

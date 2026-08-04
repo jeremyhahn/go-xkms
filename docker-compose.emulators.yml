@@ -1,23 +1,37 @@
 services:
-  # LocalStack - AWS KMS Emulator
-  localstack:
-    image: localstack/localstack:latest
-    container_name: go-xkms-localstack
+  # Floci - AWS Emulator (KMS)
+  floci:
+    image: floci/floci:latest
+    container_name: go-xkms-floci
     ports:
       - "4566:4566"
     environment:
-      - SERVICES=kms
-      - DEBUG=0
-      - PERSISTENCE=0
-      - SKIP_INFRA_DOWNLOADS=1
-    volumes:
-      - "${TMPDIR:-/tmp}/localstack:/var/lib/localstack"
+      - FLOCI_DEFAULT_REGION=us-east-1
+      - FLOCI_STORAGE_MODE=memory
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
-      interval: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_floci/health"]
+      interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 5s
+    networks:
+      - xkms-test
+
+  # Floci - GCP Emulator (Cloud KMS)
+  floci-gcp:
+    image: floci/floci-gcp:latest
+    container_name: go-xkms-floci-gcp
+    ports:
+      - "4588:4588"
+    environment:
+      - FLOCI_GCP_DEFAULT_PROJECT_ID=test-project
+      - FLOCI_GCP_STORAGE_MODE=memory
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4588/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     networks:
       - xkms-test
 

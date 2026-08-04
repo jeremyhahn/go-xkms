@@ -3,9 +3,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -17,7 +17,6 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -210,16 +209,6 @@ func TestNewEventLogValidationHookEmptyProdCaDataPush(t *testing.T) {
 	assert.NoError(t, err) // Should skip when ProdCaData is empty
 }
 
-// TestCircuitBreakerHealthCheckerNilPush tests health checker with nil manager
-func TestCircuitBreakerHealthCheckerNilPush(t *testing.T) {
-	checker := CircuitBreakerHealthChecker(nil)
-	health := checker.CheckHealth(context.Background())
-
-	assert.Equal(t, HealthStatusHealthy, health.Status)
-	assert.Contains(t, health.Message, "No circuit breakers configured")
-}
-
-// TestNewDeviceProfileHookNonTCGPush tests device profile hook for non-TCG
 func TestNewDeviceProfileHookNonTCGPush(t *testing.T) {
 	lookupFunc := func(serial, model string) (*DeviceProfile, error) {
 		return &DeviceProfile{
@@ -318,30 +307,6 @@ func TestEventTypeToStringPush(t *testing.T) {
 	}
 }
 
-// TestFormatCircuitBreakerMessagePush tests the circuit breaker message formatting
-func TestFormatCircuitBreakerMessagePush(t *testing.T) {
-	tests := []struct {
-		name     string
-		open     int
-		halfOpen int
-		total    int
-		contains string
-	}{
-		{"all healthy", 0, 0, 5, "0"},
-		{"one open", 1, 0, 5, "1"},
-		{"one half-open", 0, 1, 5, "1"},
-		{"mixed", 2, 1, 5, "2"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatCircuitBreakerMessage(tt.open, tt.halfOpen, tt.total)
-			assert.Contains(t, result, tt.contains)
-		})
-	}
-}
-
-// TestParseCryptoAgileEventTruncatedHeaderPush tests parseCryptoAgileEvent with truncated header
 func TestParseCryptoAgileEventTruncatedHeaderPush(t *testing.T) {
 	algorithms := []SpecIDAlgorithm{
 		{AlgorithmID: 0x0004, DigestSize: 20},
@@ -558,22 +523,4 @@ func TestParseCryptoAgileEventMultipleDigests(t *testing.T) {
 	entry, err := parseCryptoAgileEvent(reader, algorithms)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, entry.PCRIndex)
-}
-
-// TestHealthStatusConstants tests health status constant values
-func TestHealthStatusConstants(t *testing.T) {
-	assert.Equal(t, HealthStatus("healthy"), HealthStatusHealthy)
-	assert.Equal(t, HealthStatus("degraded"), HealthStatusDegraded)
-	assert.Equal(t, HealthStatus("unhealthy"), HealthStatusUnhealthy)
-}
-
-// TestComponentHealthStruct tests ComponentHealth struct
-func TestComponentHealthStruct(t *testing.T) {
-	health := ComponentHealth{
-		Status:  HealthStatusHealthy,
-		Message: "All systems operational",
-	}
-
-	assert.Equal(t, HealthStatusHealthy, health.Status)
-	assert.Equal(t, "All systems operational", health.Message)
 }

@@ -7,12 +7,18 @@ import (
 	"math"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // NVWrite seals a secret to an NV RAM index against the Platform Policy.
 // The NV index must be defined with NT=Ordinary.
+//
+// When the secret exceeds the TPM's TPM_PT_NV_BUFFER_MAX, the write is
+// issued in chunks with the Offset field incremented per chunk (TCG Part 3
+// §31.4.1).  The TPM's buffer maximum is queried via GetCapability; if the
+// query fails, a conservative default of 512 bytes is used.
 func (tpm *TPM2) NVWrite(
 	keyAttrs *types.KeyAttributes) error {
 
@@ -101,24 +107,44 @@ func (tpm *TPM2) NVWrite(
 		}
 	}()
 
-	write := tpm2.NVWrite{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		NVIndex: tpm2.AuthHandle{
-			Handle: pub.NVIndex,
-			Name:   *nvName,
-			Auth:   session,
-		},
-		Data: tpm2.TPM2BMaxNVBuffer{
-			Buffer: secretBytes,
-		},
-		Offset: 0,
-	}
-	if _, err := write.Execute(tpm.transport); err != nil {
-		tpm.logger.Error("NVWrite failed", slog.String("error", err.Error()))
-		return err
+	// Determine the maximum write chunk size from TPM capabilities.
+	// Fall back to 512 bytes on capability query failure (conservative;
+	// all compliant TPM 2.0 implementations support at least 512 bytes).
+	bufMax := nvWriteChunkSize(tpm.transport)
+
+	offset := uint16(0)
+	remaining := secretBytes
+	for len(remaining) > 0 {
+		chunkSize := bufMax
+		if uint16(len(remaining)) < chunkSize {
+			chunkSize = uint16(len(remaining))
+		}
+		chunk := remaining[:chunkSize]
+		remaining = remaining[chunkSize:]
+
+		write := tpm2.NVWrite{
+			AuthHandle: tpm2.AuthHandle{
+				Handle: hierarchy,
+				Auth:   tpm2.PasswordAuth(hierarchyAuth),
+			},
+			NVIndex: tpm2.AuthHandle{
+				Handle: pub.NVIndex,
+				Name:   *nvName,
+				Auth:   session,
+			},
+			Data: tpm2.TPM2BMaxNVBuffer{
+				Buffer: chunk,
+			},
+			Offset: offset,
+		}
+		if _, err := write.Execute(tpm.transport); err != nil {
+			tpm.logger.Error("NVWrite failed",
+				slog.String("error", err.Error()),
+				slog.Int("offset", int(offset)),
+				slog.Int("chunkSize", int(chunkSize)))
+			return err
+		}
+		offset += chunkSize
 	}
 
 	if tpm.debugSecrets {
@@ -133,9 +159,25 @@ func (tpm *TPM2) NVWrite(
 }
 
 // NVRead reads data from an NV RAM index. When PlatformPolicy is set on the
-// key attributes, a policy session is used; otherwise, simple password
-// authorization is used (suitable for owner-hierarchy NV reads).
+// key attributes, a policy session is used; otherwise, the authorization path
+// is selected by inspecting TPMA_NV attributes (TCG Part 3 §31.13):
+//   - TPMA_NV_AUTHREAD with no caller-supplied hierarchy auth → index-self auth
+//     (AuthHandle is the NV index itself with empty password authorization).
+//   - TPMA_NV_OWNERREAD with caller-supplied hierarchy auth → owner-hierarchy auth.
+//   - TPMA_NV_OWNERREAD with no hierarchy auth → owner-hierarchy with empty auth
+//     (backward-compatible path for TPMs with empty owner auth).
+//
 // The NV index must have been defined with NT=Ordinary.
+//
+// When dataSize is 0 the entire NV index (nvPub.DataSize bytes) is read.
+// When the requested size exceeds the TPM's TPM_PT_NV_BUFFER_MAX the read is
+// issued in sequential chunks with the Offset field incremented accordingly
+// (TCG Part 3 §31.3.1).  The buffer maximum is queried via GetCapability;
+// if the query fails a conservative default of 512 bytes is used.
+// Password-auth sessions are stateless and safe to reuse across chunks.
+// Policy sessions created by PlatformPolicySession use ContinueSession=true
+// (go-tpm's PolicySession helper sets this unconditionally) so the same
+// session handle remains valid for every chunk within the loop.
 func (tpm *TPM2) NVRead(
 	keyAttrs *types.KeyAttributes,
 	dataSize uint16) ([]byte, error) {
@@ -150,30 +192,9 @@ func (tpm *TPM2) NVRead(
 		hierarchyAuth = keyAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
 	}
 
-	// Build the NV index auth session. Platform policy requires a policy
-	// session; all other cases use simple password authorization.
-	var session tpm2.Session
-	var closer func() error
-	if keyAttrs.PlatformPolicy {
-		var err error
-		session, closer, err = tpm.CreateSession(keyAttrs)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		session = tpm2.PasswordAuth(hierarchyAuth)
-		closer = func() error { return nil }
-	}
-	defer func() {
-		if err := closer(); err != nil {
-			tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
-		}
-	}()
-
-	hierarchy := keyAttrs.TPMAttributes.Hierarchy
 	handle := keyAttrs.TPMAttributes.Handle
 
-	// Read the NV RAM bytes
+	// Read the NV public area to obtain the Name and TPMA_NV attributes.
 	readPubRsp, err := tpm2.NVReadPublic{
 		NVIndex: handle,
 	}.Execute(tpm.transport)
@@ -184,27 +205,144 @@ func (tpm *TPM2) NVRead(
 	tpm.logger.Debug("NV Name",
 		slog.String("name", Encode(readPubRsp.NVName.Buffer)))
 
-	readRsp, err := tpm2.NVRead{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		NVIndex: tpm2.AuthHandle{
+	nvPub, err := readPubRsp.NVPublic.Contents()
+	if err != nil {
+		tpm.logger.Error("failed to parse NV public area", slog.String("error", err.Error()))
+		return nil, err
+	}
+	attrs := nvPub.Attributes
+
+	// Resolve the effective read size.
+	// dataSize==0 means "read the full index contents" (caller semantics
+	// documented in xkey ReadNVData: "When size is 0 …").
+	// In all cases clamp to the index's actual data size so callers that
+	// pass the listed size do not exceed what the TPM actually stored.
+	effectiveSize := dataSize
+	if effectiveSize == 0 || effectiveSize > nvPub.DataSize {
+		effectiveSize = nvPub.DataSize
+	}
+
+	// When PlatformPolicy is set, build a policy session and use it as the
+	// authorization for the NV index itself (TPMA_NV_POLICYREAD path).
+	// The policy session is created once and reused across all chunks —
+	// go-tpm's PolicySession sets ContinueSession=true so the session
+	// handle remains alive until the closer is called.
+	// Otherwise, select the password authorization path by inspecting
+	// TPMA_NV attributes per TCG Part 3 §31.13:
+	//   TPMA_NV_AUTHREAD + empty index auth → index-self auth.
+	//   TPMA_NV_OWNERREAD + supplied owner auth → owner-hierarchy auth.
+	//   TPMA_NV_OWNERREAD, no auth provided → owner-hierarchy with empty auth.
+	// Select the authorization path by inspecting TPMA_NV attributes per
+	// TCG Part 3 §31.13.
+	//
+	// PlatformPolicy only controls the WRITE session (NVWrite creates a
+	// policy session for the write command).  For READS the authorization
+	// entity is always the NV index itself or the owner hierarchy, selected
+	// by the attributes present in the NV public area:
+	//
+	//   TPMA_NV_POLICYREAD set AND PlatformPolicy=true
+	//     → Policy session (PCR branch) against the NV index handle.
+	//       This is the secure path that satisfies the policy digest stored
+	//       in AuthPolicy.  The PCR branch is always attempted first; if it
+	//       fails (PCR state changed) the caller must handle the error.
+	//
+	//   TPMA_NV_AUTHREAD + empty index auth
+	//     → Index-self auth with empty password.
+	//
+	//   TPMA_NV_OWNERREAD + supplied owner auth
+	//     → Owner-hierarchy password auth.
+	//
+	//   TPMA_NV_OWNERREAD, no owner auth
+	//     → Owner-hierarchy with empty auth (backward compat).
+	var authHandle tpm2.AuthHandle
+	if keyAttrs.PlatformPolicy && attrs.PolicyRead {
+		// PCR-branch policy session: call PlatformPolicySession(nil) directly
+		// so the session digest matches the PolicyOR(PCR, AuthValue) AuthPolicy
+		// stored in the NV public area.  CreateKeySession is NOT used because
+		// the key password ("test" in tests) is unrelated to the NV index
+		// authValue (always empty for NV indices defined by NVWrite).
+		session, closer, err := tpm.PlatformPolicySession(nil)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if err := closer(); err != nil {
+				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
+			}
+		}()
+		authHandle = tpm2.AuthHandle{
 			Handle: handle,
 			Name:   readPubRsp.NVName,
 			Auth:   session,
-		},
-		Size: dataSize,
-	}.Execute(tpm.transport)
-	if err != nil {
-		tpm.logger.Error("NVRead failed", slog.String("error", err.Error()))
-		return nil, err
+		}
+	} else {
+		switch {
+		case attrs.AuthRead && len(hierarchyAuth) == 0:
+			// Index-self auth path: authHandle is the NV index itself.
+			authHandle = tpm2.AuthHandle{
+				Handle: handle,
+				Name:   readPubRsp.NVName,
+				Auth:   tpm2.PasswordAuth(nil),
+			}
+		case attrs.OwnerRead && len(hierarchyAuth) > 0:
+			// Owner-hierarchy path with supplied credentials.
+			authHandle = tpm2.AuthHandle{
+				Handle: tpm2.TPMRHOwner,
+				Auth:   tpm2.PasswordAuth(hierarchyAuth),
+			}
+		case attrs.OwnerRead:
+			// Owner-hierarchy path with empty owner auth (TPM with no owner password).
+			authHandle = tpm2.AuthHandle{
+				Handle: tpm2.TPMRHOwner,
+				Auth:   tpm2.PasswordAuth(nil),
+			}
+		default:
+			return nil, ErrNVReadNotAuthorized
+		}
+	}
+
+	// Issue NVRead in chunks of at most TPM_PT_NV_BUFFER_MAX bytes.
+	// A single read of a size exceeding the buffer maximum returns
+	// TPM_RC_VALUE (parameter 1).  Fall back to 512 bytes on capability
+	// query failure — all compliant TPM 2.0 implementations support at
+	// least 512 bytes (TCG Part 2 §4.4).
+	bufMax := nvReadChunkSize(tpm.transport)
+
+	result := make([]byte, 0, effectiveSize)
+	offset := uint16(0)
+	remaining := effectiveSize
+	for remaining > 0 {
+		chunkSize := bufMax
+		if remaining < chunkSize {
+			chunkSize = remaining
+		}
+
+		readRsp, err := tpm2.NVRead{
+			AuthHandle: authHandle,
+			NVIndex: tpm2.NamedHandle{
+				Handle: handle,
+				Name:   readPubRsp.NVName,
+			},
+			Size:   chunkSize,
+			Offset: offset,
+		}.Execute(tpm.transport)
+		if err != nil {
+			tpm.logger.Error("NVRead failed",
+				slog.String("error", err.Error()),
+				slog.Int("offset", int(offset)),
+				slog.Int("chunkSize", int(chunkSize)))
+			return nil, err
+		}
+
+		result = append(result, readRsp.Data.Buffer...)
+		offset += uint16(len(readRsp.Data.Buffer)) // #nosec G115 -- chunkSize ≤ bufMax ≤ MaxUint16
+		remaining -= uint16(len(readRsp.Data.Buffer))
 	}
 
 	tpm.logger.Debug("NVRead: retrieved data",
-		slog.Int("bytes", len(readRsp.Data.Buffer)))
+		slog.Int("bytes", len(result)))
 
-	return readRsp.Data.Buffer, nil
+	return result, nil
 }
 
 // NVDefineCounter defines a counter NV index at the specified handle.
@@ -451,15 +589,41 @@ func (tpm *TPM2) NVIncrement(keyAttrs *types.KeyAttributes) (uint64, error) {
 		return 0, err
 	}
 
-	readRsp, err := tpm2.NVRead{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		NVIndex: tpm2.AuthHandle{
+	nvPub, err := readPubRsp.NVPublic.Contents()
+	if err != nil {
+		tpm.logger.Error("failed to parse NV public area", slog.String("error", err.Error()))
+		return 0, err
+	}
+	attrs := nvPub.Attributes
+
+	// Select the authorization path per TCG Part 3 §31.13.
+	var readAuthHandle tpm2.AuthHandle
+	switch {
+	case attrs.AuthRead && len(hierarchyAuth) == 0:
+		readAuthHandle = tpm2.AuthHandle{
 			Handle: handle,
 			Name:   readPubRsp.NVName,
-			Auth:   session,
+			Auth:   tpm2.PasswordAuth(nil),
+		}
+	case attrs.OwnerRead && len(hierarchyAuth) > 0:
+		readAuthHandle = tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(hierarchyAuth),
+		}
+	case attrs.OwnerRead:
+		readAuthHandle = tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(nil),
+		}
+	default:
+		return 0, ErrNVReadNotAuthorized
+	}
+
+	readRsp, err := tpm2.NVRead{
+		AuthHandle: readAuthHandle,
+		NVIndex: tpm2.NamedHandle{
+			Handle: handle,
+			Name:   readPubRsp.NVName,
 		},
 		Size: 8, // Counter is always 8 bytes
 	}.Execute(tpm.transport)
@@ -537,6 +701,8 @@ func (tpm *TPM2) NVExtend(keyAttrs *types.KeyAttributes, data []byte) error {
 
 // NVReadCounter reads the current value of a counter NV index.
 // The NV index must have been defined with NT=Counter.
+// Authorization path is selected by inspecting TPMA_NV attributes per
+// TCG Part 3 §31.13 (same rules as NVRead).
 func (tpm *TPM2) NVReadCounter(keyAttrs *types.KeyAttributes) (uint64, error) {
 
 	var hierarchyAuth []byte
@@ -553,28 +719,9 @@ func (tpm *TPM2) NVReadCounter(keyAttrs *types.KeyAttributes) (uint64, error) {
 		hierarchyAuth = keyAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
 	}
 
-	var session tpm2.Session
-	var closer func() error
-	if keyAttrs.PlatformPolicy {
-		var err error
-		session, closer, err = tpm.CreateSession(keyAttrs)
-		if err != nil {
-			return 0, err
-		}
-	} else {
-		session = tpm2.PasswordAuth(hierarchyAuth)
-		closer = func() error { return nil }
-	}
-	defer func() {
-		if err := closer(); err != nil {
-			tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
-		}
-	}()
-
-	hierarchy := keyAttrs.TPMAttributes.Hierarchy
 	handle := keyAttrs.TPMAttributes.Handle
 
-	// Read the NV public area to get the name
+	// Read the NV public area to get the name and TPMA_NV attributes.
 	readPubRsp, err := tpm2.NVReadPublic{
 		NVIndex: handle,
 	}.Execute(tpm.transport)
@@ -583,15 +730,58 @@ func (tpm *TPM2) NVReadCounter(keyAttrs *types.KeyAttributes) (uint64, error) {
 		return 0, err
 	}
 
-	readRsp, err := tpm2.NVRead{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		NVIndex: tpm2.AuthHandle{
+	nvPub, err := readPubRsp.NVPublic.Contents()
+	if err != nil {
+		tpm.logger.Error("failed to parse NV public area", slog.String("error", err.Error()))
+		return 0, err
+	}
+	attrs := nvPub.Attributes
+
+	// Select the authorization path per TCG Part 3 §31.13.
+	var authHandle tpm2.AuthHandle
+	if keyAttrs.PlatformPolicy {
+		session, closer, err := tpm.CreateSession(keyAttrs)
+		if err != nil {
+			return 0, err
+		}
+		defer func() {
+			if err := closer(); err != nil {
+				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
+			}
+		}()
+		authHandle = tpm2.AuthHandle{
 			Handle: handle,
 			Name:   readPubRsp.NVName,
 			Auth:   session,
+		}
+	} else {
+		switch {
+		case attrs.AuthRead && len(hierarchyAuth) == 0:
+			authHandle = tpm2.AuthHandle{
+				Handle: handle,
+				Name:   readPubRsp.NVName,
+				Auth:   tpm2.PasswordAuth(nil),
+			}
+		case attrs.OwnerRead && len(hierarchyAuth) > 0:
+			authHandle = tpm2.AuthHandle{
+				Handle: tpm2.TPMRHOwner,
+				Auth:   tpm2.PasswordAuth(hierarchyAuth),
+			}
+		case attrs.OwnerRead:
+			authHandle = tpm2.AuthHandle{
+				Handle: tpm2.TPMRHOwner,
+				Auth:   tpm2.PasswordAuth(nil),
+			}
+		default:
+			return 0, ErrNVReadNotAuthorized
+		}
+	}
+
+	readRsp, err := tpm2.NVRead{
+		AuthHandle: authHandle,
+		NVIndex: tpm2.NamedHandle{
+			Handle: handle,
+			Name:   readPubRsp.NVName,
 		},
 		Size: 8, // Counter is always 8 bytes
 	}.Execute(tpm.transport)
@@ -612,6 +802,8 @@ func (tpm *TPM2) NVReadCounter(keyAttrs *types.KeyAttributes) (uint64, error) {
 
 // NVReadExtend reads the current digest value of an extend NV index.
 // The NV index must have been defined with NT=Extend.
+// Authorization path is selected by inspecting TPMA_NV attributes per
+// TCG Part 3 §31.13 (same rules as NVRead).
 func (tpm *TPM2) NVReadExtend(keyAttrs *types.KeyAttributes) ([]byte, error) {
 
 	var hierarchyAuth []byte
@@ -628,35 +820,16 @@ func (tpm *TPM2) NVReadExtend(keyAttrs *types.KeyAttributes) ([]byte, error) {
 		hierarchyAuth = keyAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
 	}
 
-	var session tpm2.Session
-	var closer func() error
-	if keyAttrs.PlatformPolicy {
-		var err error
-		session, closer, err = tpm.CreateSession(keyAttrs)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		session = tpm2.PasswordAuth(hierarchyAuth)
-		closer = func() error { return nil }
-	}
-	defer func() {
-		if err := closer(); err != nil {
-			tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
-		}
-	}()
-
-	hierarchy := keyAttrs.TPMAttributes.Hierarchy
 	handle := keyAttrs.TPMAttributes.Handle
 	hashAlg := keyAttrs.TPMAttributes.HashAlg
 
-	// Determine the data size based on the hash algorithm
+	// Determine the data size based on the hash algorithm.
 	dataSize, err := hashAlgDigestSize(hashAlg)
 	if err != nil {
 		return nil, err
 	}
 
-	// Read the NV public area to get the name
+	// Read the NV public area to get the name and TPMA_NV attributes.
 	readPubRsp, err := tpm2.NVReadPublic{
 		NVIndex: handle,
 	}.Execute(tpm.transport)
@@ -665,15 +838,58 @@ func (tpm *TPM2) NVReadExtend(keyAttrs *types.KeyAttributes) ([]byte, error) {
 		return nil, err
 	}
 
-	readRsp, err := tpm2.NVRead{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		NVIndex: tpm2.AuthHandle{
+	nvPub, err := readPubRsp.NVPublic.Contents()
+	if err != nil {
+		tpm.logger.Error("failed to parse NV public area", slog.String("error", err.Error()))
+		return nil, err
+	}
+	attrs := nvPub.Attributes
+
+	// Select the authorization path per TCG Part 3 §31.13.
+	var authHandle tpm2.AuthHandle
+	if keyAttrs.PlatformPolicy {
+		session, closer, err := tpm.CreateSession(keyAttrs)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if err := closer(); err != nil {
+				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
+			}
+		}()
+		authHandle = tpm2.AuthHandle{
 			Handle: handle,
 			Name:   readPubRsp.NVName,
 			Auth:   session,
+		}
+	} else {
+		switch {
+		case attrs.AuthRead && len(hierarchyAuth) == 0:
+			authHandle = tpm2.AuthHandle{
+				Handle: handle,
+				Name:   readPubRsp.NVName,
+				Auth:   tpm2.PasswordAuth(nil),
+			}
+		case attrs.OwnerRead && len(hierarchyAuth) > 0:
+			authHandle = tpm2.AuthHandle{
+				Handle: tpm2.TPMRHOwner,
+				Auth:   tpm2.PasswordAuth(hierarchyAuth),
+			}
+		case attrs.OwnerRead:
+			authHandle = tpm2.AuthHandle{
+				Handle: tpm2.TPMRHOwner,
+				Auth:   tpm2.PasswordAuth(nil),
+			}
+		default:
+			return nil, ErrNVReadNotAuthorized
+		}
+	}
+
+	readRsp, err := tpm2.NVRead{
+		AuthHandle: authHandle,
+		NVIndex: tpm2.NamedHandle{
+			Handle: handle,
+			Name:   readPubRsp.NVName,
 		},
 		Size: dataSize,
 	}.Execute(tpm.transport)
@@ -740,6 +956,41 @@ func (tpm *TPM2) NVUndefine(keyAttrs *types.KeyAttributes) error {
 	return nil
 }
 
+// nvChunkSizeFallback is the conservative default chunk size used when the
+// TPM_PT_NV_BUFFER_MAX capability query fails.  All compliant TPM 2.0
+// implementations must support at least 512 bytes (TCG Part 2 §4.4).
+const nvChunkSizeFallback = uint16(512)
+
+// nvReadChunkSize returns the maximum number of bytes that may be transferred
+// in a single TPM2_NV_Read command.  It queries TPM_PT_NV_BUFFER_MAX via
+// TPM2_GetCapability (reusing the existing nvBufferMax helper in
+// capabilities.go) and converts to uint16.  On failure nvChunkSizeFallback
+// is returned.
+func nvReadChunkSize(t transport.TPM) uint16 {
+	return nvBufferMaxUint16(t)
+}
+
+// nvWriteChunkSize returns the maximum number of bytes that may be transferred
+// in a single TPM2_NV_Write command.  Same query as nvReadChunkSize; both
+// NV_Read and NV_Write are constrained by TPM_PT_NV_BUFFER_MAX.
+func nvWriteChunkSize(t transport.TPM) uint16 {
+	return nvBufferMaxUint16(t)
+}
+
+// nvBufferMaxUint16 wraps nvBufferMax (capabilities.go) and converts the
+// result to uint16, clamping at math.MaxUint16.  Returns nvChunkSizeFallback
+// on error or zero result.
+func nvBufferMaxUint16(t transport.TPM) uint16 {
+	v, err := nvBufferMax(t)
+	if err != nil || v == 0 {
+		return nvChunkSizeFallback
+	}
+	if v > math.MaxUint16 {
+		return math.MaxUint16
+	}
+	return uint16(v) // #nosec G115 -- clamped to MaxUint16 above
+}
+
 // hashAlgDigestSize returns the digest size for a given TPM hash algorithm.
 func hashAlgDigestSize(hashAlg tpm2.TPMIAlgHash) (uint16, error) {
 	switch hashAlg {
@@ -757,6 +1008,9 @@ func hashAlgDigestSize(hashAlg tpm2.TPMIAlgHash) (uint16, error) {
 }
 
 // writeCertToNVRAM writes a DER-encoded certificate to TPM NVRAM.
+// The write is issued in chunks of at most TPM_PT_NV_BUFFER_MAX bytes so
+// that certificates larger than the TPM's NV buffer maximum are handled
+// correctly (TCG Part 3 §31.4.1).
 func (tpm *TPM2) writeCertToNVRAM(nvIndex tpm2.TPMHandle, certDER []byte) error {
 	tpm.logger.Debug("writing certificate to NV index",
 		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)),
@@ -802,65 +1056,98 @@ func (tpm *TPM2) writeCertToNVRAM(nvIndex tpm2.TPMHandle, certDER []byte) error 
 		return err
 	}
 
-	write := tpm2.NVWrite{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(nil),
-		},
-		NVIndex: tpm2.NamedHandle{
-			Handle: pub.NVIndex,
-			Name:   *nvName,
-		},
-		Data: tpm2.TPM2BMaxNVBuffer{
-			Buffer: certDER,
-		},
-		Offset: 0,
-	}
+	bufMax := nvWriteChunkSize(tpm.transport)
+	offset := uint16(0)
+	remaining := certDER
+	for len(remaining) > 0 {
+		chunkSize := int(bufMax)
+		if len(remaining) < chunkSize {
+			chunkSize = len(remaining)
+		}
+		chunk := remaining[:chunkSize]
+		remaining = remaining[chunkSize:]
 
-	if _, err := write.Execute(tpm.transport); err != nil {
-		tpm.logger.Error("failed to write NV data", slog.String("error", err.Error()))
-		return err
+		write := tpm2.NVWrite{
+			AuthHandle: tpm2.AuthHandle{
+				Handle: tpm2.TPMRHOwner,
+				Auth:   tpm2.PasswordAuth(nil),
+			},
+			NVIndex: tpm2.NamedHandle{
+				Handle: pub.NVIndex,
+				Name:   *nvName,
+			},
+			Data: tpm2.TPM2BMaxNVBuffer{
+				Buffer: chunk,
+			},
+			Offset: offset,
+		}
+		if _, err := write.Execute(tpm.transport); err != nil {
+			tpm.logger.Error("failed to write NV data",
+				slog.String("error", err.Error()),
+				slog.Int("offset", int(offset)))
+			return err
+		}
+		offset += uint16(chunkSize) // #nosec G115 -- chunkSize ≤ bufMax ≤ MaxUint16
 	}
 
 	return nil
 }
 
 // readCertFromNVRAM reads a DER-encoded certificate from TPM NVRAM.
+// The read is issued in chunks of at most TPM_PT_NV_BUFFER_MAX bytes so
+// that certificates larger than the TPM's NV buffer maximum are handled
+// correctly (TCG Part 3 §31.3.1).
 func (tpm *TPM2) readCertFromNVRAM(nvIndex tpm2.TPMHandle) ([]byte, error) {
 	tpm.logger.Debug("reading certificate from NV index",
 		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)))
 
 	// Read NV public to get the Name and DataSize
-	nvPub, err := tpm2.NVReadPublic{
+	nvPubRsp, err := tpm2.NVReadPublic{
 		NVIndex: nvIndex,
 	}.Execute(tpm.transport)
 	if err != nil {
 		return nil, err
 	}
 
-	pub, err := nvPub.NVPublic.Contents()
+	pub, err := nvPubRsp.NVPublic.Contents()
 	if err != nil {
 		return nil, err
 	}
 
-	// Read NV data
-	nvRead, err := tpm2.NVRead{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(nil),
-		},
-		NVIndex: tpm2.NamedHandle{
-			Handle: nvIndex,
-			Name:   nvPub.NVName,
-		},
-		Size:   pub.DataSize,
-		Offset: 0,
-	}.Execute(tpm.transport)
-	if err != nil {
-		return nil, err
+	bufMax := nvReadChunkSize(tpm.transport)
+	authHandle := tpm2.AuthHandle{
+		Handle: tpm2.TPMRHOwner,
+		Auth:   tpm2.PasswordAuth(nil),
 	}
 
-	return nvRead.Data.Buffer, nil
+	result := make([]byte, 0, pub.DataSize)
+	offset := uint16(0)
+	remaining := pub.DataSize
+	for remaining > 0 {
+		chunkSize := bufMax
+		if remaining < chunkSize {
+			chunkSize = remaining
+		}
+
+		nvRead, err := tpm2.NVRead{
+			AuthHandle: authHandle,
+			NVIndex: tpm2.NamedHandle{
+				Handle: nvIndex,
+				Name:   nvPubRsp.NVName,
+			},
+			Size:   chunkSize,
+			Offset: offset,
+		}.Execute(tpm.transport)
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, nvRead.Data.Buffer...)
+		offset += uint16(len(nvRead.Data.Buffer)) // #nosec G115 -- chunkSize ≤ bufMax ≤ MaxUint16
+		remaining -= uint16(len(nvRead.Data.Buffer))
+	}
+
+	return result, nil
 }
 
 // deleteCertFromNVRAM undefines an NV index from TPM NVRAM.

@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"google.golang.org/grpc/codes"
@@ -322,7 +324,7 @@ func parseCASerialHex(s string) (*big.Int, error) {
 	serialStr = strings.TrimPrefix(serialStr, "0X")
 	serial := new(big.Int)
 	if _, ok := serial.SetString(serialStr, 16); !ok {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidSerialNumber, s)
+		return nil, &errs.Detail{Err: ErrInvalidSerialNumber, Detail: fmt.Sprintf("%s", s)}
 	}
 	return serial, nil
 }

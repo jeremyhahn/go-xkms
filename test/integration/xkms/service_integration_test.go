@@ -73,7 +73,7 @@ func setupServiceIntegration(t *testing.T) {
 	// Initialize service with multiple backends
 	err = xkms.Initialize(&xkms.ServiceConfig{
 		Backends: map[string]xkms.Backend{
-			"software": software1KS,
+			"software":  software1KS,
 			"software2": software2KS,
 		},
 		DefaultBackend: "software",

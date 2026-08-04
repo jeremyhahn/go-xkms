@@ -285,9 +285,17 @@ service KeystoreService {
   // BarrierDeleteRecoveryKeys removes recovery key metadata from storage.
   rpc BarrierDeleteRecoveryKeys(google.protobuf.Empty) returns (google.protobuf.Empty);
 
+  // BarrierHasRecoveryKeys reports whether recovery keys have been generated.
+  rpc BarrierHasRecoveryKeys(google.protobuf.Empty) returns (BarrierHasRecoveryKeysResponse);
+
   // BarrierGenerateRootToken generates a one-time root token by proving
   // knowledge of the master key through Shamir share reconstruction.
   rpc BarrierGenerateRootToken(BarrierGenerateRootTokenRequest) returns (BarrierRootTokenResponse);
+
+  // BarrierEnableEncryption migrates a previously-unencrypted barrier to a
+  // keyed strategy in place. The migration runs asynchronously; the response
+  // acknowledges the start and clients poll BarrierStatus for completion.
+  rpc BarrierEnableEncryption(BarrierEnableEncryptionRequest) returns (BarrierEnableEncryptionResponse);
 
   // ==================== PIN Operations ====================
 
@@ -397,6 +405,15 @@ service KeystoreService {
   // TenantBarrierUnseal unseals the barrier for a tenant.
   rpc TenantBarrierUnseal(TenantBarrierUnsealRequest) returns (google.protobuf.Empty);
 
+  // TenantBarrierStatus reports the current state of a per-tenant barrier.
+  rpc TenantBarrierStatus(TenantBarrierStatusRequest) returns (TenantBarrierStatusResponse);
+
+  // UpdateTenantEntitlements updates a tenant's feature entitlements.
+  rpc UpdateTenantEntitlements(UpdateTenantEntitlementsRequest) returns (UpdateTenantEntitlementsResponse);
+
+  // UpdateTenantQuotas updates a tenant's resource quotas.
+  rpc UpdateTenantQuotas(UpdateTenantQuotasRequest) returns (UpdateTenantQuotasResponse);
+
   // ==================== Cluster Operations ====================
 
   // GetClusterStatus returns the Raft leadership status for the configured
@@ -461,6 +478,56 @@ service KeystoreService {
   // FinishAuthentication together with the assertion JSON.
   rpc BeginAuthentication(BeginAuthenticationRequest) returns (BeginAuthenticationResponse);
   rpc FinishAuthentication(FinishAuthenticationRequest) returns (FinishAuthenticationResponse);
+
+  // ==================== SSH Operations ====================
+
+  // SSHGenerateKey generates a new SSH key. When backend is set the key is
+  // created on that crypto backend (private key never leaves a hardware
+  // backend); otherwise a software key is generated server-side.
+  rpc SSHGenerateKey(SSHGenerateKeyRequest) returns (SSHKeyResponse);
+
+  // SSHImportKey imports a PEM-encoded SSH private key.
+  rpc SSHImportKey(SSHImportKeyRequest) returns (SSHKeyResponse);
+
+  // SSHListKeys enumerates SSH keys by (scope, owner).
+  rpc SSHListKeys(SSHListKeysRequest) returns (SSHListKeysResponse);
+
+  // SSHGetKey loads metadata for a single SSH key.
+  rpc SSHGetKey(SSHKeyRef) returns (SSHKeyResponse);
+
+  // SSHDeleteKey removes an SSH key (and its backend material, if any).
+  rpc SSHDeleteKey(SSHKeyRef) returns (google.protobuf.Empty);
+
+  // SSHExportPublic returns the authorized_keys public line for a key.
+  rpc SSHExportPublic(SSHKeyRef) returns (SSHPublicKeyResponse);
+
+  // SSHSign signs a digest with the key's private half (delegated to the
+  // backend for hardware-backed keys) and returns the SSH signature blob.
+  rpc SSHSign(SSHSignRequest) returns (SSHSignResponse);
+
+  // SSHAddKnownHost pins a host key.
+  rpc SSHAddKnownHost(SSHAddKnownHostRequest) returns (google.protobuf.Empty);
+
+  // SSHListKnownHosts enumerates host-key pins.
+  rpc SSHListKnownHosts(SSHListKnownHostsRequest) returns (SSHListKnownHostsResponse);
+
+  // SSHRemoveKnownHost removes a host-key pin.
+  rpc SSHRemoveKnownHost(SSHRemoveKnownHostRequest) returns (google.protobuf.Empty);
+
+  // SSHAddAuthorizedKey persists an authorized_keys entry.
+  rpc SSHAddAuthorizedKey(SSHAddAuthorizedKeyRequest) returns (google.protobuf.Empty);
+
+  // SSHListAuthorizedKeys enumerates authorized_keys entries.
+  rpc SSHListAuthorizedKeys(SSHListAuthorizedKeysRequest) returns (SSHListAuthorizedKeysResponse);
+
+  // SSHRemoveAuthorizedKey removes an authorized_keys entry.
+  rpc SSHRemoveAuthorizedKey(SSHAuthorizedKeyRef) returns (google.protobuf.Empty);
+
+  // SSHConsole opens an interactive PTY shell as a bidirectional stream. The
+  // first client message MUST be an Open; subsequent client messages carry
+  // stdin or resize; server messages carry stdout (and a final Exit). This is
+  // the gRPC/unix transport's implementation of the SSH console capability.
+  rpc SSHConsole(stream SSHConsoleClientMsg) returns (stream SSHConsoleServerMsg);
 }
 
 // UserInfo describes an xkms user.
@@ -1969,6 +2036,12 @@ message BarrierGenerateRecoveryKeysRequest {
 // BarrierRecoveryKeysResponse reports the recovery key generation
 // parameters. Recovery key material is never returned (qrdb share-free
 // contract): recovery shares are sealed to enrolled recovery officers.
+// BarrierHasRecoveryKeysResponse reports whether recovery keys exist.
+message BarrierHasRecoveryKeysResponse {
+  // has_keys is true when recovery keys have been generated.
+  bool has_keys = 1;
+}
+
 message BarrierRecoveryKeysResponse {
   // Field 1 carried raw recovery share values before the share-free
   // redesign and must never be reintroduced.
@@ -2000,6 +2073,34 @@ message BarrierRootTokenResponse {
   string token = 1;
   // created_at records when the token was generated (RFC 3339).
   string created_at = 2;
+}
+
+// BarrierEnableEncryptionRequest enables at-rest encryption on a
+// previously-unencrypted barrier by migrating it to a keyed strategy in place.
+message BarrierEnableEncryptionRequest {
+  // tenant_id selects the tenant barrier to migrate; empty targets the system
+  // barrier (admin authority).
+  string tenant_id = 1;
+  // strategy is the keyed target strategy id (e.g. "passphrase", "shamir").
+  string strategy = 2;
+  // mechanism selects the re-encryption approach ("swap" or "in-place").
+  string mechanism = 3;
+  // availability selects write behaviour during migration ("quiesced" or
+  // "online").
+  string availability = 4;
+  // passphrase carries the secret for a passphrase-target migration.
+  string passphrase = 5;
+  // shamir_threshold / shamir_total configure an M-of-N Shamir-target migration.
+  int32 shamir_threshold = 6;
+  int32 shamir_total = 7;
+}
+
+// BarrierEnableEncryptionResponse acknowledges that the migration has started.
+message BarrierEnableEncryptionResponse {
+  // status is "migration_started".
+  string status = 1;
+  // scope is the migrated barrier scope ("system" or "tenant").
+  string scope = 2;
 }
 
 // ==================== PIN Operations Messages ====================
@@ -2333,6 +2434,78 @@ message TenantInfo {
   string status = 4;
   string created_at = 5;
   string updated_at = 6;
+  // isolation_type is the tenant's isolation mode (prefix / barrier / volume /
+  // raft). Empty for legacy tenants (resolves to prefix).
+  string isolation_type = 7;
+  // quotas are the tenant's resource limits (omitted when unset).
+  TenantQuotas quotas = 8;
+  // entitlements are the tenant's permitted isolation tiers / features.
+  TenantEntitlements entitlements = 9;
+}
+
+// TenantQuotas describes a tenant's resource limits.
+message TenantQuotas {
+  int64 max_databases = 1;
+  int64 max_raft_groups = 2;
+  int64 max_replicas_per_group = 3;
+  int64 max_total_replicas = 4;
+  int64 max_collections = 5;
+  int64 max_keys = 6;
+  int64 max_storage_bytes = 7;
+  int64 max_database_size_bytes = 8;
+  int64 max_users = 9;
+  int64 max_roles = 10;
+  int64 max_certificates = 11;
+  int64 max_backups = 12;
+  int64 max_vector_dims = 13;
+  int64 max_ts_metrics = 14;
+}
+
+// TenantEntitlements describes which isolation tiers and dedicated-storage
+// features a tenant's plan permits.
+message TenantEntitlements {
+  repeated string allowed_isolation_modes = 1;
+  bool allow_dedicated_raft = 2;
+  bool allow_volume_storage = 3;
+  bool allow_system_managed_barrier = 4;
+}
+
+// TenantBarrierStatusRequest requests the status of a per-tenant barrier.
+message TenantBarrierStatusRequest {
+  string tenant_id = 1;
+}
+
+// TenantBarrierStatusResponse reports the current state of a per-tenant barrier.
+message TenantBarrierStatusResponse {
+  string tenant_id = 1;
+  bool sealed = 2;
+  bool initialized = 3;
+  string strategy = 4;
+  bool hardware_backed = 5;
+  int32 shamir_threshold = 6;
+  int32 shamir_total = 7;
+}
+
+// UpdateTenantEntitlementsRequest updates a tenant's feature entitlements.
+message UpdateTenantEntitlementsRequest {
+  string tenant_id = 1;
+  TenantEntitlements entitlements = 2;
+}
+
+// UpdateTenantEntitlementsResponse contains the updated tenant.
+message UpdateTenantEntitlementsResponse {
+  TenantInfo tenant = 1;
+}
+
+// UpdateTenantQuotasRequest updates a tenant's resource quotas.
+message UpdateTenantQuotasRequest {
+  string tenant_id = 1;
+  TenantQuotas quotas = 2;
+}
+
+// UpdateTenantQuotasResponse contains the updated tenant.
+message UpdateTenantQuotasResponse {
+  TenantInfo tenant = 1;
 }
 
 // CreateTenantRequest requests creation of a new tenant.
@@ -2340,6 +2513,12 @@ message CreateTenantRequest {
   string id = 1;
   string name = 2;
   string description = 3;
+  // isolation_type selects the tenant's isolation mode (prefix / barrier /
+  // volume / raft). Empty defaults to prefix (barrier isolation is opt-in).
+  string isolation_type = 4;
+  // barrier_auto_unseal opts a dedicated-isolation tenant into system-managed
+  // auto-unseal (entitlement-gated). Default false is self-managed.
+  bool barrier_auto_unseal = 5;
 }
 
 // CreateTenantResponse contains the created tenant.
@@ -2573,4 +2752,187 @@ message FinishAuthenticationResponse {
   string token = 2;
   string username = 3;
   string message = 4;
+}
+
+// ==================== SSH Messages ====================
+
+// SSHKeyRef identifies a single SSH key by (scope, owner, name).
+message SSHKeyRef {
+  string scope = 1;
+  string owner = 2;
+  string name = 3;
+}
+
+// SSHKeyInfo is the transport-safe representation of an SSH key (public
+// material + metadata only; the private half stays server-/backend-side).
+message SSHKeyInfo {
+  string scope = 1;
+  string owner = 2;
+  string name = 3;
+  string algorithm = 4;
+  string public_key = 5;  // authorized_keys line, no newline
+  string fingerprint = 6;
+  google.protobuf.Timestamp created_at = 7;
+  string comment = 8;
+  string backend = 9;     // crypto backend holding the private half, if any
+  string backend_key_id = 10;  // underlying backend key CN (e.g. ssh-user-local-laptop)
+}
+
+message SSHGenerateKeyRequest {
+  string scope = 1;
+  string owner = 2;
+  string name = 3;
+  string algorithm = 4;   // ed25519 | rsa | ecdsa-p256 | ecdsa-p384 | ecdsa-p521
+  int32 rsa_bits = 5;
+  string comment = 6;
+  string backend = 7;     // optional crypto backend id
+}
+
+message SSHImportKeyRequest {
+  string scope = 1;
+  string owner = 2;
+  string name = 3;
+  bytes pem = 4;
+  string comment = 5;
+}
+
+message SSHKeyResponse {
+  SSHKeyInfo key = 1;
+}
+
+message SSHListKeysRequest {
+  string scope = 1;
+  string owner = 2;
+}
+
+message SSHListKeysResponse {
+  repeated SSHKeyInfo keys = 1;
+}
+
+message SSHPublicKeyResponse {
+  string algorithm = 1;
+  string line = 2;
+  string fingerprint = 3;
+}
+
+message SSHSignRequest {
+  SSHKeyRef key = 1;
+  bytes digest = 2;
+}
+
+message SSHSignResponse {
+  string format = 1;
+  bytes blob = 2;
+}
+
+// SSHPin is the transport-safe representation of a host-key pin.
+message SSHPin {
+  string scope = 1;
+  string owner = 2;
+  string host = 3;
+  string fingerprint = 4;
+  string algorithm = 5;
+  google.protobuf.Timestamp added_at = 6;
+  string source = 7;
+}
+
+message SSHAddKnownHostRequest {
+  string scope = 1;
+  string owner = 2;
+  string host = 3;
+  string fingerprint = 4;
+  string algorithm = 5;
+  string source = 6;
+}
+
+message SSHListKnownHostsRequest {
+  string scope = 1;
+  string owner = 2;
+}
+
+message SSHListKnownHostsResponse {
+  repeated SSHPin pins = 1;
+}
+
+message SSHRemoveKnownHostRequest {
+  string scope = 1;
+  string owner = 2;
+  string host = 3;
+}
+
+// SSHAuthorizedEntry is the transport-safe authorized_keys entry.
+message SSHAuthorizedEntry {
+  string scope = 1;
+  string owner = 2;
+  string name = 3;
+  string line = 4;
+  repeated string options = 5;
+  string comment = 6;
+}
+
+message SSHAddAuthorizedKeyRequest {
+  string scope = 1;
+  string owner = 2;
+  string name = 3;
+  string line = 4;
+  repeated string options = 5;
+  string comment = 6;
+}
+
+message SSHListAuthorizedKeysRequest {
+  string scope = 1;
+  string owner = 2;
+}
+
+message SSHListAuthorizedKeysResponse {
+  repeated SSHAuthorizedEntry entries = 1;
+}
+
+message SSHAuthorizedKeyRef {
+  string scope = 1;
+  string owner = 2;
+  string name = 3;
+}
+
+// ==================== SSH Console (streaming) ====================
+
+// SSHConsoleClientMsg is a client→server console stream frame.
+message SSHConsoleClientMsg {
+  oneof msg {
+    SSHConsoleOpen open = 1;     // first frame only
+    bytes stdin = 2;             // keystrokes
+    SSHConsoleResize resize = 3; // window resize
+  }
+}
+
+// SSHConsoleOpen is the first client frame: it selects the key and target.
+message SSHConsoleOpen {
+  string scope = 1;
+  string owner = 2;
+  string key_name = 3;
+  string host = 4;
+  int32 port = 5;
+  string user = 6;
+  string term = 7;
+  int32 rows = 8;
+  int32 cols = 9;
+}
+
+// SSHConsoleResize updates the remote PTY window.
+message SSHConsoleResize {
+  int32 rows = 1;
+  int32 cols = 2;
+}
+
+// SSHConsoleServerMsg is a server→client console stream frame.
+message SSHConsoleServerMsg {
+  oneof msg {
+    bytes stdout = 1;          // terminal output
+    SSHConsoleExit exit = 2;   // session ended
+  }
+}
+
+// SSHConsoleExit signals the console session ended.
+message SSHConsoleExit {
+  string message = 1;
 }

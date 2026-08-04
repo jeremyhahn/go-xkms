@@ -15,7 +15,8 @@ package fido2
 
 import (
 	"crypto/sha256"
-	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -37,7 +38,7 @@ func NewAuthenticator(device *CTAPHIDDevice, config *Config) (*Authenticator, er
 	// Get device info
 	info, err := auth.GetInfo()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get authenticator info: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get authenticator info", Err: err}
 	}
 	auth.info = info
 
@@ -49,13 +50,13 @@ func (a *Authenticator) GetInfo() (*DeviceInfo, error) {
 	// Send GetInfo command (no request parameters)
 	resp, err := a.device.SendCBOR(CmdGetInfo, nil)
 	if err != nil {
-		return nil, fmt.Errorf("GetInfo command failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "GetInfo command failed", Err: err}
 	}
 
 	// Decode CBOR response
 	var infoMap map[int]interface{}
 	if err := cbor.Unmarshal(resp, &infoMap); err != nil {
-		return nil, fmt.Errorf("failed to decode GetInfo response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode GetInfo response", Err: err}
 	}
 
 	info := &DeviceInfo{
@@ -234,13 +235,13 @@ func (a *Authenticator) MakeCredential(req *MakeCredentialRequest) (*MakeCredent
 	// Send command
 	resp, err := a.device.SendCBOR(CmdMakeCredential, reqMap)
 	if err != nil {
-		return nil, fmt.Errorf("MakeCredential command failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "MakeCredential command failed", Err: err}
 	}
 
 	// Decode response
 	var respMap map[int]interface{}
 	if err := cbor.Unmarshal(resp, &respMap); err != nil {
-		return nil, fmt.Errorf("failed to decode MakeCredential response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode MakeCredential response", Err: err}
 	}
 
 	result := &MakeCredentialResponse{
@@ -336,13 +337,13 @@ func (a *Authenticator) GetAssertion(req *GetAssertionRequest) (*GetAssertionRes
 	// Send command
 	resp, err := a.device.SendCBOR(CmdGetAssertion, reqMap)
 	if err != nil {
-		return nil, fmt.Errorf("GetAssertion command failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "GetAssertion command failed", Err: err}
 	}
 
 	// Decode response
 	var respMap map[int]interface{}
 	if err := cbor.Unmarshal(resp, &respMap); err != nil {
-		return nil, fmt.Errorf("failed to decode GetAssertion response: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode GetAssertion response", Err: err}
 	}
 
 	result := &GetAssertionResponse{}

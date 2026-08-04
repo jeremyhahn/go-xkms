@@ -531,7 +531,7 @@ func setupServiceWithPasswordManager(t *testing.T) (*XKMSService, *seal.BarrierR
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	err = sysBarrier.Initialize(ctx, seal.Credentials{Secret: "test-pw"})
+	err = sysBarrier.Initialize(ctx, seal.Credentials{Secret: []byte("test-pw")})
 	require.NoError(t, err)
 
 	// Create registry and register a tenant.
@@ -540,7 +540,7 @@ func setupServiceWithPasswordManager(t *testing.T) (*XKMSService, *seal.BarrierR
 
 	_, err = registry.RegisterTenant("tenant-1")
 	require.NoError(t, err)
-	err = registry.InitializeTenant(ctx, "tenant-1", seal.Credentials{Secret: "tenant-pw"})
+	err = registry.InitializeTenant(ctx, "tenant-1", seal.Credentials{Secret: []byte("tenant-pw")})
 	require.NoError(t, err)
 
 	// Create system password store and tenant manager.

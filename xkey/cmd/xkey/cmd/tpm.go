@@ -174,11 +174,21 @@ func openTPMForProvisioning() (xkms.TrustedPlatformModule, error) {
 }
 
 // openTPMForProvisioningWithPCROverrides creates a TPM connection for provisioning
-// with optional PCR configuration overrides.
+// with optional PCR configuration overrides, using the `tpm` command group's
+// own --device/--simulator flags (tpmCfg).
 // - pcrBank: override the platform PCR bank (empty string uses default "sha256")
 // - goldenPCRs: override which PCRs to include in golden measurement (nil uses config default)
 // - platformPCR: override which PCR to extend with golden measurement (0 uses default 16)
 func openTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs []uint, platformPCR int) (xkms.TrustedPlatformModule, error) {
+	return openTPMForProvisioningWithDeviceAndPCROverrides(tpmCfg.device, tpmCfg.useSimulator, pcrBank, goldenPCRs, platformPCR)
+}
+
+// openTPMForProvisioningWithDeviceAndPCROverrides is the device-parameterized
+// variant of openTPMForProvisioningWithPCROverrides. It exists so callers
+// outside the `tpm` command group (e.g. `policy`, which has its own
+// --tpm-device/--tpm-simulator flags) can open a TPM connection without
+// depending on the `tpm` command's package-level tpmCfg flags.
+func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator bool, pcrBank string, goldenPCRs []uint, platformPCR int) (xkms.TrustedPlatformModule, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: getLogLevel(),
 	}))
@@ -196,8 +206,8 @@ func openTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs []uint, p
 	}
 
 	config := &xkms.TPMConfig{
-		Device:       tpmCfg.device,
-		UseSimulator: tpmCfg.useSimulator,
+		Device:       device,
+		UseSimulator: useSimulator,
 		Hash:         "SHA-256",
 		EK: &xkms.EKConfig{
 			Handle:        0x81010001,

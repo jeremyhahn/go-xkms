@@ -152,7 +152,7 @@ func (s *Service) ComputeLocalTrustStoreDelta() (*TrustStoreDelta, error) {
 
 	certs, err := s.trustStore.Certificates()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTrustStoreSyncFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrTrustStoreSyncFailed, Cause: err}
 	}
 
 	delta := &TrustStoreDelta{
@@ -185,7 +185,7 @@ func (s *Service) ComputeLocalOATHDelta() (*OATHDelta, error) {
 
 	creds, err := s.oath.List()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOATHSyncFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrOATHSyncFailed, Cause: err}
 	}
 
 	delta := &OATHDelta{
@@ -218,7 +218,7 @@ func (s *Service) ComputeLocalPasswordDelta() (*PasswordDelta, error) {
 
 	passwords, err := s.passwords.List()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPasswordSyncFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrPasswordSyncFailed, Cause: err}
 	}
 
 	delta := &PasswordDelta{
@@ -249,7 +249,7 @@ func (s *Service) ComputeLocalCADelta() (*CADelta, error) {
 
 	certPEM, err := s.caReader.GetCACertificatePEM()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCASyncFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCASyncFailed, Cause: err}
 	}
 
 	if len(certPEM) == 0 {
@@ -284,7 +284,7 @@ func (s *Service) ApplyTrustStoreDelta(delta *TrustStoreDelta) (*SyncItemResult,
 
 	if s.trustStore == nil {
 		result.Errors = append(result.Errors, "trust store accessor not configured")
-		return result, fmt.Errorf("%w: trust store accessor not configured", ErrTrustStoreSyncFailed)
+		return result, &DetailError{Err: ErrTrustStoreSyncFailed, Detail: ": trust store accessor not configured"}
 	}
 
 	for _, cert := range delta.Certificates {
@@ -335,7 +335,7 @@ func (s *Service) ApplyOATHDelta(delta *OATHDelta) (*SyncItemResult, error) {
 
 	if s.oath == nil {
 		result.Errors = append(result.Errors, "OATH accessor not configured")
-		return result, fmt.Errorf("%w: OATH accessor not configured", ErrOATHSyncFailed)
+		return result, &DetailError{Err: ErrOATHSyncFailed, Detail: ": OATH accessor not configured"}
 	}
 
 	for _, remote := range delta.Credentials {
@@ -388,7 +388,7 @@ func (s *Service) ApplyPasswordDelta(delta *PasswordDelta) (*SyncItemResult, err
 
 	if s.passwords == nil {
 		result.Errors = append(result.Errors, "password accessor not configured")
-		return result, fmt.Errorf("%w: password accessor not configured", ErrPasswordSyncFailed)
+		return result, &DetailError{Err: ErrPasswordSyncFailed, Detail: ": password accessor not configured"}
 	}
 
 	for _, remote := range delta.Passwords {
@@ -438,7 +438,7 @@ func (s *Service) ApplyCADelta(delta *CADelta) (*SyncItemResult, error) {
 
 	if s.trustStore == nil {
 		result.Errors = append(result.Errors, "trust store accessor not configured")
-		return result, fmt.Errorf("%w: trust store accessor not configured", ErrCASyncFailed)
+		return result, &DetailError{Err: ErrCASyncFailed, Detail: ": trust store accessor not configured"}
 	}
 
 	n, err := s.trustStore.AddPEM([]byte(delta.CACertPEM))
@@ -478,12 +478,12 @@ func (s *Service) LoadState() (*SyncState, error) {
 		if os.IsNotExist(err) {
 			return &SyncState{StoreChecksums: make(map[string]string)}, nil
 		}
-		return nil, fmt.Errorf("%w: %v", ErrStateLoad, err)
+		return nil, &SentinelCauseError{Sentinel: ErrStateLoad, Cause: err}
 	}
 
 	var state SyncState
 	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrStateLoad, err)
+		return nil, &SentinelCauseError{Sentinel: ErrStateLoad, Cause: err}
 	}
 
 	if state.StoreChecksums == nil {
@@ -501,21 +501,21 @@ func (s *Service) SaveState(state *SyncState) error {
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w: marshal: %v", ErrStateSave, err)
+		return &DetailError{Err: ErrStateSave, Detail: fmt.Sprintf(": marshal: %v", err)}
 	}
 
 	dir := filepath.Dir(s.config.StateFilePath)
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("%w: mkdir: %v", ErrStateSave, err)
+		return &DetailError{Err: ErrStateSave, Detail: fmt.Sprintf(": mkdir: %v", err)}
 	}
 
 	tmpPath := s.config.StateFilePath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return fmt.Errorf("%w: write: %v", ErrStateSave, err)
+		return &DetailError{Err: ErrStateSave, Detail: fmt.Sprintf(": write: %v", err)}
 	}
 
 	if err := os.Rename(tmpPath, s.config.StateFilePath); err != nil {
-		return fmt.Errorf("%w: rename: %v", ErrStateSave, err)
+		return &DetailError{Err: ErrStateSave, Detail: fmt.Sprintf(": rename: %v", err)}
 	}
 
 	return nil

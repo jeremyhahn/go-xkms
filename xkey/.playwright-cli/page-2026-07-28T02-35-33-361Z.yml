@@ -1,0 +1,83 @@
+- generic [ref=e217]:
+  - generic [ref=e218]:
+    - generic [ref=e219]:
+      - img [ref=e262]
+      - generic [ref=e221]: Welcome
+    - generic [ref=e223]:
+      - img [ref=e284]
+      - generic [ref=e225]: Deployment
+    - generic [ref=e227]:
+      - img [ref=e308]
+      - generic [ref=e229]: Mode
+    - generic [ref=e231]:
+      - generic [ref=e232]: "4"
+      - generic [ref=e233]: Security
+    - generic [ref=e235]:
+      - generic [ref=e236]: "5"
+      - generic [ref=e237]: Storage
+    - generic [ref=e239]:
+      - generic [ref=e240]: "6"
+      - generic [ref=e241]: Summary
+  - generic [ref=e310]:
+    - heading "Security" [level=2] [ref=e311]
+    - paragraph [ref=e312]: Configure PINs, platform security, and password storage.
+    - generic [ref=e313]:
+      - generic [ref=e314]:
+        - img [ref=e315]
+        - generic [ref=e317]: PIN Management
+        - generic [ref=e318]: Required
+      - generic [ref=e319]:
+        - generic [ref=e320]: Security Officer PIN
+        - textbox "Security Officer PIN" [ref=e321]:
+          - /placeholder: Minimum 6 characters (required)
+        - generic [ref=e322]: Required. Controls admin operations and authorizes User PIN changes.
+        - generic [ref=e323]: Confirm SO PIN
+        - textbox "Confirm SO PIN" [ref=e324]:
+          - /placeholder: Re-enter your SO PIN
+        - generic [ref=e325]: User PIN
+        - textbox "User PIN" [ref=e326]:
+          - /placeholder: Minimum 6 characters (required)
+        - generic [ref=e327]: Required. Unlocks FIDO2, PKCS#11, password store, and encrypted storage.
+        - generic [ref=e328]: Confirm User PIN
+        - textbox "Confirm User PIN" [ref=e329]:
+          - /placeholder: Re-enter your User PIN
+        - generic [ref=e330] [cursor=pointer]:
+          - checkbox "Save PINs to password store" [ref=e331]
+          - generic [ref=e332]: Save PINs to password store
+        - generic [ref=e333]: Store the SO PIN and User PIN in the password store for easy retrieval. You can delete them later.
+        - generic [ref=e334]:
+          - img [ref=e335]
+          - generic [ref=e337]: Your User PIN will be used as the master password for all encrypted data.
+    - generic [ref=e338]:
+      - generic [ref=e339]:
+        - img [ref=e340]
+        - generic [ref=e342]: TPM 2.0
+        - generic [ref=e343]: Detected
+      - generic [ref=e344]:
+        - generic [ref=e345] [cursor=pointer]:
+          - checkbox "Set TPM Hierarchy Authorization Passwords" [ref=e346]
+          - generic [ref=e347]: Set TPM Hierarchy Authorization Passwords
+        - generic [ref=e348]: Uses the SO PIN to set authorization passwords on the TPM Endorsement, Owner, and Lockout hierarchies. Leave unchecked to keep default (empty) hierarchy passwords.
+    - generic [ref=e349]:
+      - generic [ref=e350]:
+        - img [ref=e351]
+        - generic [ref=e353]: Password Storage
+      - generic [ref=e354]:
+        - generic [ref=e355] [cursor=pointer]:
+          - radio "TPM-Sealed (Recommended) Master key sealed to TPM with platform policy. Auto-unlocks when system boots with expected firmware configuration." [checked] [ref=e356]
+          - generic [ref=e357]:
+            - generic [ref=e358]: TPM-Sealed (Recommended)
+            - generic [ref=e359]: Master key sealed to TPM with platform policy. Auto-unlocks when system boots with expected firmware configuration.
+        - generic [ref=e360] [cursor=pointer]:
+          - radio "Software AES-256 Encrypt with a master password using Argon2id key derivation. The encryption key is stored on disk and protected only by filesystem permissions. A TPM-sealed backend is strongly recommended for production use." [ref=e361]
+          - generic [ref=e362]:
+            - generic [ref=e363]: Software AES-256
+            - generic [ref=e364]: Encrypt with a master password using Argon2id key derivation. The encryption key is stored on disk and protected only by filesystem permissions. A TPM-sealed backend is strongly recommended for production use.
+        - generic [ref=e365] [cursor=pointer]:
+          - radio "None Passwords stored in plaintext. Not recommended." [ref=e366]
+          - generic [ref=e367]:
+            - generic [ref=e368]: None
+            - generic [ref=e369]: Passwords stored in plaintext. Not recommended.
+    - generic [ref=e370]:
+      - button "Back" [ref=e371] [cursor=pointer]
+      - button "Next" [ref=e372] [cursor=pointer]

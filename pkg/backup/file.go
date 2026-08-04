@@ -33,6 +33,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/uuid"
 )
 
@@ -83,7 +85,7 @@ type FileBackupAdapter struct {
 func NewFileBackupAdapter(basePath string) (*FileBackupAdapter, error) {
 	// Ensure the backup directory exists
 	if err := os.MkdirAll(basePath, 0700); err != nil {
-		return nil, fmt.Errorf("failed to create backup directory: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create backup directory", Err: err}
 	}
 
 	adapter := &FileBackupAdapter{
@@ -93,7 +95,7 @@ func NewFileBackupAdapter(basePath string) (*FileBackupAdapter, error) {
 
 	// Load existing backups into the index
 	if err := adapter.loadIndex(); err != nil {
-		return nil, fmt.Errorf("failed to load backup index: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to load backup index", Err: err}
 	}
 
 	return adapter, nil
@@ -186,21 +188,21 @@ func (f *FileBackupAdapter) CreateBackup(ctx context.Context, data *BackupData, 
 
 		serialized, err = json.Marshal(data) //nolint:staticcheck // SA1026: SessionCloser is cleared before marshaling
 		if err != nil {
-			return nil, fmt.Errorf("failed to serialize backup: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to serialize backup", Err: err}
 		}
 	case BackupFormatProtobuf:
 		// Protobuf serialization is a planned feature for future releases.
 		// JSON and Encrypted formats provide full functionality for production use.
 		return nil, errors.New("protobuf format not yet implemented")
 	default:
-		return nil, fmt.Errorf("%w: %s", ErrInvalidBackupFormat, opts.Format)
+		return nil, &errs.Detail{Err: ErrInvalidBackupFormat, Detail: fmt.Sprintf("%s", opts.Format)}
 	}
 
 	// Compress if requested
 	if opts.Compress {
 		compressed, err := f.compressData(serialized, opts.CompressionAlgorithm)
 		if err != nil {
-			return nil, fmt.Errorf("failed to compress backup: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to compress backup", Err: err}
 		}
 		data.Metadata.CompressedSize = int64(len(compressed))
 		data.Metadata.Compressed = true
@@ -218,7 +220,7 @@ func (f *FileBackupAdapter) CreateBackup(ctx context.Context, data *BackupData, 
 		}
 		encrypted, err := f.encryptData(serialized, opts.EncryptionKey)
 		if err != nil {
-			return nil, fmt.Errorf("failed to encrypt backup: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to encrypt backup", Err: err}
 		}
 		data.Metadata.Encrypted = true
 		data.Metadata.EncryptionAlgorithm = DefaultEncryptionAlgorithm
@@ -233,7 +235,7 @@ func (f *FileBackupAdapter) CreateBackup(ctx context.Context, data *BackupData, 
 	// Write backup file
 	backupPath := f.getBackupPath(backupID)
 	if err := os.WriteFile(backupPath, serialized, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write backup file: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to write backup file", Err: err}
 	}
 
 	// Write metadata file
@@ -244,7 +246,7 @@ func (f *FileBackupAdapter) CreateBackup(ctx context.Context, data *BackupData, 
 		if removeErr := os.Remove(backupPath); removeErr != nil {
 			log.Printf("failed to clean up backup file %s: %v", backupPath, removeErr)
 		}
-		return nil, fmt.Errorf("failed to serialize metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to serialize metadata", Err: err}
 	}
 
 	if err := os.WriteFile(metadataPath, metadataBytes, 0600); err != nil {
@@ -252,7 +254,7 @@ func (f *FileBackupAdapter) CreateBackup(ctx context.Context, data *BackupData, 
 		if removeErr := os.Remove(backupPath); removeErr != nil {
 			log.Printf("failed to clean up backup file %s: %v", backupPath, removeErr)
 		}
-		return nil, fmt.Errorf("failed to write metadata file: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to write metadata file", Err: err}
 	}
 
 	// Update index
@@ -280,7 +282,7 @@ func (f *FileBackupAdapter) RestoreBackup(ctx context.Context, backupID string, 
 	backupPath := f.getBackupPath(backupID)
 	backupBytes, err := os.ReadFile(backupPath)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read backup file: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to read backup file", Err: err}
 	}
 
 	// Verify checksum unless dry run
@@ -298,7 +300,7 @@ func (f *FileBackupAdapter) RestoreBackup(ctx context.Context, backupID string, 
 		}
 		decrypted, err := f.decryptData(backupBytes, opts.DecryptionKey)
 		if err != nil {
-			return 0, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
+			return 0, &errs.Detail{Err: ErrDecryptionFailed, Detail: fmt.Sprintf("%v", err)}
 		}
 		backupBytes = decrypted
 	}
@@ -307,7 +309,7 @@ func (f *FileBackupAdapter) RestoreBackup(ctx context.Context, backupID string, 
 	if metadata.Compressed {
 		decompressed, err := f.decompressData(backupBytes, metadata.CompressionAlgorithm)
 		if err != nil {
-			return 0, fmt.Errorf("failed to decompress backup: %w", err)
+			return 0, &errs.Wrapped{Msg: "failed to decompress backup", Err: err}
 		}
 		backupBytes = decompressed
 	}
@@ -315,7 +317,7 @@ func (f *FileBackupAdapter) RestoreBackup(ctx context.Context, backupID string, 
 	// Deserialize backup data
 	var data BackupData
 	if err := json.Unmarshal(backupBytes, &data); err != nil {
-		return 0, fmt.Errorf("failed to deserialize backup: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to deserialize backup", Err: err}
 	}
 
 	// Filter keys if specific KeyIDs are requested
@@ -428,13 +430,13 @@ func (f *FileBackupAdapter) DeleteBackup(ctx context.Context, backupID string) e
 	// Remove backup file
 	backupPath := f.getBackupPath(backupID)
 	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove backup file: %w", err)
+		return &errs.Wrapped{Msg: "failed to remove backup file", Err: err}
 	}
 
 	// Remove metadata file
 	metadataPath := f.getMetadataPath(backupID)
 	if err := os.Remove(metadataPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove metadata file: %w", err)
+		return &errs.Wrapped{Msg: "failed to remove metadata file", Err: err}
 	}
 
 	// Remove from index
@@ -474,7 +476,7 @@ func (f *FileBackupAdapter) VerifyBackup(ctx context.Context, backupID string, o
 	backupBytes, err := os.ReadFile(backupPath)
 	if err != nil {
 		result.Valid = false
-		result.Errors = append(result.Errors, fmt.Errorf("failed to read backup file: %w", err))
+		result.Errors = append(result.Errors, &errs.Wrapped{Msg: "failed to read backup file", Err: err})
 		return result, nil
 	}
 
@@ -496,7 +498,7 @@ func (f *FileBackupAdapter) VerifyBackup(ctx context.Context, backupID string, o
 			if err != nil {
 				result.Valid = false
 				result.DecryptionValid = false
-				result.Errors = append(result.Errors, fmt.Errorf("decryption failed: %w", err))
+				result.Errors = append(result.Errors, &errs.Wrapped{Msg: "decryption failed", Err: err})
 				return result, nil
 			}
 			backupBytes = decrypted
@@ -509,7 +511,7 @@ func (f *FileBackupAdapter) VerifyBackup(ctx context.Context, backupID string, o
 		if err != nil {
 			result.Valid = false
 			result.FormatValid = false
-			result.Errors = append(result.Errors, fmt.Errorf("decompression failed: %w", err))
+			result.Errors = append(result.Errors, &errs.Wrapped{Msg: "decompression failed", Err: err})
 			return result, nil
 		}
 		backupBytes = decompressed
@@ -520,7 +522,7 @@ func (f *FileBackupAdapter) VerifyBackup(ctx context.Context, backupID string, o
 	if err := json.Unmarshal(backupBytes, &data); err != nil {
 		result.Valid = false
 		result.FormatValid = false
-		result.Errors = append(result.Errors, fmt.Errorf("deserialization failed: %w", err))
+		result.Errors = append(result.Errors, &errs.Wrapped{Msg: "deserialization failed", Err: err})
 		return result, nil
 	}
 
@@ -551,18 +553,18 @@ func (f *FileBackupAdapter) ExportBackup(ctx context.Context, backupID string, d
 	backupPath := f.getBackupPath(backupID)
 	backupBytes, err := os.ReadFile(backupPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read backup file: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to read backup file", Err: err}
 	}
 
 	// Ensure destination directory exists
 	destDir := filepath.Dir(destination)
 	if err := os.MkdirAll(destDir, 0700); err != nil {
-		return "", fmt.Errorf("failed to create destination directory: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to create destination directory", Err: err}
 	}
 
 	// Write to destination
 	if err := os.WriteFile(destination, backupBytes, 0600); err != nil {
-		return "", fmt.Errorf("failed to write backup to destination: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to write backup to destination", Err: err}
 	}
 
 	return destination, nil
@@ -576,13 +578,13 @@ func (f *FileBackupAdapter) ImportBackup(ctx context.Context, source string) (*B
 	// Read source file
 	backupBytes, err := os.ReadFile(source)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read source file: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to read source file", Err: err}
 	}
 
 	// Try to deserialize to extract metadata
 	var data BackupData
 	if err := json.Unmarshal(backupBytes, &data); err != nil {
-		return nil, fmt.Errorf("failed to deserialize backup: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to deserialize backup", Err: err}
 	}
 
 	if data.Metadata == nil {
@@ -606,7 +608,7 @@ func (f *FileBackupAdapter) ImportBackup(ctx context.Context, source string) (*B
 	// Write backup file
 	backupPath := f.getBackupPath(backupID)
 	if err := os.WriteFile(backupPath, backupBytes, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write backup file: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to write backup file", Err: err}
 	}
 
 	// Write metadata file
@@ -616,14 +618,14 @@ func (f *FileBackupAdapter) ImportBackup(ctx context.Context, source string) (*B
 		if removeErr := os.Remove(backupPath); removeErr != nil {
 			log.Printf("failed to clean up backup file %s: %v", backupPath, removeErr)
 		}
-		return nil, fmt.Errorf("failed to serialize metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to serialize metadata", Err: err}
 	}
 
 	if err := os.WriteFile(metadataPath, metadataBytes, 0600); err != nil {
 		if removeErr := os.Remove(backupPath); removeErr != nil {
 			log.Printf("failed to clean up backup file %s: %v", backupPath, removeErr)
 		}
-		return nil, fmt.Errorf("failed to write metadata file: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to write metadata file", Err: err}
 	}
 
 	// Update index
@@ -713,12 +715,12 @@ func (f *FileBackupAdapter) getBackupMetadata(backupID string) (*BackupMetadata,
 		if os.IsNotExist(err) {
 			return nil, ErrBackupNotFound
 		}
-		return nil, fmt.Errorf("failed to read metadata file: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to read metadata file", Err: err}
 	}
 
 	var metadata BackupMetadata
 	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-		return nil, fmt.Errorf("failed to deserialize metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to deserialize metadata", Err: err}
 	}
 
 	return &metadata, nil
@@ -776,7 +778,7 @@ func (f *FileBackupAdapter) compressData(data []byte, algorithm string) ([]byte,
 		}
 		return buf.Bytes(), nil
 	default:
-		return nil, fmt.Errorf("unsupported compression algorithm: %s", algorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported compression algorithm: %s", algorithm)}
 	}
 }
 
@@ -798,30 +800,30 @@ func (f *FileBackupAdapter) decompressData(data []byte, algorithm string) ([]byt
 		}()
 		return io.ReadAll(reader)
 	default:
-		return nil, fmt.Errorf("unsupported compression algorithm: %s", algorithm)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported compression algorithm: %s", algorithm)}
 	}
 }
 
 func (f *FileBackupAdapter) encryptData(data []byte, key []byte) ([]byte, error) {
 	// Validate key size (must be 32 bytes for AES-256)
 	if len(key) != 32 {
-		return nil, fmt.Errorf("%w: key must be 32 bytes for AES-256", ErrInvalidEncryptionKey)
+		return nil, &errs.Detail{Err: ErrInvalidEncryptionKey, Detail: "key must be 32 bytes for AES-256"}
 	}
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// Generate nonce
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 	}
 
 	// Encrypt and prepend nonce
@@ -832,17 +834,17 @@ func (f *FileBackupAdapter) encryptData(data []byte, key []byte) ([]byte, error)
 func (f *FileBackupAdapter) decryptData(data []byte, key []byte) ([]byte, error) {
 	// Validate key size
 	if len(key) != 32 {
-		return nil, fmt.Errorf("%w: key must be 32 bytes for AES-256", ErrInvalidEncryptionKey)
+		return nil, &errs.Detail{Err: ErrInvalidEncryptionKey, Detail: "key must be 32 bytes for AES-256"}
 	}
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	nonceSize := gcm.NonceSize()
@@ -856,7 +858,7 @@ func (f *FileBackupAdapter) decryptData(data []byte, key []byte) ([]byte, error)
 	// Decrypt
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return nil, fmt.Errorf("decryption failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "decryption failed", Err: err}
 	}
 
 	return plaintext, nil

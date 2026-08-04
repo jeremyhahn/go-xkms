@@ -26,6 +26,13 @@ export const extensionPairingChanged = writable<number>(0);
 export const appLocked = writable<boolean>(false);
 
 /**
+ * Counter incremented whenever the barrier is unsealed or the data directory
+ * is (re-)initialized. Views that display barrier-gated data subscribe to this
+ * store and reload their content reactively on each increment.
+ */
+export const dashboardRefreshToken = writable<number>(0);
+
+/**
  * Event listener setup for Wails runtime events.
  *
  * The Wails runtime module (../../wailsjs/runtime/runtime) is auto-generated
@@ -280,5 +287,14 @@ export async function setupEventListeners(): Promise<void> {
   on('extension:unpaired', () => {
     extensionPairingChanged.update((n) => n + 1);
     addNotification('info', 'Extension unpaired');
+  });
+
+  on('barrier:unlocked', () => {
+    dashboardRefreshToken.update((n) => n + 1);
+    addNotification('success', 'Barrier unsealed — data accessible');
+  });
+
+  on('storage:data_dir_initialized', () => {
+    dashboardRefreshToken.update((n) => n + 1);
   });
 }

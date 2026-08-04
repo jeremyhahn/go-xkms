@@ -56,6 +56,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -206,10 +208,10 @@ func fetchStatus(ctx context.Context, baseURL string) (clusterStatus, error) {
 		return st, err
 	}
 	if code != http.StatusOK {
-		return st, fmt.Errorf("status %d: %s", code, body)
+		return st, &errs.Message{Msg: fmt.Sprintf("status %d: %s", code, body)}
 	}
 	if err := json.Unmarshal(body, &st); err != nil {
-		return st, fmt.Errorf("decode status: %w (%s)", err, body)
+		return st, &errs.Affix{Prefix: "decode status: ", Err: err, Suffix: fmt.Sprintf(" (%s)", body)}
 	}
 	return st, nil
 }

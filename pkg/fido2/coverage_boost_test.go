@@ -25,6 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/fxamacker/cbor/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -256,7 +258,7 @@ type SendCBORErrorDeviceCB struct {
 
 func (d *SendCBORErrorDeviceCB) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -383,7 +385,7 @@ func (d *SendCBORErrorDeviceCB) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestEnrollKey_NoHMACSecretSupport tests EnrollKey when device doesn't support hmac-secret.
@@ -412,7 +414,7 @@ type NoExtensionDeviceCB struct {
 
 func (d *NoExtensionDeviceCB) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -498,7 +500,7 @@ func (d *NoExtensionDeviceCB) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestEnrollKey_CustomTimeout tests EnrollKey with custom timeout.
@@ -957,7 +959,7 @@ type GetAssertionErrorDeviceCB struct {
 
 func (d *GetAssertionErrorDeviceCB) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -1043,7 +1045,7 @@ func (d *GetAssertionErrorDeviceCB) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestUnlockWithKey_CTAPInitError tests error when CTAP init fails.
@@ -1089,7 +1091,7 @@ func (d *CTAPInitFailDeviceCB) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // TestUnlockWithKey_HMACSecretNotSupported tests error when device doesn't support hmac-secret.

@@ -10,6 +10,10 @@ export function LaunchBrowser(arg1, arg2) {
   return window['go']['services']['SecureBrowserService']['LaunchBrowser'](arg1, arg2);
 }
 
+export function LaunchBrowserWithOptions(arg1, arg2, arg3) {
+  return window['go']['services']['SecureBrowserService']['LaunchBrowserWithOptions'](arg1, arg2, arg3);
+}
+
 export function Rebuild() {
   return window['go']['services']['SecureBrowserService']['Rebuild']();
 }

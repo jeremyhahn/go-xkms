@@ -113,7 +113,7 @@ func TestHandleError_ExitsWithCode1(t *testing.T) {
 	globalConfig.OutputFormat = "text"
 
 	code := captureExit(t, func() {
-		handleError(fmt.Errorf("test error"))
+		handleError(errTestError)
 	})
 
 	if code != 1 {
@@ -130,7 +130,7 @@ func TestHandleError_WithPanic(t *testing.T) {
 	globalConfig.OutputFormat = "text"
 
 	withTestExit(t, func() {
-		handleError(fmt.Errorf("test error"))
+		handleError(errTestError)
 	}, func(code int) {
 		if code != 1 {
 			t.Errorf("handleError() should exit with code 1, got %d", code)

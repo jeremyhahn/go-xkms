@@ -108,7 +108,7 @@ func (t *FunctionFSTransport) Initialize(ctx context.Context) error {
 	ep0, err := os.OpenFile(ep0Path, os.O_RDWR, 0)
 	if err != nil {
 		return NewGadgetError("Initialize",
-			fmt.Errorf("%w: %v", ErrEndpointOpenFailed, err))
+			&SentinelCauseError{Sentinel: ErrEndpointOpenFailed, Cause: err})
 	}
 	t.ep0 = ep0
 
@@ -118,7 +118,7 @@ func (t *FunctionFSTransport) Initialize(ctx context.Context) error {
 		_ = t.ep0.Close()
 		t.ep0 = nil
 		return NewGadgetError("Initialize",
-			fmt.Errorf("%w: %v", ErrDescriptorWriteFailed, err))
+			&SentinelCauseError{Sentinel: ErrDescriptorWriteFailed, Cause: err})
 	}
 
 	// Write string descriptors to ep0.
@@ -127,7 +127,7 @@ func (t *FunctionFSTransport) Initialize(ctx context.Context) error {
 		_ = t.ep0.Close()
 		t.ep0 = nil
 		return NewGadgetError("Initialize",
-			fmt.Errorf("%w: %v", ErrDescriptorWriteFailed, err))
+			&SentinelCauseError{Sentinel: ErrDescriptorWriteFailed, Cause: err})
 	}
 
 	// Open bulk OUT endpoint (host -> device).
@@ -137,7 +137,7 @@ func (t *FunctionFSTransport) Initialize(ctx context.Context) error {
 		_ = t.ep0.Close()
 		t.ep0 = nil
 		return NewGadgetError("Initialize",
-			fmt.Errorf("%w: ep1: %v", ErrEndpointOpenFailed, err))
+			&DetailError{Err: ErrEndpointOpenFailed, Detail: fmt.Sprintf(": ep1: %v", err)})
 	}
 	t.epOut = epOut
 
@@ -150,7 +150,7 @@ func (t *FunctionFSTransport) Initialize(ctx context.Context) error {
 		_ = t.ep0.Close()
 		t.ep0 = nil
 		return NewGadgetError("Initialize",
-			fmt.Errorf("%w: ep2: %v", ErrEndpointOpenFailed, err))
+			&DetailError{Err: ErrEndpointOpenFailed, Detail: fmt.Sprintf(": ep2: %v", err)})
 	}
 	t.epIn = epIn
 
@@ -196,7 +196,7 @@ func (t *FunctionFSTransport) Read(ctx context.Context) ([]byte, error) {
 				continue
 			}
 			return nil, NewGadgetError("Read",
-				fmt.Errorf("%w: %v", ErrEndpointIOFailed, err))
+				&SentinelCauseError{Sentinel: ErrEndpointIOFailed, Cause: err})
 		}
 
 		data := make([]byte, n)
@@ -214,7 +214,7 @@ func (t *FunctionFSTransport) Write(data []byte) error {
 
 	if _, err := t.epIn.Write(data); err != nil {
 		return NewGadgetError("Write",
-			fmt.Errorf("%w: %v", ErrEndpointIOFailed, err))
+			&SentinelCauseError{Sentinel: ErrEndpointIOFailed, Cause: err})
 	}
 	return nil
 }

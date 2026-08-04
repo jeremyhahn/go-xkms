@@ -89,7 +89,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	// Load existing configuration
 	cfg, err := loadDevicesConfig()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 	if cfg == nil {
 		cfg = &DevicesConfig{
@@ -106,7 +106,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, phone.ErrBLEUnavailable) {
 			return ErrDeviceBLEUnavailable
 		}
-		return fmt.Errorf("failed to initialize Bluetooth: %w", err)
+		return &WrappedError{Msg: "failed to initialize Bluetooth", Err: err}
 	}
 	defer transport.Close()
 
@@ -120,7 +120,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Searching for device \"%s\"...\n", deviceFilter)
 		devices, err := transport.ScanAll(ctx)
 		if err != nil {
-			return fmt.Errorf("scan failed: %w", err)
+			return &WrappedError{Msg: "scan failed", Err: err}
 		}
 
 		for i := range devices {
@@ -146,7 +146,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 		devices, err := transport.Scan(ctx) // Stops on first device found
 		logger.Debug("scan returned", "deviceCount", len(devices), "error", err)
 		if err != nil {
-			return fmt.Errorf("scan failed: %w", err)
+			return &WrappedError{Msg: "scan failed", Err: err}
 		}
 
 		if len(devices) == 0 {
@@ -178,7 +178,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 				selection = 1 // Default to first device
 			} else {
 				if _, err := fmt.Sscanf(input, "%d", &selection); err != nil || selection < 1 || selection > len(devices) {
-					return fmt.Errorf("invalid selection: %s", input)
+					return &MessageError{Msg: fmt.Sprintf("invalid selection: %s", input)}
 				}
 			}
 			selectedDevice = &devices[selection-1]
@@ -205,7 +205,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	// Generate local Noise static key
 	localKey, err := phone.GenerateStaticKey()
 	if err != nil {
-		return fmt.Errorf("failed to generate local key: %w", err)
+		return &WrappedError{Msg: "failed to generate local key", Err: err}
 	}
 
 	// Create Noise session for handshake
@@ -214,7 +214,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 		IsInitiator:    true,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create noise session: %w", err)
+		return &WrappedError{Msg: "failed to create noise session", Err: err}
 	}
 
 	// Connect to the device - use longer timeout to allow for user PIN confirmation
@@ -226,7 +226,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	fmt.Println("Connecting...")
 	fmt.Println("(Check your phone for a pairing confirmation prompt)")
 	if err := transport.Connect(connectCtx, selectedDevice.Address); err != nil {
-		return fmt.Errorf("connection failed: %w", err)
+		return &WrappedError{Msg: "connection failed", Err: err}
 	}
 
 	// Perform Noise XX handshake using the centralized implementation
@@ -240,7 +240,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	}
 	if err := phone.PerformHandshake(connectCtx, handshakeCfg); err != nil {
 		transport.Disconnect()
-		return fmt.Errorf("key exchange failed: %w", err)
+		return &WrappedError{Msg: "key exchange failed", Err: err}
 	}
 
 	// Send pairing confirmation request to phone
@@ -252,27 +252,27 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	pairingPlaintext, err := phone.EncodeRequest(pairingReq)
 	if err != nil {
 		transport.Disconnect()
-		return fmt.Errorf("failed to encode pairing request: %w", err)
+		return &WrappedError{Msg: "failed to encode pairing request", Err: err}
 	}
 	pairingCiphertext, err := session.Encrypt(pairingPlaintext)
 	if err != nil {
 		transport.Disconnect()
-		return fmt.Errorf("failed to encrypt pairing request: %w", err)
+		return &WrappedError{Msg: "failed to encrypt pairing request", Err: err}
 	}
 	pairingResponseCiphertext, err := transport.SendAndReceive(connectCtx, pairingCiphertext)
 	if err != nil {
 		transport.Disconnect()
-		return fmt.Errorf("pairing confirmation failed: %w", err)
+		return &WrappedError{Msg: "pairing confirmation failed", Err: err}
 	}
 	pairingResponsePlaintext, err := session.Decrypt(pairingResponseCiphertext)
 	if err != nil {
 		transport.Disconnect()
-		return fmt.Errorf("failed to decrypt pairing response: %w", err)
+		return &WrappedError{Msg: "failed to decrypt pairing response", Err: err}
 	}
 	pairingResp, err := phone.DecodeResponse(pairingResponsePlaintext)
 	if err != nil {
 		transport.Disconnect()
-		return fmt.Errorf("failed to decode pairing response: %w", err)
+		return &WrappedError{Msg: "failed to decode pairing response", Err: err}
 	}
 	if pairingResp.Error != nil {
 		transport.Disconnect()
@@ -281,7 +281,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	pairingResult, err := phone.DecodeResult[phone.PairingConfirmResult](pairingResp)
 	if err != nil {
 		transport.Disconnect()
-		return fmt.Errorf("failed to decode pairing result: %w", err)
+		return &WrappedError{Msg: "failed to decode pairing result", Err: err}
 	}
 	if !pairingResult.Confirmed {
 		transport.Disconnect()
@@ -293,7 +293,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	remotePublicKey := session.RemoteStaticPublicKey()
 	if len(remotePublicKey) == 0 {
 		transport.Disconnect()
-		return fmt.Errorf("failed to obtain phone's public key")
+		return &MessageError{Msg: "failed to obtain phone's public key"}
 	}
 
 	// Perform device attestation to verify device security
@@ -350,7 +350,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 
 	// Save configuration
 	if err := saveDevicesConfig(cfg); err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceConfigSaveFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigSaveFailed, Cause: err}
 	}
 
 	fmt.Println()

@@ -16,7 +16,6 @@ package services
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sync/atomic"
 
@@ -107,7 +106,7 @@ func (s *NotificationService) SendNotification(req NotificationRequest) error {
 			slog.String("title", req.Title),
 			slog.String("error", err.Error()),
 		)
-		return fmt.Errorf("%w: %w", ErrNotificationSendFailed, err)
+		return &SentinelCauseError{Sentinel: ErrNotificationSendFailed, Cause: err}
 	}
 
 	return nil
@@ -135,7 +134,7 @@ func (s *NotificationService) NotifyTouchRequired(operation, rpID string) error 
 			slog.String("rp_id", rpID),
 			slog.String("error", err.Error()),
 		)
-		return fmt.Errorf("%w: %w", ErrNotificationSendFailed, err)
+		return &SentinelCauseError{Sentinel: ErrNotificationSendFailed, Cause: err}
 	}
 
 	return nil

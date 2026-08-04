@@ -16,6 +16,8 @@ package jwe
 import (
 	"crypto"
 	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // XKMSEncrypter encrypts JWE using keys from a xkms/keystore.
@@ -55,7 +57,7 @@ type XKMSEncrypter struct {
 //	jweString, err := encrypter.EncryptWithKeyID(plaintext, "tpm2:encryption-key")
 func NewXKMSEncrypter(keyEncAlg, encAlg string, getKey func(string) (crypto.PublicKey, error)) (*XKMSEncrypter, error) {
 	if getKey == nil {
-		return nil, fmt.Errorf("getKey function cannot be nil")
+		return nil, &errs.Message{Msg: "getKey function cannot be nil"}
 	}
 
 	// Validate algorithms
@@ -95,19 +97,19 @@ func NewXKMSEncrypter(keyEncAlg, encAlg string, getKey func(string) (crypto.Publ
 //	)
 func (e *XKMSEncrypter) EncryptWithKeyID(plaintext []byte, keyID string) (string, error) {
 	if keyID == "" {
-		return "", fmt.Errorf("keyID cannot be empty")
+		return "", &errs.Message{Msg: "keyID cannot be empty"}
 	}
 
 	// Retrieve public key from xkms
 	publicKey, err := e.getKey(keyID)
 	if err != nil {
-		return "", fmt.Errorf("failed to get key %s: %w", keyID, err)
+		return "", &errs.Wrapped{Msg: fmt.Sprintf("failed to get key %s", keyID), Err: err}
 	}
 
 	// Create encrypter with the retrieved key
 	encrypter, err := NewEncrypter(e.keyEncAlg, e.encAlg, publicKey)
 	if err != nil {
-		return "", fmt.Errorf("failed to create encrypter: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to create encrypter", Err: err}
 	}
 
 	// Encrypt with kid in header
@@ -127,17 +129,17 @@ func (e *XKMSEncrypter) EncryptWithKeyID(plaintext []byte, keyID string) (string
 //	jweString, err := encrypter.Encrypt(plaintext, "tpm2:encryption-key")
 func (e *XKMSEncrypter) Encrypt(plaintext []byte, keyID string) (string, error) {
 	if keyID == "" {
-		return "", fmt.Errorf("keyID cannot be empty")
+		return "", &errs.Message{Msg: "keyID cannot be empty"}
 	}
 
 	publicKey, err := e.getKey(keyID)
 	if err != nil {
-		return "", fmt.Errorf("failed to get key %s: %w", keyID, err)
+		return "", &errs.Wrapped{Msg: fmt.Sprintf("failed to get key %s", keyID), Err: err}
 	}
 
 	encrypter, err := NewEncrypter(e.keyEncAlg, e.encAlg, publicKey)
 	if err != nil {
-		return "", fmt.Errorf("failed to create encrypter: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to create encrypter", Err: err}
 	}
 
 	return encrypter.Encrypt(plaintext)
@@ -194,11 +196,11 @@ func (d *XKMSDecrypter) DecryptWithAutoKeyID(jweString string) ([]byte, error) {
 	// Extract kid from JWE header
 	kid, err := ExtractKID(jweString)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract kid: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to extract kid", Err: err}
 	}
 
 	if kid == "" {
-		return nil, fmt.Errorf("JWE header does not contain kid field")
+		return nil, &errs.Message{Msg: "JWE header does not contain kid field"}
 	}
 
 	return d.DecryptWithKeyID(jweString, kid)
@@ -223,13 +225,13 @@ func (d *XKMSDecrypter) DecryptWithAutoKeyID(jweString string) ([]byte, error) {
 //	plaintext, err := decrypter.DecryptWithKeyID(jweString, "tpm2:encryption-key")
 func (d *XKMSDecrypter) DecryptWithKeyID(jweString string, keyID string) ([]byte, error) {
 	if keyID == "" {
-		return nil, fmt.Errorf("keyID cannot be empty")
+		return nil, &errs.Message{Msg: "keyID cannot be empty"}
 	}
 
 	// Retrieve decrypter from xkms
 	decrypter, err := d.getDecrypter(keyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get decrypter for key %s: %w", keyID, err)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get decrypter for key %s", keyID), Err: err}
 	}
 
 	// Decrypt JWE using standard decrypter

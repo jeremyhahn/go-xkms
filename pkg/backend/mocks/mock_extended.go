@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -98,7 +100,7 @@ func (m *ExtendedMockBackend) GenerateSymmetricKey(ctx context.Context, attrs *t
 	// Generate random key material
 	keyMaterial := make([]byte, keySize)
 	if _, err := rand.Read(keyMaterial); err != nil {
-		return nil, fmt.Errorf("failed to generate key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate key material", Err: err}
 	}
 
 	m.symmetricKeys[attrs.CN] = keyMaterial
@@ -124,7 +126,7 @@ func (m *ExtendedMockBackend) GetSymmetricKey(ctx context.Context, attrs *types.
 
 	keyMaterial, ok := m.symmetricKeys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("symmetric key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("symmetric key not found: %s", attrs.CN)}
 	}
 
 	return &MockSymmetricKey{
@@ -148,7 +150,7 @@ func (m *ExtendedMockBackend) SymmetricEncrypter(ctx context.Context, attrs *typ
 
 	keyMaterial, ok := m.symmetricKeys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("symmetric key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("symmetric key not found: %s", attrs.CN)}
 	}
 
 	return &MockSymmetricEncrypter{
@@ -171,7 +173,7 @@ func (m *ExtendedMockBackend) GetImportParameters(ctx context.Context, attrs *ty
 	// Generate a mock wrapping key (RSA public key)
 	wrappingPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate wrapping key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate wrapping key", Err: err}
 	}
 
 	return &backend.ImportParameters{
@@ -251,7 +253,7 @@ func (m *ExtendedMockBackend) ExportKey(ctx context.Context, attrs *types.KeyAtt
 	} else if symKey, ok := m.symmetricKeys[attrs.CN]; ok {
 		keyMaterial = symKey
 	} else {
-		return nil, fmt.Errorf("key not found: %s", attrs.CN)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 
 	return &backend.WrappedKeyMaterial{
@@ -365,17 +367,17 @@ func (e *MockSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOp
 
 	block, err := aes.NewCipher(e.KeyMaterial)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 	}
 
 	var aad []byte
@@ -406,12 +408,12 @@ func (e *MockSymmetricEncrypter) Decrypt(encrypted *types.EncryptedData, opts *t
 
 	block, err := aes.NewCipher(e.KeyMaterial)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	var aad []byte
@@ -424,7 +426,7 @@ func (e *MockSymmetricEncrypter) Decrypt(encrypted *types.EncryptedData, opts *t
 
 	plaintext, err := gcm.Open(nil, encrypted.Nonce, ciphertextWithTag, aad)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decrypt", Err: err}
 	}
 
 	return plaintext, nil

@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
@@ -54,7 +56,7 @@ func (a *HardwareBackendAdapter) Get(_ context.Context, key string) ([]byte, err
 
 	// Parse key to determine operation
 	if !strings.HasPrefix(key, "certs/") {
-		return nil, fmt.Errorf("hardware storage only supports certificate keys (certs/*): got %s", key)
+		return nil, &errs.Message{Msg: fmt.Sprintf("hardware storage only supports certificate keys (certs/*): got %s", key)}
 	}
 
 	// Check if it's a chain request
@@ -87,7 +89,7 @@ func (a *HardwareBackendAdapter) Get(_ context.Context, key string) ([]byte, err
 		return cert.Raw, nil
 	}
 
-	return nil, fmt.Errorf("unsupported key format: %s", key)
+	return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key format: %s", key)}
 }
 
 // Put stores certificate data by key.
@@ -97,7 +99,7 @@ func (a *HardwareBackendAdapter) Put(_ context.Context, key string, value []byte
 	defer a.mu.Unlock()
 
 	if !strings.HasPrefix(key, "certs/") {
-		return fmt.Errorf("hardware storage only supports certificate keys (certs/*): got %s", key)
+		return &errs.Message{Msg: fmt.Sprintf("hardware storage only supports certificate keys (certs/*): got %s", key)}
 	}
 
 	// Check if it's a chain
@@ -108,7 +110,7 @@ func (a *HardwareBackendAdapter) Put(_ context.Context, key string, value []byte
 		// Parse DER data as certificate chain
 		chain, err := parseDERChain(value)
 		if err != nil {
-			return fmt.Errorf("failed to parse certificate chain: %w", err)
+			return &errs.Wrapped{Msg: "failed to parse certificate chain", Err: err}
 		}
 
 		return a.hardware.SaveCertChain(id, chain)
@@ -122,13 +124,13 @@ func (a *HardwareBackendAdapter) Put(_ context.Context, key string, value []byte
 		// Parse DER data as single certificate
 		cert, err := x509.ParseCertificate(value)
 		if err != nil {
-			return fmt.Errorf("failed to parse certificate: %w", err)
+			return &errs.Wrapped{Msg: "failed to parse certificate", Err: err}
 		}
 
 		return a.hardware.SaveCert(id, cert)
 	}
 
-	return fmt.Errorf("unsupported key format: %s", key)
+	return &errs.Message{Msg: fmt.Sprintf("unsupported key format: %s", key)}
 }
 
 // Delete removes a certificate by key.
@@ -137,7 +139,7 @@ func (a *HardwareBackendAdapter) Delete(_ context.Context, key string) error {
 	defer a.mu.Unlock()
 
 	if !strings.HasPrefix(key, "certs/") {
-		return fmt.Errorf("hardware storage only supports certificate keys (certs/*): got %s", key)
+		return &errs.Message{Msg: fmt.Sprintf("hardware storage only supports certificate keys (certs/*): got %s", key)}
 	}
 
 	// Extract ID from key
@@ -190,7 +192,7 @@ func (a *HardwareBackendAdapter) Scan(_ context.Context, prefix string, fn func(
 
 		cert, err := a.hardware.GetCert(id)
 		if err != nil {
-			return fmt.Errorf("failed to get certificate %q: %w", id, err)
+			return &errs.Wrapped{Msg: fmt.Sprintf("failed to get certificate %q", id), Err: err}
 		}
 
 		if err := fn(key, cert.Raw); err != nil {
@@ -257,7 +259,7 @@ func parseDERChain(data []byte) ([]*x509.Certificate, error) {
 	}
 
 	if len(chain) == 0 {
-		return nil, fmt.Errorf("no certificates found in data")
+		return nil, &errs.Message{Msg: "no certificates found in data"}
 	}
 
 	return chain, nil

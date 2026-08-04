@@ -31,6 +31,7 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
+	stopSwtpmForTests()
 	os.RemoveAll(pkgTempDir)
 	os.Exit(code)
 }

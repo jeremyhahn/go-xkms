@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -35,7 +37,7 @@ func (tpm *TPM2) defaultSealKeyAttributes() (*types.KeyAttributes, error) {
 		// Platform SRK unavailable: fall back to the standard SSRK.
 		srkAttrs, err = tpm.SSRKAttributes()
 		if err != nil {
-			return nil, fmt.Errorf("tpm2: no usable SRK for sealing: %w", err)
+			return nil, &errs.Wrapped{Msg: "tpm2: no usable SRK for sealing", Err: err}
 		}
 	}
 	return &types.KeyAttributes{
@@ -53,7 +55,7 @@ func (tpm *TPM2) defaultUnsealKeyAttributes(keyID string) (*types.KeyAttributes,
 	if err != nil {
 		srkAttrs, err = tpm.SSRKAttributes()
 		if err != nil {
-			return nil, fmt.Errorf("tpm2: no usable SRK for unsealing: %w", err)
+			return nil, &errs.Wrapped{Msg: "tpm2: no usable SRK for unsealing", Err: err}
 		}
 	}
 	return &types.KeyAttributes{
@@ -136,7 +138,7 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 	// Call the internal seal operation
 	sealResponse, err := tpm.SealKey(keyAttrs, backend, true)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrSealFailed, err)
+		return nil, &errs.Joined{Lead: ErrSealFailed, Cause: err}
 	}
 
 	// Marshal the TPM public area
@@ -184,7 +186,7 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 	}
 
 	if sealed.Backend != types.BackendTypeTPM2 {
-		return nil, fmt.Errorf("%w: got %s", ErrSealedDataBackendMismatch, sealed.Backend)
+		return nil, &errs.Detail{Err: ErrSealedDataBackendMismatch, Detail: fmt.Sprintf("got %s", sealed.Backend)}
 	}
 
 	if opts == nil {
@@ -209,7 +211,7 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 		if perr != nil {
 			srkAttrs, perr = tpm.SSRKAttributes()
 			if perr != nil {
-				return nil, fmt.Errorf("tpm2: no usable SRK for unsealing: %w", perr)
+				return nil, &errs.Wrapped{Msg: "tpm2: no usable SRK for unsealing", Err: perr}
 			}
 		}
 		keyAttrs.Parent = srkAttrs
@@ -244,7 +246,7 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 	// Call the internal unseal operation
 	plaintext, err := tpm.UnsealKey(keyAttrs, backend)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrUnsealFailed, err)
+		return nil, &errs.Joined{Lead: ErrUnsealFailed, Cause: err}
 	}
 
 	return plaintext, nil

@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 
@@ -54,7 +53,7 @@ type BackendStore struct {
 // is loaded into the in-memory cache on creation.
 func NewBackendStore(backend xkms.StorageBackend, prefix string) (*BackendStore, error) {
 	if backend == nil {
-		return nil, fmt.Errorf("%w: storage backend is required", ErrInvalidCertificate)
+		return nil, &DetailError{Err: ErrInvalidCertificate, Detail: ": storage backend is required"}
 	}
 
 	bs := &BackendStore{
@@ -219,12 +218,12 @@ func (bs *BackendStore) RemoveCertificate(fingerprint string) error {
 
 	// Delete certificate PEM entry.
 	if err := bs.backend.Delete(context.Background(), bs.certKey(fingerprint)); err != nil && !errors.Is(err, xkms.ErrStorageNotFound) {
-		return fmt.Errorf("%w: %v", ErrStorageWrite, err)
+		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
 	}
 
 	// Delete metadata entry.
 	if err := bs.backend.Delete(context.Background(), bs.metaKey(fingerprint)); err != nil && !errors.Is(err, xkms.ErrStorageNotFound) {
-		return fmt.Errorf("%w: %v", ErrStorageWrite, err)
+		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
 	}
 
 	delete(bs.certs, fingerprint)
@@ -468,7 +467,7 @@ func (bs *BackendStore) loadFromBackend() error {
 	metaPrefix := bs.prefix + metadataKeyPrefix
 	metaKeys, err := bs.backend.List(context.Background(), metaPrefix)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrStorageRead, err)
+		return &SentinelCauseError{Sentinel: ErrStorageRead, Cause: err}
 	}
 
 	for _, key := range metaKeys {
@@ -477,7 +476,7 @@ func (bs *BackendStore) loadFromBackend() error {
 			if errors.Is(getErr, xkms.ErrStorageNotFound) {
 				continue
 			}
-			return fmt.Errorf("%w: %v", ErrStorageRead, getErr)
+			return &SentinelCauseError{Sentinel: ErrStorageRead, Cause: getErr}
 		}
 
 		var meta CertMetadata
@@ -525,7 +524,7 @@ func (bs *BackendStore) rebuildFromCerts() error {
 	certPrefix := bs.prefix + certKeyPrefix
 	certKeys, err := bs.backend.List(context.Background(), certPrefix)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrStorageRead, err)
+		return &SentinelCauseError{Sentinel: ErrStorageRead, Cause: err}
 	}
 
 	for _, key := range certKeys {
@@ -573,7 +572,7 @@ func (bs *BackendStore) writeCert(fingerprint string, cert *x509.Certificate) er
 	pemBytes := pem.EncodeToMemory(block)
 
 	if err := bs.backend.Put(context.Background(), bs.certKey(fingerprint), pemBytes); err != nil {
-		return fmt.Errorf("%w: %v", ErrStorageWrite, err)
+		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
 	}
 
 	return nil
@@ -583,11 +582,11 @@ func (bs *BackendStore) writeCert(fingerprint string, cert *x509.Certificate) er
 func (bs *BackendStore) writeMeta(fingerprint string, meta *CertMetadata) error {
 	data, err := json.Marshal(meta)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrStorageWrite, err)
+		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
 	}
 
 	if err := bs.backend.Put(context.Background(), bs.metaKey(fingerprint), data); err != nil {
-		return fmt.Errorf("%w: %v", ErrStorageWrite, err)
+		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
 	}
 
 	return nil
@@ -597,12 +596,12 @@ func (bs *BackendStore) writeMeta(fingerprint string, meta *CertMetadata) error 
 func parsePEMBytes(data []byte) (*x509.Certificate, error) {
 	block, _ := pem.Decode(data)
 	if block == nil || block.Type != pemBlockType {
-		return nil, fmt.Errorf("%w: invalid PEM block", ErrInvalidCertificate)
+		return nil, &DetailError{Err: ErrInvalidCertificate, Detail: ": invalid PEM block"}
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidCertificate, err)
+		return nil, &SentinelCauseError{Sentinel: ErrInvalidCertificate, Cause: err}
 	}
 
 	return cert, nil

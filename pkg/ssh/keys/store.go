@@ -71,11 +71,22 @@ type storedEnvelope struct {
 	Fingerprint string    `json:"fp"`
 	CreatedAt   time.Time `json:"created"`
 	Comment     string    `json:"comment,omitempty"`
-	PublicKey   string    `json:"pub"`     // authorized_keys line (no newline)
-	MaterialPEM string    `json:"pem_b64"` // base64 JSON-string-encoded PEM
+	PublicKey   string    `json:"pub"`               // authorized_keys line (no newline)
+	MaterialPEM string    `json:"pem_b64,omitempty"` // base64 JSON-string-encoded PEM; empty for backend-backed keys
+
+	// BackendID / BackendKeyID identify the crypto backend holding the
+	// private half of a backend-backed key. When BackendID is set,
+	// MaterialPEM is empty and signing is delegated to the backend. Both
+	// omitempty so v1 software envelopes round-trip unchanged.
+	BackendID    string `json:"backend_id,omitempty"`
+	BackendKeyID string `json:"backend_key_id,omitempty"`
 }
 
-const envelopeVersion = 1
+// envelopeVersion is the current on-disk schema version. v1 stored only
+// software keys (MaterialPEM required); v2 added the backend_id /
+// backend_key_id fields for backend-backed keys. Both decode under the
+// same struct because the new fields are omitempty.
+const envelopeVersion = 2
 
 // BackendStore is the production Store. It serializes Keys into JSON
 // envelopes and persists them under "ssh/keys/<scope>/<owner>/<name>"
@@ -100,7 +111,12 @@ func (s *BackendStore) Put(ctx context.Context, key *Key) error {
 	if key == nil {
 		return &NilInputError{Field: "key"}
 	}
-	if key.Material == nil {
+	if key.PublicKey == nil {
+		return &NilInputError{Field: "key.PublicKey"}
+	}
+	// A key is either software (Material holds the sealed PEM) or
+	// backend-backed (BackendID set, no PEM). At least one must hold.
+	if key.Material == nil && !key.IsBackendBacked() {
 		return &NilInputError{Field: "key.Material"}
 	}
 	id, err := scope.BuildKeyID(key.Scope, key.Owner, key.Name)
@@ -108,30 +124,43 @@ func (s *BackendStore) Put(ctx context.Context, key *Key) error {
 		return err
 	}
 
-	// Open the Secret into a Buffer, serialize the envelope, then
-	// destroy the Buffer. The JSON bytes we hand to the backend are
-	// the encrypted-at-rest form the backend chooses (plain on-disk
-	// JSON if backed by memory; wrapped if backed by an envelope-
-	// encrypting store). We do not wrap here — that lives one level
-	// up in the service wiring.
+	env := storedEnvelope{
+		Version:      envelopeVersion,
+		Scope:        string(key.Scope),
+		Owner:        key.Owner,
+		Name:         key.Name,
+		Algorithm:    string(key.Algorithm),
+		Fingerprint:  key.Fingerprint,
+		CreatedAt:    key.CreatedAt,
+		Comment:      key.Comment,
+		PublicKey:    strings.TrimRight(string(ssh.MarshalAuthorizedKey(key.PublicKey)), "\n"),
+		BackendID:    key.BackendID,
+		BackendKeyID: key.BackendKeyID,
+	}
+
+	if key.IsBackendBacked() {
+		// No private material to serialize — the backend holds the key.
+		data, jerr := json.Marshal(&env)
+		if jerr != nil {
+			return &SerializationError{Op: "marshal envelope", Err: jerr}
+		}
+		if perr := s.backend.Put(ctx, storagePrefix+id, data); perr != nil {
+			return &StorageError{Op: "put", Err: perr}
+		}
+		return nil
+	}
+
+	// Software key: open the Secret into a Buffer, serialize the envelope,
+	// then destroy the Buffer. The JSON bytes we hand to the backend are
+	// the encrypted-at-rest form the backend chooses (plain on-disk JSON if
+	// backed by memory; wrapped if backed by an envelope-encrypting store).
+	// We do not wrap here — that lives one level up in the service wiring.
 	buf, err := key.Material.Open()
 	if err != nil {
 		return &KeyMaterialError{Op: "open secret for put", Err: err}
 	}
 	defer buf.Destroy()
-
-	env := storedEnvelope{
-		Version:     envelopeVersion,
-		Scope:       string(key.Scope),
-		Owner:       key.Owner,
-		Name:        key.Name,
-		Algorithm:   string(key.Algorithm),
-		Fingerprint: key.Fingerprint,
-		CreatedAt:   key.CreatedAt,
-		Comment:     key.Comment,
-		PublicKey:   strings.TrimRight(string(ssh.MarshalAuthorizedKey(key.PublicKey)), "\n"),
-		MaterialPEM: string(buf.Bytes()),
-	}
+	env.MaterialPEM = string(buf.Bytes())
 
 	data, jerr := json.Marshal(&env)
 	if jerr != nil {
@@ -228,6 +257,24 @@ func envelopeToKey(env *storedEnvelope) (*Key, error) {
 		return nil, &PEMParseError{Err: pubErr}
 	}
 
+	// Backend-backed key: no PEM to seal — the private half lives in the
+	// crypto backend. Reconstruct the metadata + backend reference; signing
+	// is delegated via (*Key).BackendSigner.
+	if env.BackendID != "" {
+		return &Key{
+			PublicKey:    pub,
+			Algorithm:    Algorithm(env.Algorithm),
+			Fingerprint:  env.Fingerprint,
+			Scope:        sc,
+			Owner:        env.Owner,
+			Name:         env.Name,
+			CreatedAt:    env.CreatedAt,
+			Comment:      env.Comment,
+			BackendID:    env.BackendID,
+			BackendKeyID: env.BackendKeyID,
+		}, nil
+	}
+
 	if env.MaterialPEM == "" {
 		return nil, &KeyMaterialError{Op: "envelope has no material", Err: errors.New("empty pem")}
 	}
@@ -268,20 +315,22 @@ func envelopeToKeyMetaOnly(env *storedEnvelope) (*Key, error) {
 		return nil, &PEMParseError{Err: pubErr}
 	}
 	return &Key{
-		PublicKey:   pub,
-		Algorithm:   Algorithm(env.Algorithm),
-		Fingerprint: env.Fingerprint,
-		Scope:       sc,
-		Owner:       env.Owner,
-		Name:        env.Name,
-		CreatedAt:   env.CreatedAt,
-		Comment:     env.Comment,
+		PublicKey:    pub,
+		Algorithm:    Algorithm(env.Algorithm),
+		Fingerprint:  env.Fingerprint,
+		Scope:        sc,
+		Owner:        env.Owner,
+		Name:         env.Name,
+		CreatedAt:    env.CreatedAt,
+		Comment:      env.Comment,
+		BackendID:    env.BackendID,
+		BackendKeyID: env.BackendKeyID,
 	}, nil
 }
 
 // isStorageNotFound checks whether a storage error indicates a missing
 // key. We compare against the storage package's sentinel ErrNotFound;
-// the backend implementations wrap it with fmt.Errorf, so
+// the backend implementations wrap it with contextual error types, so
 // errors.Is is the correct predicate.
 func isStorageNotFound(err error) bool {
 	return errors.Is(err, storage.ErrNotFound)

@@ -427,7 +427,8 @@ func TestUnsealKeyMismatch(t *testing.T) {
 func TestSealUnsealAfterClose(t *testing.T) {
 	keyStorage := storage.New()
 	config := &Config{
-		KeyStorage: keyStorage,
+		KeyStorage:         keyStorage,
+		AllowPlaintextKeys: true, // test infrastructure — verifies close behavior, not encryption policy
 	}
 
 	be, err := NewBackend(config)

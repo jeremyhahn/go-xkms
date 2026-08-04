@@ -15,7 +15,6 @@ package gadget
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"sync/atomic"
@@ -55,7 +54,7 @@ func NewHIDGadgetTransport(devPath string, logger *slog.Logger) (*HIDGadgetTrans
 	}
 	file, err := os.OpenFile(devPath, os.O_RDWR, 0)
 	if err != nil {
-		return nil, NewGadgetError("OpenHIDGadget", fmt.Errorf("%w: %v", ErrEndpointOpenFailed, err))
+		return nil, NewGadgetError("OpenHIDGadget", &SentinelCauseError{Sentinel: ErrEndpointOpenFailed, Cause: err})
 	}
 	logger.Info("opened HID gadget device", "path", devPath)
 	return &HIDGadgetTransport{
@@ -95,7 +94,7 @@ func (t *HIDGadgetTransport) Read(ctx context.Context) ([]byte, error) {
 		return nil, ctx.Err()
 	case result := <-ch:
 		if result.err != nil {
-			return nil, NewGadgetError("Read", fmt.Errorf("%w: %v", ErrEndpointIOFailed, result.err))
+			return nil, NewGadgetError("Read", &SentinelCauseError{Sentinel: ErrEndpointIOFailed, Cause: result.err})
 		}
 		return result.data, nil
 	}
@@ -109,7 +108,7 @@ func (t *HIDGadgetTransport) Write(data []byte) error {
 	}
 	_, err := t.file.Write(data)
 	if err != nil {
-		return NewGadgetError("Write", fmt.Errorf("%w: %v", ErrEndpointIOFailed, err))
+		return NewGadgetError("Write", &SentinelCauseError{Sentinel: ErrEndpointIOFailed, Cause: err})
 	}
 	return nil
 }

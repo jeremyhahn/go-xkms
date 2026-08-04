@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	chacha20poly1305pkg "github.com/jeremyhahn/go-xkms/pkg/crypto/chacha20poly1305"
@@ -93,10 +95,10 @@ type Config struct {
 // Validate checks if the Config is valid.
 func (c *Config) Validate() error {
 	if c == nil {
-		return fmt.Errorf("config is nil")
+		return &errs.Message{Msg: "config is nil"}
 	}
 	if c.KeyStorage == nil {
-		return fmt.Errorf("KeyStorage is required")
+		return &errs.Message{Msg: "KeyStorage is required"}
 	}
 	return nil
 }
@@ -125,7 +127,7 @@ func (c *Config) Validate() error {
 //	key, err := backend.GenerateSymmetricKey(attrs)
 func NewBackend(config *Config) (types.SymmetricKeyProvider, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid config", Err: err}
 	}
 
 	// Create default tracker if none provided
@@ -137,7 +139,7 @@ func NewBackend(config *Config) (types.SymmetricKeyProvider, error) {
 	// Create RNG resolver with default auto-detection if not provided
 	rng, err := cryptorand.NewResolver(config.RNGConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize RNG: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to initialize RNG", Err: err}
 	}
 
 	return &Backend{
@@ -171,13 +173,13 @@ func (b *Backend) Capabilities() types.Capabilities {
 // GenerateKey is not supported by the symmetric backend (symmetric only).
 // Use GenerateSymmetricKey instead.
 func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return nil, fmt.Errorf("%w: use GenerateSymmetricKey instead", backend.ErrOperationNotSupported)
+	return nil, &errs.Detail{Err: backend.ErrOperationNotSupported, Detail: "use GenerateSymmetricKey instead"}
 }
 
 // GetKey is not supported by the symmetric backend (symmetric only).
 // Use GetSymmetricKey instead.
 func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return nil, fmt.Errorf("%w: use GetSymmetricKey instead", backend.ErrOperationNotSupported)
+	return nil, &errs.Detail{Err: backend.ErrOperationNotSupported, Detail: "use GetSymmetricKey instead"}
 }
 
 // DeleteKey removes a symmetric key identified by its attributes.
@@ -191,7 +193,7 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	keyID := attrs.ID()
@@ -199,7 +201,7 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 		if err == storage.ErrNotFound {
 			return backend.ErrKeyNotFound
 		}
-		return fmt.Errorf("failed to delete key: %w", err)
+		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
 	}
 
 	return nil
@@ -217,7 +219,7 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 
 	keyIDs, err := storage.ListKeys(ctx, b.storage)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
 
 	// Parse key ID format: [partition:]sw:secret:cn:algorithm
@@ -308,7 +310,7 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 //   - New key starts with fresh tracking state
 func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	if attrs == nil {
-		return fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "attributes cannot be nil"}
 	}
 
 	keyID := attrs.ID()
@@ -323,13 +325,13 @@ func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) err
 
 	// Delete the old key
 	if err := b.DeleteKey(ctx, attrs); err != nil && err != backend.ErrKeyNotFound {
-		return fmt.Errorf("failed to delete old key: %w", err)
+		return &errs.Wrapped{Msg: "failed to delete old key", Err: err}
 	}
 
 	// Generate a new key with the same attributes (tracking will be re-initialized)
 	_, err := b.GenerateSymmetricKey(ctx, attrs)
 	if err != nil {
-		return fmt.Errorf("failed to generate new key: %w", err)
+		return &errs.Wrapped{Msg: "failed to generate new key", Err: err}
 	}
 
 	return nil
@@ -380,21 +382,21 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
 	}
 
 	// Check if key already exists
 	keyID := attrs.ID()
 	exists, err := storage.KeyExists(ctx, b.storage, keyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check key existence: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if exists {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyAlreadyExists, keyID)
+		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", keyID)}
 	}
 
 	// Set up AEAD tracking with defaults if not specified
@@ -403,12 +405,12 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		aeadOpts = types.DefaultAEADOptions()
 	}
 	if err := aeadOpts.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid AEAD options: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid AEAD options", Err: err}
 	}
 
 	// Initialize tracking for this key
 	if err := b.tracker.SetAEADOptions(keyID, aeadOpts); err != nil {
-		return nil, fmt.Errorf("failed to set AEAD options: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to set AEAD options", Err: err}
 	}
 
 	// Generate random key bytes based on algorithm
@@ -416,7 +418,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 
 	keyData := make([]byte, keySize)
 	if _, err := rand.Read(keyData); err != nil {
-		return nil, fmt.Errorf("failed to generate random key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate random key", Err: err}
 	}
 
 	// Create appropriate symmetric key based on algorithm
@@ -426,12 +428,12 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	case types.SymmetricChaCha20Poly1305, types.SymmetricXChaCha20Poly1305:
 		symmetricKey, keyErr = NewChaCha20Key(string(attrs.SymmetricAlgorithm), keyData)
 		if keyErr != nil {
-			return nil, fmt.Errorf("failed to create ChaCha20 key: %w", keyErr)
+			return nil, &errs.Wrapped{Msg: "failed to create ChaCha20 key", Err: keyErr}
 		}
 	default:
 		symmetricKey, keyErr = NewAESKey(string(attrs.SymmetricAlgorithm), keyData)
 		if keyErr != nil {
-			return nil, fmt.Errorf("failed to create AES key: %w", keyErr)
+			return nil, &errs.Wrapped{Msg: "failed to create AES key", Err: keyErr}
 		}
 	}
 
@@ -450,11 +452,11 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	}
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 	metaKey := "meta/" + keyID
 	if err := b.storage.Put(ctx, metaKey, metadataBytes); err != nil {
-		return nil, fmt.Errorf("failed to store metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to store metadata", Err: err}
 	}
 
 	return symmetricKey, nil
@@ -471,11 +473,11 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
 	}
 
 	keyID := attrs.ID()
@@ -484,7 +486,7 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 		if err == storage.ErrNotFound {
 			return nil, backend.ErrKeyNotFound
 		}
-		return nil, fmt.Errorf("failed to retrieve key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
 	}
 
 	// Decode the key
@@ -548,14 +550,14 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 	// STEP 1: Check bytes limit before encryption
 	if e.tracker != nil {
 		if err := e.tracker.IncrementBytes(keyID, int64(len(plaintext))); err != nil {
-			return nil, fmt.Errorf("AEAD safety check failed: %w (consider rotating this key)", err)
+			return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (consider rotating this key)"}
 		}
 	}
 
 	// Get raw key bytes
 	keyBytes, err := e.key.Raw()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get raw key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get raw key", Err: err}
 	}
 
 	// Determine which cipher to use and perform encryption
@@ -571,7 +573,7 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 			chacha20Cipher, err = chacha20poly1305pkg.New(keyBytes)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("failed to create ChaCha20 cipher: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create ChaCha20 cipher", Err: err}
 		}
 
 		// STEP 2: Generate or use provided nonce
@@ -580,20 +582,20 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 		if opts.Nonce != nil {
 			nonce = opts.Nonce
 			if len(nonce) != nonceSize {
-				return nil, fmt.Errorf("invalid nonce size: %d (expected %d)", len(nonce), nonceSize)
+				return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: %d (expected %d)", len(nonce), nonceSize)}
 			}
 		} else {
 			// Use configured RNG for nonce generation
 			nonce, err = e.rng.Rand(nonceSize)
 			if err != nil {
-				return nil, fmt.Errorf("failed to generate nonce: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 			}
 		}
 
 		// STEP 3: Check nonce uniqueness before encryption
 		if e.tracker != nil {
 			if err := e.tracker.CheckNonce(keyID, nonce); err != nil {
-				return nil, fmt.Errorf("AEAD safety check failed: %w (CRITICAL: rotate this key immediately)", err)
+				return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
 			}
 		}
 
@@ -604,19 +606,19 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 		}
 		encrypted, err = chacha20Cipher.Encrypt(plaintext, chacha20Opts)
 		if err != nil {
-			return nil, fmt.Errorf("ChaCha20 encryption failed: %w", err)
+			return nil, &errs.Wrapped{Msg: "ChaCha20 encryption failed", Err: err}
 		}
 
 	default:
 		// Use AES-GCM
 		block, err := aes.NewCipher(keyBytes)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create cipher: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 		}
 
 		gcm, err := cipher.NewGCM(block)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create GCM: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 		}
 
 		nonceSize := gcm.NonceSize()
@@ -626,20 +628,20 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 		if opts.Nonce != nil {
 			nonce = opts.Nonce
 			if len(nonce) != nonceSize {
-				return nil, fmt.Errorf("invalid nonce size: %d (expected %d)", len(nonce), nonceSize)
+				return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: %d (expected %d)", len(nonce), nonceSize)}
 			}
 		} else {
 			// Use configured RNG for nonce generation
 			nonce, err = e.rng.Rand(nonceSize)
 			if err != nil {
-				return nil, fmt.Errorf("failed to generate nonce: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 			}
 		}
 
 		// STEP 3: Check nonce uniqueness before encryption
 		if e.tracker != nil {
 			if err := e.tracker.CheckNonce(keyID, nonce); err != nil {
-				return nil, fmt.Errorf("AEAD safety check failed: %w (CRITICAL: rotate this key immediately)", err)
+				return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
 			}
 		}
 
@@ -649,7 +651,7 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 		// Extract tag from end of ciphertext
 		tagSize := gcm.Overhead()
 		if len(ciphertextWithTag) < tagSize {
-			return nil, fmt.Errorf("ciphertext too short")
+			return nil, &errs.Message{Msg: "ciphertext too short"}
 		}
 
 		ciphertext := ciphertextWithTag[:len(ciphertextWithTag)-tagSize]
@@ -683,13 +685,13 @@ func (e *softwareSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *ty
 	}
 
 	if data == nil {
-		return nil, fmt.Errorf("encrypted data is nil")
+		return nil, &errs.Message{Msg: "encrypted data is nil"}
 	}
 
 	// Get raw key bytes
 	keyBytes, err := e.key.Raw()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get raw key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get raw key", Err: err}
 	}
 
 	// Reconstruct ciphertext with tag (AEAD ciphers expect tag appended)
@@ -707,7 +709,7 @@ func (e *softwareSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *ty
 			chacha20Cipher, err = chacha20poly1305pkg.New(keyBytes)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("failed to create ChaCha20 cipher: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create ChaCha20 cipher", Err: err}
 		}
 
 		// Decrypt and verify - use the ChaCha20 AEAD interface's Decrypt method
@@ -715,25 +717,25 @@ func (e *softwareSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *ty
 			AdditionalData: opts.AdditionalData,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("decryption failed (authentication error): %w", err)
+			return nil, &errs.Wrapped{Msg: "decryption failed (authentication error)", Err: err}
 		}
 
 	default:
 		// Use AES-GCM
 		block, err := aes.NewCipher(keyBytes)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create cipher: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 		}
 
 		gcm, err := cipher.NewGCM(block)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create GCM: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 		}
 
 		// Decrypt and verify
 		plaintext, err = gcm.Open(nil, data.Nonce, fullCiphertext, opts.AdditionalData)
 		if err != nil {
-			return nil, fmt.Errorf("decryption failed (authentication error): %w", err)
+			return nil, &errs.Wrapped{Msg: "decryption failed (authentication error)", Err: err}
 		}
 	}
 
@@ -753,7 +755,7 @@ func (b *Backend) storeSymmetricKey(ctx context.Context, keyID string, keyData [
 			var err error
 			storedData, err = encryptWithPassword(keyData, passwordBytes)
 			if err != nil {
-				return fmt.Errorf("failed to encrypt key: %w", err)
+				return &errs.Wrapped{Msg: "failed to encrypt key", Err: err}
 			}
 		} else {
 			storedData = keyData
@@ -763,7 +765,7 @@ func (b *Backend) storeSymmetricKey(ctx context.Context, keyID string, keyData [
 	}
 
 	if err := storage.SaveKey(ctx, b.storage, keyID, storedData); err != nil {
-		return fmt.Errorf("failed to save key: %w", err)
+		return &errs.Wrapped{Msg: "failed to save key", Err: err}
 	}
 
 	return nil
@@ -802,7 +804,7 @@ func encryptWithPassword(keyData, password []byte) ([]byte, error) {
 	// Generate salt
 	salt := make([]byte, 32)
 	if _, err := rand.Read(salt); err != nil {
-		return nil, fmt.Errorf("failed to generate salt: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate salt", Err: err}
 	}
 
 	// Derive encryption key using Argon2id
@@ -812,18 +814,18 @@ func encryptWithPassword(keyData, password []byte) ([]byte, error) {
 	// Create AES-GCM cipher
 	block, err := aes.NewCipher(derivedKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// Generate nonce
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 	}
 
 	// Encrypt with salt as additional authenticated data
@@ -843,7 +845,7 @@ func encryptWithPassword(keyData, password []byte) ([]byte, error) {
 func decryptWithPassword(encryptedData, password []byte) ([]byte, error) {
 	// Minimum size: 32 (salt) + 12 (nonce) + 16 (tag) = 60 bytes
 	if len(encryptedData) < 60 {
-		return nil, fmt.Errorf("encrypted data too short: %d bytes (minimum 60)", len(encryptedData))
+		return nil, &errs.Message{Msg: fmt.Sprintf("encrypted data too short: %d bytes (minimum 60)", len(encryptedData))}
 	}
 
 	// Extract components
@@ -857,12 +859,12 @@ func decryptWithPassword(encryptedData, password []byte) ([]byte, error) {
 	// Create AES-GCM cipher
 	block, err := aes.NewCipher(derivedKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// Decrypt with salt as additional authenticated data
@@ -886,7 +888,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 	b.mu.RUnlock()
 
 	if attrs == nil {
-		return nil, fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "attributes cannot be nil"}
 	}
 
 	// Validate wrapping algorithm
@@ -897,13 +899,13 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		// Supported algorithms
 	default:
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", algorithm)}
 	}
 
 	// Generate 2048-bit RSA key pair
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate RSA key pair: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate RSA key pair", Err: err}
 	}
 
 	// Generate UUID token for this import operation
@@ -941,23 +943,23 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 // Uses pkg/crypto/wrapping to wrap the key material.
 func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if len(keyMaterial) == 0 {
-		return nil, fmt.Errorf("%w: key material cannot be nil or empty", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "key material cannot be nil or empty"}
 	}
 
 	if params == nil {
-		return nil, fmt.Errorf("%w: import parameters cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import parameters cannot be nil"}
 	}
 
 	// Validate key material is a valid symmetric key size
 	keySize := len(keyMaterial)
 	if keySize != 16 && keySize != 24 && keySize != 32 {
-		return nil, fmt.Errorf("%w: invalid symmetric key size %d bytes (must be 16, 24, or 32)", backend.ErrInvalidAttributes, keySize)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("invalid symmetric key size %d bytes (must be 16, 24, or 32)", keySize)}
 	}
 
 	// Ensure we have an RSA public key
 	rsaPubKey, ok := params.WrappingPublicKey.(*rsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("%w: wrapping public key must be RSA", backend.ErrInvalidKeyType)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "wrapping public key must be RSA"}
 	}
 
 	var wrapped []byte
@@ -976,11 +978,11 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 		wrapped, err = wrapping.WrapRSAAES(keyMaterial, rsaPubKey, params.Algorithm)
 
 	default:
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, params.Algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", params.Algorithm)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to wrap key material", Err: err}
 	}
 
 	return &backend.WrappedKeyMaterial{
@@ -995,15 +997,15 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 // The import token is used to retrieve the corresponding private key.
 func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if wrapped == nil {
-		return nil, fmt.Errorf("%w: wrapped key material cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "wrapped key material cannot be nil"}
 	}
 
 	if params == nil {
-		return nil, fmt.Errorf("%w: import parameters cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import parameters cannot be nil"}
 	}
 
 	if len(wrapped.ImportToken) == 0 {
-		return nil, fmt.Errorf("%w: import token cannot be nil or empty", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import token cannot be nil or empty"}
 	}
 
 	// Retrieve the private key using the import token
@@ -1014,7 +1016,7 @@ func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMate
 	b.wrappingKeysMutex.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("%w: invalid or expired import token", backend.ErrKeyNotFound)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "invalid or expired import token"}
 	}
 
 	var unwrapped []byte
@@ -1033,17 +1035,17 @@ func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMate
 		unwrapped, err = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
 
 	default:
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, wrapped.Algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to unwrap key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to unwrap key material", Err: err}
 	}
 
 	// Validate unwrapped key is a valid symmetric key size
 	keySize := len(unwrapped)
 	if keySize != 16 && keySize != 24 && keySize != 32 {
-		return nil, fmt.Errorf("%w: unwrapped key has invalid size %d bytes (must be 16, 24, or 32)", backend.ErrInvalidAttributes, keySize)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("unwrapped key has invalid size %d bytes (must be 16, 24, or 32)", keySize)}
 	}
 
 	return unwrapped, nil
@@ -1060,25 +1062,25 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	}
 
 	if attrs == nil {
-		return fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "attributes cannot be nil"}
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	if !attrs.IsSymmetric() {
-		return fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
 	}
 
 	// Check if key already exists
 	keyID := attrs.ID()
 	exists, err := storage.KeyExists(ctx, b.storage, keyID)
 	if err != nil {
-		return fmt.Errorf("failed to check key existence: %w", err)
+		return &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if exists {
-		return fmt.Errorf("%w: %s", backend.ErrKeyAlreadyExists, keyID)
+		return &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", keyID)}
 	}
 
 	// Create import parameters to pass to UnwrapKey
@@ -1091,19 +1093,18 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	// Unwrap the key material
 	keyData, err := b.UnwrapKey(ctx, wrapped, params)
 	if err != nil {
-		return fmt.Errorf("failed to unwrap key material: %w", err)
+		return &errs.Wrapped{Msg: "failed to unwrap key material", Err: err}
 	}
 
 	// Validate key size matches attributes
 	expectedSize := attrs.SymmetricAlgorithm.KeySize() / 8
 	if len(keyData) != expectedSize {
-		return fmt.Errorf("%w: unwrapped key size (%d bytes) does not match expected size (%d bytes)",
-			backend.ErrInvalidAttributes, len(keyData), expectedSize)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("unwrapped key size (%d bytes) does not match expected size (%d bytes)", len(keyData), expectedSize)}
 	}
 
 	// Store the key using the existing storage mechanism
 	if err := b.storeSymmetricKey(ctx, keyID, keyData, attrs.Password); err != nil {
-		return fmt.Errorf("failed to store imported key: %w", err)
+		return &errs.Wrapped{Msg: "failed to store imported key", Err: err}
 	}
 
 	// Clean up the wrapping key after successful import
@@ -1142,11 +1143,11 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
 	}
 
 	// Retrieve the key
@@ -1156,25 +1157,25 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		if err == storage.ErrNotFound {
 			return nil, backend.ErrKeyNotFound
 		}
-		return nil, fmt.Errorf("failed to retrieve key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
 	}
 
 	// Decode the key (handle password protection if necessary)
 	rawKey, err := b.decodeSymmetricKey(keyData, attrs.Password)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode key", Err: err}
 	}
 
 	// Generate import parameters for wrapping
 	params, err := b.GetImportParameters(ctx, attrs, algorithm)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate import parameters: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate import parameters", Err: err}
 	}
 
 	// Wrap the key material
 	wrapped, err := b.WrapKey(ctx, rawKey, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to wrap key material", Err: err}
 	}
 
 	return wrapped, nil
@@ -1212,7 +1213,7 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Retrieve the key
@@ -1222,13 +1223,13 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 		if err == storage.ErrNotFound {
 			return nil, backend.ErrKeyNotFound
 		}
-		return nil, fmt.Errorf("failed to retrieve key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
 	}
 
 	// Decode the key (handle password protection if necessary)
 	rawKey, err := b.decodeSymmetricKey(keyData, attrs.Password)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode key", Err: err}
 	}
 
 	return rawKey, nil

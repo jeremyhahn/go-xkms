@@ -5,6 +5,7 @@ This directory contains development-focused documentation for contributors and m
 ## Available Documents
 
 - [encoding-interop-status.md](encoding-interop-status.md) - Status of JWK/JWT/JWE integration test implementation
+- [errors.md](errors.md) - Typed-error conventions (`pkg/errs` types, sentinels, sentinel-preservation rule)
 
 ## For Other Documentation
 

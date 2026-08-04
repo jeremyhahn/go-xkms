@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -15,7 +15,6 @@ package admin
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
@@ -75,7 +74,7 @@ func TestTenantCAClient_CreateRootCA(t *testing.T) {
 	})
 
 	t.Run("transport error", func(t *testing.T) {
-		mt := newMockTransportWithError(fmt.Errorf("connection refused"))
+		mt := newMockTransportWithError(errTestConnRefused)
 		c := newTenantCAClient(mt)
 
 		_, err := c.CreateRootCA(context.Background(), "tenant-1", &CreateTenantRootCARequest{
@@ -140,7 +139,7 @@ func TestTenantCAClient_CAStatus(t *testing.T) {
 	})
 
 	t.Run("transport error", func(t *testing.T) {
-		mt := newMockTransportWithError(fmt.Errorf("unavailable"))
+		mt := newMockTransportWithError(errTestUnavailable)
 		c := newTenantCAClient(mt)
 
 		_, err := c.CAStatus(context.Background(), "tenant-1")
@@ -220,7 +219,7 @@ func TestTenantCAClient_CreateIntermediateCA(t *testing.T) {
 	})
 
 	t.Run("transport error", func(t *testing.T) {
-		mt := newMockTransportWithError(fmt.Errorf("conflict"))
+		mt := newMockTransportWithError(errTestConflict)
 		c := newTenantCAClient(mt)
 
 		_, err := c.CreateIntermediateCA(context.Background(), "tenant-1", &CreateTenantIntermediateCARequest{
@@ -283,7 +282,7 @@ func TestTenantCAClient_ListIntermediateCAs(t *testing.T) {
 	})
 
 	t.Run("transport error", func(t *testing.T) {
-		mt := newMockTransportWithError(fmt.Errorf("unavailable"))
+		mt := newMockTransportWithError(errTestUnavailable)
 		c := newTenantCAClient(mt)
 
 		_, err := c.ListIntermediateCAs(context.Background(), "tenant-1")
@@ -352,7 +351,7 @@ func TestTenantCAClient_GetIntermediateCA(t *testing.T) {
 	})
 
 	t.Run("transport error", func(t *testing.T) {
-		mt := newMockTransportWithError(fmt.Errorf("not found"))
+		mt := newMockTransportWithError(errTestNotFound)
 		c := newTenantCAClient(mt)
 
 		_, err := c.GetIntermediateCA(context.Background(), "tenant-1", "int-ca-1")
@@ -426,7 +425,7 @@ func TestTenantCAClient_UpdateIntermediateCAStatus(t *testing.T) {
 	})
 
 	t.Run("transport error", func(t *testing.T) {
-		mt := newMockTransportWithError(fmt.Errorf("forbidden"))
+		mt := newMockTransportWithError(errTestForbidden)
 		c := newTenantCAClient(mt)
 
 		err := c.UpdateIntermediateCAStatus(context.Background(), "tenant-1", "int-ca-1", "suspended")
@@ -474,7 +473,7 @@ func TestTenantCAClient_UpdateTenantStatus(t *testing.T) {
 	})
 
 	t.Run("transport error", func(t *testing.T) {
-		mt := newMockTransportWithError(fmt.Errorf("unavailable"))
+		mt := newMockTransportWithError(errTestUnavailable)
 		c := newTenantCAClient(mt)
 
 		err := c.UpdateTenantStatus(context.Background(), "tenant-1", "disabled")

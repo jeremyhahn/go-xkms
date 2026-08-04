@@ -3,9 +3,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -20,107 +20,18 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/gorilla/mux"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 	"github.com/stretchr/testify/assert"
 )
 
-// mockClusterHealthService implements ClusterHealthService for testing
-type mockClusterHealthService struct {
-	healthy bool
+// formatAccountID renders an account ID in its decimal string form for URLs.
+func formatAccountID(id uint64) string {
+	return strconv.FormatUint(id, 10)
 }
 
-func (m *mockClusterHealthService) Healthy() bool { return m.healthy }
-
-func TestClusterHealthCheckerWithMock(t *testing.T) {
-	t.Run("healthy cluster", func(t *testing.T) {
-		mock := &mockClusterHealthService{healthy: true}
-		checker := ClusterHealthChecker(mock)
-		health := checker.CheckHealth(context.Background())
-
-		assert.Equal(t, HealthStatusHealthy, health.Status)
-		assert.Contains(t, health.Message, "healthy")
-	})
-
-	t.Run("unhealthy cluster", func(t *testing.T) {
-		mock := &mockClusterHealthService{healthy: false}
-		checker := ClusterHealthChecker(mock)
-		health := checker.CheckHealth(context.Background())
-
-		assert.Equal(t, HealthStatusUnhealthy, health.Status)
-		assert.Contains(t, health.Message, "not healthy")
-	})
-}
-
-func TestCheckClusterHealthWithMock(t *testing.T) {
-	t.Run("healthy cluster service", func(t *testing.T) {
-		mock := &mockClusterHealthService{healthy: true}
-		phs := NewProductionHealthService("1.0.0", mock, nil, nil)
-
-		health := phs.checkClusterHealth(context.Background())
-
-		assert.True(t, health.Healthy)
-	})
-
-	t.Run("unhealthy cluster service", func(t *testing.T) {
-		mock := &mockClusterHealthService{healthy: false}
-		phs := NewProductionHealthService("1.0.0", mock, nil, nil)
-
-		health := phs.checkClusterHealth(context.Background())
-
-		assert.False(t, health.Healthy)
-	})
-}
-
-func TestCircuitBreakerHealthCheckerHalfOpen(t *testing.T) {
-	mgr := circuitbreaker.NewManager()
-	cb := mgr.Get("test-cb")
-
-	// Trip the circuit breaker
-	cb.Trip()
-
-	checker := CircuitBreakerHealthChecker(mgr)
-	health := checker.CheckHealth(context.Background())
-
-	// With an open circuit, status should be degraded
-	assert.Equal(t, HealthStatusDegraded, health.Status)
-}
-
-func TestDetailedHealthHandlerWithHealthyCluster(t *testing.T) {
-	mock := &mockClusterHealthService{healthy: true}
-	cbMgr := circuitbreaker.NewManager()
-	phs := NewProductionHealthService("1.0.0", mock, cbMgr, nil)
-
-	// Register healthy components
-	phs.RegisterChecker("test", HealthCheckerFunc(func(ctx context.Context) ComponentHealth {
-		return ComponentHealth{
-			Status:  HealthStatusHealthy,
-			Message: "Test component is healthy",
-		}
-	}))
-
-	req := httptest.NewRequest("GET", "/health/detailed", nil)
-	rec := httptest.NewRecorder()
-
-	phs.DetailedHealthHandler(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-}
-
-func TestMetricsHandlerWithNilManagers(t *testing.T) {
-	phs := NewProductionHealthService("1.0.0", nil, nil, nil)
-
-	req := httptest.NewRequest("GET", "/health/metrics", nil)
-	rec := httptest.NewRecorder()
-
-	phs.MetricsHandler(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-}
-
-// TestOrdersListHandlerNoOrders tests the orders list handler when no orders exist
 func TestOrdersListHandlerNoOrders(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
@@ -247,8 +158,4 @@ func TestOrderHandlerValidOrder(t *testing.T) {
 
 	// Should return 200 OK with order details
 	assert.Equal(t, http.StatusOK, rr.Code)
-}
-
-func formatAccountID(id uint64) string {
-	return formatInt(int(id))
 }

@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/quantum/kyber768"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -258,14 +260,14 @@ func TestKyber768Integration_ConcurrentOperations(t *testing.T) {
 			for j := 0; j < opsPerGoroutine; j++ {
 				sender, err := kyber768.New()
 				if err != nil {
-					errors <- fmt.Errorf("goroutine %d op %d: New() failed: %w", id, j, err)
+					errors <- &errs.Wrapped{Msg: fmt.Sprintf("goroutine %d op %d: New() failed", id, j), Err: err}
 					continue
 				}
 
 				ct, secret, err := sender.Encapsulate(receiverPubKey)
 				sender.Clean()
 				if err != nil {
-					errors <- fmt.Errorf("goroutine %d op %d: Encapsulate() failed: %w", id, j, err)
+					errors <- &errs.Wrapped{Msg: fmt.Sprintf("goroutine %d op %d: Encapsulate() failed", id, j), Err: err}
 					continue
 				}
 

@@ -30,8 +30,10 @@ const (
 	SourceManual = "manual"
 
 	// SourceFirstContact indicates the pin was recorded on a
-	// trust-on-first-use bootstrap. This package does NOT implement
-	// TOFU; the tag exists for callers who layer it on top.
+	// trust-on-first-use bootstrap — either CallbackWithConfirm's built-in
+	// TOFU confirmer path, or a caller layering its own accept flow on top
+	// of Callback (e.g. pkg/ssh/connect's sync-back of host keys the
+	// system ssh client accepted).
 	SourceFirstContact = "first-contact"
 
 	// SourceImport prefix identifies bulk-imported pins; the full
@@ -77,6 +79,14 @@ type Pin struct {
 	// Source is free-text provenance. See the Source* constants for
 	// suggested values.
 	Source string
+
+	// PublicKey is the SSH wire-format host public key
+	// (ssh.PublicKey.Marshal()). It is OPTIONAL — Verify needs only the
+	// Fingerprint — but when present it lets the pin be emitted as an
+	// OpenSSH known_hosts line (Emit / EmitAll) so the system ssh client can
+	// verify the host. Non-secret; safe to log/ship. Empty for legacy pins
+	// recorded before this field existed.
+	PublicKey []byte
 }
 
 // ValidateHost returns nil if host is safe to use as a storage-path

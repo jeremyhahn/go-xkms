@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -63,7 +65,7 @@ const importExportAlgorithm = backend.WrappingAlgorithm("TPM2_DUPLICATE")
 func (b *Backend) srkPublicContents() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 	name, pub, err := b.tpm.SRKPublic()
 	if err != nil {
-		return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, fmt.Errorf("%w: failed to read SRK public: %v", ErrUnsupportedOperation, err)
+		return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to read SRK public: %v", err)}
 	}
 	return name, pub, nil
 }
@@ -84,8 +86,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 		return nil, ErrInvalidKeyAttributes
 	}
 	if algorithm != importExportAlgorithm {
-		return nil, fmt.Errorf("%w: TPM2 import requires algorithm %s, got %s",
-			ErrUnsupportedOperation, importExportAlgorithm, algorithm)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("TPM2 import requires algorithm %s, got %s", importExportAlgorithm, algorithm)}
 	}
 
 	name, pub, err := b.srkPublicContents()
@@ -98,7 +99,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 	// marshaling (no length prefix), matching the production read path.
 	pubKey, err := b.tpm.ParsePublicKey(tpm2.Marshal(pub))
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to parse SRK public key: %v", ErrUnsupportedOperation, err)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to parse SRK public key: %v", err)}
 	}
 
 	return &backend.ImportParameters{
@@ -124,13 +125,13 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 		return nil, ErrNotInitialized
 	}
 	if len(keyMaterial) == 0 {
-		return nil, fmt.Errorf("%w: key material is empty", ErrInvalidKeyAttributes)
+		return nil, &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "key material is empty"}
 	}
 	if params == nil {
-		return nil, fmt.Errorf("%w: import parameters are nil", ErrInvalidKeyAttributes)
+		return nil, &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "import parameters are nil"}
 	}
 	if params.Algorithm != importExportAlgorithm {
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedOperation, params.Algorithm)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("%s", params.Algorithm)}
 	}
 
 	_, srkPub, err := b.srkPublicContents()
@@ -140,7 +141,7 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 
 	encKey, err := tpm2.ImportEncapsulationKey(&srkPub)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to build SRK encapsulation key: %v", ErrUnsupportedOperation, err)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to build SRK encapsulation key: %v", err)}
 	}
 
 	// Build the duplicable sealed object that holds the key material as its
@@ -152,12 +153,12 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 	}
 	name, err := tpm2.ObjectName(public)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to compute object name: %v", ErrUnsupportedOperation, err)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to compute object name: %v", err)}
 	}
 
 	duplicate, encSecret, err := tpm2.CreateDuplicate(b.tpm.RandomSource(), encKey, name.Buffer, sensitive)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to create duplication blob: %v", ErrUnsupportedOperation, err)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to create duplication blob: %v", err)}
 	}
 
 	blob := duplicationBlob{
@@ -167,7 +168,7 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 	}
 	encoded, err := json.Marshal(blob)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to encode duplication blob: %v", ErrUnsupportedOperation, err)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to encode duplication blob: %v", err)}
 	}
 
 	return &backend.WrappedKeyMaterial{
@@ -191,7 +192,7 @@ func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMate
 		return nil, ErrNotInitialized
 	}
 	if wrapped == nil || len(wrapped.WrappedKey) == 0 {
-		return nil, fmt.Errorf("%w: wrapped key material is empty", ErrInvalidKeyAttributes)
+		return nil, &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "wrapped key material is empty"}
 	}
 
 	public, outPrivate, err := b.importDuplicate(wrapped.WrappedKey)
@@ -219,7 +220,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		return ErrInvalidKeyAttributes
 	}
 	if wrapped == nil || len(wrapped.WrappedKey) == 0 {
-		return fmt.Errorf("%w: wrapped key material is empty", ErrInvalidKeyAttributes)
+		return &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "wrapped key material is empty"}
 	}
 
 	public, outPrivate, err := b.importDuplicate(wrapped.WrappedKey)
@@ -234,7 +235,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 
 	publicBlob := tpm2.New2B(*public)
 	if err := b.tpm.SaveKeyPair(attrs, outPrivate, publicBlob, b.keyBackend, true); err != nil {
-		return fmt.Errorf("%w: failed to persist imported key: %v", ErrUnsupportedOperation, err)
+		return &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to persist imported key: %v", err)}
 	}
 	return nil
 }
@@ -249,7 +250,7 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	if !attrs.Exportable {
 		return nil, backend.ErrKeyNotExportable
 	}
-	return nil, fmt.Errorf("%w: TPM2 keys are hardware-bound and cannot be exported", backend.ErrExportNotSupported)
+	return nil, &errs.Detail{Err: backend.ErrExportNotSupported, Detail: "TPM2 keys are hardware-bound and cannot be exported"}
 }
 
 // ExportKeyMaterial is not supported: TPM2 keys never release plaintext private
@@ -258,7 +259,7 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}
-	return nil, fmt.Errorf("%w: TPM2 keys cannot release raw material", backend.ErrExportNotSupported)
+	return nil, &errs.Detail{Err: backend.ErrExportNotSupported, Detail: "TPM2 keys cannot release raw material"}
 }
 
 // buildSealedDuplicate constructs the duplicable sealed-keyedhash object whose
@@ -271,7 +272,7 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 func (b *Backend) buildSealedDuplicate(keyMaterial []byte) (*tpm2.TPMTPublic, []byte, error) {
 	obfuscation := make([]byte, sha256.Size)
 	if _, err := b.tpm.RandomSource().Read(obfuscation); err != nil {
-		return nil, nil, fmt.Errorf("%w: failed to read obfuscation: %v", ErrUnsupportedOperation, err)
+		return nil, nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to read obfuscation: %v", err)}
 	}
 
 	uniqueHash := sha256.New()
@@ -306,12 +307,12 @@ func (b *Backend) buildSealedDuplicate(keyMaterial []byte) (*tpm2.TPMTPublic, []
 func (b *Backend) importDuplicate(encoded []byte) (*tpm2.TPMTPublic, tpm2.TPM2BPrivate, error) {
 	var blob duplicationBlob
 	if err := json.Unmarshal(encoded, &blob); err != nil {
-		return nil, tpm2.TPM2BPrivate{}, fmt.Errorf("%w: failed to decode duplication blob: %v", ErrInvalidKeyAttributes, err)
+		return nil, tpm2.TPM2BPrivate{}, &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: fmt.Sprintf("failed to decode duplication blob: %v", err)}
 	}
 
 	public, err := tpm2.Unmarshal[tpm2.TPMTPublic](blob.Public)
 	if err != nil {
-		return nil, tpm2.TPM2BPrivate{}, fmt.Errorf("%w: failed to parse duplicated public: %v", ErrInvalidKeyAttributes, err)
+		return nil, tpm2.TPM2BPrivate{}, &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: fmt.Sprintf("failed to parse duplicated public: %v", err)}
 	}
 
 	srkName, _, err := b.srkPublicContents()
@@ -328,7 +329,7 @@ func (b *Backend) importDuplicate(encoded []byte) (*tpm2.TPMTPublic, tpm2.TPM2BP
 	}
 	session, closer, err := b.tpm.CreateSession(importAttrs)
 	if err != nil {
-		return nil, tpm2.TPM2BPrivate{}, fmt.Errorf("%w: %v", ErrSessionCreationFailed, err)
+		return nil, tpm2.TPM2BPrivate{}, &errs.Detail{Err: ErrSessionCreationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	defer func() { _ = closer() }()
 
@@ -343,7 +344,7 @@ func (b *Backend) importDuplicate(encoded []byte) (*tpm2.TPMTPublic, tpm2.TPM2BP
 		InSymSeed:    tpm2.TPM2BEncryptedSecret{Buffer: blob.EncSecret},
 	}.Execute(b.tpm.Transport())
 	if err != nil {
-		return nil, tpm2.TPM2BPrivate{}, fmt.Errorf("%w: TPM2_Import failed: %v", ErrUnsupportedOperation, err)
+		return nil, tpm2.TPM2BPrivate{}, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("TPM2_Import failed: %v", err)}
 	}
 
 	return public, imp.OutPrivate, nil
@@ -364,7 +365,7 @@ func (b *Backend) loadAndUnseal(public *tpm2.TPMTPublic, outPrivate tpm2.TPM2BPr
 	}
 	loadSession, loadCloser, err := b.tpm.CreateSession(loadAttrs)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSessionCreationFailed, err)
+		return nil, &errs.Detail{Err: ErrSessionCreationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	loadResp, err := tpm2.Load{
@@ -378,7 +379,7 @@ func (b *Backend) loadAndUnseal(public *tpm2.TPMTPublic, outPrivate tpm2.TPM2BPr
 	}.Execute(b.tpm.Transport())
 	_ = loadCloser()
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to load imported object: %v", ErrUnsupportedOperation, err)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to load imported object: %v", err)}
 	}
 	defer b.tpm.Flush(loadResp.ObjectHandle)
 
@@ -389,7 +390,7 @@ func (b *Backend) loadAndUnseal(public *tpm2.TPMTPublic, outPrivate tpm2.TPM2BPr
 		},
 	}.Execute(b.tpm.Transport())
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to unseal imported object: %v", ErrUnsupportedOperation, err)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to unseal imported object: %v", err)}
 	}
 
 	return unseal.OutData.Buffer, nil

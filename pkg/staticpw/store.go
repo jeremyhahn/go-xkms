@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
@@ -190,7 +192,7 @@ func (s *BackendStore) Add(pw *StaticPassword) error {
 	key := s.storageKey(pw.ID)
 	exists, err := s.backend.Exists(context.Background(), key)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidPassword, err)
+		return &errs.Detail{Err: ErrInvalidPassword, Detail: fmt.Sprintf("%v", err)}
 	}
 	if exists {
 		return ErrPasswordExists
@@ -203,7 +205,7 @@ func (s *BackendStore) Add(pw *StaticPassword) error {
 
 	data, err := json.Marshal(pw)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrMarshalFailed, err)
+		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return s.backend.Put(context.Background(), key, data)
@@ -235,7 +237,7 @@ func (s *BackendStore) List() ([]*StaticPassword, error) {
 
 	keys, err := s.backend.List(context.Background(), s.keyPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPasswordNotFound, err)
+		return nil, &errs.Detail{Err: ErrPasswordNotFound, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	passwords := make([]*StaticPassword, 0, len(keys))
@@ -301,7 +303,7 @@ func (s *BackendStore) Update(pw *StaticPassword) error {
 	if newID != pw.ID {
 		// Name or folder changed — delete old entry, write under new key.
 		if err := s.backend.Delete(context.Background(), oldKey); err != nil {
-			return fmt.Errorf("%w: %v", ErrPasswordNotFound, err)
+			return &errs.Detail{Err: ErrPasswordNotFound, Detail: fmt.Sprintf("%v", err)}
 		}
 		pw.ID = newID
 	}
@@ -309,7 +311,7 @@ func (s *BackendStore) Update(pw *StaticPassword) error {
 	newKey := s.storageKey(pw.ID)
 	data, err := json.Marshal(pw)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrMarshalFailed, err)
+		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return s.backend.Put(context.Background(), newKey, data)
@@ -472,7 +474,7 @@ func (s *BackendStore) MoveToFolder(idOrName string, folderPath string) error {
 	// Delete the old entry.
 	oldKey := s.storageKey(pw.ID)
 	if delErr := s.backend.Delete(context.Background(), oldKey); delErr != nil {
-		return fmt.Errorf("%w: %v", ErrPasswordNotFound, delErr)
+		return &errs.Detail{Err: ErrPasswordNotFound, Detail: fmt.Sprintf("%v", delErr)}
 	}
 
 	// Update folder and regenerate ID.
@@ -484,7 +486,7 @@ func (s *BackendStore) MoveToFolder(idOrName string, folderPath string) error {
 	newKey := s.storageKey(pw.ID)
 	exists, err := s.backend.Exists(context.Background(), newKey)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidPassword, err)
+		return &errs.Detail{Err: ErrInvalidPassword, Detail: fmt.Sprintf("%v", err)}
 	}
 	if exists {
 		return ErrPasswordExists
@@ -492,7 +494,7 @@ func (s *BackendStore) MoveToFolder(idOrName string, folderPath string) error {
 
 	data, err := json.Marshal(pw)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrMarshalFailed, err)
+		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return s.backend.Put(context.Background(), newKey, data)
@@ -562,7 +564,7 @@ func (s *BackendStore) storageKey(id string) string {
 func unmarshalPassword(data []byte) (*StaticPassword, error) {
 	var pw StaticPassword
 	if err := json.Unmarshal(data, &pw); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnmarshalFailed, err)
+		return nil, &errs.Detail{Err: ErrUnmarshalFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	return &pw, nil
 }

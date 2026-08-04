@@ -288,7 +288,7 @@ func (td *TestDevice) Start(ctx context.Context) error {
 	}
 
 	if err := td.uhid.Create(cfg); err != nil {
-		return fmt.Errorf("failed to create UHID device: %w", err)
+		return &WrappedError{Msg: "failed to create UHID device", Err: err}
 	}
 
 	td.running.Store(true)
@@ -317,7 +317,7 @@ func (td *TestDevice) Start(ctx context.Context) error {
 	// Initialize channel
 	if err := td.initChannel(); err != nil {
 		td.Stop()
-		return fmt.Errorf("failed to initialize channel: %w", err)
+		return &WrappedError{Msg: "failed to initialize channel", Err: err}
 	}
 
 	return nil
@@ -518,7 +518,7 @@ func (td *TestDevice) collectResponse(timeout time.Duration) ([]byte, error) {
 			// Check for error response
 			if cmd == ctapHIDError|0x80 {
 				if len(resp) > 7 {
-					return nil, fmt.Errorf("CTAPHID error: 0x%02X", resp[7])
+					return nil, &MessageError{Msg: fmt.Sprintf("CTAPHID error: 0x%02X", resp[7])}
 				}
 				return nil, errors.New("CTAPHID error")
 			}
@@ -600,13 +600,13 @@ func (td *TestDevice) MakeCredential(rpID, rpName, userName, userDisplayName str
 
 	status := resp[0]
 	if status != statusOK {
-		return nil, fmt.Errorf("MakeCredential failed with status 0x%02X", status)
+		return nil, &MessageError{Msg: fmt.Sprintf("MakeCredential failed with status 0x%02X", status)}
 	}
 
 	// Decode response
 	var result map[int]interface{}
 	if err := cbor.Unmarshal(resp[1:], &result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, &WrappedError{Msg: "failed to decode response", Err: err}
 	}
 
 	authData, ok := result[2].([]byte)
@@ -677,13 +677,13 @@ func (td *TestDevice) GetAssertion(rpID string, credentialID []byte, clientDataH
 
 	status := resp[0]
 	if status != statusOK {
-		return nil, fmt.Errorf("GetAssertion failed with status 0x%02X", status)
+		return nil, &MessageError{Msg: fmt.Sprintf("GetAssertion failed with status 0x%02X", status)}
 	}
 
 	// Decode response
 	var result map[int]interface{}
 	if err := cbor.Unmarshal(resp[1:], &result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, &WrappedError{Msg: "failed to decode response", Err: err}
 	}
 
 	authData, ok := result[2].([]byte)
@@ -716,12 +716,12 @@ func (td *TestDevice) GetInfo() (*GetInfoResult, error) {
 
 	status := resp[0]
 	if status != statusOK {
-		return nil, fmt.Errorf("GetInfo failed with status 0x%02X", status)
+		return nil, &MessageError{Msg: fmt.Sprintf("GetInfo failed with status 0x%02X", status)}
 	}
 
 	var result map[int]interface{}
 	if err := cbor.Unmarshal(resp[1:], &result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, &WrappedError{Msg: "failed to decode response", Err: err}
 	}
 
 	info := &GetInfoResult{}
@@ -756,7 +756,7 @@ func (td *TestDevice) GetInfo() (*GetInfoResult, error) {
 func VerifySignature(publicKeyCOSE, authData, clientDataHash, signature []byte) (bool, error) {
 	pubKey, _, err := authenticator.DecodeCOSEPublicKey(publicKeyCOSE)
 	if err != nil {
-		return false, fmt.Errorf("failed to decode public key: %w", err)
+		return false, &WrappedError{Msg: "failed to decode public key", Err: err}
 	}
 
 	ecPubKey, ok := pubKey.(*ecdsa.PublicKey)

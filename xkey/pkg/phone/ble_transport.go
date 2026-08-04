@@ -988,7 +988,7 @@ func disconnectBlueZDevice(address string) error {
 	if err != nil {
 		// Disconnect can fail if not connected - that's ok
 		if !contains(string(output), "not connected") {
-			return fmt.Errorf("bluetoothctl disconnect failed: %v, output: %s", err, output)
+			return &MessageError{Msg: fmt.Sprintf("bluetoothctl disconnect failed: %v, output: %s", err, output)}
 		}
 	}
 	return nil
@@ -1000,7 +1000,7 @@ func removeBlueZDevice(address string) error {
 	cmd := exec.Command("bluetoothctl", "remove", address)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("bluetoothctl remove failed: %v, output: %s", err, output)
+		return &MessageError{Msg: fmt.Sprintf("bluetoothctl remove failed: %v, output: %s", err, output)}
 	}
 	return nil
 }
@@ -1027,7 +1027,7 @@ func trustBlueZDevice(address string) error {
 	cmd := exec.Command("bluetoothctl", "trust", address)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("bluetoothctl trust failed: %v, output: %s", err, output)
+		return &MessageError{Msg: fmt.Sprintf("bluetoothctl trust failed: %v, output: %s", err, output)}
 	}
 	return nil
 }
@@ -1039,7 +1039,7 @@ func connectViaBluetoothctl(address string) error {
 	cmd := exec.Command("bluetoothctl", "connect", address)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("bluetoothctl connect failed: %v, output: %s", err, output)
+		return &MessageError{Msg: fmt.Sprintf("bluetoothctl connect failed: %v, output: %s", err, output)}
 	}
 
 	// Check if connection was successful
@@ -1058,7 +1058,7 @@ func connectViaBluetoothctl(address string) error {
 		return nil
 	}
 
-	return fmt.Errorf("connection not confirmed: %s", outputStr)
+	return &MessageError{Msg: fmt.Sprintf("connection not confirmed: %s", outputStr)}
 }
 
 // pairViaBluetoothctl uses bluetoothctl to pair with a device.
@@ -1102,7 +1102,7 @@ func pairViaBluetoothctl(address string) error {
 	}
 
 	if !discovered {
-		return fmt.Errorf("device %s not discovered by BlueZ", address)
+		return &MessageError{Msg: fmt.Sprintf("device %s not discovered by BlueZ", address)}
 	}
 
 	// Step 3: Trust the device first (helps with some devices)
@@ -1136,7 +1136,7 @@ func pairViaBluetoothctl(address string) error {
 	}
 
 	if pairErr != nil {
-		return fmt.Errorf("pairing failed: %v, output: %s", pairErr, pairStr)
+		return &MessageError{Msg: fmt.Sprintf("pairing failed: %v, output: %s", pairErr, pairStr)}
 	}
 
 	return nil

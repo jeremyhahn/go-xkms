@@ -19,8 +19,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"path"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
@@ -62,7 +63,7 @@ func (t *NonceTracker) MarkUsed(keyID string, commitment []byte) error {
 	// Check if already used (O(1) existence check)
 	exists, err := t.storage.Exists(context.Background(), key)
 	if err != nil {
-		return fmt.Errorf("failed to check nonce status: %w", err)
+		return &errs.Wrapped{Msg: "failed to check nonce status", Err: err}
 	}
 	if exists {
 		return ErrNonceAlreadyUsed
@@ -70,7 +71,7 @@ func (t *NonceTracker) MarkUsed(keyID string, commitment []byte) error {
 
 	// Mark as used (value is just a marker)
 	if err := t.storage.Put(context.Background(), key, []byte{1}); err != nil {
-		return fmt.Errorf("failed to mark nonce as used: %w", err)
+		return &errs.Wrapped{Msg: "failed to mark nonce as used", Err: err}
 	}
 
 	return nil
@@ -91,7 +92,7 @@ func (t *NonceTracker) MarkUsedWithDetails(keyID string, participantID uint32, s
 	// Check if already used
 	exists, err := t.storage.Exists(context.Background(), key)
 	if err != nil {
-		return fmt.Errorf("failed to check nonce status: %w", err)
+		return &errs.Wrapped{Msg: "failed to check nonce status", Err: err}
 	}
 	if exists {
 		return &NonceReuseError{
@@ -103,7 +104,7 @@ func (t *NonceTracker) MarkUsedWithDetails(keyID string, participantID uint32, s
 
 	// Mark as used
 	if err := t.storage.Put(context.Background(), key, []byte{1}); err != nil {
-		return fmt.Errorf("failed to mark nonce as used: %w", err)
+		return &errs.Wrapped{Msg: "failed to mark nonce as used", Err: err}
 	}
 
 	return nil
@@ -115,7 +116,7 @@ func (t *NonceTracker) DeleteKeyNonces(keyID string) error {
 	prefix := path.Join(noncesPrefix, keyID) + "/"
 	keys, err := t.storage.List(context.Background(), prefix)
 	if err != nil {
-		return fmt.Errorf("failed to list nonces: %w", err)
+		return &errs.Wrapped{Msg: "failed to list nonces", Err: err}
 	}
 
 	for _, key := range keys {

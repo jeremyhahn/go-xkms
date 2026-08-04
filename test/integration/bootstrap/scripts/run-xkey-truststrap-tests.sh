@@ -24,29 +24,10 @@ echo "Noise public key: ${BOOTSTRAP_NOISE_STATIC_KEY}"
 echo "SPKI pin: ${BOOTSTRAP_SPKI_PIN}"
 
 echo 'Building transient go.work for cross-module resolution...'
-cat >/tmp/go.work <<'EOF'
-go 1.26.1
-
-use (
-    /workspace
-    /workspace/sdk/go
-    /workspace/xkey
-    /go-qrdb
-    /go-qrdb/sdk/go
-    /go-quicraft
-)
-
-// Explicit replace directives for the v0.0.0 requires that the
-// workspace alone cannot satisfy (indirect transitive requires on
-// unpublished revisions). Each replacement points at the same
-// directory the matching `use` directive imports.
-replace github.com/jeremyhahn/go-quicraft v0.0.0 => /go-quicraft
-replace github.com/jeremyhahn/go-qrdb v0.0.0 => /go-qrdb
-replace github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0 => /go-qrdb/sdk/go
-replace github.com/jeremyhahn/go-xkms v0.0.0 => /workspace
-replace github.com/jeremyhahn/go-xkms/sdk/go v0.0.0 => /workspace/sdk/go
-replace github.com/jeremyhahn/go-xkms/xkey v0.0.0 => /workspace/xkey
-EOF
+# Delegate to the single canonical generator so the module set + version-specific
+# replaces never drift from the other container contexts. All siblings are mounted
+# at /go-<name> by this stack's docker-compose.yml; repo root is /workspace.
+bash /workspace/scripts/gen-gowork.sh /workspace /tmp/go.work
 export GOWORK=/tmp/go.work
 
 echo 'Running xkey TrustService truststrap integration tests...'

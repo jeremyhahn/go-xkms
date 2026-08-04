@@ -15,8 +15,9 @@ package xkms
 
 import (
 	"errors"
-	"fmt"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
@@ -35,7 +36,7 @@ func TestAsNotLeader_DirectMatch(t *testing.T) {
 
 func TestAsNotLeader_Wrapped(t *testing.T) {
 	src := &qrdbtransport.NotLeaderError{ShardID: 1, LeaderID: 5, LeaderAddress: "node5:63001"}
-	wrapped := fmt.Errorf("write key blob: %w", src)
+	wrapped := &errs.Wrapped{Msg: "write key blob", Err: src}
 
 	nl, ok := AsNotLeader(wrapped)
 	if !ok {

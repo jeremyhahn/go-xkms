@@ -147,7 +147,7 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -158,7 +158,7 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -168,17 +168,17 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 	// Decode the pairing keys
 	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
 	if err != nil {
-		return fmt.Errorf("invalid local noise key: %w", err)
+		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
-		return fmt.Errorf("invalid phone noise key: %w", err)
+		return &WrappedError{Msg: "invalid phone noise key", Err: err}
 	}
 
 	// Reconstruct the Noise DH key pair from the stored private key
 	localKey, err := phone.LoadStaticKey(localPrivateKey)
 	if err != nil {
-		return fmt.Errorf("invalid local noise key: %w", err)
+		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
 
 	// Connect to phone
@@ -192,7 +192,7 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 		Logger:               logger,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create phone backend: %w", err)
+		return &WrappedError{Msg: "failed to create phone backend", Err: err}
 	}
 	defer backend.Close()
 
@@ -201,7 +201,7 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("Connecting to phone...")
 	if err := backend.Connect(ctx); err != nil {
-		return fmt.Errorf("connection failed: %w", err)
+		return &WrappedError{Msg: "connection failed", Err: err}
 	}
 
 	// Generate random nonce (32 bytes)
@@ -221,17 +221,17 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 
 	resp, err := backend.SendRequest(ctx, req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDeviceAttestFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceAttestFailed, Cause: err}
 	}
 
 	if resp.Error != nil {
-		return fmt.Errorf("%w: [%d] %s", ErrDeviceAttestFailed, resp.Error.Code, resp.Error.Message)
+		return &DetailError{Err: ErrDeviceAttestFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
 	// Decode the result
 	result, err := phone.DecodeResult[phone.LocalAttestKeyResult](resp)
 	if err != nil {
-		return fmt.Errorf("failed to decode attestation result: %w", err)
+		return &WrappedError{Msg: "failed to decode attestation result", Err: err}
 	}
 
 	// Display raw attestation info
@@ -264,18 +264,18 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 		// Build trust pool using the auto-selecting attestation verifier
 		xkeyStore, xkeyErr := openTrustStore()
 		if xkeyErr != nil {
-			return fmt.Errorf("failed to open trust store: %w", xkeyErr)
+			return &WrappedError{Msg: "failed to open trust store", Err: xkeyErr}
 		}
 		defer func() { _ = xkeyStore.Close() }()
 
 		verifier, verifierErr := xkeyAttestation.NewVerifier(xkeyStore, xkeyTruststore.LoadEmbeddedRoots)
 		if verifierErr != nil {
-			return fmt.Errorf("failed to create attestation verifier: %w", verifierErr)
+			return &WrappedError{Msg: "failed to create attestation verifier", Err: verifierErr}
 		}
 
 		rootPool, poolErr := verifier.BuildTrustPool(xkeyTruststore.PurposeAndroidHardware)
 		if poolErr != nil {
-			return fmt.Errorf("failed to build trust pool: %w", poolErr)
+			return &WrappedError{Msg: "failed to build trust pool", Err: poolErr}
 		}
 
 		// Build allRoots slice for findMatchingTrustRoot: xkey store certs + embedded roots
@@ -298,7 +298,7 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 			fmt.Println("The certificate chain could not be verified against")
 			fmt.Println("Google's Hardware Attestation Root CAs. This may indicate")
 			fmt.Println("the key is not hardware-backed or the device is not genuine.")
-			return fmt.Errorf("%w: %v", ErrDeviceAttestVerifyFailed, err)
+			return &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: err}
 		}
 
 		// Find which root matched from all trust sources
@@ -367,7 +367,7 @@ func parseDERChain(derChain [][]byte) ([]*x509.Certificate, error) {
 	for i, der := range derChain {
 		cert, err := x509.ParseCertificate(der)
 		if err != nil {
-			return nil, fmt.Errorf("certificate at index %d: %w", i, err)
+			return nil, &WrappedError{Msg: fmt.Sprintf("certificate at index %d", i), Err: err}
 		}
 		chain = append(chain, cert)
 	}

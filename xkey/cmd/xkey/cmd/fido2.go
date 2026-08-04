@@ -1349,11 +1349,11 @@ func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialSto
 	// Resolve xkey home and data directory.
 	home, err := xhome.Resolve()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrFIDO2BarrierUnsealFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierUnsealFailed, Cause: err}
 	}
 	dataDir, err := home.EnsureDataDir()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrFIDO2BarrierUnsealFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierUnsealFailed, Cause: err}
 	}
 
 	// Resolve barrier password.
@@ -1361,7 +1361,7 @@ func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialSto
 	if password == "" && cfg.BarrierPasswordFile != "" {
 		raw, readErr := os.ReadFile(cfg.BarrierPasswordFile)
 		if readErr != nil {
-			return nil, fmt.Errorf("%w: %v", ErrFIDO2BarrierPasswordRequired, readErr)
+			return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierPasswordRequired, Cause: readErr}
 		}
 		password = strings.TrimSpace(strings.SplitN(string(raw), "\n", 2)[0])
 	}
@@ -1369,14 +1369,14 @@ func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialSto
 	// Create file backend over the data directory.
 	fileBackend, err := xkms.NewFileStorageBackend(dataDir)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrFIDO2BarrierUnsealFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierUnsealFailed, Cause: err}
 	}
 
 	// Read barrier strategy from root key to determine unseal method.
 	strategy, err := readBarrierStrategy(dataDir)
 	if err != nil {
 		_ = fileBackend.Close()
-		return nil, fmt.Errorf("%w: %v", ErrFIDO2BarrierUnsealFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierUnsealFailed, Cause: err}
 	}
 
 	// Create barrier service and unseal.
@@ -1386,13 +1386,13 @@ func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialSto
 
 	if err := barrierSvc.Unseal(password, string(strategy)); err != nil {
 		_ = fileBackend.Close()
-		return nil, fmt.Errorf("%w: %v", ErrFIDO2BarrierUnsealFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierUnsealFailed, Cause: err}
 	}
 
 	barrierBackend := barrierSvc.GetBackend()
 	if barrierBackend == nil {
 		_ = fileBackend.Close()
-		return nil, fmt.Errorf("%w: barrier backend unavailable after unseal", ErrFIDO2BarrierUnsealFailed)
+		return nil, &DetailError{Err: ErrFIDO2BarrierUnsealFailed, Detail: ": barrier backend unavailable after unseal"}
 	}
 
 	// Create FIDO2 credential storage using the barrier backend.

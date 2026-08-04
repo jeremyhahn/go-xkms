@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -285,7 +285,7 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 	// Set headers
 	httpReq.Header.Set("Content-Type", "application/jose+json")
 	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("User-Agent", "go-trusted-ca-sdk/1.0")
+	httpReq.Header.Set("User-Agent", "go-xkms-sdk/1.0")
 
 	// Execute the request
 	resp, err := t.client.Do(httpReq)

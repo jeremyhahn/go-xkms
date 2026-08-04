@@ -1,6 +1,6 @@
 # Bare-Metal Deployment Guide
 
-Deploy go-trusted-ca ACME server on traditional server infrastructure without containers.
+Deploy go-xkms ACME server on traditional server infrastructure without containers.
 
 ## Prerequisites
 
@@ -31,10 +31,10 @@ VERSION=1.0.0
 ARCH=amd64  # or arm64
 
 # Download binary
-curl -LO https://github.com/jeremyhahn/go-trusted-ca/releases/download/v${VERSION}/trusted-acme-server-linux-${ARCH}
+curl -LO https://github.com/jeremyhahn/go-xkms/releases/download/v${VERSION}/trusted-acme-server-linux-${ARCH}
 
 # Download checksum
-curl -LO https://github.com/jeremyhahn/go-trusted-ca/releases/download/v${VERSION}/checksums.txt
+curl -LO https://github.com/jeremyhahn/go-xkms/releases/download/v${VERSION}/checksums.txt
 
 # Verify checksum
 sha256sum -c checksums.txt --ignore-missing
@@ -47,8 +47,8 @@ sudo install -m 755 trusted-acme-server-linux-${ARCH} /usr/local/bin/trusted-acm
 
 ```bash
 # Clone repository
-git clone https://github.com/jeremyhahn/go-trusted-ca.git
-cd go-trusted-ca
+git clone https://github.com/jeremyhahn/go-xkms.git
+cd go-xkms
 
 # Build
 make build
@@ -336,7 +336,7 @@ Create `/etc/systemd/system/trusted-acme.service`:
 ```ini
 [Unit]
 Description=Trusted ACME Certificate Authority
-Documentation=https://github.com/jeremyhahn/go-trusted-ca
+Documentation=https://github.com/jeremyhahn/go-xkms
 After=network.target
 
 [Service]
@@ -844,10 +844,10 @@ sudo systemctl start trusted-acme
 ```bash
 # Download new version
 VERSION=1.1.0
-curl -LO https://github.com/jeremyhahn/go-trusted-ca/releases/download/v${VERSION}/trusted-acme-server-linux-amd64
+curl -LO https://github.com/jeremyhahn/go-xkms/releases/download/v${VERSION}/trusted-acme-server-linux-amd64
 
 # Verify checksum
-curl -LO https://github.com/jeremyhahn/go-trusted-ca/releases/download/v${VERSION}/checksums.txt
+curl -LO https://github.com/jeremyhahn/go-xkms/releases/download/v${VERSION}/checksums.txt
 sha256sum -c checksums.txt --ignore-missing
 
 # Stop service

@@ -29,6 +29,8 @@ export function RenameBackend(arg1:string,arg2:string):Promise<void>;
 
 export function SetAuditStore(arg1:audit.Store):Promise<void>;
 
+export function SetBackendKeyLister(arg1:services.BackendKeyLister):Promise<void>;
+
 export function SetBackendRegistry(arg1:backendregistry.Registry):Promise<void>;
 
 export function SetConfigUpdateFunc(arg1:any):Promise<void>;

@@ -56,7 +56,7 @@ func ParseSize(s string) (int64, error) {
 	if len(s) < 2 {
 		return 0, &USBError{
 			Operation: "parse_size",
-			Err:       fmt.Errorf("%w: input too short: %q", ErrInvalidSize, s),
+			Err:       &DetailError{Err: ErrInvalidSize, Detail: fmt.Sprintf(": input too short: %q", s)},
 		}
 	}
 
@@ -67,7 +67,7 @@ func ParseSize(s string) (int64, error) {
 	if !ok {
 		return 0, &USBError{
 			Operation: "parse_size",
-			Err:       fmt.Errorf("%w: unknown unit %q in %q", ErrInvalidSize, string(unit), s),
+			Err:       &DetailError{Err: ErrInvalidSize, Detail: fmt.Sprintf(": unknown unit %q in %q", string(unit), s)},
 		}
 	}
 
@@ -75,14 +75,14 @@ func ParseSize(s string) (int64, error) {
 	if err != nil {
 		return 0, &USBError{
 			Operation: "parse_size",
-			Err:       fmt.Errorf("%w: invalid numeric value %q: %v", ErrInvalidSize, valueStr, err),
+			Err:       &DetailError{Err: ErrInvalidSize, Detail: fmt.Sprintf(": invalid numeric value %q: %v", valueStr, err)},
 		}
 	}
 
 	if value <= 0 {
 		return 0, &USBError{
 			Operation: "parse_size",
-			Err:       fmt.Errorf("%w: size must be positive, got %d", ErrInvalidSize, value),
+			Err:       &DetailError{Err: ErrInvalidSize, Detail: fmt.Sprintf(": size must be positive, got %d", value)},
 		}
 	}
 

@@ -23,6 +23,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -101,7 +103,7 @@ func ParseSignatureAlgorithm(s string) (x509.SignatureAlgorithm, error) {
 	case "ED25519":
 		return x509.PureEd25519, nil
 	default:
-		return x509.UnknownSignatureAlgorithm, fmt.Errorf("unknown signature algorithm: %s", s)
+		return x509.UnknownSignatureAlgorithm, &errs.Message{Msg: fmt.Sprintf("unknown signature algorithm: %s", s)}
 	}
 }
 
@@ -116,7 +118,7 @@ func ParseKeyAlgorithm(s string) (x509.PublicKeyAlgorithm, error) {
 	case "ED25519":
 		return x509.Ed25519, nil
 	default:
-		return x509.UnknownPublicKeyAlgorithm, fmt.Errorf("unknown key algorithm: %s", s)
+		return x509.UnknownPublicKeyAlgorithm, &errs.Message{Msg: fmt.Sprintf("unknown key algorithm: %s", s)}
 	}
 }
 
@@ -133,7 +135,7 @@ func ParseCurve(s string) (elliptic.Curve, error) {
 	case "P521", "P-521":
 		return elliptic.P521(), nil
 	default:
-		return nil, fmt.Errorf("unknown curve: %s", s)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unknown curve: %s", s)}
 	}
 }
 

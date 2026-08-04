@@ -13,7 +13,29 @@
 
 package services
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
+
+// SSHService errors.
+var (
+	// ErrSSHUnavailable indicates the SSH subsystem is not configured.
+	ErrSSHUnavailable = errors.New("ssh_service: SSH subsystem not configured")
+
+	// ErrSSHMissingName indicates a required key name was empty.
+	ErrSSHMissingName = errors.New("ssh_service: key name is required")
+)
+
+// SSHRemoteUnavailableError indicates a remote xkms backend was selected for
+// SSH but no remote connection is available.
+type SSHRemoteUnavailableError struct {
+	Backend string
+}
+
+func (e *SSHRemoteUnavailableError) Error() string {
+	return fmt.Sprintf("ssh_service: remote backend %q selected but no connection is available", e.Backend)
+}
 
 // AppService errors.
 var (
@@ -169,6 +191,12 @@ var (
 
 	// ErrTPMPolicySaveCancelled indicates the user cancelled the save dialog.
 	ErrTPMPolicySaveCancelled = errors.New("tpm_service: save cancelled")
+
+	// ErrTPMPolicyMixedBanks indicates a PCR policy's selections reference
+	// more than one hash bank. The canonical pcr_policy store models a
+	// policy with a single Bank field, so all selections in one policy must
+	// share the same bank.
+	ErrTPMPolicyMixedBanks = errors.New("tpm_service: policy PCR selections must share a single bank")
 )
 
 // OIDCService errors.
@@ -271,6 +299,11 @@ var (
 var (
 	// ErrPINServiceNotConfigured indicates the PIN service has not been wired.
 	ErrPINServiceNotConfigured = errors.New("pin_service: not configured")
+
+	// ErrSOPINNotSupported indicates the active PIN backend does not support
+	// a separate Security Officer PIN (e.g. the tpm2 strategy binds all
+	// authorization to the PlatformSRK auth value and has no SO PIN concept).
+	ErrSOPINNotSupported = errors.New("pin_service: SO PIN not supported by the active PIN backend")
 )
 
 // CertificateService errors.
@@ -467,3 +500,67 @@ var (
 	// ErrNVIndexOutOfRange indicates the provided NV index value is outside the valid range.
 	ErrNVIndexOutOfRange = errors.New("nv_index_allocator: NV index out of valid range")
 )
+
+// DetailError appends detail text directly after a wrapped error while
+// preserving errors.Is / errors.As matching of the wrapped error through
+// Unwrap. The detail text carries its own leading separator.
+type DetailError struct {
+	Err    error
+	Detail string
+}
+
+// Error implements the error interface.
+func (e *DetailError) Error() string {
+	return e.Err.Error() + e.Detail
+}
+
+// Unwrap returns the wrapped cause.
+func (e *DetailError) Unwrap() error {
+	return e.Err
+}
+
+// MessageError is a typed error that carries a preformatted message. It
+// replaces inline formatted-error constructions that do not wrap a cause.
+type MessageError struct {
+	Msg string
+}
+
+// Error implements the error interface.
+func (e *MessageError) Error() string {
+	return e.Msg
+}
+
+// SentinelCauseError attaches an underlying cause to a package sentinel
+// error so errors.Is matches both the sentinel and the cause.
+type SentinelCauseError struct {
+	Sentinel error
+	Cause    error
+}
+
+// Error implements the error interface.
+func (e *SentinelCauseError) Error() string {
+	return e.Sentinel.Error() + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the sentinel and the cause for errors.Is / errors.As.
+func (e *SentinelCauseError) Unwrap() []error {
+	return []error{e.Sentinel, e.Cause}
+}
+
+// WrappedError wraps an underlying cause with a contextual message while
+// preserving errors.Is / errors.As matching through Unwrap. It replaces
+// inline formatted-error constructions that wrap another error.
+type WrappedError struct {
+	Msg string
+	Err error
+}
+
+// Error implements the error interface.
+func (e *WrappedError) Error() string {
+	return e.Msg + ": " + e.Err.Error()
+}
+
+// Unwrap returns the wrapped cause.
+func (e *WrappedError) Unwrap() error {
+	return e.Err
+}

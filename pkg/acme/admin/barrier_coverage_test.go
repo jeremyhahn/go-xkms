@@ -3,9 +3,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -25,8 +25,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/gorilla/mux"
+	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,24 +36,24 @@ import (
 // ==========================================================================
 
 type stubBarrierClient struct {
-	statusResp          *db.BarrierStatusResponse
-	statusErr           error
-	initErr             error
-	sealErr             error
-	unsealErr           error
-	initShamirResp      *db.BarrierInitializeShamirResponse
-	initShamirErr       error
-	unsealShareResp     *db.BarrierUnsealShareResponse
-	unsealShareErr      error
-	rekeyResp           *db.BarrierRekeyResponse
-	rekeyErr            error
-	genRecoveryResp     *db.BarrierRecoveryKeysResponse
-	genRecoveryErr      error
-	recoverErr          error
-	hasKeysResp         *db.BarrierHasRecoveryKeysResponse
-	hasKeysErr          error
-	genRootTokenResp    *db.BarrierRootTokenResponse
-	genRootTokenErr     error
+	statusResp       *db.BarrierStatusResponse
+	statusErr        error
+	initErr          error
+	sealErr          error
+	unsealErr        error
+	initShamirResp   *db.BarrierInitializeShamirResponse
+	initShamirErr    error
+	unsealShareResp  *db.BarrierUnsealShareResponse
+	unsealShareErr   error
+	rekeyResp        *db.BarrierRekeyResponse
+	rekeyErr         error
+	genRecoveryResp  *db.BarrierRecoveryKeysResponse
+	genRecoveryErr   error
+	recoverErr       error
+	hasKeysResp      *db.BarrierHasRecoveryKeysResponse
+	hasKeysErr       error
+	genRootTokenResp *db.BarrierRootTokenResponse
+	genRootTokenErr  error
 }
 
 func newStubBarrierClient() *stubBarrierClient {
@@ -94,6 +94,9 @@ func newStubBarrierClient() *stubBarrierClient {
 
 func (s *stubBarrierClient) BarrierStatus(_ context.Context) (*db.BarrierStatusResponse, error) {
 	return s.statusResp, s.statusErr
+}
+func (s *stubBarrierClient) BarrierEnableEncryption(_ context.Context, _ *db.BarrierEnableEncryptionRequest) (*db.BarrierEnableEncryptionResponse, error) {
+	return &db.BarrierEnableEncryptionResponse{Status: "migration_started"}, nil
 }
 func (s *stubBarrierClient) BarrierInitialize(_ context.Context, _ *db.BarrierInitializeRequest) error {
 	return s.initErr
@@ -489,35 +492,35 @@ func TestBarrierService_GenerateRootToken_Error(t *testing.T) {
 
 // stubBarrierService is a simple in-memory BarrierService for handler tests.
 type stubBarrierService struct {
-	statusResp       *BarrierStatusResponse
-	statusErr        error
-	initErr          error
-	sealErr          error
-	unsealErr        error
-	shamirResp       *BarrierInitializeShamirResponse
-	shamirErr        error
-	shareResp        *BarrierUnsealShareResponse
-	shareErr         error
-	rekeyResp        *BarrierRekeyResponse
-	rekeyErr         error
-	genRecoveryResp  *BarrierRecoveryKeysResponse
-	genRecoveryErr   error
-	recoverErr       error
-	hasKeysResult    bool
-	hasKeysErr       error
-	rootTokenResp    *BarrierRootTokenResponse
-	rootTokenErr     error
+	statusResp      *BarrierStatusResponse
+	statusErr       error
+	initErr         error
+	sealErr         error
+	unsealErr       error
+	shamirResp      *BarrierInitializeShamirResponse
+	shamirErr       error
+	shareResp       *BarrierUnsealShareResponse
+	shareErr        error
+	rekeyResp       *BarrierRekeyResponse
+	rekeyErr        error
+	genRecoveryResp *BarrierRecoveryKeysResponse
+	genRecoveryErr  error
+	recoverErr      error
+	hasKeysResult   bool
+	hasKeysErr      error
+	rootTokenResp   *BarrierRootTokenResponse
+	rootTokenErr    error
 }
 
 func newStubBarrierService() *stubBarrierService {
 	return &stubBarrierService{
-		statusResp:  &BarrierStatusResponse{Mode: BarrierModeEmbedded, Enabled: true, Sealed: false, Strategy: "passphrase"},
-		shamirResp:  &BarrierInitializeShamirResponse{Threshold: 2, TotalShares: 3, ShareCount: 3},
-		shareResp:   &BarrierUnsealShareResponse{Required: 2, Submitted: 1, Complete: false},
-		rekeyResp:   &BarrierRekeyResponse{Threshold: 2, TotalShares: 3, ShareCount: 3},
+		statusResp:      &BarrierStatusResponse{Mode: BarrierModeEmbedded, Enabled: true, Sealed: false, Strategy: "passphrase"},
+		shamirResp:      &BarrierInitializeShamirResponse{Threshold: 2, TotalShares: 3, ShareCount: 3},
+		shareResp:       &BarrierUnsealShareResponse{Required: 2, Submitted: 1, Complete: false},
+		rekeyResp:       &BarrierRekeyResponse{Threshold: 2, TotalShares: 3, ShareCount: 3},
 		genRecoveryResp: &BarrierRecoveryKeysResponse{Threshold: 2, Total: 3, ShareCount: 3},
-		hasKeysResult: true,
-		rootTokenResp: &BarrierRootTokenResponse{Token: "tok", CreatedAt: "2025-01-01T00:00:00Z"},
+		hasKeysResult:   true,
+		rootTokenResp:   &BarrierRootTokenResponse{Token: "tok", CreatedAt: "2025-01-01T00:00:00Z"},
 	}
 }
 

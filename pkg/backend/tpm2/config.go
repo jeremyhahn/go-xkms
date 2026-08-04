@@ -18,6 +18,8 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -108,7 +110,7 @@ func (c *Config) Validate() error {
 	// Check if device exists (unless using simulator)
 	if !c.UseSimulator && c.Device != "" {
 		if _, err := os.Stat(c.Device); os.IsNotExist(err) {
-			return fmt.Errorf("%w: device %s does not exist", ErrTPMNotAvailable, c.Device)
+			return &errs.Detail{Err: ErrTPMNotAvailable, Detail: fmt.Sprintf("device %s does not exist", c.Device)}
 		}
 	}
 

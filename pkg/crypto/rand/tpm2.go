@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/tcp"
@@ -77,13 +79,13 @@ func newTPM2Resolver(config *TPM2Config) (Resolver, error) {
 			PlatformAddress: platAddr,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to connect to TPM simulator at %s (platform: %s): %w", cmdAddr, platAddr, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to connect to TPM simulator at %s (platform: %s)", cmdAddr, platAddr), Err: err}
 		}
 	} else {
 		// Open hardware TPM device
 		dev, err := tpmutil.OpenTPM(config.Device)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open TPM2 device %s: %w", config.Device, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to open TPM2 device %s", config.Device), Err: err}
 		}
 		rwc = transport.FromReadWriteCloser(dev)
 	}
@@ -103,7 +105,7 @@ func (t *tpm2Resolver) Rand(n int) ([]byte, error) {
 	defer t.mu.Unlock()
 
 	if t.rwc == nil {
-		return nil, fmt.Errorf("TPM2 resolver closed")
+		return nil, &errs.Message{Msg: "TPM2 resolver closed"}
 	}
 
 	// Handle large requests by making multiple calls
@@ -123,7 +125,7 @@ func (t *tpm2Resolver) Rand(n int) ([]byte, error) {
 
 		rsp, err := getRandom.Execute(t.rwc)
 		if err != nil {
-			return nil, fmt.Errorf("TPM2 GetRandom failed: %w", err)
+			return nil, &errs.Wrapped{Msg: "TPM2 GetRandom failed", Err: err}
 		}
 
 		result = append(result, rsp.RandomBytes.Buffer...)

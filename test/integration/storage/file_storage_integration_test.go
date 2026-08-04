@@ -23,6 +23,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	"github.com/stretchr/testify/assert"
@@ -263,7 +265,7 @@ func TestFileStorageIntegration_ConcurrentAccess(t *testing.T) {
 				if err != nil {
 					readErrors <- err
 				} else if string(retrieved) != string(expectedValue) {
-					readErrors <- fmt.Errorf("value mismatch for key %s", key)
+					readErrors <- &errs.Message{Msg: fmt.Sprintf("value mismatch for key %s", key)}
 				}
 			}
 		}(i)

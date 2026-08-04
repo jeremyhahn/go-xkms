@@ -51,7 +51,10 @@ func (m *mockSSHClient) Keys() sdkssh.KeysClient                     { return m.
 func (m *mockSSHClient) KnownHosts() sdkssh.KnownHostsClient         { return m.kh }
 func (m *mockSSHClient) AuthorizedKeys() sdkssh.AuthorizedKeysClient { return m.ak }
 func (m *mockSSHClient) Session() sdkssh.SessionClient               { return nil }
-func (m *mockSSHClient) Close() error                                { return nil }
+func (m *mockSSHClient) Console(context.Context, sdkssh.ConsoleConnectRequest, sdkssh.ConsoleConfig) (sdkssh.ConsoleSession, error) {
+	return nil, &sdkssh.ConsoleUnsupportedError{Transport: "mock"}
+}
+func (m *mockSSHClient) Close() error { return nil }
 
 type mockKeysClient struct {
 	genResp    *sdkssh.Key

@@ -24,13 +24,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"gopkg.in/yaml.v3"
 
@@ -829,14 +830,14 @@ func (s *PhoneService) enforceAttestationPolicy(deviceName string, device *phone
 		s.emitPolicyViolationEvent(deviceName, map[string]string{
 			"attestation": fmt.Sprintf("attestation failed: %v", err),
 		}, "Attestation failed during policy check")
-		return fmt.Errorf("%w: attestation failed: %v", ErrPhonePolicyViolation, err)
+		return &DetailError{Err: ErrPhonePolicyViolation, Detail: fmt.Sprintf(": attestation failed: %v", err)}
 	}
 
 	if !result.Verified {
 		s.emitPolicyViolationEvent(deviceName, map[string]string{
 			"verification": "attestation chain not verified",
 		}, "Attestation verification failed")
-		return fmt.Errorf("%w: attestation chain not verified", ErrPhonePolicyViolation)
+		return &DetailError{Err: ErrPhonePolicyViolation, Detail: ": attestation chain not verified"}
 	}
 
 	// Compare fields.
@@ -863,7 +864,7 @@ func (s *PhoneService) enforceAttestationPolicy(deviceName string, device *phone
 	if len(mismatches) > 0 {
 		msg := fmt.Sprintf("Attestation policy violation: %d field(s) mismatched", len(mismatches))
 		s.emitPolicyViolationEvent(deviceName, mismatches, msg)
-		return fmt.Errorf("%w: %s", ErrPhonePolicyViolation, msg)
+		return &DetailError{Err: ErrPhonePolicyViolation, Detail: fmt.Sprintf(": %s", msg)}
 	}
 
 	return nil
@@ -921,7 +922,7 @@ func (s *PhoneService) performAttestation(device *phoneConfigDevice) (*Attestati
 	// Generate 32-byte random nonce.
 	nonce := make([]byte, 32)
 	if _, err := cryptorand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("%w: nonce generation failed", ErrPhoneAttestFailed)
+		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": nonce generation failed"}
 	}
 
 	// Send attestation request via encrypted BLE.
@@ -931,11 +932,11 @@ func (s *PhoneService) performAttestation(device *phoneConfigDevice) (*Attestati
 	})
 	reqPlaintext, err := phone.EncodeRequest(attestReq)
 	if err != nil {
-		return nil, fmt.Errorf("%w: encode request failed", ErrPhoneAttestFailed)
+		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": encode request failed"}
 	}
 	reqCiphertext, err := session.Encrypt(reqPlaintext)
 	if err != nil {
-		return nil, fmt.Errorf("%w: encrypt failed", ErrPhoneAttestFailed)
+		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": encrypt failed"}
 	}
 
 	opCtx, opCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -943,7 +944,7 @@ func (s *PhoneService) performAttestation(device *phoneConfigDevice) (*Attestati
 
 	respCiphertext, err := transport.SendAndReceive(opCtx, reqCiphertext)
 	if err != nil {
-		return nil, fmt.Errorf("%w: send/receive failed", ErrPhoneAttestFailed)
+		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": send/receive failed"}
 	}
 
 	s.log.Debug("attestation response received",
@@ -958,26 +959,26 @@ func (s *PhoneService) performAttestation(device *phoneConfigDevice) (*Attestati
 			"ciphertext_len", len(respCiphertext),
 			"ciphertext_hex", hex.EncodeToString(respCiphertext[:min(len(respCiphertext), 128)]),
 		)
-		return nil, fmt.Errorf("%w: decrypt failed", ErrPhoneAttestFailed)
+		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": decrypt failed"}
 	}
 
 	resp, err := phone.DecodeResponse(respPlaintext)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decode response failed", ErrPhoneAttestFailed)
+		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": decode response failed"}
 	}
 	if resp.Error != nil {
-		return nil, fmt.Errorf("%w: %s", ErrPhoneAttestFailed, resp.Error.Message)
+		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: fmt.Sprintf(": %s", resp.Error.Message)}
 	}
 
 	attestResult, err := phone.DecodeResult[phone.LocalAttestKeyResult](resp)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decode result failed", ErrPhoneAttestFailed)
+		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": decode result failed"}
 	}
 
 	// Parse DER certificate chain.
 	chain, err := parseDERChain(attestResult.CertificateChain)
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid cert chain", ErrPhoneAttestFailed)
+		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": invalid cert chain"}
 	}
 
 	// Build trust pool from embedded roots + local trust store.
@@ -985,7 +986,7 @@ func (s *PhoneService) performAttestation(device *phoneConfigDevice) (*Attestati
 
 	rootPool, err := s.buildAttestationTrustPool(embeddedRoots)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPhoneAttestFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrPhoneAttestFailed, Cause: err}
 	}
 
 	// Verify attestation chain.
@@ -1054,11 +1055,11 @@ func (s *PhoneService) buildAttestationTrustPool(embeddedRoots []*x509.Certifica
 	if s.trustStore != nil {
 		verifier, err := xkeyAttestation.NewVerifier(s.trustStore, truststore.LoadEmbeddedRoots)
 		if err != nil {
-			return nil, fmt.Errorf("verifier creation failed: %w", err)
+			return nil, &WrappedError{Msg: "verifier creation failed", Err: err}
 		}
 		pool, err := verifier.BuildTrustPool(truststore.PurposeAndroidHardware)
 		if err != nil {
-			return nil, fmt.Errorf("trust pool build failed: %w", err)
+			return nil, &WrappedError{Msg: "trust pool build failed", Err: err}
 		}
 		return pool, nil
 	}
@@ -1330,7 +1331,7 @@ func parseDERChain(derChain [][]byte) ([]*x509.Certificate, error) {
 	for i, der := range derChain {
 		cert, err := x509.ParseCertificate(der)
 		if err != nil {
-			return nil, fmt.Errorf("certificate at index %d: %w", i, err)
+			return nil, &WrappedError{Msg: fmt.Sprintf("certificate at index %d", i), Err: err}
 		}
 		chain = append(chain, cert)
 	}

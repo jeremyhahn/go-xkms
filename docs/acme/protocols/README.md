@@ -1,6 +1,6 @@
 # Multi-Protocol API Support
 
-go-trusted-ca exposes all administrative operations through five protocols, ensuring maximum interoperability across different client types and deployment scenarios.
+go-xkms exposes all administrative operations through five protocols, ensuring maximum interoperability across different client types and deployment scenarios.
 
 ## Supported Protocols
 

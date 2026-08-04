@@ -374,7 +374,7 @@ func runPivGenerate(cmd *cobra.Command, args []string) error {
 func writePIVOutput(outputFile string, data []byte, label, successMsg string) error {
 	if outputFile != "" {
 		if err := os.WriteFile(outputFile, data, 0600); err != nil {
-			return fmt.Errorf("piv: failed to write %s to %s: %w", label, outputFile, err)
+			return &WrappedError{Msg: fmt.Sprintf("piv: failed to write %s to %s", label, outputFile), Err: err}
 		}
 		fmt.Printf("%s written to %s\n", successMsg, outputFile)
 		return nil

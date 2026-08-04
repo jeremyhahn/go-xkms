@@ -4,7 +4,7 @@ REST API for administrative operations on the ACME Certificate Authority.
 
 ## Overview
 
-The Admin API provides comprehensive management capabilities for the go-trusted-ca Certificate Authority. It enables enterprise administrators to manage certificates, accounts, orders, tenants, External Account Bindings (EAB), and RBAC policies through a secure, role-based interface.
+The Admin API provides comprehensive management capabilities for the go-xkms Certificate Authority. It enables enterprise administrators to manage certificates, accounts, orders, tenants, External Account Bindings (EAB), and RBAC policies through a secure, role-based interface.
 
 The Admin API is separate from the RFC 8555 ACME API and is designed for human operators and administrative automation systems rather than ACME clients.
 
@@ -24,7 +24,7 @@ The Admin API is separate from the RFC 8555 ACME API and is designed for human o
 
 ## Storage and Auth Integration
 
-The Admin API uses QRDB for KV storage and RBAC/auth services. QRDB runs embedded (in-process) with go-trusted-ca.
+The Admin API uses QRDB for KV storage and RBAC/auth services. QRDB runs embedded (in-process) with go-xkms.
 
 ```
 +-----------------------------------------------------------------------+

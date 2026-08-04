@@ -46,7 +46,7 @@ func (failingBackend) Scan(_ context.Context, _ string, _ func(string, []byte) e
 	return errFail
 }
 func (failingBackend) Exists(_ context.Context, _ string) (bool, error) { return false, errFail }
-func (failingBackend) Close() error                                      { return nil }
+func (failingBackend) Close() error                                     { return nil }
 
 // corruptBackend returns corrupt JSON for every Get and reports Exists=false.
 type corruptBackend struct{ failingBackend }
@@ -69,7 +69,7 @@ func (putFailBackend) Exists(_ context.Context, _ string) (bool, error) { return
 type removeErrBackend struct{ failingBackend }
 
 func (removeErrBackend) Exists(_ context.Context, _ string) (bool, error) { return false, nil }
-func (removeErrBackend) Delete(_ context.Context, _ string) error          { return errFail }
+func (removeErrBackend) Delete(_ context.Context, _ string) error         { return errFail }
 
 // ---------------------------------------------------------------------------
 // Error type string/unwrap coverage

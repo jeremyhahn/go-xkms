@@ -24,6 +24,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // JWK represents a JSON Web Key as defined in RFC 7517.
@@ -97,9 +99,9 @@ func FromPublicKey(pub crypto.PublicKey) (*JWK, error) {
 		if key.Curve() == ecdh.X25519() {
 			return fromX25519PublicKey(key)
 		}
-		return nil, fmt.Errorf("unsupported ECDH curve: %v", key.Curve())
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported ECDH curve: %v", key.Curve())}
 	default:
-		return nil, fmt.Errorf("unsupported public key type: %T", pub)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported public key type: %T", pub)}
 	}
 }
 
@@ -119,9 +121,9 @@ func FromPrivateKey(priv crypto.PrivateKey) (*JWK, error) {
 		if key.Curve() == ecdh.X25519() {
 			return fromX25519PrivateKey(key)
 		}
-		return nil, fmt.Errorf("unsupported ECDH curve: %v", key.Curve())
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported ECDH curve: %v", key.Curve())}
 	default:
-		return nil, fmt.Errorf("unsupported private key type: %T", priv)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported private key type: %T", priv)}
 	}
 }
 
@@ -129,7 +131,7 @@ func FromPrivateKey(priv crypto.PrivateKey) (*JWK, error) {
 // The key parameter should be the raw symmetric key material.
 func FromSymmetricKey(key []byte, alg string) (*JWK, error) {
 	if len(key) == 0 {
-		return nil, fmt.Errorf("symmetric key cannot be empty")
+		return nil, &errs.Message{Msg: "symmetric key cannot be empty"}
 	}
 
 	return &JWK{
@@ -154,10 +156,10 @@ func (jwk *JWK) ToPublicKey() (crypto.PublicKey, error) {
 		case string(CurveX25519):
 			return jwk.toX25519PublicKey()
 		default:
-			return nil, fmt.Errorf("unsupported OKP curve: %s", jwk.Crv)
+			return nil, &errs.Message{Msg: fmt.Sprintf("unsupported OKP curve: %s", jwk.Crv)}
 		}
 	default:
-		return nil, fmt.Errorf("unsupported key type: %s", jwk.Kty)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %s", jwk.Kty)}
 	}
 }
 
@@ -167,17 +169,17 @@ func (jwk *JWK) ToPrivateKey() (crypto.PrivateKey, error) {
 	switch jwk.Kty {
 	case string(KeyTypeRSA):
 		if jwk.D == "" {
-			return nil, fmt.Errorf("JWK does not contain RSA private key parameters")
+			return nil, &errs.Message{Msg: "JWK does not contain RSA private key parameters"}
 		}
 		return jwk.toRSAPrivateKey()
 	case string(KeyTypeEC):
 		if jwk.D == "" {
-			return nil, fmt.Errorf("JWK does not contain EC private key parameters")
+			return nil, &errs.Message{Msg: "JWK does not contain EC private key parameters"}
 		}
 		return jwk.toECDSAPrivateKey()
 	case string(KeyTypeOKP):
 		if jwk.D == "" {
-			return nil, fmt.Errorf("JWK does not contain OKP private key parameters")
+			return nil, &errs.Message{Msg: "JWK does not contain OKP private key parameters"}
 		}
 		switch jwk.Crv {
 		case string(CurveEd25519):
@@ -185,10 +187,10 @@ func (jwk *JWK) ToPrivateKey() (crypto.PrivateKey, error) {
 		case string(CurveX25519):
 			return jwk.toX25519PrivateKey()
 		default:
-			return nil, fmt.Errorf("unsupported OKP curve: %s", jwk.Crv)
+			return nil, &errs.Message{Msg: fmt.Sprintf("unsupported OKP curve: %s", jwk.Crv)}
 		}
 	default:
-		return nil, fmt.Errorf("unsupported key type: %s", jwk.Kty)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %s", jwk.Kty)}
 	}
 }
 
@@ -196,10 +198,10 @@ func (jwk *JWK) ToPrivateKey() (crypto.PrivateKey, error) {
 // Returns an error if the JWK doesn't represent a symmetric key.
 func (jwk *JWK) ToSymmetricKey() ([]byte, error) {
 	if jwk.Kty != string(KeyTypeOct) {
-		return nil, fmt.Errorf("JWK is not a symmetric key (kty=%s)", jwk.Kty)
+		return nil, &errs.Message{Msg: fmt.Sprintf("JWK is not a symmetric key (kty=%s)", jwk.Kty)}
 	}
 	if jwk.K == "" {
-		return nil, fmt.Errorf("JWK does not contain symmetric key value")
+		return nil, &errs.Message{Msg: "JWK does not contain symmetric key value"}
 	}
 	return base64.RawURLEncoding.DecodeString(jwk.K)
 }
@@ -218,7 +220,7 @@ func (jwk *JWK) MarshalIndent(prefix, indent string) ([]byte, error) {
 func Unmarshal(data []byte) (*JWK, error) {
 	var jwk JWK
 	if err := json.Unmarshal(data, &jwk); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JWK: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to unmarshal JWK", Err: err}
 	}
 	return &jwk, nil
 }
@@ -278,27 +280,27 @@ func fromRSAPrivateKey(key *rsa.PrivateKey) (*JWK, error) {
 
 func (jwk *JWK) toRSAPublicKey() (*rsa.PublicKey, error) {
 	if jwk.N == "" {
-		return nil, fmt.Errorf("RSA JWK missing required field: n")
+		return nil, &errs.Message{Msg: "RSA JWK missing required field: n"}
 	}
 	if jwk.E == "" {
-		return nil, fmt.Errorf("RSA JWK missing required field: e")
+		return nil, &errs.Message{Msg: "RSA JWK missing required field: e"}
 	}
 
 	nBytes, err := base64.RawURLEncoding.DecodeString(jwk.N)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode RSA modulus: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode RSA modulus", Err: err}
 	}
 
 	eBytes, err := base64.RawURLEncoding.DecodeString(jwk.E)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode RSA exponent: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode RSA exponent", Err: err}
 	}
 
 	n := new(big.Int).SetBytes(nBytes)
 	e := new(big.Int).SetBytes(eBytes)
 
 	if !e.IsInt64() {
-		return nil, fmt.Errorf("RSA exponent too large")
+		return nil, &errs.Message{Msg: "RSA exponent too large"}
 	}
 
 	return &rsa.PublicKey{
@@ -315,7 +317,7 @@ func (jwk *JWK) toRSAPrivateKey() (*rsa.PrivateKey, error) {
 
 	dBytes, err := base64.RawURLEncoding.DecodeString(jwk.D)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode RSA private exponent: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode RSA private exponent", Err: err}
 	}
 
 	privKey := &rsa.PrivateKey{
@@ -327,11 +329,11 @@ func (jwk *JWK) toRSAPrivateKey() (*rsa.PrivateKey, error) {
 	if jwk.P != "" && jwk.Q != "" {
 		pBytes, err := base64.RawURLEncoding.DecodeString(jwk.P)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode RSA prime P: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to decode RSA prime P", Err: err}
 		}
 		qBytes, err := base64.RawURLEncoding.DecodeString(jwk.Q)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode RSA prime Q: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to decode RSA prime Q", Err: err}
 		}
 		privKey.Primes = []*big.Int{
 			new(big.Int).SetBytes(pBytes),
@@ -373,13 +375,13 @@ func fromECDSAPrivateKey(key *ecdsa.PrivateKey) (*JWK, error) {
 
 func (jwk *JWK) toECDSAPublicKey() (*ecdsa.PublicKey, error) {
 	if jwk.Crv == "" {
-		return nil, fmt.Errorf("EC JWK missing required field: crv")
+		return nil, &errs.Message{Msg: "EC JWK missing required field: crv"}
 	}
 	if jwk.X == "" {
-		return nil, fmt.Errorf("EC JWK missing required field: x")
+		return nil, &errs.Message{Msg: "EC JWK missing required field: x"}
 	}
 	if jwk.Y == "" {
-		return nil, fmt.Errorf("EC JWK missing required field: y")
+		return nil, &errs.Message{Msg: "EC JWK missing required field: y"}
 	}
 
 	curve, err := getCurve(jwk.Crv)
@@ -389,12 +391,12 @@ func (jwk *JWK) toECDSAPublicKey() (*ecdsa.PublicKey, error) {
 
 	xBytes, err := base64.RawURLEncoding.DecodeString(jwk.X)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode EC X coordinate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode EC X coordinate", Err: err}
 	}
 
 	yBytes, err := base64.RawURLEncoding.DecodeString(jwk.Y)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode EC Y coordinate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode EC Y coordinate", Err: err}
 	}
 
 	return &ecdsa.PublicKey{
@@ -412,7 +414,7 @@ func (jwk *JWK) toECDSAPrivateKey() (*ecdsa.PrivateKey, error) {
 
 	dBytes, err := base64.RawURLEncoding.DecodeString(jwk.D)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode EC private key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode EC private key", Err: err}
 	}
 
 	return &ecdsa.PrivateKey{
@@ -445,11 +447,11 @@ func fromEd25519PrivateKey(key ed25519.PrivateKey) (*JWK, error) {
 func (jwk *JWK) toEd25519PublicKey() (ed25519.PublicKey, error) {
 	xBytes, err := base64.RawURLEncoding.DecodeString(jwk.X)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode Ed25519 public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode Ed25519 public key", Err: err}
 	}
 
 	if len(xBytes) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("invalid Ed25519 public key size: %d", len(xBytes))
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid Ed25519 public key size: %d", len(xBytes))}
 	}
 
 	return ed25519.PublicKey(xBytes), nil
@@ -458,11 +460,11 @@ func (jwk *JWK) toEd25519PublicKey() (ed25519.PublicKey, error) {
 func (jwk *JWK) toEd25519PrivateKey() (ed25519.PrivateKey, error) {
 	dBytes, err := base64.RawURLEncoding.DecodeString(jwk.D)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode Ed25519 private key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode Ed25519 private key", Err: err}
 	}
 
 	if len(dBytes) != ed25519.SeedSize {
-		return nil, fmt.Errorf("invalid Ed25519 seed size: %d", len(dBytes))
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid Ed25519 seed size: %d", len(dBytes))}
 	}
 
 	return ed25519.NewKeyFromSeed(dBytes), nil
@@ -492,11 +494,11 @@ func fromX25519PrivateKey(key *ecdh.PrivateKey) (*JWK, error) {
 func (jwk *JWK) toX25519PublicKey() (*ecdh.PublicKey, error) {
 	xBytes, err := base64.RawURLEncoding.DecodeString(jwk.X)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode X25519 public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode X25519 public key", Err: err}
 	}
 
 	if len(xBytes) != 32 {
-		return nil, fmt.Errorf("invalid X25519 public key size: %d (expected 32)", len(xBytes))
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid X25519 public key size: %d (expected 32)", len(xBytes))}
 	}
 
 	return ecdh.X25519().NewPublicKey(xBytes)
@@ -505,11 +507,11 @@ func (jwk *JWK) toX25519PublicKey() (*ecdh.PublicKey, error) {
 func (jwk *JWK) toX25519PrivateKey() (*ecdh.PrivateKey, error) {
 	dBytes, err := base64.RawURLEncoding.DecodeString(jwk.D)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode X25519 private key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode X25519 private key", Err: err}
 	}
 
 	if len(dBytes) != 32 {
-		return nil, fmt.Errorf("invalid X25519 private key size: %d (expected 32)", len(dBytes))
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid X25519 private key size: %d (expected 32)", len(dBytes))}
 	}
 
 	return ecdh.X25519().NewPrivateKey(dBytes)
@@ -526,7 +528,7 @@ func getCurveName(curve elliptic.Curve) (Curve, error) {
 	case elliptic.P521():
 		return CurveP521, nil
 	default:
-		return "", fmt.Errorf("unsupported elliptic curve: %s", curve.Params().Name)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported elliptic curve: %s", curve.Params().Name)}
 	}
 }
 
@@ -539,6 +541,6 @@ func getCurve(name string) (elliptic.Curve, error) {
 	case string(CurveP521):
 		return elliptic.P521(), nil
 	default:
-		return nil, fmt.Errorf("unsupported curve: %s", name)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported curve: %s", name)}
 	}
 }

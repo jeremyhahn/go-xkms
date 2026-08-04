@@ -17,8 +17,9 @@ import (
 	"context"
 	"crypto"
 	"encoding/base64"
-	"fmt"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/golang-jwt/jwt/v5"
 	xkmsjwt "github.com/jeremyhahn/go-xkms/pkg/encoding/jwt"
@@ -61,10 +62,10 @@ type JWTGeneratorConfig struct {
 // NewDefaultJWTGenerator creates a new JWT generator with the given configuration.
 func NewDefaultJWTGenerator(config *JWTGeneratorConfig) (*DefaultJWTGenerator, error) {
 	if config == nil {
-		return nil, fmt.Errorf("config is required")
+		return nil, &errs.Message{Msg: "config is required"}
 	}
 	if config.PrivateKey == nil {
-		return nil, fmt.Errorf("private key is required")
+		return nil, &errs.Message{Msg: "private key is required"}
 	}
 
 	// Set defaults
@@ -136,7 +137,7 @@ func (g *DefaultJWTGenerator) GenerateToken(ctx context.Context, user User) (str
 // VerifyToken verifies a JWT and returns the claims.
 func (g *DefaultJWTGenerator) VerifyToken(tokenString string) (jwt.MapClaims, error) {
 	if g.publicKey == nil {
-		return nil, fmt.Errorf("public key not available for verification")
+		return nil, &errs.Message{Msg: "public key not available for verification"}
 	}
 
 	verifier := xkmsjwt.NewVerifier()
@@ -150,12 +151,12 @@ func (g *DefaultJWTGenerator) VerifyToken(tokenString string) (jwt.MapClaims, er
 
 	token, err := verifier.VerifyWithOptions(tokenString, g.publicKey, opts)
 	if err != nil {
-		return nil, fmt.Errorf("token verification failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "token verification failed", Err: err}
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return nil, fmt.Errorf("invalid claims type")
+		return nil, &errs.Message{Msg: "invalid claims type"}
 	}
 
 	return claims, nil

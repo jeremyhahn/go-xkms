@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -79,7 +81,7 @@ func New() KeyAgreement {
 func (ka *x25519KeyAgreement) GenerateKey() (*KeyPair, error) {
 	privateKey, err := ka.curve.GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate X25519 key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate X25519 key", Err: err}
 	}
 
 	return &KeyPair{
@@ -92,23 +94,23 @@ func (ka *x25519KeyAgreement) GenerateKey() (*KeyPair, error) {
 // The shared secret should not be used directly - use DeriveKey instead.
 func (ka *x25519KeyAgreement) DeriveSharedSecret(privateKey *ecdh.PrivateKey, peerPublicKey *ecdh.PublicKey) ([]byte, error) {
 	if privateKey == nil {
-		return nil, fmt.Errorf("private key cannot be nil")
+		return nil, &errs.Message{Msg: "private key cannot be nil"}
 	}
 	if peerPublicKey == nil {
-		return nil, fmt.Errorf("peer public key cannot be nil")
+		return nil, &errs.Message{Msg: "peer public key cannot be nil"}
 	}
 
 	// Verify the keys are X25519 keys
 	if privateKey.Curve() != ecdh.X25519() {
-		return nil, fmt.Errorf("private key must be X25519, got %v", privateKey.Curve())
+		return nil, &errs.Message{Msg: fmt.Sprintf("private key must be X25519, got %v", privateKey.Curve())}
 	}
 	if peerPublicKey.Curve() != ecdh.X25519() {
-		return nil, fmt.Errorf("peer public key must be X25519, got %v", peerPublicKey.Curve())
+		return nil, &errs.Message{Msg: fmt.Sprintf("peer public key must be X25519, got %v", peerPublicKey.Curve())}
 	}
 
 	sharedSecret, err := privateKey.ECDH(peerPublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("X25519 key agreement failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "X25519 key agreement failed", Err: err}
 	}
 
 	return sharedSecret, nil
@@ -124,13 +126,13 @@ func (ka *x25519KeyAgreement) DeriveSharedSecret(privateKey *ecdh.PrivateKey, pe
 // - Binds the key to application context via 'info'
 func (ka *x25519KeyAgreement) DeriveKey(sharedSecret, salt, info []byte, keyLength int) ([]byte, error) {
 	if len(sharedSecret) == 0 {
-		return nil, fmt.Errorf("shared secret cannot be empty")
+		return nil, &errs.Message{Msg: "shared secret cannot be empty"}
 	}
 	if keyLength <= 0 {
-		return nil, fmt.Errorf("key length must be positive, got %d", keyLength)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key length must be positive, got %d", keyLength)}
 	}
 	if keyLength > 255*32 { // HKDF-SHA256 limit
-		return nil, fmt.Errorf("key length too large: %d (max 8160 bytes for HKDF-SHA256)", keyLength)
+		return nil, &errs.Message{Msg: fmt.Sprintf("key length too large: %d (max 8160 bytes for HKDF-SHA256)", keyLength)}
 	}
 
 	// Use HKDF-SHA256 to derive the key
@@ -139,7 +141,7 @@ func (ka *x25519KeyAgreement) DeriveKey(sharedSecret, salt, info []byte, keyLeng
 
 	derivedKey := make([]byte, keyLength)
 	if _, err := io.ReadFull(reader, derivedKey); err != nil {
-		return nil, fmt.Errorf("failed to derive key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to derive key", Err: err}
 	}
 
 	return derivedKey, nil
@@ -149,7 +151,7 @@ func (ka *x25519KeyAgreement) DeriveKey(sharedSecret, salt, info []byte, keyLeng
 // The input should be 32 bytes.
 func ParsePrivateKey(privateKeyBytes []byte) (*ecdh.PrivateKey, error) {
 	if len(privateKeyBytes) != 32 {
-		return nil, fmt.Errorf("X25519 private key must be 32 bytes, got %d", len(privateKeyBytes))
+		return nil, &errs.Message{Msg: fmt.Sprintf("X25519 private key must be 32 bytes, got %d", len(privateKeyBytes))}
 	}
 
 	return ecdh.X25519().NewPrivateKey(privateKeyBytes)
@@ -159,7 +161,7 @@ func ParsePrivateKey(privateKeyBytes []byte) (*ecdh.PrivateKey, error) {
 // The input should be 32 bytes.
 func ParsePublicKey(publicKeyBytes []byte) (*ecdh.PublicKey, error) {
 	if len(publicKeyBytes) != 32 {
-		return nil, fmt.Errorf("X25519 public key must be 32 bytes, got %d", len(publicKeyBytes))
+		return nil, &errs.Message{Msg: fmt.Sprintf("X25519 public key must be 32 bytes, got %d", len(publicKeyBytes))}
 	}
 
 	return ecdh.X25519().NewPublicKey(publicKeyBytes)

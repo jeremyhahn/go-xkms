@@ -131,6 +131,7 @@ type BarrierServicer interface {
 	BarrierDeleteRecoveryKeys(ctx context.Context) error
 	BarrierHasRecoveryKeys(ctx context.Context) (*BarrierHasRecoveryKeysResponse, error)
 	BarrierGenerateRootToken(ctx context.Context, req *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error)
+	BarrierEnableEncryption(ctx context.Context, req *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error)
 }
 
 // PIVServicer handles Personal Identity Verification operations.
@@ -258,6 +259,9 @@ type TenantServicer interface {
 	DeleteTenant(ctx context.Context, tenantID string) error
 	TenantBarrierInit(ctx context.Context, req *TenantBarrierInitRequest) error
 	TenantBarrierUnseal(ctx context.Context, req *TenantBarrierUnsealRequest) error
+	TenantBarrierStatus(ctx context.Context, tenantID string) (*TenantBarrierStatusResponse, error)
+	UpdateTenantEntitlements(ctx context.Context, req *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error)
+	UpdateTenantQuotas(ctx context.Context, req *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error)
 }
 
 // InitCeremonyServicer provides init ceremony operations.

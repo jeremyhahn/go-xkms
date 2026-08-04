@@ -163,6 +163,9 @@ func (s *stubClient) BarrierRekey(context.Context, *BarrierRekeyRequest) (*Barri
 func (s *stubClient) BarrierGenerateRecoveryKeys(context.Context, *BarrierGenerateRecoveryKeysRequest) (*BarrierRecoveryKeysResponse, error) {
 	panic("stub")
 }
+func (s *stubClient) BarrierEnableEncryption(context.Context, *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error) {
+	panic("stub")
+}
 func (s *stubClient) BarrierRecoverWithKeys(context.Context, *BarrierRecoverWithKeysRequest) error {
 	panic("stub")
 }
@@ -369,6 +372,15 @@ func (s *stubClient) TenantBarrierInit(context.Context, *TenantBarrierInitReques
 }
 func (s *stubClient) TenantBarrierUnseal(context.Context, *TenantBarrierUnsealRequest) error {
 	panic("stub")
+}
+func (s *stubClient) TenantBarrierStatus(_ context.Context, _ string) (*TenantBarrierStatusResponse, error) {
+	return nil, nil
+}
+func (s *stubClient) UpdateTenantEntitlements(_ context.Context, _ *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error) {
+	return nil, nil
+}
+func (s *stubClient) UpdateTenantQuotas(_ context.Context, _ *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error) {
+	return nil, nil
 }
 
 // InitCeremonyService stubs.

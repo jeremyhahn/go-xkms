@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -66,7 +68,7 @@ func (tpm *TPM2) ECDHZGen(
 		tpm.logger.Error("failed to load ECC key for ECDH",
 			slog.String("cn", keyAttrs.CN),
 			slog.String("error", err.Error()))
-		return nil, fmt.Errorf("failed to load key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to load key", Err: err}
 	}
 	defer tpm.Flush(loadResponse.ObjectHandle)
 
@@ -80,7 +82,7 @@ func (tpm *TPM2) ECDHZGen(
 	} else if keyAttrs.PlatformPolicy {
 		session, closer, err := tpm.PlatformPolicySession(nil)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create platform policy session: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to create platform policy session", Err: err}
 		}
 		defer func() {
 			if err := closer(); err != nil {
@@ -109,13 +111,13 @@ func (tpm *TPM2) ECDHZGen(
 		tpm.logger.Error("TPM2_ECDH_ZGen failed",
 			slog.String("cn", keyAttrs.CN),
 			slog.String("error", err.Error()))
-		return nil, fmt.Errorf("ECDH_ZGen failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "ECDH_ZGen failed", Err: err}
 	}
 
 	// Extract the shared secret point
 	outPoint, err := response.OutPoint.Contents()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get output point: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get output point", Err: err}
 	}
 
 	// Per NIST SP 800-56A, the shared secret is the X coordinate

@@ -122,7 +122,7 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -133,7 +133,7 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -141,23 +141,22 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 	// Load sharing policy store
 	store, err := loadSharingPolicyStore()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSharePolicyStoreFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSharePolicyStoreFailed, Cause: err}
 	}
 
 	// Check if sharing is allowed for this key
 	allowed, err := store.IsShareAllowed(backend, keyID, device.DeviceFingerprint)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSharePolicyStoreFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSharePolicyStoreFailed, Cause: err}
 	}
 	if !allowed {
-		return fmt.Errorf("%w: no sharing policy allows %s/%s for device %s",
-			ErrSharePolicyDenied, backend, keyID, device.Name)
+		return &DetailError{Err: ErrSharePolicyDenied, Detail: fmt.Sprintf(": no sharing policy allows %s/%s for device %s", backend, keyID, device.Name)}
 	}
 
 	// Get the policy to check what can be shared
 	policy, err := store.GetPolicy(backend, keyID)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSharePolicyStoreFailed, err)
+		return &SentinelCauseError{Sentinel: ErrSharePolicyStoreFailed, Cause: err}
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Sharing key \"%s\" (backend: %s) with device \"%s\"...\n\n",
@@ -166,16 +165,16 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 	// Decode pairing keys
 	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
 	if err != nil {
-		return fmt.Errorf("invalid local noise key: %w", err)
+		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
-		return fmt.Errorf("invalid phone noise key: %w", err)
+		return &WrappedError{Msg: "invalid phone noise key", Err: err}
 	}
 
 	localKey, err := phone.LoadStaticKey(localPrivateKey)
 	if err != nil {
-		return fmt.Errorf("invalid local noise key: %w", err)
+		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
 
 	// Connect to phone
@@ -189,7 +188,7 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 		Logger:               logger,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrShareConnectFailed, err)
+		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
 	defer phoneBackend.Close()
 
@@ -198,7 +197,7 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrShareConnectFailed, err)
+		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
 
 	// Share public key if policy allows
@@ -214,15 +213,15 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 
 		resp, err := phoneBackend.SendRequest(ctx, req)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrShareRequestFailed, err)
+			return &SentinelCauseError{Sentinel: ErrShareRequestFailed, Cause: err}
 		}
 		if resp.Error != nil {
-			return fmt.Errorf("%w: [%d] %s", ErrShareRequestFailed, resp.Error.Code, resp.Error.Message)
+			return &DetailError{Err: ErrShareRequestFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 		}
 
 		result, err := phone.DecodeResult[phone.LocalSharePublicKeyResult](resp)
 		if err != nil {
-			return fmt.Errorf("failed to decode share result: %w", err)
+			return &WrappedError{Msg: "failed to decode share result", Err: err}
 		}
 
 		if result.Accepted {
@@ -244,15 +243,15 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 
 		resp, err := phoneBackend.SendRequest(ctx, req)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrShareRequestFailed, err)
+			return &SentinelCauseError{Sentinel: ErrShareRequestFailed, Cause: err}
 		}
 		if resp.Error != nil {
-			return fmt.Errorf("%w: [%d] %s", ErrShareRequestFailed, resp.Error.Code, resp.Error.Message)
+			return &DetailError{Err: ErrShareRequestFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 		}
 
 		result, err := phone.DecodeResult[phone.LocalShareSymmetricResult](resp)
 		if err != nil {
-			return fmt.Errorf("failed to decode share result: %w", err)
+			return &WrappedError{Msg: "failed to decode share result", Err: err}
 		}
 
 		if result.Accepted {
@@ -282,7 +281,7 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -293,7 +292,7 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 	device := selectDevice(cfg, deviceName)
 	if device == nil {
 		if deviceName != "" {
-			return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 		}
 		return ErrDeviceNotPaired
 	}
@@ -303,16 +302,16 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 	// Decode pairing keys
 	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
 	if err != nil {
-		return fmt.Errorf("invalid local noise key: %w", err)
+		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
-		return fmt.Errorf("invalid phone noise key: %w", err)
+		return &WrappedError{Msg: "invalid phone noise key", Err: err}
 	}
 
 	localKey, err := phone.LoadStaticKey(localPrivateKey)
 	if err != nil {
-		return fmt.Errorf("invalid local noise key: %w", err)
+		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
 
 	// Connect to phone
@@ -326,7 +325,7 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 		Logger:               logger,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrShareConnectFailed, err)
+		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
 	defer phoneBackend.Close()
 
@@ -335,7 +334,7 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrShareConnectFailed, err)
+		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
 
 	// Request key import from phone
@@ -348,15 +347,15 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 
 	resp, err := phoneBackend.SendRequest(ctx, req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrShareImportFailed, err)
+		return &SentinelCauseError{Sentinel: ErrShareImportFailed, Cause: err}
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("%w: [%d] %s", ErrShareImportFailed, resp.Error.Code, resp.Error.Message)
+		return &DetailError{Err: ErrShareImportFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
 	result, err := phone.DecodeResult[phone.LocalImportSharedKeyResult](resp)
 	if err != nil {
-		return fmt.Errorf("failed to decode import result: %w", err)
+		return &WrappedError{Msg: "failed to decode import result", Err: err}
 	}
 
 	// Display imported key information

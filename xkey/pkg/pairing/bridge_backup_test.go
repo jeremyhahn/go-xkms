@@ -290,6 +290,18 @@ func (m *mockTransportClient) TenantBarrierUnseal(_ context.Context, _ *transpor
 	return nil
 }
 
+func (m *mockTransportClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
+	return &transport.TenantBarrierStatusResponse{}, nil
+}
+
+func (m *mockTransportClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockTransportClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return nil, nil
+}
+
 // Init ceremony operations
 
 func (m *mockTransportClient) GetInitStatus(_ context.Context) (*transport.InitStatusResponse, error) {

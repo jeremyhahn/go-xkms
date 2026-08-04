@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -67,7 +69,7 @@ type kmsDecrypter struct {
 // It initializes the AWS KMS client with the provided configuration.
 func NewBackend(config *Config) (*Backend, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "config validation failed", Err: err}
 	}
 
 	// Create default tracker if none provided
@@ -89,7 +91,7 @@ func NewBackend(config *Config) (*Backend, error) {
 // This is primarily used for testing with mock clients.
 func NewBackendWithClient(config *Config, client KMSClient) (*Backend, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "config validation failed", Err: err}
 	}
 
 	// Create default tracker if none provided
@@ -145,7 +147,7 @@ func (b *Backend) initClient(ctx context.Context) error {
 
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
-		return fmt.Errorf("failed to load AWS config: %w", err)
+		return &errs.Wrapped{Msg: "failed to load AWS config", Err: err}
 	}
 
 	// Create KMS client with optional endpoint override
@@ -180,7 +182,7 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 	if extension == backend.FSEXT_PRIVATE_BLOB || extension == backend.FSEXT_PUBLIC_BLOB {
 		data, ok := b.metadata[attrs.CN]
 		if !ok {
-			return nil, fmt.Errorf("%w: %s", backend.ErrFileNotFound, attrs.CN)
+			return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 		}
 		return data, nil
 	}
@@ -192,12 +194,12 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 			KeyId: aws.String(keyID),
 		})
 		if err != nil {
-			return nil, fmt.Errorf("%w: failed to get public key: %v", backend.ErrFileNotFound, err)
+			return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: fmt.Sprintf("failed to get public key: %v", err)}
 		}
 		return output.PublicKey, nil
 	}
 
-	return nil, fmt.Errorf("%w: extension not supported for AWS KMS", backend.ErrInvalidExtension)
+	return nil, &errs.Detail{Err: backend.ErrInvalidExtension, Detail: "extension not supported for AWS KMS"}
 }
 
 // Save stores data for a key with the specified attributes and extension.
@@ -218,7 +220,7 @@ func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.
 	// Check if metadata already exists
 	if !overwrite {
 		if _, exists := b.metadata[attrs.CN]; exists {
-			return fmt.Errorf("%w: %s", backend.ErrFileAlreadyExists, attrs.CN)
+			return &errs.Detail{Err: backend.ErrFileAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
 		}
 	}
 
@@ -302,7 +304,7 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 			attrs.CN, attrs.KeyType)),
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to create KMS key: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to create KMS key", Err: err}
 	}
 
 	keyID := aws.ToString(output.KeyMetadata.KeyId)
@@ -330,7 +332,7 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return keyID, fmt.Errorf("failed to marshal metadata: %w", err)
+		return keyID, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	b.mu.Lock()
@@ -364,7 +366,7 @@ func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte) ([]byte, error
 		SigningAlgorithm: signingAlgorithm,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("KMS sign operation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "KMS sign operation failed", Err: err}
 	}
 
 	return output.Signature, nil
@@ -395,7 +397,7 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 		SigningAlgorithm: signingAlgorithm,
 	})
 	if err != nil {
-		return fmt.Errorf("KMS verify operation failed: %w", err)
+		return &errs.Wrapped{Msg: "KMS verify operation failed", Err: err}
 	}
 
 	if !output.SignatureValid {
@@ -445,7 +447,7 @@ func (b *Backend) getKeySpec(attrs *types.KeyAttributes) (awstypes.KeySpec, erro
 		// Default to ECC_NIST_P256 if not specified
 		return awstypes.KeySpecEccNistP256, nil
 	default:
-		return "", fmt.Errorf("%w: %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
+		return "", &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
 	}
 }
 
@@ -479,7 +481,7 @@ func (b *Backend) getSigningAlgorithm(attrs *types.KeyAttributes) (awstypes.Sign
 		case crypto.SHA512:
 			return awstypes.SigningAlgorithmSpecRsassaPssSha512, nil
 		default:
-			return "", fmt.Errorf("%w: unsupported hash algorithm for RSA: %s", backend.ErrInvalidAlgorithm, hash)
+			return "", &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported hash algorithm for RSA: %s", hash)}
 		}
 	case x509.ECDSA:
 		// Map hash to ECDSA signing algorithm
@@ -491,10 +493,10 @@ func (b *Backend) getSigningAlgorithm(attrs *types.KeyAttributes) (awstypes.Sign
 		case crypto.SHA512:
 			return awstypes.SigningAlgorithmSpecEcdsaSha512, nil
 		default:
-			return "", fmt.Errorf("%w: unsupported hash algorithm for ECDSA: %s", backend.ErrInvalidAlgorithm, hash)
+			return "", &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported hash algorithm for ECDSA: %s", hash)}
 		}
 	default:
-		return "", fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+		return "", &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
 	}
 }
 
@@ -529,7 +531,7 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 	// Create the KMS key
 	_, err := b.CreateKey(attrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create KMS key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create KMS key", Err: err}
 	}
 
 	// Return nil for private key since it's not extractable from KMS
@@ -554,7 +556,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	b.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	// Verify key exists in KMS
@@ -563,7 +565,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		KeyId: aws.String(keyID),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to describe key: %v", backend.ErrKeyNotFound, err)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to describe key: %v", err)}
 	}
 
 	// Return nil for private key since it's not extractable from KMS
@@ -584,7 +586,7 @@ func (b *Backend) GetSignerByID(keyID string) (crypto.Signer, error) {
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("%w: key %s does not implement crypto.Signer", backend.ErrInvalidKeyType, keyID)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key %s does not implement crypto.Signer", keyID)}
 	}
 	return signer, nil
 }
@@ -602,7 +604,7 @@ func (b *Backend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
 	}
 	decrypter, ok := key.(crypto.Decrypter)
 	if !ok {
-		return nil, fmt.Errorf("%w: key %s does not implement crypto.Decrypter", backend.ErrInvalidKeyType, keyID)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key %s does not implement crypto.Decrypter", keyID)}
 	}
 	return decrypter, nil
 }
@@ -689,13 +691,13 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		KeyId: aws.String(keyID),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get public key", Err: err}
 	}
 
 	// Parse the public key
 	publicKey, err := x509.ParsePKIXPublicKey(pubKeyOutput.PublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
 	// Get signing algorithm
@@ -721,11 +723,11 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 
 	// Only RSA keys with ENCRYPT_DECRYPT usage support decryption
 	if attrs.KeyAlgorithm != x509.RSA {
-		return nil, fmt.Errorf("%w: only RSA keys support decryption", backend.ErrNotSupported)
+		return nil, &errs.Detail{Err: backend.ErrNotSupported, Detail: "only RSA keys support decryption"}
 	}
 
 	if attrs.KeyType != backend.KEY_TYPE_ENCRYPTION {
-		return nil, fmt.Errorf("%w: key must be of type encryption", backend.ErrInvalidKeyType)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "key must be of type encryption"}
 	}
 
 	if err := b.initClient(ctx); err != nil {
@@ -739,13 +741,13 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 		KeyId: aws.String(keyID),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get public key", Err: err}
 	}
 
 	// Parse the public key
 	publicKey, err := x509.ParsePKIXPublicKey(pubKeyOutput.PublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
 	return &kmsDecrypter{
@@ -774,7 +776,7 @@ func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) err
 		KeyId: aws.String(keyID),
 	})
 	if err != nil {
-		return fmt.Errorf("failed to rotate key: %w", err)
+		return &errs.Wrapped{Msg: "failed to rotate key", Err: err}
 	}
 
 	// Reset AEAD tracking after successful rotation
@@ -810,7 +812,7 @@ func (s *kmsSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) 
 		SigningAlgorithm: s.signingAlg,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("KMS sign operation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "KMS sign operation failed", Err: err}
 	}
 
 	return output.Signature, nil
@@ -845,7 +847,7 @@ func (d *kmsDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.De
 		EncryptionAlgorithm: encryptionAlgorithm,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("KMS decrypt operation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "KMS decrypt operation failed", Err: err}
 	}
 
 	return output.Plaintext, nil
@@ -884,13 +886,13 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 		WrappingKeySpec:   awstypes.WrappingKeySpecRsa2048, // AWS KMS uses RSA-2048 for wrapping keys
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get import parameters from AWS KMS: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get import parameters from AWS KMS", Err: err}
 	}
 
 	// Parse the wrapping public key (DER-encoded SPKI format)
 	publicKey, err := x509.ParsePKIXPublicKey(output.PublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse wrapping public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse wrapping public key", Err: err}
 	}
 
 	// Calculate expiration time (AWS provides ParametersValidTo)
@@ -925,20 +927,20 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 // is sent during the ImportKey operation.
 func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if len(keyMaterial) == 0 {
-		return nil, fmt.Errorf("%w: key material cannot be empty", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "key material cannot be empty"}
 	}
 	if params == nil {
-		return nil, fmt.Errorf("%w: import parameters cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import parameters cannot be nil"}
 	}
 	if params.WrappingPublicKey == nil {
-		return nil, fmt.Errorf("%w: wrapping public key cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "wrapping public key cannot be nil"}
 	}
 
 	// Determine which wrapping function to use based on algorithm
 	// Extract the RSA public key from the interface
 	rsaPubKey, ok := params.WrappingPublicKey.(*rsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("%w: wrapping public key must be an *rsa.PublicKey", backend.ErrInvalidKeyType)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "wrapping public key must be an *rsa.PublicKey"}
 	}
 
 	var wrappedKey []byte
@@ -956,11 +958,11 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 		wrappedKey, err = wrapping.WrapRSAAES(keyMaterial, rsaPubKey, params.Algorithm)
 
 	default:
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, params.Algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", params.Algorithm)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to wrap key material", Err: err}
 	}
 
 	return &backend.WrappedKeyMaterial{
@@ -978,7 +980,7 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 // For AWS KMS, key material is unwrapped automatically during the ImportKey operation
 // within the secure hardware boundary.
 func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
-	return nil, fmt.Errorf("%w: AWS KMS performs unwrapping internally within the HSM", backend.ErrNotSupported)
+	return nil, &errs.Detail{Err: backend.ErrNotSupported, Detail: "AWS KMS performs unwrapping internally within the HSM"}
 }
 
 // ImportKey imports externally generated key material into AWS KMS.
@@ -998,13 +1000,13 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		return backend.ErrInvalidAttributes
 	}
 	if wrapped == nil {
-		return fmt.Errorf("%w: wrapped key material cannot be nil", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "wrapped key material cannot be nil"}
 	}
 	if len(wrapped.ImportToken) == 0 {
-		return fmt.Errorf("%w: import token is required", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import token is required"}
 	}
 	if len(wrapped.WrappedKey) == 0 {
-		return fmt.Errorf("%w: wrapped key material is empty", backend.ErrInvalidAttributes)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "wrapped key material is empty"}
 	}
 
 	if err := b.initClient(ctx); err != nil {
@@ -1025,7 +1027,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		ExpirationModel:      awstypes.ExpirationModelTypeKeyMaterialDoesNotExpire,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to import key material into AWS KMS: %w", err)
+		return &errs.Wrapped{Msg: "failed to import key material into AWS KMS", Err: err}
 	}
 
 	return nil
@@ -1068,6 +1070,6 @@ func (b *Backend) mapWrappingAlgorithm(algorithm backend.WrappingAlgorithm) (aws
 	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		return awstypes.AlgorithmSpecRsaAesKeyWrapSha256, nil
 	default:
-		return "", fmt.Errorf("%w: unsupported wrapping algorithm: %s", backend.ErrInvalidAlgorithm, algorithm)
+		return "", &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported wrapping algorithm: %s", algorithm)}
 	}
 }

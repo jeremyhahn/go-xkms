@@ -15,10 +15,11 @@ package rest
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
@@ -28,7 +29,7 @@ func TestHandleError_NotLeader(t *testing.T) {
 	src := &qrdbtransport.NotLeaderError{ShardID: 1, LeaderID: 2, LeaderAddress: "10.0.0.2:63001"}
 
 	// Simulate the servicer error reaching a handler wrapped in business context.
-	handleError(rec, fmt.Errorf("generate key: %w", src))
+	handleError(rec, &errs.Wrapped{Msg: "generate key", Err: src})
 
 	if rec.Code != http.StatusMisdirectedRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMisdirectedRequest)

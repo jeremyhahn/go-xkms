@@ -15,8 +15,9 @@ package hardware
 
 import (
 	"errors"
-	"fmt"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,17 +47,17 @@ func TestIsCapacityError(t *testing.T) {
 		},
 		{
 			name:     "WrappedCapacityExceeded",
-			err:      fmt.Errorf("wrapper: %w", ErrCapacityExceeded),
+			err:      &errs.Wrapped{Msg: "wrapper", Err: ErrCapacityExceeded},
 			expected: true,
 		},
 		{
 			name:     "WrappedCertificateTooLarge",
-			err:      fmt.Errorf("wrapper: %w", ErrCertificateTooLarge),
+			err:      &errs.Wrapped{Msg: "wrapper", Err: ErrCertificateTooLarge},
 			expected: true,
 		},
 		{
 			name:     "WrappedTokenFull",
-			err:      fmt.Errorf("wrapper: %w", ErrTokenFull),
+			err:      &errs.Wrapped{Msg: "wrapper", Err: ErrTokenFull},
 			expected: true,
 		},
 		{
@@ -108,17 +109,17 @@ func TestIsHardwareError(t *testing.T) {
 		},
 		{
 			name:     "WrappedHardwareUnavailable",
-			err:      fmt.Errorf("wrapper: %w", ErrHardwareUnavailable),
+			err:      &errs.Wrapped{Msg: "wrapper", Err: ErrHardwareUnavailable},
 			expected: true,
 		},
 		{
 			name:     "WrappedNVIndexUnavailable",
-			err:      fmt.Errorf("wrapper: %w", ErrNVIndexUnavailable),
+			err:      &errs.Wrapped{Msg: "wrapper", Err: ErrNVIndexUnavailable},
 			expected: true,
 		},
 		{
 			name:     "WrappedNotSupported",
-			err:      fmt.Errorf("wrapper: %w", ErrNotSupported),
+			err:      &errs.Wrapped{Msg: "wrapper", Err: ErrNotSupported},
 			expected: true,
 		},
 		{

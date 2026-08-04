@@ -1,0 +1,191 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - navigation "Main navigation" [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - img [ref=e8]
+          - generic [ref=e9]: xKey
+        - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+          - img [ref=e11]
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: OVERVIEW
+          - button "Dashboard" [ref=e16] [cursor=pointer]:
+            - img [ref=e17]
+            - generic [ref=e19]: Dashboard
+          - button "Pairing" [ref=e20] [cursor=pointer]:
+            - img [ref=e21]
+            - generic [ref=e23]: Pairing
+          - button "TPM 2.0" [ref=e24] [cursor=pointer]:
+            - img [ref=e25]
+            - generic [ref=e27]: TPM 2.0
+        - generic [ref=e28]:
+          - generic [ref=e29]: STORE
+          - button "Keys" [ref=e30] [cursor=pointer]:
+            - img [ref=e31]
+            - generic [ref=e33]: Keys
+          - button "Trust Store" [ref=e34] [cursor=pointer]:
+            - img [ref=e35]
+            - generic [ref=e37]: Trust Store
+          - button "Certificates" [ref=e38] [cursor=pointer]:
+            - img [ref=e39]
+            - generic [ref=e41]: Certificates
+        - generic [ref=e42]:
+          - generic [ref=e43]: APPLICATIONS
+          - button "SSH" [ref=e44] [cursor=pointer]:
+            - img [ref=e45]
+            - generic [ref=e47]: SSH
+          - button "FIDO2" [ref=e48] [cursor=pointer]:
+            - img [ref=e49]
+            - generic [ref=e51]: FIDO2
+          - button "OATH" [ref=e52] [cursor=pointer]:
+            - img [ref=e53]
+            - generic [ref=e55]: OATH
+          - button "PIV" [ref=e56] [cursor=pointer]:
+            - img [ref=e57]
+            - generic [ref=e59]: PIV
+          - button "Passwords" [ref=e60] [cursor=pointer]:
+            - img [ref=e61]
+            - generic [ref=e63]: Passwords
+          - button "Sealed Data" [ref=e64] [cursor=pointer]:
+            - img [ref=e65]
+            - generic [ref=e67]: Sealed Data
+          - button "Browser" [ref=e68] [cursor=pointer]:
+            - img [ref=e69]
+            - generic [ref=e71]: Browser
+        - generic [ref=e72]:
+          - generic [ref=e73]: MANAGEMENT
+          - button "Audit Log" [ref=e74] [cursor=pointer]:
+            - img [ref=e75]
+            - generic [ref=e77]: Audit Log
+          - button "Admin" [ref=e78] [cursor=pointer]:
+            - img [ref=e79]
+            - generic [ref=e81]: Admin
+        - generic [ref=e82]:
+          - generic [ref=e83]: DEVELOPER TOOLS
+          - button "OIDC" [ref=e84] [cursor=pointer]:
+            - img [ref=e85]
+            - generic [ref=e87]: OIDC
+          - button "API Explorer" [ref=e88] [cursor=pointer]:
+            - img [ref=e89]
+            - generic [ref=e91]: API Explorer
+      - generic [ref=e92]:
+        - generic "Standalone mode" [ref=e93]:
+          - generic [ref=e95]: Standalone
+        - button "Theme" [ref=e96] [cursor=pointer]:
+          - img [ref=e97]
+          - generic [ref=e99]: Theme
+        - button "Settings" [ref=e100] [cursor=pointer]:
+          - img [ref=e101]
+          - generic [ref=e103]: Settings
+    - main [ref=e104]:
+      - generic [ref=e106]:
+        - button "Lock app" [ref=e107] [cursor=pointer]:
+          - img [ref=e108]
+          - generic [ref=e110]: Lock
+        - button "No touch pending" [disabled] [ref=e111]:
+          - img [ref=e113]
+      - generic [ref=e116]:
+        - generic [ref=e118]:
+          - generic [ref=e119]:
+            - heading "xKey" [level=1] [ref=e120]
+            - paragraph [ref=e121]: Virtual Security Key
+          - generic [ref=e123]:
+            - generic [ref=e124]: v0.1.0-dev
+            - status "N/A" [ref=e125]:
+              - generic [ref=e127]: N/A
+        - generic [ref=e128]:
+          - generic [ref=e129]:
+            - button "Mode Standalone N/A" [ref=e130] [cursor=pointer]:
+              - generic [ref=e131]:
+                - img [ref=e133]
+                - generic [ref=e135]:
+                  - generic [ref=e136]: Mode
+                  - generic [ref=e137]: Standalone
+                - status "N/A" [ref=e138]:
+                  - generic [ref=e140]: N/A
+            - button "Storage Not Encrypted Disconnected" [ref=e141] [cursor=pointer]:
+              - generic [ref=e142]:
+                - img [ref=e144]
+                - generic [ref=e146]:
+                  - generic [ref=e147]: Storage
+                  - generic [ref=e148]: Not Encrypted
+                - status "Disconnected" [ref=e149]:
+                  - generic [ref=e151]: Disconnected
+            - button "TPM 2.0 Available Warning" [ref=e152] [cursor=pointer]:
+              - generic [ref=e153]:
+                - img [ref=e155]
+                - generic [ref=e157]:
+                  - generic [ref=e158]: TPM 2.0
+                  - generic [ref=e159]: Available
+                - status "Warning" [ref=e160]:
+                  - generic [ref=e162]: Warning
+            - button "Barrier Unsealed Verified" [ref=e163] [cursor=pointer]:
+              - generic [ref=e164]:
+                - img [ref=e166]
+                - generic [ref=e168]:
+                  - generic [ref=e169]: Barrier
+                  - generic [ref=e170]: Unsealed
+                - status "Verified" [ref=e171]:
+                  - generic [ref=e173]: Verified
+          - button "Barrier Encryption Passphrase (AES-256-GCM) Verified" [ref=e175] [cursor=pointer]:
+            - generic [ref=e176]:
+              - img [ref=e178]
+              - generic [ref=e180]:
+                - generic [ref=e181]: Barrier Encryption
+                - generic [ref=e182]: Passphrase (AES-256-GCM)
+              - status "Verified" [ref=e183]:
+                - generic [ref=e185]: Verified
+          - generic [ref=e188]:
+            - heading "Key Inventory" [level=2] [ref=e189]
+            - generic [ref=e190]:
+              - button "0 OATH Accounts" [ref=e191] [cursor=pointer]:
+                - img [ref=e192]
+                - generic [ref=e194]:
+                  - generic [ref=e195]: "0"
+                  - generic [ref=e196]: OATH Accounts
+              - button "0 FIDO2 Credentials" [ref=e198] [cursor=pointer]:
+                - img [ref=e199]
+                - generic [ref=e201]:
+                  - generic [ref=e202]: "0"
+                  - generic [ref=e203]: FIDO2 Credentials
+              - button "0 PIV Certificates" [ref=e205] [cursor=pointer]:
+                - img [ref=e206]
+                - generic [ref=e208]:
+                  - generic [ref=e209]: "0"
+                  - generic [ref=e210]: PIV Certificates
+              - button "0 Remote Keys" [ref=e212] [cursor=pointer]:
+                - img [ref=e213]
+                - generic [ref=e215]:
+                  - generic [ref=e216]: "0"
+                  - generic [ref=e217]: Remote Keys
+          - generic [ref=e218]:
+            - generic [ref=e219]:
+              - heading "Recent Activity" [level=2] [ref=e220]
+              - button "View All" [ref=e221] [cursor=pointer]
+            - generic [ref=e222]:
+              - generic [ref=e223]:
+                - img [ref=e225]
+                - generic [ref=e227]:
+                  - generic [ref=e228]: service_started
+                  - generic [ref=e229]: service_started on local
+                - generic [ref=e230]: 2 minutes ago
+              - generic [ref=e231]:
+                - img [ref=e233]
+                - generic [ref=e235]:
+                  - generic [ref=e236]: barrier_unsealed
+                  - generic [ref=e237]: barrier_unsealed on local
+                - generic [ref=e238]: 2 minutes ago
+          - generic [ref=e239]:
+            - generic [ref=e240]: v0.1.0-dev
+            - generic [ref=e241]: linux/amd64
+            - generic [ref=e242]: go1.26.4
+            - generic [ref=e243]: "Uptime: 37m33s"
+  - dialog "App locked" [ref=e244]:
+    - generic [ref=e245]:
+      - img [ref=e247]
+      - heading "App Locked" [level=2] [ref=e249]
+      - paragraph [ref=e250]: Enter your PIN to unlock
+      - generic [ref=e251]:
+        - textbox "Enter PIN" [active] [ref=e252]
+        - button "Unlock" [disabled] [ref=e253]

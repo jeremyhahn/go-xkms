@@ -18,6 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	xerrs "github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // Registry manages multiple escrow agents and provides a unified interface
@@ -50,7 +52,7 @@ func (r *Registry) Register(name string, agent EscrowAgent) error {
 	defer r.mu.Unlock()
 
 	if _, exists := r.agents[name]; exists {
-		return fmt.Errorf("%w: %s", ErrAgentAlreadyRegistered, name)
+		return &xerrs.Detail{Err: ErrAgentAlreadyRegistered, Detail: fmt.Sprintf("%s", name)}
 	}
 
 	r.agents[name] = agent
@@ -65,7 +67,7 @@ func (r *Registry) Get(name string) (EscrowAgent, error) {
 
 	agent, exists := r.agents[name]
 	if !exists {
-		return nil, fmt.Errorf("%w: %s", ErrAgentNotConfigured, name)
+		return nil, &xerrs.Detail{Err: ErrAgentNotConfigured, Detail: fmt.Sprintf("%s", name)}
 	}
 	return agent, nil
 }
@@ -113,14 +115,14 @@ func (r *Registry) EscrowKeyAll(ctx context.Context, req *EscrowRequest) ([]*Esc
 	for name, agent := range agentsCopy {
 		receipt, err := agent.EscrowKey(ctx, req)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("agent %s: %w", name, err))
+			errs = append(errs, &xerrs.Wrapped{Msg: fmt.Sprintf("agent %s", name), Err: err})
 			continue
 		}
 		receipts = append(receipts, receipt)
 	}
 
 	if len(receipts) == 0 {
-		return nil, fmt.Errorf("%w: %w", ErrEscrowFailed, errors.Join(errs...))
+		return nil, &xerrs.Joined{Lead: ErrEscrowFailed, Cause: errors.Join(errs...)}
 	}
 
 	return receipts, nil
@@ -153,13 +155,13 @@ func (r *Registry) RecoverKeyAny(ctx context.Context, req *RecoverRequest) (*Rec
 	for name, agent := range agentsCopy {
 		resp, err := agent.RecoverKey(ctx, req)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("agent %s: %w", name, err))
+			errs = append(errs, &xerrs.Wrapped{Msg: fmt.Sprintf("agent %s", name), Err: err})
 			continue
 		}
 		return resp, nil
 	}
 
-	return nil, fmt.Errorf("%w: %w", ErrRecoverFailed, errors.Join(errs...))
+	return nil, &xerrs.Joined{Lead: ErrRecoverFailed, Cause: errors.Join(errs...)}
 }
 
 // ListAll returns escrow records from all registered agents, aggregated
@@ -184,7 +186,7 @@ func (r *Registry) ListAll(ctx context.Context) ([]EscrowRecord, error) {
 	for name, agent := range agentsCopy {
 		records, err := agent.ListEscrowed(ctx)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("agent %s: %w", name, err))
+			errs = append(errs, &xerrs.Wrapped{Msg: fmt.Sprintf("agent %s", name), Err: err})
 			continue
 		}
 		allRecords = append(allRecords, records...)
@@ -205,7 +207,7 @@ func (r *Registry) Close() error {
 	var errs []error
 	for name, agent := range r.agents {
 		if err := agent.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("agent %s: %w", name, err))
+			errs = append(errs, &xerrs.Wrapped{Msg: fmt.Sprintf("agent %s", name), Err: err})
 		}
 	}
 

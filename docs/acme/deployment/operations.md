@@ -1,6 +1,6 @@
 # Operations Runbook
 
-This runbook provides standard operating procedures for managing go-trusted-ca deployments in production environments.
+This runbook provides standard operating procedures for managing go-xkms deployments in production environments.
 
 ## Table of Contents
 
@@ -761,7 +761,7 @@ docker compose restart trusted-ca
 
 ```bash
 # Scan container image
-trivy image go-trusted-ca:latest
+trivy image go-xkms:latest
 
 # Scan Docker Compose configuration
 docker compose config --quiet && echo "Configuration valid"

@@ -450,3 +450,143 @@ test.describe('Setup Wizard - User Onboarding Flow', () => {
     await expect(page.getByText('Review and apply your configuration')).toBeVisible();
   });
 });
+
+test.describe('Setup Wizard - Security Warning Display', () => {
+  test.beforeEach(async ({ page }) => {
+    const realWails = await isRealWailsRuntime(page);
+    test.skip(realWails, REAL_WAILS_SKIP_REASON);
+  });
+
+  test('ApplySetup success with warnings triggers warning notification', async ({ page }) => {
+    // Install a mock where ApplySetup returns success=true with a downgrade warning.
+    await page.addInitScript(() => {
+      (window as any).go = {
+        services: {
+          SetupWizardService: {
+            GetStartupState: async () => ({
+              setup_complete: false,
+              enterprise_mode: false,
+              enterprise_wizard_mode: '',
+            }),
+            ProbeEnvironment: async () => ({
+              tpm_available: false,
+              luks_available: false,
+              platform: 'linux',
+              server_address: '',
+              barrier_strategies: [],
+            }),
+            GetPolicy: async () => null,
+            SkipSetup: async () => {},
+            ApplySetup: async () => ({
+              success: true,
+              errors: [],
+              warnings: [
+                'sealing strategy downgraded: requested "tpm_sealed" but barrier initialized with "passphrase"' +
+                  ' (TPM hardware key sealing is not available — ' +
+                  'to use TPM sealing, clear the TPM or provide the correct SO PIN, ' +
+                  'then re-run the setup wizard)',
+              ],
+              setup_complete: true,
+            }),
+          },
+          AuthService: {
+            SetModeUser: async () => {},
+          },
+          FIDO2DeviceService: {
+            ApproveTouchRequest: async () => true,
+          },
+        },
+      };
+    });
+
+    await page.goto('/');
+    await waitForSetupWizard(page);
+
+    // Navigate through wizard steps to reach the Apply step.
+    // Step 1: Welcome -> click Next
+    await clickNext(page);
+
+    // Step 2: Deployment mode -> pick Personal
+    await selectPersonalMode(page);
+
+    // Step 3: Security -> click Next (use defaults)
+    await clickNext(page);
+
+    // Step 4: PIN setup -> fill required fields and advance
+    await fillSOPin(page, '123456');
+    await fillConfirmSOPin(page, '123456');
+    await fillUserPin(page, '654321');
+    await fillConfirmUserPin(page, '654321');
+    await clickNext(page);
+
+    // Step 5: Data Storage -> click Next
+    await clickNext(page);
+
+    // Step 6: Review & Apply -> click "Apply Setup"
+    const applyBtn = page.locator('.step-actions .btn', { hasText: /apply/i });
+    await applyBtn.click();
+
+    // The warning notification toast must appear.
+    const notification = page.locator('.notification, [class*="notification"], [role="alert"]');
+    await expect(notification.filter({ hasText: /warning/i })).toBeVisible({ timeout: 10_000 });
+  });
+
+  test('ApplySetup success with warnings renders warnings panel in result screen', async ({ page }) => {
+    const warningText = 'sealing strategy downgraded: requested "tpm_sealed"';
+    await page.addInitScript((msg) => {
+      (window as any).go = {
+        services: {
+          SetupWizardService: {
+            GetStartupState: async () => ({
+              setup_complete: false,
+              enterprise_mode: false,
+              enterprise_wizard_mode: '',
+            }),
+            ProbeEnvironment: async () => ({
+              tpm_available: false,
+              luks_available: false,
+              platform: 'linux',
+              server_address: '',
+              barrier_strategies: [],
+            }),
+            GetPolicy: async () => null,
+            SkipSetup: async () => {},
+            ApplySetup: async () => ({
+              success: true,
+              errors: [],
+              warnings: [msg],
+              setup_complete: true,
+            }),
+          },
+          AuthService: {
+            SetModeUser: async () => {},
+          },
+          FIDO2DeviceService: {
+            ApproveTouchRequest: async () => true,
+          },
+        },
+      };
+    }, warningText);
+
+    await page.goto('/');
+    await waitForSetupWizard(page);
+
+    // Navigate through wizard steps.
+    await clickNext(page);
+    await selectPersonalMode(page);
+    await clickNext(page);
+    await fillSOPin(page, '123456');
+    await fillConfirmSOPin(page, '123456');
+    await fillUserPin(page, '654321');
+    await fillConfirmUserPin(page, '654321');
+    await clickNext(page);
+    await clickNext(page);
+
+    const applyBtn = page.locator('.step-actions .btn', { hasText: /apply/i });
+    await applyBtn.click();
+
+    // The result panel should contain the warning text.
+    await expect(page.locator('.result-messages.warnings')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('.result-messages.warnings')).toContainText('sealing strategy downgraded');
+  });
+});

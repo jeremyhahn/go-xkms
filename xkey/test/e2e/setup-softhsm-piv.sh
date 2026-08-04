@@ -20,6 +20,16 @@
 #   9D (Key Management)    → 0x03
 #   9E (Card Authentication) → 0x04
 #
+# Idempotency is per-object, by design: this script NEVER deletes an existing
+# token. A long-running consumer (e.g. the xkey Wails dev server used by the
+# Playwright e2e tier) may hold an open PKCS#11 session against this exact
+# token while another test file consumes (deletes) one slot's cert/key pair
+# and this script is re-run to restore it. Deleting and recreating the whole
+# token would invalidate that live session (new token UUID / possibly a new
+# slot ID). Instead, each of the four PIV slots is checked independently by
+# its CKA_ID and only regenerated if missing — the token itself, once
+# created, is never destroyed by this script.
+#
 # Exports:
 #   SOFTHSM_PIV_SLOT     — slot number assigned to the e2e-piv-test token
 #   SOFTHSM_PIV_PIN      — user PIN (123456)
@@ -41,6 +51,14 @@ pkcs11() {
     pkcs11-tool --module "${SOFTHSM_LIB}" "$@"
 }
 
+# cert_exists ID — true if a certificate object with the given CKA_ID
+# (two hex digits, e.g. "01") is already present on the token.
+cert_exists() {
+    local id="$1"
+    pkcs11 --token-label "${TOKEN_LABEL}" -O --type cert --id "${id}" 2>/dev/null \
+        | grep -q "Certificate Object"
+}
+
 # ---------------------------------------------------------------------------
 # 1. Check prerequisites
 # ---------------------------------------------------------------------------
@@ -57,33 +75,18 @@ for cmd in softhsm2-util pkcs11-tool openssl; do
 done
 
 # ---------------------------------------------------------------------------
-# 2. Idempotency check — skip only if token exists AND has certificates
+# 2. Create the token only if it does not already exist. Never delete it —
+#    see the idempotency note in the file header.
 # ---------------------------------------------------------------------------
-if softhsm2-util --show-slots 2>/dev/null | grep -q "${TOKEN_LABEL}"; then
-    CERT_COUNT=$(pkcs11 --token-label "${TOKEN_LABEL}" -O --type cert 2>/dev/null | grep -c "Certificate Object" || true)
-    if [ "${CERT_COUNT}" -ge 4 ]; then
-        echo "[setup-softhsm-piv] Token '${TOKEN_LABEL}' already populated with ${CERT_COUNT} certs."
-        SLOT=$(softhsm2-util --show-slots 2>/dev/null \
-            | grep -B 20 "Label:.*${TOKEN_LABEL}" \
-            | grep "^Slot " | tail -1 | awk '{print $2}')
-        export SOFTHSM_PIV_SLOT="${SLOT:-0}"
-        export SOFTHSM_PIV_PIN="${USER_PIN}"
-        export SOFTHSM_PIV_LIBRARY="${SOFTHSM_LIB}"
-        echo "[setup-softhsm-piv] SOFTHSM_PIV_SLOT=${SOFTHSM_PIV_SLOT}"
-        exit 0
-    fi
-    echo "[setup-softhsm-piv] Token '${TOKEN_LABEL}' exists but has only ${CERT_COUNT} certs, reinitializing..."
-    softhsm2-util --delete-token --token "${TOKEN_LABEL}" 2>/dev/null || true
+if softhsm2-util --show-slots 2>/dev/null | grep -q "Label:.*${TOKEN_LABEL}"; then
+    echo "[setup-softhsm-piv] Token '${TOKEN_LABEL}' already exists."
+else
+    echo "[setup-softhsm-piv] Initializing SoftHSM2 token '${TOKEN_LABEL}'..."
+    softhsm2-util --init-token --free \
+        --label "${TOKEN_LABEL}" \
+        --so-pin "${SO_PIN}" \
+        --pin "${USER_PIN}"
 fi
-
-# ---------------------------------------------------------------------------
-# 3. Initialize the token
-# ---------------------------------------------------------------------------
-echo "[setup-softhsm-piv] Initializing SoftHSM2 token '${TOKEN_LABEL}'..."
-softhsm2-util --init-token --free \
-    --label "${TOKEN_LABEL}" \
-    --so-pin "${SO_PIN}" \
-    --pin "${USER_PIN}"
 
 # Resolve the assigned slot number by finding the Slot line that precedes our token label.
 SLOT=$(softhsm2-util --show-slots 2>/dev/null \
@@ -93,10 +96,10 @@ if [ -z "${SLOT}" ]; then
     echo "[setup-softhsm-piv] ERROR: could not resolve slot for token '${TOKEN_LABEL}'"
     exit 1
 fi
-echo "[setup-softhsm-piv] Token initialized in slot ${SLOT}."
+echo "[setup-softhsm-piv] Token is in slot ${SLOT}."
 
 # ---------------------------------------------------------------------------
-# 4. Generate self-signed test certificates
+# 3. Generate self-signed test certificates for any missing PIV slot
 # ---------------------------------------------------------------------------
 mkdir -p "${CERT_DIR}"
 
@@ -104,6 +107,11 @@ generate_rsa_cert() {
     local name="$1"
     local cn="$2"
     local id="$3"
+
+    if cert_exists "${id}"; then
+        echo "[setup-softhsm-piv] ${cn} (CKA_ID=0x${id}) already present, skipping."
+        return
+    fi
 
     local key="${CERT_DIR}/${name}.key"
     local cert="${CERT_DIR}/${name}.crt"
@@ -128,6 +136,11 @@ generate_ec_cert() {
     local name="$1"
     local cn="$2"
     local id="$3"
+
+    if cert_exists "${id}"; then
+        echo "[setup-softhsm-piv] ${cn} (CKA_ID=0x${id}) already present, skipping."
+        return
+    fi
 
     local key="${CERT_DIR}/${name}.key"
     local cert="${CERT_DIR}/${name}.crt"
@@ -162,13 +175,13 @@ generate_rsa_cert "piv-keymgmt" "Key Management Test"     "03"
 generate_ec_cert  "piv-cardauth" "Card Authentication Test" "04"
 
 # ---------------------------------------------------------------------------
-# 5. Clean up temporary certificate files
+# 4. Clean up temporary certificate files
 # ---------------------------------------------------------------------------
 rm -rf "${CERT_DIR}"
 echo "[setup-softhsm-piv] Temporary certificate files removed."
 
 # ---------------------------------------------------------------------------
-# 6. Export environment variables
+# 5. Export environment variables
 # ---------------------------------------------------------------------------
 export SOFTHSM_PIV_SLOT="${SLOT}"
 export SOFTHSM_PIV_PIN="${USER_PIN}"

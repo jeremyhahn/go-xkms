@@ -116,9 +116,9 @@ func TestVerifyHybridCertificate_AltSigAlgNoValue_B16(t *testing.T) {
 // SignatureAlgorithm field uses an OID not in algorithmOIDMap.
 //
 // verifyQuantumCertificate calls:
-//   1. asn1.Unmarshal(certDER, &rawCert)      — outer parse (line 254)
-//   2. asn1.Unmarshal(rawCert.FullBytes, &inner) — inner parse (line 268)
-//   3. oidToQuantumAlgorithm(...)              — OID lookup (line 273)
+//  1. asn1.Unmarshal(certDER, &rawCert)      — outer parse (line 254)
+//  2. asn1.Unmarshal(rawCert.FullBytes, &inner) — inner parse (line 268)
+//  3. oidToQuantumAlgorithm(...)              — OID lookup (line 273)
 //
 // For (2) to succeed, rawCert.FullBytes must be a SEQUENCE containing the
 // three certificate fields. rawCert.FullBytes == certDER, so certDER itself

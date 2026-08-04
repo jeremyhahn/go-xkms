@@ -1,0 +1,184 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - navigation "Main navigation" [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - img [ref=e8]
+          - generic [ref=e9]: xKey
+        - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+          - img [ref=e11]
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: OVERVIEW
+          - button "Dashboard" [ref=e16] [cursor=pointer]:
+            - img [ref=e17]
+            - generic [ref=e19]: Dashboard
+          - button "Pairing" [ref=e20] [cursor=pointer]:
+            - img [ref=e21]
+            - generic [ref=e23]: Pairing
+          - button "TPM 2.0" [ref=e134] [cursor=pointer]:
+            - img [ref=e135]
+            - generic [ref=e137]: TPM 2.0
+        - generic [ref=e24]:
+          - generic [ref=e25]: STORE
+          - button "Keys" [ref=e26] [cursor=pointer]:
+            - img [ref=e27]
+            - generic [ref=e29]: Keys
+          - button "Trust Store" [ref=e30] [cursor=pointer]:
+            - img [ref=e31]
+            - generic [ref=e33]: Trust Store
+          - button "Certificates" [ref=e34] [cursor=pointer]:
+            - img [ref=e35]
+            - generic [ref=e37]: Certificates
+        - generic [ref=e38]:
+          - generic [ref=e39]: APPLICATIONS
+          - button "SSH" [ref=e40] [cursor=pointer]:
+            - img [ref=e41]
+            - generic [ref=e43]: SSH
+          - button "FIDO2" [ref=e44] [cursor=pointer]:
+            - img [ref=e45]
+            - generic [ref=e47]: FIDO2
+          - button "OATH" [ref=e48] [cursor=pointer]:
+            - img [ref=e49]
+            - generic [ref=e51]: OATH
+          - button "PIV" [ref=e52] [cursor=pointer]:
+            - img [ref=e53]
+            - generic [ref=e55]: PIV
+          - button "Passwords" [ref=e56] [cursor=pointer]:
+            - img [ref=e57]
+            - generic [ref=e59]: Passwords
+          - button "Sealed Data" [ref=e60] [cursor=pointer]:
+            - img [ref=e61]
+            - generic [ref=e63]: Sealed Data
+          - button "Browser" [ref=e64] [cursor=pointer]:
+            - img [ref=e65]
+            - generic [ref=e67]: Browser
+        - generic [ref=e68]:
+          - generic [ref=e69]: MANAGEMENT
+          - button "Audit Log" [ref=e70] [cursor=pointer]:
+            - img [ref=e71]
+            - generic [ref=e73]: Audit Log
+          - button "Admin" [ref=e74] [cursor=pointer]:
+            - img [ref=e75]
+            - generic [ref=e77]: Admin
+        - generic [ref=e78]:
+          - generic [ref=e79]: DEVELOPER TOOLS
+          - button "OIDC" [ref=e80] [cursor=pointer]:
+            - img [ref=e81]
+            - generic [ref=e83]: OIDC
+          - button "API Explorer" [ref=e84] [cursor=pointer]:
+            - img [ref=e85]
+            - generic [ref=e87]: API Explorer
+      - generic [ref=e88]:
+        - generic "Standalone mode" [ref=e89]:
+          - generic [ref=e91]: Standalone
+        - button "Theme" [ref=e92] [cursor=pointer]:
+          - img [ref=e93]
+          - generic [ref=e95]: Theme
+        - button "Settings" [ref=e96] [cursor=pointer]:
+          - img [ref=e97]
+          - generic [ref=e99]: Settings
+    - main [ref=e100]:
+      - generic [ref=e102]:
+        - button "Lock app" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+          - generic [ref=e106]: Lock
+        - button "No touch pending" [disabled] [ref=e107]:
+          - img [ref=e109]
+      - generic [ref=e259]:
+        - generic [ref=e262]:
+          - heading "Key Management" [level=1] [ref=e263]
+          - paragraph [ref=e264]: Local key operations
+        - generic [ref=e265]:
+          - generic [ref=e266]:
+            - generic [ref=e268]:
+              - generic [ref=e269]: "3"
+              - generic [ref=e270]: Total Keys
+            - generic [ref=e272]:
+              - generic [ref=e273]: "2"
+              - generic [ref=e274]: Backends
+            - generic [ref=e276]:
+              - button "Generate Key" [ref=e277] [cursor=pointer]:
+                - img [ref=e278]
+                - generic [ref=e280]: Generate Key
+              - button "Generate SSH Key" [ref=e281] [cursor=pointer]:
+                - img [ref=e282]
+                - generic [ref=e284]: Generate SSH Key
+          - generic [ref=e285]:
+            - img [ref=e286]
+            - button "All Backends" [ref=e288] [cursor=pointer]
+            - button "software" [ref=e289] [cursor=pointer]
+            - button "tpm2" [ref=e290] [cursor=pointer]
+            - generic [ref=e291]: "|"
+            - button "All Types" [ref=e292] [cursor=pointer]
+            - button "SSH" [ref=e293] [cursor=pointer]
+            - button "Refresh" [ref=e294] [cursor=pointer]:
+              - img [ref=e295]
+              - generic [ref=e297]: Refresh
+          - table [ref=e390]:
+            - rowgroup [ref=e391]:
+              - row "Key ID Backend Purpose Algorithm Actions" [ref=e392]:
+                - columnheader [ref=e393]:
+                  - checkbox [ref=e394] [cursor=pointer]
+                - columnheader "Key ID" [ref=e395] [cursor=pointer]
+                - columnheader "Backend" [ref=e396] [cursor=pointer]
+                - columnheader "Purpose" [ref=e397] [cursor=pointer]
+                - columnheader "Algorithm" [ref=e398] [cursor=pointer]
+                - columnheader "Actions" [ref=e399]
+            - rowgroup [ref=e400]:
+              - row "chrometest-ssh-sw Software SSH ed25519" [ref=e401] [cursor=pointer]:
+                - cell [ref=e402]:
+                  - checkbox [ref=e403]
+                - cell "chrometest-ssh-sw" [ref=e404]:
+                  - generic [ref=e405]:
+                    - img [ref=e406]
+                    - generic [ref=e408]: chrometest-ssh-sw
+                - cell "Software" [ref=e409]:
+                  - generic "Software" [ref=e410]:
+                    - img [ref=e411]
+                    - generic [ref=e413]: Software
+                - cell "SSH" [ref=e414]:
+                  - generic [ref=e415]: SSH
+                - cell "ed25519" [ref=e416]
+                - cell [ref=e417]:
+                  - button "Actions" [ref=e419]:
+                    - img [ref=e420]
+              - row "chrometest-ssh-tpm TPM 2.0 SSH ecdsa-p256" [ref=e422] [cursor=pointer]:
+                - cell [ref=e423]:
+                  - checkbox [ref=e424]
+                - cell "chrometest-ssh-tpm" [ref=e425]:
+                  - generic [ref=e426]:
+                    - img [ref=e427]
+                    - generic [ref=e429]: chrometest-ssh-tpm
+                - cell "TPM 2.0" [ref=e430]:
+                  - generic "TPM 2.0 (hardware-backed)" [ref=e431]:
+                    - img [ref=e432]
+                    - generic [ref=e434]: TPM 2.0
+                - cell "SSH" [ref=e435]:
+                  - generic [ref=e436]: SSH
+                - cell "ecdsa-p256" [ref=e437]
+                - cell [ref=e438]:
+                  - button "Actions" [ref=e440]:
+                    - img [ref=e441]
+              - row "chrometest-tpm-filtered TPM 2.0 SSH rsa" [ref=e443] [cursor=pointer]:
+                - cell [ref=e444]:
+                  - checkbox [ref=e445]
+                - cell "chrometest-tpm-filtered" [ref=e446]:
+                  - generic [ref=e447]:
+                    - img [ref=e448]
+                    - generic [ref=e450]: chrometest-tpm-filtered
+                - cell "TPM 2.0" [ref=e451]:
+                  - generic "TPM 2.0 (hardware-backed)" [ref=e452]:
+                    - img [ref=e453]
+                    - generic [ref=e455]: TPM 2.0
+                - cell "SSH" [ref=e456]:
+                  - generic [ref=e457]: SSH
+                - cell "rsa" [ref=e458]
+                - cell [ref=e459]:
+                  - button "Actions" [ref=e461]:
+                    - img [ref=e462]
+  - alert [ref=e464]:
+    - img [ref=e466]
+    - generic [ref=e468]: SSH key "chrometest-tpm-filtered" generated
+    - button "Dismiss notification" [ref=e469] [cursor=pointer]:
+      - img [ref=e470]

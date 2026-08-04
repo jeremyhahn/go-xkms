@@ -1,0 +1,216 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package seal
+
+import (
+	"log/slog"
+	"time"
+
+	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+)
+
+// This file is the ONE canonical hardware-seal autodetect for the stack. It
+// generalizes the policy previously duplicated in go-quicbaas
+// (pkg/server/seal_autodetect.go) and xkey (barrier_service ProbeStrategies):
+// probe a TPM exactly once, bounded and non-provisioning, and — only when a
+// provisioned, seal-capable device answers — build the go-xkms TPM2 sealing
+// strategy. Consumers (go-quicbaas, xkey, xkms's own barrier, cluster CA key
+// protection) call this instead of re-implementing the probe. go-xkms owns all
+// hardware crypto, so this is its to provide.
+//
+// Hardening carried over verbatim from the quicbaas original, and it matters:
+//   - The probe is OPT-IN at the caller: an absent TPM2 config yields an empty
+//     result (software fallback), never a blind hardware default.
+//   - Autodetect NEVER provisions. A fresh device returns
+//     ErrTPM2BackendNotInitialized; that is treated as "not usable" so a slow
+//     or unprovisioned TPM can never stall boot. Only an already-provisioned,
+//     CanSeal() device is selected. An operator wanting boot-time provisioning
+//     must construct the tpm2 backend explicitly.
+//   - The TPM is opened EXACTLY ONCE. The single open's backend is returned in
+//     the result and reused for the barrier / key stores for its whole life —
+//     there is no probe-then-reopen. A swtpm emulator empirically HANGS on a
+//     second open within a process, so never relying on reopen keeps every
+//     path emulator-safe.
+
+// DefaultProbeTimeout bounds the single autodetect TPM open so a slow or wedged
+// TPM can never stall a daemon boot.
+const DefaultProbeTimeout = 3 * time.Second
+
+// TPM2ProbeConfig is the subset of the TPM2 backend configuration the
+// autodetect probe needs. Callers map their own config onto it so this package
+// does not depend on any consumer's config type.
+type TPM2ProbeConfig struct {
+	Device          string
+	KeyDir          string
+	UseSimulator    bool
+	SimulatorHost   string
+	SimulatorPort   int
+	SRKHandle       uint32
+	PlatformPolicy  bool
+	PlatformPCR     uint
+	PlatformPCRBank string
+}
+
+// AutodetectOptions configures BuildBestStrategy.
+type AutodetectOptions struct {
+	// TPM2 enables the TPM probe when non-nil. Nil skips it (software fallback).
+	TPM2 *TPM2ProbeConfig
+
+	// ProbeTimeout bounds the single TPM open. Zero uses DefaultProbeTimeout.
+	ProbeTimeout time.Duration
+
+	// Logger receives probe diagnostics. Nil uses slog.Default().
+	Logger *slog.Logger
+}
+
+// AutodetectResult holds the selected hardware strategy (if any) and the
+// underlying open sealer, so the caller can reuse the single TPM open for the
+// barrier and node-local key stores, and Close it on shutdown.
+type AutodetectResult struct {
+	// Strategy is the selected hardware SealingStrategy, or nil when no usable
+	// hardware sealer was found (the caller then uses the software strategy).
+	Strategy SealingStrategy
+
+	// Sealer is the underlying types.Sealer (the open TPM backend) for reuse in
+	// sealed key stores; nil when Strategy is nil.
+	Sealer types.Sealer
+
+	// ID is the selected strategy ID ("tpm2"), or empty when none.
+	ID StrategyID
+
+	// closer releases the single TPM open. Nil when no backend was opened.
+	closer interface{ Close() error }
+}
+
+// HardwareAvailable reports whether a usable hardware sealer was selected.
+func (r *AutodetectResult) HardwareAvailable() bool {
+	return r != nil && r.Strategy != nil
+}
+
+// Close releases the underlying TPM open, if any. Safe on a nil receiver and
+// when no backend was opened.
+func (r *AutodetectResult) Close() error {
+	if r == nil || r.closer == nil {
+		return nil
+	}
+	return r.closer.Close()
+}
+
+// tpm2Sealer is the surface a probed TPM backend must expose: seal capability
+// plus lifecycle. *tpm2backend.Backend satisfies it.
+type tpm2Sealer interface {
+	types.Sealer
+	Close() error
+}
+
+// openTPM2Backend opens a TPM2 backend from the probe config. It is a package
+// var so tests can stub the open deterministically without touching hardware,
+// mirroring quicbaas's tpm2AutoSealStrategy seam. errTPM2NotInitialized lets
+// the probe classify a fresh/unprovisioned device as "not usable".
+var openTPM2Backend = func(cfg *TPM2ProbeConfig) (tpm2Sealer, error) {
+	return tpm2backend.NewBackend(&tpm2backend.Config{
+		Device:          cfg.Device,
+		KeyDir:          cfg.KeyDir,
+		UseSimulator:    cfg.UseSimulator,
+		SimulatorHost:   cfg.SimulatorHost,
+		SimulatorPort:   cfg.SimulatorPort,
+		SRKHandle:       cfg.SRKHandle,
+		PlatformPolicy:  cfg.PlatformPolicy,
+		PlatformPCR:     cfg.PlatformPCR,
+		PlatformPCRBank: cfg.PlatformPCRBank,
+	})
+}
+
+// errTPM2NotInitialized is the sentinel a fresh/unprovisioned TPM open returns;
+// autodetect treats it as "not usable" (no provisioning).
+var errTPM2NotInitialized = tpm2backend.ErrNotInitialized
+
+// BuildBestStrategy runs the single bounded, non-provisioning TPM probe and
+// returns the best available hardware seal strategy. When no provisioned,
+// seal-capable TPM is present (or TPM2 config is nil), it returns a result with
+// a nil Strategy; the caller then falls back to the software strategy. The
+// returned result owns the single TPM open — call Close() on shutdown.
+func BuildBestStrategy(opts AutodetectOptions) *AutodetectResult {
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	empty := &AutodetectResult{}
+	if opts.TPM2 == nil {
+		return empty
+	}
+	timeout := opts.ProbeTimeout
+	if timeout == 0 {
+		timeout = DefaultProbeTimeout
+	}
+
+	type openResult struct {
+		backend tpm2Sealer
+		err     error
+	}
+	resultCh := make(chan openResult, 1)
+	go func() {
+		backend, err := openTPM2Backend(opts.TPM2)
+		resultCh <- openResult{backend: backend, err: err}
+	}()
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			if errTPM2NotInitialized != nil && (r.err == errTPM2NotInitialized) {
+				logger.Debug("seal autodetect: TPM present but unprovisioned; not selecting (construct the tpm2 backend explicitly to provision)")
+			} else {
+				logger.Debug("seal autodetect: TPM open failed; selecting software", slog.String("error", r.err.Error()))
+			}
+			return empty
+		}
+		if !r.backend.CanSeal() {
+			_ = r.backend.Close()
+			logger.Debug("seal autodetect: TPM open but not seal-capable; selecting software")
+			return empty
+		}
+		logger.Info("seal autodetect: provisioned, seal-capable TPM present; selecting tpm2 strategy")
+		return &AutodetectResult{
+			Strategy: NewTPM2Strategy(r.backend, nil),
+			Sealer:   r.backend,
+			ID:       StrategyTPM2,
+			closer:   r.backend,
+		}
+	case <-time.After(timeout):
+		// Drain and close the late open so a wedged TPM session cannot leak.
+		go func() {
+			r := <-resultCh
+			if r.err == nil && r.backend != nil {
+				_ = r.backend.Close()
+			}
+		}()
+		logger.Warn("seal autodetect: TPM open timed out; selecting software", slog.Duration("timeout", timeout))
+		return empty
+	}
+}
+
+// ProbeStrategies returns the hardware strategy IDs currently available,
+// alongside the always-present software fallback — the surface a UI (e.g. the
+// xkey setup wizard) needs to LIST selectable seal modes. It shares the single
+// probe with BuildBestStrategy; when a TPM is selected the returned result owns
+// its open (Close on shutdown), so listing and auto-selecting are one path.
+func ProbeStrategies(opts AutodetectOptions) (available []StrategyID, result *AutodetectResult) {
+	result = BuildBestStrategy(opts)
+	available = []StrategyID{StrategyPassphrase, StrategyNone}
+	if result.HardwareAvailable() {
+		available = append([]StrategyID{result.ID}, available...)
+	}
+	return available, result
+}

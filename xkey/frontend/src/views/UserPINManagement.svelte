@@ -41,9 +41,15 @@
   async function loadLockoutStatus(): Promise<void> {
     lockoutLoading = true;
     const result = await callBackend<LockoutStatus>('PINService', 'GetLockoutStatus');
-    if (result) {
-      lockoutStatus = result;
-    }
+    // When the backend has no native lockout (software backend returns nil),
+    // use a zero-value default so the panel renders instead of spinning.
+    lockoutStatus = result ?? {
+      failed_attempts: 0,
+      max_attempts: 0,
+      is_locked: false,
+      lockout_until: '',
+      recovery_seconds: 0,
+    };
     lockoutLoading = false;
   }
 

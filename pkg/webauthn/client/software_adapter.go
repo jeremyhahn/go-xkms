@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/fxamacker/cbor/v2"
 
 	softwarebackend "github.com/jeremyhahn/go-xkms/pkg/backend/software"
@@ -91,31 +93,31 @@ func (a *SoftwareAdapter) Available() bool {
 func (a *SoftwareAdapter) MakeCredential(options []byte) ([]byte, error) {
 	var opts creationOptions
 	if err := json.Unmarshal(options, &opts); err != nil {
-		return nil, fmt.Errorf("%w: failed to parse creation options: %w", ErrCTAPOperationFailed, err)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to parse creation options", Cause: err}
 	}
 
 	rpID := opts.PublicKey.RP.ID
 	if rpID == "" {
-		return nil, fmt.Errorf("%w: missing RP ID in creation options", ErrCTAPOperationFailed)
+		return nil, &errs.Detail{Err: ErrCTAPOperationFailed, Detail: "missing RP ID in creation options"}
 	}
 
 	challenge, err := base64.RawURLEncoding.DecodeString(opts.PublicKey.Challenge)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidChallenge, err)
+		return nil, &errs.Joined{Lead: ErrInvalidChallenge, Cause: err}
 	}
 
 	// Build CollectedClientData JSON and compute clientDataHash
 	clientData := buildCollectedClientData("webauthn.create", challenge, "https://"+rpID)
 	clientDataBytes, err := json.Marshal(clientData)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to marshal client data: %w", ErrCTAPOperationFailed, err)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to marshal client data", Cause: err}
 	}
 	clientDataHash := sha256.Sum256(clientDataBytes)
 
 	// Decode user ID from base64url to raw bytes
 	userIDBytes, err := base64.RawURLEncoding.DecodeString(opts.PublicKey.User.ID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to decode user ID: %w", ErrCTAPOperationFailed, err)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to decode user ID", Cause: err}
 	}
 
 	// Build CTAP2 MakeCredential request (integer-keyed CBOR map)
@@ -150,27 +152,27 @@ func (a *SoftwareAdapter) MakeCredential(options []byte) ([]byte, error) {
 
 	cborData, err := cbor.Marshal(reqMap)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to encode CTAP2 request: %w", ErrCTAPOperationFailed, err)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to encode CTAP2 request", Cause: err}
 	}
 
 	// Call the real authenticator
 	resp, ctapErr := a.auth.ProcessCBOR(authenticator.CmdMakeCredential, cborData)
 	if ctapErr != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCTAPOperationFailed, ctapErr)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Cause: ctapErr}
 	}
 
 	// Parse the CTAP2 response: [statusByte][cborPayload]
 	if len(resp) < 1 {
-		return nil, fmt.Errorf("%w: empty response from authenticator", ErrCTAPOperationFailed)
+		return nil, &errs.Detail{Err: ErrCTAPOperationFailed, Detail: "empty response from authenticator"}
 	}
 	if resp[0] != authenticator.StatusOK {
-		return nil, fmt.Errorf("%w: authenticator returned status 0x%02x", ErrCTAPOperationFailed, resp[0])
+		return nil, &errs.Detail{Err: ErrCTAPOperationFailed, Detail: fmt.Sprintf("authenticator returned status 0x%02x", resp[0])}
 	}
 
 	// Decode the CBOR response payload (integer-keyed map)
 	var ctapResp map[int]interface{}
 	if err := cbor.Unmarshal(resp[1:], &ctapResp); err != nil {
-		return nil, fmt.Errorf("%w: failed to decode CTAP2 response: %w", ErrCTAPOperationFailed, err)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to decode CTAP2 response", Cause: err}
 	}
 
 	// Extract fields from CTAP2 response
@@ -184,7 +186,7 @@ func (a *SoftwareAdapter) MakeCredential(options []byte) ([]byte, error) {
 	// Extract credential ID from authData
 	credentialID, err := extractCredentialIDFromAuthData(authDataRaw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCTAPOperationFailed, err)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Cause: err}
 	}
 
 	// Re-encode the attestation object as string-keyed CBOR (WebAuthn format)
@@ -194,7 +196,7 @@ func (a *SoftwareAdapter) MakeCredential(options []byte) ([]byte, error) {
 		"authData": authDataRaw,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to encode attestation object: %w", ErrCTAPOperationFailed, err)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to encode attestation object", Cause: err}
 	}
 
 	// Build the WebAuthn JSON attestation response
@@ -218,24 +220,24 @@ func (a *SoftwareAdapter) MakeCredential(options []byte) ([]byte, error) {
 func (a *SoftwareAdapter) GetAssertion(options []byte) ([]byte, error) {
 	var opts assertionOptions
 	if err := json.Unmarshal(options, &opts); err != nil {
-		return nil, fmt.Errorf("%w: failed to parse assertion options: %w", ErrCTAPOperationFailed, err)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to parse assertion options", Cause: err}
 	}
 
 	rpID := opts.PublicKey.RPID
 	if rpID == "" {
-		return nil, fmt.Errorf("%w: missing RP ID in assertion options", ErrCTAPOperationFailed)
+		return nil, &errs.Detail{Err: ErrCTAPOperationFailed, Detail: "missing RP ID in assertion options"}
 	}
 
 	challenge, err := base64.RawURLEncoding.DecodeString(opts.PublicKey.Challenge)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidChallenge, err)
+		return nil, &errs.Joined{Lead: ErrInvalidChallenge, Cause: err}
 	}
 
 	// Build CollectedClientData JSON and compute clientDataHash
 	clientData := buildCollectedClientData("webauthn.get", challenge, "https://"+rpID)
 	clientDataBytes, err := json.Marshal(clientData)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to marshal client data: %w", ErrCTAPOperationFailed, err)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to marshal client data", Cause: err}
 	}
 	clientDataHash := sha256.Sum256(clientDataBytes)
 
@@ -264,37 +266,37 @@ func (a *SoftwareAdapter) GetAssertion(options []byte) ([]byte, error) {
 
 	cborData, err := cbor.Marshal(reqMap)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to encode CTAP2 request: %w", ErrCTAPOperationFailed, err)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to encode CTAP2 request", Cause: err}
 	}
 
 	// Call the real authenticator
 	resp, ctapErr := a.auth.ProcessCBOR(authenticator.CmdGetAssertion, cborData)
 	if ctapErr != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCTAPOperationFailed, ctapErr)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Cause: ctapErr}
 	}
 
 	// Parse the CTAP2 response
 	if len(resp) < 1 {
-		return nil, fmt.Errorf("%w: empty response from authenticator", ErrCTAPOperationFailed)
+		return nil, &errs.Detail{Err: ErrCTAPOperationFailed, Detail: "empty response from authenticator"}
 	}
 	if resp[0] != authenticator.StatusOK {
-		return nil, fmt.Errorf("%w: authenticator returned status 0x%02x", ErrCTAPOperationFailed, resp[0])
+		return nil, &errs.Detail{Err: ErrCTAPOperationFailed, Detail: fmt.Sprintf("authenticator returned status 0x%02x", resp[0])}
 	}
 
 	// Decode the CBOR response payload
 	var ctapResp map[int]interface{}
 	if err := cbor.Unmarshal(resp[1:], &ctapResp); err != nil {
-		return nil, fmt.Errorf("%w: failed to decode CTAP2 response: %w", ErrCTAPOperationFailed, err)
+		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to decode CTAP2 response", Cause: err}
 	}
 
 	// Extract credential ID from the response
 	credMap, ok := ctapResp[0x01].(map[interface{}]interface{})
 	if !ok {
-		return nil, fmt.Errorf("%w: missing credential in assertion response", ErrCTAPOperationFailed)
+		return nil, &errs.Detail{Err: ErrCTAPOperationFailed, Detail: "missing credential in assertion response"}
 	}
 	credIDBytes, _ := credMap["id"].([]byte)
 	if len(credIDBytes) == 0 {
-		return nil, fmt.Errorf("%w: empty credential ID in assertion response", ErrCTAPOperationFailed)
+		return nil, &errs.Detail{Err: ErrCTAPOperationFailed, Detail: "empty credential ID in assertion response"}
 	}
 
 	authDataRaw, _ := ctapResp[0x02].([]byte)
@@ -428,18 +430,18 @@ func buildCBORPubKeyCredParams(params []pubKeyCredParam) []map[string]interface{
 // If AT flag (bit 6) is set: aaguid(16) + credIDLen(2 big-endian) + credentialID
 func extractCredentialIDFromAuthData(authData []byte) ([]byte, error) {
 	if len(authData) < 37 {
-		return nil, fmt.Errorf("authData too short: %d bytes", len(authData))
+		return nil, &errs.Message{Msg: fmt.Sprintf("authData too short: %d bytes", len(authData))}
 	}
 
 	flags := authData[32]
 	if flags&0x40 == 0 {
-		return nil, fmt.Errorf("AT flag not set in authData")
+		return nil, &errs.Message{Msg: "AT flag not set in authData"}
 	}
 
 	// After the 37-byte header: aaguid(16) + credIDLen(2) + credentialID
 	offset := 37
 	if len(authData) < offset+16+2 {
-		return nil, fmt.Errorf("authData too short for attested credential data")
+		return nil, &errs.Message{Msg: "authData too short for attested credential data"}
 	}
 
 	// Skip AAGUID (16 bytes)
@@ -449,7 +451,7 @@ func extractCredentialIDFromAuthData(authData []byte) ([]byte, error) {
 	offset += 2
 
 	if len(authData) < offset+int(credIDLen) {
-		return nil, fmt.Errorf("authData too short for credential ID")
+		return nil, &errs.Message{Msg: "authData too short for credential ID"}
 	}
 
 	credentialID := make([]byte, credIDLen)

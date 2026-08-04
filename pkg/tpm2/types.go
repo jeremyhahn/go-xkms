@@ -52,6 +52,10 @@ const (
 	nvramCounterIndex = 0x01800010 //nolint:unused // used in tests
 	nvramExtendIndex  = 0x01800020 //nolint:unused // used in tests
 
+	// nvramChunkIndex is used to test chunked NVRead/NVWrite paths for
+	// indices larger than TPM_PT_NV_BUFFER_MAX.
+	nvramChunkIndex = 0x01800030 //nolint:unused // used in tests
+
 	// Trusted Platform EK and SRK stored under the Platform Hierarchy
 	// Registry of Reserved TPM 2.0 Handles and Localities, Section 2.3.1 - Key Handle Assignments
 	tpEKIndex   = 0x81800001
@@ -108,6 +112,7 @@ var (
 	ErrInvalidNVExtendData             = errors.New("tpm: invalid NV extend data - data cannot be nil or empty")
 	ErrIAKNotProvisioned               = errors.New("tpm: IAK not provisioned")
 	ErrTransportNotInitialized         = errors.New("tpm: transport not initialized")
+	ErrInstallTransportNotInitialized  = errors.New("tpm: TPM transport not initialized")
 	ErrLockoutResetFailed              = errors.New("tpm: dictionary attack lockout reset failed")
 	ErrEKNotInitialized                = errors.New("tpm: endorsement key not initialized")
 	ErrEKPublicRead                    = errors.New("tpm: failed to read endorsement key public area")
@@ -123,6 +128,7 @@ var (
 	ErrIAKConfigFailed                 = errors.New("tpm: failed to create IAK attributes from config")
 	ErrCSRFieldTooLarge                = errors.New("tpm: CSR field exceeds maximum size")
 	ErrNVSecretTooLarge                = errors.New("tpm: NV secret data exceeds maximum size")
+	ErrNVReadNotAuthorized             = errors.New("tpm: NV index has no readable attribute (AuthRead or OwnerRead) matching the provided credentials")
 	ErrInvalidHierarchy                = errors.New("tpm: invalid hierarchy")
 	ErrFactoryReset                    = errors.New("tpm: factory reset failed")
 	ErrForceClear                      = errors.New("tpm: force clear via PPI failed")

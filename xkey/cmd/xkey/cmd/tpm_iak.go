@@ -186,7 +186,7 @@ func runIAKShow(cmd *cobra.Command, args []string) error {
 	// Get IAK attributes
 	iakAttrs, err := tpm.IAKAttributes()
 	if err != nil {
-		return fmt.Errorf("%w: IAK not found - run 'tpm provision' first", ErrKeyNotFound)
+		return &DetailError{Err: ErrKeyNotFound, Detail: ": IAK not found - run 'tpm provision' first"}
 	}
 
 	info := &IAKInfo{
@@ -265,7 +265,7 @@ func runIAKCreate(cmd *cobra.Command, args []string) error {
 	case "rsa2048", "rsa-pss", "ecc256":
 		// Valid
 	default:
-		return fmt.Errorf("%w: %s", ErrInvalidIAKTemplate, iakCreateTemplate)
+		return &DetailError{Err: ErrInvalidIAKTemplate, Detail: fmt.Sprintf(": %s", iakCreateTemplate)}
 	}
 
 	tpm, err := openTPM()
@@ -277,21 +277,21 @@ func runIAKCreate(cmd *cobra.Command, args []string) error {
 	// Check if IAK already exists
 	if !iakCreateForce {
 		if _, err := tpm.IAKAttributes(); err == nil {
-			return fmt.Errorf("IAK already exists - use --force to recreate")
+			return &MessageError{Msg: "IAK already exists - use --force to recreate"}
 		}
 	}
 
 	// Get EK attributes for IAK creation
 	ekAttrs, err := tpm.EKAttributes()
 	if err != nil {
-		return fmt.Errorf("EK not found - run 'tpm provision' first: %w", err)
+		return &WrappedError{Msg: "EK not found - run 'tpm provision' first", Err: err}
 	}
 
 	// Create IAK
 	fmt.Println("Creating Initial Attestation Key...")
 	_, err = tpm.CreateIAK(ekAttrs, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create IAK: %w", err)
+		return &WrappedError{Msg: "failed to create IAK", Err: err}
 	}
 
 	fmt.Println("IAK created successfully")
@@ -308,7 +308,7 @@ func runIAKExport(cmd *cobra.Command, args []string) error {
 	// Get IAK certificate
 	iakCert, err := tpm.IAKCertificate()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCertificateNotFound, err)
+		return &SentinelCauseError{Sentinel: ErrCertificateNotFound, Cause: err}
 	}
 
 	// Encode as PEM
@@ -325,7 +325,7 @@ func runIAKExport(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := os.WriteFile(iakExportOutput, pemData, 0600); err != nil {
-		return fmt.Errorf("%w: %v", ErrExportFailed, err)
+		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
 	fmt.Printf("IAK certificate exported to: %s\n", iakExportOutput)
@@ -348,25 +348,25 @@ func runIAKCSR(cmd *cobra.Command, args []string) error {
 	// Get IAK attributes
 	iakAttrs, err := tpm.IAKAttributes()
 	if err != nil {
-		return fmt.Errorf("IAK not found - run 'tpm provision' first: %w", err)
+		return &WrappedError{Msg: "IAK not found - run 'tpm provision' first", Err: err}
 	}
 
 	// Create TCG-CSR-IDEVID for IAK
 	fmt.Println("Generating IAK CSR...")
 	csr, err := tpm.CreateTCG_CSR_IDEVID(ekCert, iakAttrs, nil)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCSRGenerationFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCSRGenerationFailed, Cause: err}
 	}
 
 	// Marshal CSR
 	csrBytes, err := csr.Marshal()
 	if err != nil {
-		return fmt.Errorf("failed to marshal CSR: %w", err)
+		return &WrappedError{Msg: "failed to marshal CSR", Err: err}
 	}
 
 	// Write CSR to file
 	if err := os.WriteFile(iakCSROutput, csrBytes, 0600); err != nil {
-		return fmt.Errorf("%w: %v", ErrExportFailed, err)
+		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
 	fmt.Printf("IAK CSR written to: %s\n", iakCSROutput)

@@ -313,6 +313,9 @@ func (m *mockCAClient) BarrierRekey(_ context.Context, _ *transport.BarrierRekey
 func (m *mockCAClient) BarrierGenerateRecoveryKeys(_ context.Context, _ *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
 	return nil, client.ErrNotSupported
 }
+func (m *mockCAClient) BarrierEnableEncryption(_ context.Context, _ *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	return nil, client.ErrNotSupported
+}
 func (m *mockCAClient) BarrierRecoverWithKeys(_ context.Context, _ *transport.BarrierRecoverWithKeysRequest) error {
 	return client.ErrNotSupported
 }
@@ -470,6 +473,19 @@ func (m *mockCAClient) TenantBarrierInit(_ context.Context, _ *transport.TenantB
 func (m *mockCAClient) TenantBarrierUnseal(_ context.Context, _ *transport.TenantBarrierUnsealRequest) error {
 	return nil
 }
+
+func (m *mockCAClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return nil, nil
+}
+
 func (m *mockCAClient) GetInitStatus(_ context.Context) (*transport.InitStatusResponse, error) {
 	return nil, nil
 }

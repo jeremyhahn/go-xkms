@@ -18,7 +18,7 @@ The go-xkms library includes comprehensive integration tests for all backends. T
 
 Integration tests use Docker Compose to provide:
 - Isolated test environments
-- Consistent dependencies (SoftHSM, SWTPM, LocalStack, etc.)
+- Consistent dependencies (SoftHSM, SWTPM, Floci, etc.)
 - No host system modifications
 - Repeatable test execution
 
@@ -41,11 +41,11 @@ test/integration/
 │   ├── docker-compose.yml
 │   ├── Dockerfile
 │   └── tpm2_integration_test.go
-├── awskms/                    # AWS KMS/LocalStack
+├── awskms/                    # AWS KMS/Floci
 │   ├── docker-compose.yml
 │   ├── Dockerfile
 │   └── awskms_integration_test.go
-├── gcpkms/                    # GCP KMS (mock)
+├── gcpkms/                    # GCP KMS (Floci emulator + mock)
 │   ├── docker-compose.yml
 │   ├── Dockerfile
 │   └── gcpkms_integration_test.go
@@ -81,10 +81,10 @@ make integration-test-tpm2
 # PKCS#11/SoftHSM
 make integration-test-pkcs11
 
-# AWS KMS with LocalStack
+# AWS KMS with Floci
 make integration-test-awskms
 
-# GCP KMS with mock
+# GCP KMS with Floci emulator + mock
 make integration-test-gcpkms
 
 # Azure Key Vault with mock
@@ -185,7 +185,7 @@ docker-compose down -v
 ## AWS KMS Integration Tests
 
 ### What It Tests
-- AWS KMS key creation (using LocalStack)
+- AWS KMS key creation (using Floci)
 - RSA and ECDSA key operations
 - Signing via KMS
 - Key management operations
@@ -201,26 +201,27 @@ make integration-test-awskms
 
 ```bash
 cd test/integration/awskms
-docker-compose up -d localstack
+docker-compose up -d floci
 docker-compose run --rm test
 docker-compose down -v
 ```
 
-### LocalStack Configuration
-- Endpoint: http://localstack:4566
+### Floci Configuration
+- Endpoint: http://floci:4566
 - Region: us-east-1
 - Credentials: test/test (auto-configured)
 
-**Note:** These tests use LocalStack, not real AWS. No AWS credentials or costs required.
+**Note:** These tests use Floci, not real AWS. No AWS credentials or costs required.
 
 
 ## Google Cloud KMS Integration Tests
 
 ### What It Tests
-- GCP KMS key operations (using mock client)
-- RSA and ECDSA key generation
-- Signing operations
-- Key management
+- GCP KMS key operations against the Floci GCP emulator (real gRPC, real signatures)
+- RSA (RSASSA-PKCS1) and ECDSA P-256 sign/verify with local cryptographic verification
+- Symmetric AES-256-GCM encrypt/decrypt round-trip
+- Key management and lifecycle (list, delete)
+- Mock-client coverage for algorithms the emulator lacks (EC P-384, RSA-PSS)
 - Error handling
 
 ### Running
@@ -237,7 +238,7 @@ docker-compose run --rm test
 docker-compose down -v
 ```
 
-**Note:** These tests use a mock client, not real GCP. No GCP credentials required.
+**Note:** These tests use the Floci GCP emulator and a mock client, not real GCP. No GCP credentials required.
 
 
 
@@ -323,8 +324,8 @@ Integration tests run in Docker and may take several minutes:
 - Software: ~30 seconds
 - TPM2: ~60 seconds (simulator startup)
 - PKCS#11/SoftHSM: ~45 seconds
-- AWS KMS/LocalStack: ~90 seconds (LocalStack initialization)
-- GCP KMS: ~30 seconds (mock)
+- AWS KMS/Floci: ~90 seconds (emulator initialization)
+- GCP KMS: ~40 seconds (Floci emulator + mock)
 - Azure KV: ~30 seconds (mock)
 - Vault: ~60 seconds (Vault initialization)
 

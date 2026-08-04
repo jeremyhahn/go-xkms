@@ -22,6 +22,10 @@ export function SetBarrier(arg1) {
   return window['go']['services']['BarrierAutoUnsealService']['SetBarrier'](arg1);
 }
 
+export function SetPolicyStore(arg1) {
+  return window['go']['services']['BarrierAutoUnsealService']['SetPolicyStore'](arg1);
+}
+
 export function SetTPMAccessor(arg1) {
   return window['go']['services']['BarrierAutoUnsealService']['SetTPMAccessor'](arg1);
 }

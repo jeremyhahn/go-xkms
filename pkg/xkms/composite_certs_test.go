@@ -19,10 +19,11 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"fmt"
 	"math/big"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -456,7 +457,7 @@ func TestCompositeKeyStore_SaveCert_EdgeCases(t *testing.T) {
 
 		// Configure storage to return error
 		certStorage.SaveCertFunc = func(id string, cert *x509.Certificate) error {
-			return fmt.Errorf("disk full")
+			return &errs.Message{Msg: "disk full"}
 		}
 
 		cert := generateTestCert("test-storage-error")
@@ -478,7 +479,7 @@ func TestCompositeKeyStore_GetCert_EdgeCases(t *testing.T) {
 
 		// Configure storage to return error
 		certStorage.GetCertFunc = func(id string) (*x509.Certificate, error) {
-			return nil, fmt.Errorf("certificate corrupted")
+			return nil, &errs.Message{Msg: "certificate corrupted"}
 		}
 
 		_, err := ks.GetCert(context.Background(), "test-storage-error")
@@ -499,7 +500,7 @@ func TestCompositeKeyStore_DeleteCert_EdgeCases(t *testing.T) {
 
 		// Configure storage to return error
 		certStorage.DeleteCertFunc = func(id string) error {
-			return fmt.Errorf("certificate is locked")
+			return &errs.Message{Msg: "certificate is locked"}
 		}
 
 		err := ks.DeleteCert(context.Background(), "test-delete-error")
@@ -520,7 +521,7 @@ func TestCompositeKeyStore_SaveCertChain_EdgeCases(t *testing.T) {
 
 		// Configure storage to return error
 		certStorage.SaveCertChainFunc = func(id string, chain []*x509.Certificate) error {
-			return fmt.Errorf("chain too large")
+			return &errs.Message{Msg: "chain too large"}
 		}
 
 		chain := []*x509.Certificate{
@@ -560,7 +561,7 @@ func TestCompositeKeyStore_GetCertChain_EdgeCases(t *testing.T) {
 
 		// Configure storage to return error
 		certStorage.GetCertChainFunc = func(id string) ([]*x509.Certificate, error) {
-			return nil, fmt.Errorf("chain validation failed")
+			return nil, &errs.Message{Msg: "chain validation failed"}
 		}
 
 		_, err := ks.GetCertChain(context.Background(), "test-chain-error")
@@ -581,7 +582,7 @@ func TestCompositeKeyStore_ListCerts_EdgeCases(t *testing.T) {
 
 		// Configure storage to return error
 		certStorage.ListCertsFunc = func() ([]string, error) {
-			return nil, fmt.Errorf("database connection lost")
+			return nil, &errs.Message{Msg: "database connection lost"}
 		}
 
 		_, err := ks.ListCerts(context.Background())
@@ -620,7 +621,7 @@ func TestCompositeKeyStore_CertExists_EdgeCases(t *testing.T) {
 
 		// Configure storage to return error
 		certStorage.CertExistsFunc = func(id string) (bool, error) {
-			return false, fmt.Errorf("storage unavailable")
+			return false, &errs.Message{Msg: "storage unavailable"}
 		}
 
 		_, err := ks.CertExists(context.Background(), "test-exists-error")

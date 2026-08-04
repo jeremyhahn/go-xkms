@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -48,7 +50,7 @@ func (k *vaultSymmetricKey) KeySize() int {
 // Raw returns an error because Vault Transit keys cannot expose raw key material.
 // The key material stays in Vault and can only be used through Vault operations.
 func (k *vaultSymmetricKey) Raw() ([]byte, error) {
-	return nil, fmt.Errorf("Vault Transit symmetric keys do not expose raw key material: %w", backend.ErrNotSupported)
+	return nil, &errs.Wrapped{Msg: "Vault Transit symmetric keys do not expose raw key material", Err: backend.ErrNotSupported}
 }
 
 // vaultSymmetricEncrypter implements types.SymmetricEncrypter using Vault Transit engine.
@@ -62,23 +64,23 @@ type vaultSymmetricEncrypter struct {
 // Vault Transit supports AES-256-GCM for symmetric encryption.
 func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if attrs == nil || attrs.CN == "" {
-		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: attributes specify asymmetric algorithm: %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("attributes specify asymmetric algorithm: %s", attrs.KeyAlgorithm)}
 	}
 
 	// Vault Transit only supports AES-256-GCM for symmetric encryption
 	if attrs.SymmetricAlgorithm.KeySize() != 256 {
-		return nil, fmt.Errorf("%w: Vault Transit only supports AES-256 symmetric keys, got: %d bits", backend.ErrInvalidAlgorithm, attrs.SymmetricAlgorithm.KeySize())
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("Vault Transit only supports AES-256 symmetric keys, got: %d bits", attrs.SymmetricAlgorithm.KeySize())}
 	}
 
 	keyName := b.sanitizeKeyName(attrs.CN)
@@ -86,10 +88,10 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	// Check if key already exists in metadata
 	exists, err := storage.KeyExists(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check key existence: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if exists {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyAlreadyExists, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	// Create symmetric key in Vault Transit engine
@@ -104,7 +106,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	logical := b.client.Logical()
 	_, err = logical.WriteWithContext(ctx, path, data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create symmetric key in vault: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create symmetric key in vault", Err: err}
 	}
 
 	// Store metadata
@@ -120,11 +122,11 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
-		return nil, fmt.Errorf("failed to store metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to store metadata", Err: err}
 	}
 
 	// Initialize AEAD tracking options after successful key generation
@@ -145,40 +147,40 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 // GetSymmetricKey retrieves an existing symmetric key by its attributes.
 func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if attrs == nil || attrs.CN == "" {
-		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: attributes specify asymmetric algorithm: %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("attributes specify asymmetric algorithm: %s", attrs.KeyAlgorithm)}
 	}
 
 	// Load metadata
 	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to unmarshal metadata", Err: err}
 	}
 
 	// Verify it's a symmetric key
 	isSymmetric, ok := metadata["symmetric"].(bool)
 	if !ok || !isSymmetric {
-		return nil, fmt.Errorf("%w: key is not a symmetric key: %s", backend.ErrInvalidKeyType, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key is not a symmetric key: %s", attrs.CN)}
 	}
 
 	keyName, ok := metadata["vault_name"].(string)
 	if !ok {
-		return nil, fmt.Errorf("%w: missing vault_name", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "missing vault_name"}
 	}
 
 	// Verify key exists in Vault
@@ -186,7 +188,7 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	logical := b.client.Logical()
 	secret, err := logical.ReadWithContext(ctx, path)
 	if err != nil || secret == nil {
-		return nil, fmt.Errorf("%w: failed to read key from vault: %v", backend.ErrKeyNotFound, err)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to read key from vault: %v", err)}
 	}
 
 	return &vaultSymmetricKey{
@@ -199,15 +201,15 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 // SymmetricEncrypter returns a SymmetricEncrypter for the key identified by attrs.
 func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	if attrs == nil || attrs.CN == "" {
-		return nil, fmt.Errorf("%w: CN is required", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: attributes specify asymmetric algorithm: %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("attributes specify asymmetric algorithm: %s", attrs.KeyAlgorithm)}
 	}
 
 	// Load metadata to verify key exists
@@ -216,23 +218,23 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 	b.mu.RUnlock()
 
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to unmarshal metadata", Err: err}
 	}
 
 	// Verify it's a symmetric key
 	isSymmetric, ok := metadata["symmetric"].(bool)
 	if !ok || !isSymmetric {
-		return nil, fmt.Errorf("%w: key is not a symmetric key: %s", backend.ErrInvalidKeyType, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("key is not a symmetric key: %s", attrs.CN)}
 	}
 
 	keyName, ok := metadata["vault_name"].(string)
 	if !ok {
-		return nil, fmt.Errorf("%w: missing vault_name", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "missing vault_name"}
 	}
 
 	return &vaultSymmetricEncrypter{
@@ -250,7 +252,7 @@ func (e *vaultSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 	keyID := e.attrs.CN
 	if e.backend.tracker != nil {
 		if err := e.backend.tracker.IncrementBytes(keyID, int64(len(plaintext))); err != nil {
-			return nil, fmt.Errorf("AEAD safety check failed: %w", err)
+			return nil, &errs.Wrapped{Msg: "AEAD safety check failed", Err: err}
 		}
 	}
 
@@ -272,21 +274,21 @@ func (e *vaultSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 
 	secret, err := logical.WriteWithContext(ctx, path, data)
 	if err != nil {
-		return nil, fmt.Errorf("Vault Transit encryption failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "Vault Transit encryption failed", Err: err}
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf("%w: no ciphertext returned", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no ciphertext returned"}
 	}
 
 	ciphertextInterface, ok := secret.Data["ciphertext"]
 	if !ok {
-		return nil, fmt.Errorf("%w: no ciphertext in response", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no ciphertext in response"}
 	}
 
 	ciphertextStr, ok := ciphertextInterface.(string)
 	if !ok {
-		return nil, fmt.Errorf("%w: invalid ciphertext format", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid ciphertext format"}
 	}
 
 	// Vault returns ciphertext in format "vault:v1:base64..."
@@ -319,27 +321,27 @@ func (e *vaultSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types
 
 	secret, err := logical.WriteWithContext(ctx, path, requestData)
 	if err != nil {
-		return nil, fmt.Errorf("Vault Transit decryption failed (authentication or key error): %w", err)
+		return nil, &errs.Wrapped{Msg: "Vault Transit decryption failed (authentication or key error)", Err: err}
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf("%w: no plaintext returned", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no plaintext returned"}
 	}
 
 	plaintextInterface, ok := secret.Data["plaintext"]
 	if !ok {
-		return nil, fmt.Errorf("%w: no plaintext in response", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no plaintext in response"}
 	}
 
 	plaintextStr, ok := plaintextInterface.(string)
 	if !ok {
-		return nil, fmt.Errorf("%w: invalid plaintext format", ErrInvalidResponse)
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid plaintext format"}
 	}
 
 	// Vault returns base64-encoded plaintext
 	plaintext, err := base64.StdEncoding.DecodeString(plaintextStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode plaintext: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decode plaintext", Err: err}
 	}
 
 	return plaintext, nil

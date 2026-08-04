@@ -24,7 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/sdk/go"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
@@ -244,10 +244,6 @@ func (s *FIDO2Service) ListCredentials() ([]FIDO2Credential, error) {
 		credentials = append(credentials, storedToFIDO2Credential(stored))
 	}
 
-	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpFIDO2CredentialAccessed, "fido2", "", true, nil, 0)
-	}
-
 	return credentials, nil
 }
 
@@ -437,7 +433,7 @@ func (s *FIDO2Service) HandleBridgeRequest(method string, params json.RawMessage
 		Params:  params,
 	})
 	if resp.Error != nil {
-		return nil, fmt.Errorf("fido2_service: bridge: %s", resp.Error.Message)
+		return nil, &MessageError{Msg: fmt.Sprintf("fido2_service: bridge: %s", resp.Error.Message)}
 	}
 	return resp.Result, nil
 }

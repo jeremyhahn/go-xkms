@@ -31,6 +31,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -368,7 +370,7 @@ func (opts *AEADOptions) Validate() error {
 		opts.NonceSize = 12 // Default for GCM
 	}
 	if opts.NonceSize < 12 {
-		return fmt.Errorf("nonce size must be at least 12 bytes, got %d", opts.NonceSize)
+		return &errs.Message{Msg: fmt.Sprintf("nonce size must be at least 12 bytes, got %d", opts.NonceSize)}
 	}
 	if opts.BytesTracking && opts.BytesTrackingLimit <= 0 {
 		opts.BytesTrackingLimit = 350 * 1024 * 1024 * 1024 // 350 GB default
@@ -441,7 +443,7 @@ func (e *ECCAttributes) UnmarshalJSON(data []byte) error {
 	case "":
 		e.Curve = nil
 	default:
-		return fmt.Errorf("unsupported elliptic curve: %s", aux.Curve)
+		return &errs.Message{Msg: fmt.Sprintf("unsupported elliptic curve: %s", aux.Curve)}
 	}
 
 	return nil
@@ -540,22 +542,22 @@ type ThresholdAttributes struct {
 // Validate checks if the threshold attributes are valid
 func (ta *ThresholdAttributes) Validate() error {
 	if ta.Threshold < 2 {
-		return fmt.Errorf("threshold must be at least 2, got %d", ta.Threshold)
+		return &errs.Message{Msg: fmt.Sprintf("threshold must be at least 2, got %d", ta.Threshold)}
 	}
 	if ta.Total < ta.Threshold {
-		return fmt.Errorf("total (%d) must be >= threshold (%d)", ta.Total, ta.Threshold)
+		return &errs.Message{Msg: fmt.Sprintf("total (%d) must be >= threshold (%d)", ta.Total, ta.Threshold)}
 	}
 	if ta.Threshold > 255 {
-		return fmt.Errorf("threshold cannot exceed 255, got %d", ta.Threshold)
+		return &errs.Message{Msg: fmt.Sprintf("threshold cannot exceed 255, got %d", ta.Threshold)}
 	}
 	if ta.Total > 255 {
-		return fmt.Errorf("total cannot exceed 255, got %d", ta.Total)
+		return &errs.Message{Msg: fmt.Sprintf("total cannot exceed 255, got %d", ta.Total)}
 	}
 	if len(ta.Participants) > 0 && len(ta.Participants) != ta.Total {
-		return fmt.Errorf("participants length (%d) must match total (%d)", len(ta.Participants), ta.Total)
+		return &errs.Message{Msg: fmt.Sprintf("participants length (%d) must match total (%d)", len(ta.Participants), ta.Total)}
 	}
 	if ta.ShareID != 0 && (ta.ShareID < 1 || ta.ShareID > ta.Total) {
-		return fmt.Errorf("shareID (%d) must be between 1 and total (%d)", ta.ShareID, ta.Total)
+		return &errs.Message{Msg: fmt.Sprintf("shareID (%d) must be between 1 and total (%d)", ta.ShareID, ta.Total)}
 	}
 	return nil
 }
@@ -641,25 +643,25 @@ type FrostAttributes struct {
 // Validate checks if the FROST attributes are valid
 func (fa *FrostAttributes) Validate() error {
 	if fa.Threshold < 2 {
-		return fmt.Errorf("frost: threshold must be at least 2, got %d", fa.Threshold)
+		return &errs.Message{Msg: fmt.Sprintf("frost: threshold must be at least 2, got %d", fa.Threshold)}
 	}
 	if fa.Total < fa.Threshold {
-		return fmt.Errorf("frost: total (%d) must be >= threshold (%d)", fa.Total, fa.Threshold)
+		return &errs.Message{Msg: fmt.Sprintf("frost: total (%d) must be >= threshold (%d)", fa.Total, fa.Threshold)}
 	}
 	if fa.Threshold > 255 {
-		return fmt.Errorf("frost: threshold cannot exceed 255, got %d", fa.Threshold)
+		return &errs.Message{Msg: fmt.Sprintf("frost: threshold cannot exceed 255, got %d", fa.Threshold)}
 	}
 	if fa.Total > 255 {
-		return fmt.Errorf("frost: total cannot exceed 255, got %d", fa.Total)
+		return &errs.Message{Msg: fmt.Sprintf("frost: total cannot exceed 255, got %d", fa.Total)}
 	}
 	if len(fa.Participants) > 0 && len(fa.Participants) != fa.Total {
-		return fmt.Errorf("frost: participants length (%d) must match total (%d)", len(fa.Participants), fa.Total)
+		return &errs.Message{Msg: fmt.Sprintf("frost: participants length (%d) must match total (%d)", len(fa.Participants), fa.Total)}
 	}
 	if fa.ParticipantID != 0 && (fa.ParticipantID < 1 || fa.ParticipantID > uint32(fa.Total)) {
-		return fmt.Errorf("frost: participantID (%d) must be between 1 and total (%d)", fa.ParticipantID, fa.Total)
+		return &errs.Message{Msg: fmt.Sprintf("frost: participantID (%d) must be between 1 and total (%d)", fa.ParticipantID, fa.Total)}
 	}
 	if !fa.Algorithm.IsValid() {
-		return fmt.Errorf("frost: invalid algorithm: %s", fa.Algorithm)
+		return &errs.Message{Msg: fmt.Sprintf("frost: invalid algorithm: %s", fa.Algorithm)}
 	}
 	return nil
 }
@@ -1080,15 +1082,15 @@ func (attrs KeyAttributes) String() string {
 func (attrs *KeyAttributes) Validate() error {
 	// Validate required fields
 	if attrs.CN == "" {
-		return fmt.Errorf("common name (CN) is required")
+		return &errs.Message{Msg: "common name (CN) is required"}
 	}
 
 	if attrs.StoreType == "" {
-		return fmt.Errorf("store type is required")
+		return &errs.Message{Msg: "store type is required"}
 	}
 
 	if attrs.KeyType == 0 {
-		return fmt.Errorf("key type is required")
+		return &errs.Message{Msg: "key type is required"}
 	}
 
 	// Validate algorithm-specific attributes
@@ -1103,34 +1105,34 @@ func (attrs *KeyAttributes) Validate() error {
 		case QuantumAlgorithmMLKEM512, QuantumAlgorithmMLKEM768, QuantumAlgorithmMLKEM1024:
 			// ML-KEM key encapsulation - no additional attributes required
 		default:
-			return fmt.Errorf("unsupported quantum algorithm: %s", attrs.QuantumAttributes.Algorithm)
+			return &errs.Message{Msg: fmt.Sprintf("unsupported quantum algorithm: %s", attrs.QuantumAttributes.Algorithm)}
 		}
 	} else if attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm {
 		// Asymmetric key validation
 		switch attrs.KeyAlgorithm {
 		case x509.RSA:
 			if attrs.RSAAttributes == nil {
-				return fmt.Errorf("RSA attributes are required for RSA keys")
+				return &errs.Message{Msg: "RSA attributes are required for RSA keys"}
 			}
 			if attrs.RSAAttributes.KeySize < 2048 {
-				return fmt.Errorf("RSA key size must be at least 2048 bits")
+				return &errs.Message{Msg: "RSA key size must be at least 2048 bits"}
 			}
 		case x509.ECDSA:
 			if attrs.ECCAttributes == nil {
-				return fmt.Errorf("ECC attributes are required for ECDSA keys")
+				return &errs.Message{Msg: "ECC attributes are required for ECDSA keys"}
 			}
 			if attrs.ECCAttributes.Curve == nil {
-				return fmt.Errorf("curve is required for ECDSA keys")
+				return &errs.Message{Msg: "curve is required for ECDSA keys"}
 			}
 		case x509.Ed25519:
 			// Ed25519 has no additional attributes to validate
 		default:
-			return fmt.Errorf("unsupported key algorithm: %s", attrs.KeyAlgorithm)
+			return &errs.Message{Msg: fmt.Sprintf("unsupported key algorithm: %s", attrs.KeyAlgorithm)}
 		}
 	} else if attrs.SymmetricAlgorithm != "" {
 		// Symmetric key validation - key size is derived from the algorithm via KeySize() method
 		if !attrs.SymmetricAlgorithm.IsValid() {
-			return fmt.Errorf("unsupported symmetric algorithm: %s", attrs.SymmetricAlgorithm)
+			return &errs.Message{Msg: fmt.Sprintf("unsupported symmetric algorithm: %s", attrs.SymmetricAlgorithm)}
 		}
 	} else if attrs.FrostAttributes != nil {
 		// FROST threshold signature validation (RFC 9591)
@@ -1138,7 +1140,7 @@ func (attrs *KeyAttributes) Validate() error {
 			return err
 		}
 	} else {
-		return fmt.Errorf("either KeyAlgorithm, SymmetricAlgorithm, QuantumAttributes, or FrostAttributes must be set")
+		return &errs.Message{Msg: "either KeyAlgorithm, SymmetricAlgorithm, QuantumAttributes, or FrostAttributes must be set"}
 	}
 
 	return nil
@@ -1796,7 +1798,7 @@ func (p *KDFParams) Validate() error {
 
 	// Validate algorithm
 	if !p.Algorithm.IsValid() {
-		return fmt.Errorf("invalid KDF algorithm: %s", p.Algorithm)
+		return &errs.Message{Msg: fmt.Sprintf("invalid KDF algorithm: %s", p.Algorithm)}
 	}
 
 	// Validate hash
@@ -1804,20 +1806,20 @@ func (p *KDFParams) Validate() error {
 	case "SHA-256", "SHA-384", "SHA-512", "SHA3-256", "SHA3-384", "SHA3-512":
 		// Valid hash algorithms
 	default:
-		return fmt.Errorf("unsupported hash algorithm: %s", p.Hash)
+		return &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", p.Hash)}
 	}
 
 	// Validate key length
 	if p.KeyLength <= 0 {
-		return fmt.Errorf("key length must be positive, got %d", p.KeyLength)
+		return &errs.Message{Msg: fmt.Sprintf("key length must be positive, got %d", p.KeyLength)}
 	}
 	if p.KeyLength > 1024 {
-		return fmt.Errorf("key length %d exceeds maximum of 1024 bytes", p.KeyLength)
+		return &errs.Message{Msg: fmt.Sprintf("key length %d exceeds maximum of 1024 bytes", p.KeyLength)}
 	}
 
 	// Validate derivation mode
 	if !p.DerivationMode.IsValid() {
-		return fmt.Errorf("invalid derivation mode: %d", p.DerivationMode)
+		return &errs.Message{Msg: fmt.Sprintf("invalid derivation mode: %d", p.DerivationMode)}
 	}
 
 	return nil
@@ -2673,7 +2675,7 @@ func KeyAlgorithmFromSignatureAlgorithm(sigAlgo x509.SignatureAlgorithm) (x509.P
 	case x509.PureEd25519:
 		return x509.Ed25519, nil
 	default:
-		return 0, fmt.Errorf("invalid signature algorithm: %v", sigAlgo)
+		return 0, &errs.Message{Msg: fmt.Sprintf("invalid signature algorithm: %v", sigAlgo)}
 	}
 }
 
@@ -2706,15 +2708,15 @@ func HashFileExtension(hash crypto.Hash) string {
 // Digest creates a cryptographic hash of the provided data using the specified hash function.
 func Digest(hash crypto.Hash, data []byte) ([]byte, error) {
 	if !hash.Available() {
-		return nil, fmt.Errorf("hash function not available: %v", hash)
+		return nil, &errs.Message{Msg: fmt.Sprintf("hash function not available: %v", hash)}
 	}
 	hasher := hash.New()
 	n, err := hasher.Write(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to write data to hasher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to write data to hasher", Err: err}
 	}
 	if n != len(data) {
-		return nil, fmt.Errorf("incomplete write to hasher: wrote %d of %d bytes", n, len(data))
+		return nil, &errs.Message{Msg: fmt.Sprintf("incomplete write to hasher: wrote %d of %d bytes", n, len(data))}
 	}
 	return hasher.Sum(nil), nil
 }
@@ -2734,7 +2736,7 @@ func ParseCurve(curveName string) (elliptic.Curve, error) {
 	case "P-521", "P521", "SECP521R1":
 		return elliptic.P521(), nil
 	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnknownCurve, curveName)
+		return nil, &errs.Detail{Err: ErrUnknownCurve, Detail: fmt.Sprintf("%s", curveName)}
 	}
 }
 
@@ -2750,7 +2752,7 @@ func ParseKeyAlgorithm(s string) (x509.PublicKeyAlgorithm, error) {
 	case "ed25519":
 		return x509.Ed25519, nil
 	default:
-		return x509.UnknownPublicKeyAlgorithm, fmt.Errorf("%w: %s", ErrUnknownKeyAlgorithm, s)
+		return x509.UnknownPublicKeyAlgorithm, &errs.Detail{Err: ErrUnknownKeyAlgorithm, Detail: fmt.Sprintf("%s", s)}
 	}
 }
 
@@ -2866,7 +2868,7 @@ func ParseSignatureAlgorithm(s string) (x509.SignatureAlgorithm, error) {
 	case "ED25519", "PUREED25519":
 		return x509.PureEd25519, nil
 	default:
-		return x509.UnknownSignatureAlgorithm, fmt.Errorf("%w: %s", ErrUnknownSignatureAlgorithm, s)
+		return x509.UnknownSignatureAlgorithm, &errs.Detail{Err: ErrUnknownSignatureAlgorithm, Detail: fmt.Sprintf("%s", s)}
 	}
 }
 
@@ -2933,13 +2935,13 @@ type Verifier interface {
 // ParseHashFromSignatureAlgorithm returns the hash function for a signature algorithm.
 func ParseHashFromSignatureAlgorithm(sigAlgo *x509.SignatureAlgorithm) (crypto.Hash, error) {
 	if sigAlgo == nil {
-		return 0, fmt.Errorf("signature algorithm is nil")
+		return 0, &errs.Message{Msg: "signature algorithm is nil"}
 	}
 	hashes := SignatureAlgorithmHashes()
 	if hash, ok := hashes[*sigAlgo]; ok {
 		return hash, nil
 	}
-	return 0, fmt.Errorf("unknown signature algorithm: %v", *sigAlgo)
+	return 0, &errs.Message{Msg: fmt.Sprintf("unknown signature algorithm: %v", *sigAlgo)}
 }
 
 // PublicKeyToString returns a string representation of a public key.
@@ -2975,7 +2977,7 @@ func NewVerifier(opts *VerifyOpts) Verifier {
 // Verify verifies a signature against a digest
 func (v *SimpleVerifier) Verify(publicKey crypto.PublicKey, digest, signature []byte) error {
 	if publicKey == nil {
-		return fmt.Errorf("public key is nil")
+		return &errs.Message{Msg: "public key is nil"}
 	}
 	switch pub := publicKey.(type) {
 	case *rsa.PublicKey:
@@ -2985,16 +2987,16 @@ func (v *SimpleVerifier) Verify(publicKey crypto.PublicKey, digest, signature []
 		return rsa.VerifyPKCS1v15(pub, v.opts.Hash, digest, signature)
 	case *ecdsa.PublicKey:
 		if !ecdsa.VerifyASN1(pub, digest, signature) {
-			return fmt.Errorf("ECDSA signature verification failed")
+			return &errs.Message{Msg: "ECDSA signature verification failed"}
 		}
 		return nil
 	case ed25519.PublicKey:
 		if !ed25519.Verify(pub, digest, signature) {
-			return fmt.Errorf("Ed25519 signature verification failed")
+			return &errs.Message{Msg: "Ed25519 signature verification failed"}
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported public key type: %T", publicKey)
+		return &errs.Message{Msg: fmt.Sprintf("unsupported public key type: %T", publicKey)}
 	}
 }
 
@@ -3040,7 +3042,7 @@ type KeySerializer interface {
 // runtime crypto types.
 func KeyAttributesFromConfig(config *KeyConfig) (*KeyAttributes, error) {
 	if config == nil {
-		return nil, fmt.Errorf("config is nil")
+		return nil, &errs.Message{Msg: "config is nil"}
 	}
 
 	keyAlgo, err := ParseKeyAlgorithm(string(config.KeyAlgorithm))
@@ -3072,6 +3074,13 @@ func KeyAttributesFromConfig(config *KeyConfig) (*KeyAttributes, error) {
 		SignatureAlgorithm: sigAlgo,
 		StoreType:          storeType,
 		KeyType:            ParseKeyType(string(config.KeyType)),
+	}
+
+	// Wire password from config so software (PKCS#8) backends write
+	// encrypted-at-rest keys. When config.Password is empty, attrs.Password
+	// stays nil and the pkcs8 backend enforces its AllowPlaintextKeys policy.
+	if config.Password != "" {
+		attrs.Password = NewPasswordFromString(config.Password)
 	}
 
 	// Parse algorithm-specific config from nested structs
@@ -3156,7 +3165,7 @@ func NewKeySerializer(serializerType SerializerType) (KeySerializer, error) {
 	case SerializerYAML:
 		return &jsonKeySerializer{}, nil // Use JSON for both since YAML is JSON-compatible
 	default:
-		return nil, fmt.Errorf("unsupported serializer type: %d", serializerType)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported serializer type: %d", serializerType)}
 	}
 }
 
@@ -3176,7 +3185,7 @@ func ParseKeyMap(data string) (KeyMap, error) {
 func (km KeyMap) JOSESignatureAlgorithm() (string, error) {
 	kty, ok := km["kty"].(string)
 	if !ok {
-		return "", fmt.Errorf("missing or invalid kty field")
+		return "", &errs.Message{Msg: "missing or invalid kty field"}
 	}
 	switch kty {
 	case "RSA":
@@ -3196,7 +3205,7 @@ func (km KeyMap) JOSESignatureAlgorithm() (string, error) {
 	case "OKP":
 		return "EdDSA", nil
 	default:
-		return "", fmt.Errorf("unsupported key type: %s", kty)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported key type: %s", kty)}
 	}
 }
 

@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -69,13 +71,13 @@ type Config struct {
 // Validate validates the configuration and returns an error if invalid.
 func (c *Config) Validate() error {
 	if c.RPID == "" {
-		return fmt.Errorf("RPID is required")
+		return &errs.Message{Msg: "RPID is required"}
 	}
 	if c.RPDisplayName == "" {
-		return fmt.Errorf("RPDisplayName is required")
+		return &errs.Message{Msg: "RPDisplayName is required"}
 	}
 	if len(c.RPOrigins) == 0 {
-		return fmt.Errorf("at least one RPOrigin is required")
+		return &errs.Message{Msg: "at least one RPOrigin is required"}
 	}
 
 	// Validate user verification
@@ -83,7 +85,7 @@ func (c *Config) Validate() error {
 	case "", "required", "preferred", "discouraged":
 		// Valid
 	default:
-		return fmt.Errorf("invalid user verification: %s", c.UserVerification)
+		return &errs.Message{Msg: fmt.Sprintf("invalid user verification: %s", c.UserVerification)}
 	}
 
 	// Validate attestation preference
@@ -91,7 +93,7 @@ func (c *Config) Validate() error {
 	case "", "none", "indirect", "direct", "enterprise":
 		// Valid
 	default:
-		return fmt.Errorf("invalid attestation preference: %s", c.AttestationPreference)
+		return &errs.Message{Msg: fmt.Sprintf("invalid attestation preference: %s", c.AttestationPreference)}
 	}
 
 	// Validate resident key requirement
@@ -99,7 +101,7 @@ func (c *Config) Validate() error {
 	case "", "required", "preferred", "discouraged":
 		// Valid
 	default:
-		return fmt.Errorf("invalid resident key requirement: %s", c.ResidentKeyRequirement)
+		return &errs.Message{Msg: fmt.Sprintf("invalid resident key requirement: %s", c.ResidentKeyRequirement)}
 	}
 
 	// Validate authenticator attachment
@@ -107,7 +109,7 @@ func (c *Config) Validate() error {
 	case "", "platform", "cross-platform":
 		// Valid
 	default:
-		return fmt.Errorf("invalid authenticator attachment: %s", c.AuthenticatorAttachment)
+		return &errs.Message{Msg: fmt.Sprintf("invalid authenticator attachment: %s", c.AuthenticatorAttachment)}
 	}
 
 	return nil

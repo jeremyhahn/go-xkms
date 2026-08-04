@@ -377,7 +377,7 @@ func runPasswordAdd(cmd *cobra.Command, args []string) error {
 	if generate {
 		password, err = xkms.GenerateStaticPassword(length, charset)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrPasswordGenerateFailed, err)
+			return &SentinelCauseError{Sentinel: ErrPasswordGenerateFailed, Cause: err}
 		}
 	}
 
@@ -391,11 +391,11 @@ func runPasswordAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := pw.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", ErrPasswordAddFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPasswordAddFailed, Cause: err}
 	}
 
 	if err := store.Add(pw); err != nil {
-		return fmt.Errorf("%w: %v", ErrPasswordAddFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPasswordAddFailed, Cause: err}
 	}
 
 	fmt.Printf("Added password: %s\n", pw.Name)
@@ -423,7 +423,7 @@ func runPasswordList(cmd *cobra.Command, args []string) error {
 
 	passwords, err := store.List()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPasswordListFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPasswordListFailed, Cause: err}
 	}
 
 	if len(passwords) == 0 {
@@ -476,7 +476,7 @@ func runPasswordGet(cmd *cobra.Command, args []string) error {
 
 	pw, err := store.Get(args[0])
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPasswordGetFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPasswordGetFailed, Cause: err}
 	}
 
 	fmt.Print(pw.Password)
@@ -553,11 +553,11 @@ func runPasswordType(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, ipc.ErrDaemonNotRunning) {
 			return ErrTouchDaemonNotRunning
 		}
-		return fmt.Errorf("%w: %v", ErrPasswordTypeFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPasswordTypeFailed, Cause: err}
 	}
 
 	if resp.Status == ipc.StatusError {
-		return fmt.Errorf("%w: %s", ErrPasswordTypeFailed, resp.Error)
+		return &DetailError{Err: ErrPasswordTypeFailed, Detail: fmt.Sprintf(": %s", resp.Error)}
 	}
 
 	fmt.Printf("Typed password: %s\n", args[0])
@@ -584,7 +584,7 @@ func runPasswordUnlock(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := client.PasswordStoreUnlock(ctx, req); err != nil {
-		return fmt.Errorf("%w: %v", ErrPasswordUnlockFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPasswordUnlockFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Password store unlocked.")
@@ -602,7 +602,7 @@ func runPasswordLock(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	if err := client.PasswordStoreLock(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrPasswordLockFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPasswordLockFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Password store locked.")
@@ -620,7 +620,7 @@ func runPasswordStatus(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	resp, err := client.PasswordStoreStatus(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPasswordStatusFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPasswordStatusFailed, Cause: err}
 	}
 
 	out := cmd.OutOrStdout()
@@ -659,7 +659,7 @@ func runPasswordAccessMode(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := client.PasswordStoreSetAccessMode(ctx, req); err != nil {
-		return fmt.Errorf("%w: %v", ErrPasswordAccessModeFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPasswordAccessModeFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Access mode set to: %s\n", mode)
@@ -670,12 +670,12 @@ func runPasswordAccessMode(cmd *cobra.Command, args []string) error {
 func connectPasswordStore() (PasswordStoreClientService, error) {
 	client, err := passwordClientFactory()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPasswordConnectFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrPasswordConnectFailed, Cause: err}
 	}
 
 	ctx := context.Background()
 	if err := client.Connect(ctx); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPasswordConnectFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrPasswordConnectFailed, Cause: err}
 	}
 
 	return client, nil
@@ -686,7 +686,7 @@ func connectPasswordStore() (PasswordStoreClientService, error) {
 func openPasswordStore(storePath string) (*xkms.StaticPasswordBackendStore, error) {
 	backend, err := xkms.NewFileStorageBackend(storePath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPasswordStoreOpenFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrPasswordStoreOpenFailed, Cause: err}
 	}
 	return xkms.NewStaticPasswordStore(backend), nil
 }

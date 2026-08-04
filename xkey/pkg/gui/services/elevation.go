@@ -106,7 +106,7 @@ func (e *PkexecElevator) Run(args []string, stdinData []byte) ([]byte, error) {
 		// user) can see why the elevated operation failed.
 		stderrStr := bytes.TrimSpace(stderr.Bytes())
 		if len(stderrStr) > 0 {
-			return nil, fmt.Errorf("%w: %s", ErrElevationFailed, stderrStr)
+			return nil, &DetailError{Err: ErrElevationFailed, Detail: fmt.Sprintf(": %s", stderrStr)}
 		}
 		return nil, ErrElevationFailed
 	}

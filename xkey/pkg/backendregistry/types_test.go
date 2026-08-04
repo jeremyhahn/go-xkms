@@ -263,6 +263,7 @@ func TestValidCapabilities(t *testing.T) {
 	expected := []Capability{
 		CapFIDO2, CapPIV, CapOATH, CapPasswords,
 		CapSigning, CapSealing, CapAttestation, CapEncryption,
+		CapSSH,
 	}
 	assert.Equal(t, len(expected), len(ValidCapabilities),
 		"ValidCapabilities should contain exactly %d entries", len(expected))

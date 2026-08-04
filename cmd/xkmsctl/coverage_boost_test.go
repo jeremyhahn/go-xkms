@@ -476,7 +476,7 @@ func TestTenantBarrierInit_ConnectError(t *testing.T) {
 			return mock, nil
 		},
 	}
-	tenantBarrierInit(cfg, printer, "acme", 3, 5)
+	tenantBarrierInit(cfg, printer, "acme", "", "", 3, 5)
 }
 
 func TestTenantBarrierInit_ClientFactoryError(t *testing.T) {
@@ -492,7 +492,7 @@ func TestTenantBarrierInit_ClientFactoryError(t *testing.T) {
 			return nil, errors.New("factory failed")
 		},
 	}
-	tenantBarrierInit(cfg, printer, "acme", 3, 5)
+	tenantBarrierInit(cfg, printer, "acme", "", "", 3, 5)
 }
 
 func TestTenantBarrierUnseal_ConnectError(t *testing.T) {

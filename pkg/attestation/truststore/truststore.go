@@ -23,6 +23,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 //go:embed google_hardware_attestation_root.pem
@@ -79,11 +81,11 @@ func New(config *Config) (*TrustStore, error) {
 	for _, name := range config.EmbeddedRoots {
 		pemData, ok := embeddedRootMapping[WellKnownRoot(name)]
 		if !ok {
-			return nil, fmt.Errorf("%w: %s", ErrUnknownEmbeddedRoot, name)
+			return nil, &errs.Detail{Err: ErrUnknownEmbeddedRoot, Detail: fmt.Sprintf("%s", name)}
 		}
 		certs, err := parsePEMCertificates(pemData)
 		if err != nil {
-			return nil, fmt.Errorf("truststore: failed to parse embedded root %q: %w", name, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("truststore: failed to parse embedded root %q", name), Err: err}
 		}
 		roots = append(roots, certs...)
 	}
@@ -93,13 +95,13 @@ func New(config *Config) (*TrustStore, error) {
 		pemData, err := os.ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return nil, fmt.Errorf("%w: %s", ErrFileNotFound, path)
+				return nil, &errs.Detail{Err: ErrFileNotFound, Detail: fmt.Sprintf("%s", path)}
 			}
-			return nil, fmt.Errorf("truststore: failed to read %q: %w", path, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("truststore: failed to read %q", path), Err: err}
 		}
 		certs, err := parsePEMCertificates(pemData)
 		if err != nil {
-			return nil, fmt.Errorf("truststore: failed to parse %q: %w", path, err)
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("truststore: failed to parse %q", path), Err: err}
 		}
 		roots = append(roots, certs...)
 	}
@@ -153,7 +155,7 @@ func parsePEMCertificates(pemData []byte) ([]*x509.Certificate, error) {
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrCertificateParse, err)
+			return nil, &errs.Detail{Err: ErrCertificateParse, Detail: fmt.Sprintf("%v", err)}
 		}
 		certs = append(certs, cert)
 	}

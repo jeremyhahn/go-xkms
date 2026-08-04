@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // This file re-exports ALL public types from go-qrdb/sdk/go so that
-// downstream consumers (e.g., go-trusted-ca) can depend solely on the
+// downstream consumers (e.g., go-quicbaas) can depend solely on the
 // go-xkms SDK without importing go-qrdb directly.
 //
 // Every alias is prefixed with QRDB to avoid name collisions with

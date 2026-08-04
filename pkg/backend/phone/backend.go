@@ -25,6 +25,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	phoneproto "github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
@@ -150,7 +152,7 @@ func (b *Backend) initAttestation() error {
 
 	ts, err := truststore.New(b.config.Attestation.TrustStore)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustStoreInit, err)
+		return &errs.Detail{Err: ErrTrustStoreInit, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	b.trustStore = ts

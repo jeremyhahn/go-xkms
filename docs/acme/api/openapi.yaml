@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
-  title: go-trusted-ca API
+  title: go-xkms API
   description: |
-    Complete API for go-trusted-ca Certificate Authority.
+    Complete API for go-xkms Certificate Authority.
 
     This API provides:
     - **ACME Protocol** (RFC 8555) - Automatic certificate management
@@ -49,7 +49,7 @@ info:
   contact:
     name: Automate The Things, LLC
     email: support@automatethethings.com
-    url: https://github.com/jeremyhahn/go-trusted-ca
+    url: https://github.com/jeremyhahn/go-xkms
   license:
     name: AGPL-3.0 / Commercial
     url: https://www.gnu.org/licenses/agpl-3.0.html

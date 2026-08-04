@@ -44,6 +44,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport/grpc"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport/unix"
@@ -466,12 +468,12 @@ func (m *Module) initializeStorage() error {
 	case StorageTypeFile:
 		backend, err = file.New(m.config.StoragePath)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrStorageInit, err)
+			return &errs.Detail{Err: ErrStorageInit, Detail: fmt.Sprintf("%v", err)}
 		}
 	case StorageTypeMemory, "":
 		backend = storage.NewMemory()
 	default:
-		return fmt.Errorf("%w: %s", ErrInvalidStorageType, m.config.StorageType)
+		return &errs.Detail{Err: ErrInvalidStorageType, Detail: fmt.Sprintf("%s", m.config.StorageType)}
 	}
 
 	m.storage = NewModuleStorage(backend)
@@ -579,7 +581,7 @@ func (m *Module) getSlotIDFromSession(sessionHandle SessionHandle) (SlotID, erro
 			return slotID, nil
 		}
 	}
-	return 0, fmt.Errorf("session not found")
+	return 0, &errs.Message{Msg: "session not found"}
 }
 
 // initializeClient creates and configures the transport client based on the target format.
@@ -595,7 +597,7 @@ func (m *Module) initializeClient() error {
 		socketPath := strings.TrimPrefix(target, "unix://")
 		client, err := unix.New(transport.WithAddress(socketPath))
 		if err != nil {
-			return fmt.Errorf("failed to create unix transport: %w", err)
+			return &errs.Wrapped{Msg: "failed to create unix transport", Err: err}
 		}
 		m.client = client
 		return nil
@@ -607,7 +609,7 @@ func (m *Module) initializeClient() error {
 		addr = strings.TrimPrefix(addr, "/")
 		client, err := m.createGRPCClient(addr)
 		if err != nil {
-			return fmt.Errorf("failed to create gRPC transport for dns target: %w", err)
+			return &errs.Wrapped{Msg: "failed to create gRPC transport for dns target", Err: err}
 		}
 		m.client = client
 		return nil
@@ -617,7 +619,7 @@ func (m *Module) initializeClient() error {
 	if strings.Contains(target, ":") && !strings.Contains(target, "://") {
 		client, err := m.createGRPCClient(target)
 		if err != nil {
-			return fmt.Errorf("failed to create gRPC transport for tcp target: %w", err)
+			return &errs.Wrapped{Msg: "failed to create gRPC transport for tcp target", Err: err}
 		}
 		m.client = client
 		return nil
@@ -626,7 +628,7 @@ func (m *Module) initializeClient() error {
 	// Default: treat as Unix socket path for backward compatibility
 	client, err := unix.New(transport.WithAddress(target))
 	if err != nil {
-		return fmt.Errorf("failed to create unix transport for default target: %w", err)
+		return &errs.Wrapped{Msg: "failed to create unix transport for default target", Err: err}
 	}
 	m.client = client
 	return nil

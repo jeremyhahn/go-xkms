@@ -17,6 +17,8 @@ import (
 	"errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 // VerifyAuth verifies the auth value on the backend's SRK. The TPM validates
@@ -32,11 +34,17 @@ func (b *Backend) VerifyAuth(pinValue string) error {
 	}
 
 	handle := b.srkAttrs.TPMAttributes.Handle
-	if err := b.tpm.VerifyAuth(handle, []byte(pinValue)); err != nil {
+	err := b.tpm.VerifyAuth(handle, []byte(pinValue))
+	if err == nil {
+		return nil
+	}
+	// Only a genuine authorization failure (wrong PIN) is reported as
+	// ErrAuthVerifyFailed. Any other TPM fault is surfaced as
+	// ErrAuthProbeFailed so it is never mistaken for an invalid PIN.
+	if errors.Is(err, pkgtpm2.ErrAuthFailed) {
 		return errors.Join(ErrAuthVerifyFailed, err)
 	}
-
-	return nil
+	return errors.Join(ErrAuthProbeFailed, err)
 }
 
 // ChangeAuth changes the auth value on the backend's SRK. This evicts the

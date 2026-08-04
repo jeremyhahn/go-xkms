@@ -1,0 +1,132 @@
+- generic [ref=e3]:
+  - navigation "Main navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e9]: xKey
+      - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+        - img [ref=e11]
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: OVERVIEW
+        - button "Dashboard" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - generic [ref=e19]: Dashboard
+        - button "Pairing" [ref=e20] [cursor=pointer]:
+          - img [ref=e21]
+          - generic [ref=e23]: Pairing
+        - button "TPM 2.0" [ref=e234] [cursor=pointer]:
+          - img [ref=e235]
+          - generic [ref=e237]: TPM 2.0
+      - generic [ref=e24]:
+        - generic [ref=e25]: STORE
+        - button "Keys" [ref=e26] [cursor=pointer]:
+          - img [ref=e27]
+          - generic [ref=e29]: Keys
+        - button "Trust Store" [ref=e30] [cursor=pointer]:
+          - img [ref=e31]
+          - generic [ref=e33]: Trust Store
+        - button "Certificates" [ref=e34] [cursor=pointer]:
+          - img [ref=e35]
+          - generic [ref=e37]: Certificates
+      - generic [ref=e38]:
+        - generic [ref=e39]: APPLICATIONS
+        - button "SSH" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+          - generic [ref=e43]: SSH
+        - button "FIDO2" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: FIDO2
+        - button "OATH" [ref=e48] [cursor=pointer]:
+          - img [ref=e49]
+          - generic [ref=e51]: OATH
+        - button "PIV" [ref=e52] [cursor=pointer]:
+          - img [ref=e53]
+          - generic [ref=e55]: PIV
+        - button "Passwords" [ref=e56] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: Passwords
+        - button "Sealed Data" [active] [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e63]: Sealed Data
+        - button "Browser" [ref=e64] [cursor=pointer]:
+          - img [ref=e65]
+          - generic [ref=e67]: Browser
+      - generic [ref=e68]:
+        - generic [ref=e69]: MANAGEMENT
+        - button "Audit Log" [ref=e70] [cursor=pointer]:
+          - img [ref=e71]
+          - generic [ref=e73]: Audit Log
+        - button "Admin" [ref=e74] [cursor=pointer]:
+          - img [ref=e75]
+          - generic [ref=e77]: Admin
+      - generic [ref=e78]:
+        - generic [ref=e79]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e80] [cursor=pointer]:
+          - img [ref=e81]
+          - generic [ref=e83]: OIDC
+        - button "API Explorer" [ref=e84] [cursor=pointer]:
+          - img [ref=e85]
+          - generic [ref=e87]: API Explorer
+    - generic [ref=e88]:
+      - generic "Standalone mode" [ref=e89]:
+        - generic [ref=e91]: Standalone
+      - button "Theme" [ref=e92] [cursor=pointer]:
+        - img [ref=e93]
+        - generic [ref=e95]: Theme
+      - button "Settings" [ref=e96] [cursor=pointer]:
+        - img [ref=e97]
+        - generic [ref=e99]: Settings
+  - main [ref=e100]:
+    - generic [ref=e102]:
+      - button "Lock app" [ref=e103] [cursor=pointer]:
+        - img [ref=e104]
+        - generic [ref=e106]: Lock
+      - button "No touch pending" [disabled] [ref=e107]:
+        - img [ref=e109]
+    - generic [ref=e261]:
+      - generic [ref=e264]:
+        - heading "Sealed Data" [level=1] [ref=e265]
+        - paragraph [ref=e266]: Encrypted data storage
+      - generic [ref=e267]:
+        - generic [ref=e268]:
+          - img [ref=e269]
+          - button "All" [ref=e271] [cursor=pointer]
+          - button "Software AES-256-GCM" [ref=e272] [cursor=pointer]
+          - button "TPM 2.0" [ref=e273] [cursor=pointer]
+        - button "Delete (0)" [disabled]:
+          - img
+          - generic: Delete (0)
+        - button "Seal New Data" [ref=e274] [cursor=pointer]:
+          - img [ref=e275]
+          - generic [ref=e277]: Seal New Data
+      - table [ref=e280]:
+        - rowgroup [ref=e281]:
+          - row "Label Backend Policy Created Actions" [ref=e282]:
+            - columnheader [ref=e283]:
+              - checkbox [ref=e284] [cursor=pointer]
+            - columnheader "Label" [ref=e285] [cursor=pointer]
+            - columnheader "Backend" [ref=e286] [cursor=pointer]
+            - columnheader "Policy" [ref=e287] [cursor=pointer]
+            - columnheader "Created" [ref=e288] [cursor=pointer]
+            - columnheader "Actions" [ref=e289]
+        - rowgroup [ref=e290]:
+          - row "chrometest-secret Software None Jul 27, 2026, 10:46 PM" [ref=e291] [cursor=pointer]:
+            - cell [ref=e292]:
+              - checkbox [ref=e293]
+            - cell "chrometest-secret" [ref=e294]:
+              - generic [ref=e295]:
+                - img [ref=e296]
+                - generic [ref=e298]: chrometest-secret
+            - cell "Software" [ref=e299]:
+              - generic "Software" [ref=e300]:
+                - img [ref=e301]
+                - generic [ref=e303]: Software
+            - cell "None" [ref=e304]
+            - cell "Jul 27, 2026, 10:46 PM" [ref=e305]
+            - cell [ref=e306]:
+              - generic [ref=e307]:
+                - button "Unseal & Copy" [ref=e308]:
+                  - img [ref=e309]
+                - button "Delete" [ref=e311]:
+                  - img [ref=e312]

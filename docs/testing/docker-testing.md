@@ -8,7 +8,7 @@ Each backend has its own Docker-based integration test environment in `test/inte
 - Consistent, isolated test environments
 - No host system modifications required
 - Reliable, repeatable test execution
-- All dependencies included (SoftHSM, SWTPM, LocalStack, Vault, etc.)
+- All dependencies included (SoftHSM, SWTPM, Floci, Vault, etc.)
 
 ## Test Organization
 
@@ -25,7 +25,7 @@ Supported backends:
 - **software**: Software key storage
 - **tpm2**: SWTPM simulator
 - **pkcs11**: SoftHSM2 hardware simulation
-- **awskms**: LocalStack AWS emulation
+- **awskms**: Floci AWS emulation
 - **gcpkms**: Mock GCP client
 - **azurekv**: Mock Azure client
 - **vault**: HashiCorp Vault server
@@ -43,7 +43,7 @@ This sequentially runs integration tests for all backends:
 1. Software
 2. TPM2/SWTPM
 3. PKCS#11/SoftHSM
-4. AWS KMS/LocalStack
+4. AWS KMS/Floci
 5. GCP KMS (mock)
 6. Azure Key Vault (mock)
 7. HashiCorp Vault
@@ -60,7 +60,7 @@ make integration-test-tpm2
 # PKCS#11/SoftHSM
 make integration-test-pkcs11
 
-# AWS KMS/LocalStack
+# AWS KMS/Floci
 make integration-test-awskms
 
 # GCP KMS (mock)
@@ -113,18 +113,18 @@ docker-compose run --rm test
 docker-compose down -v
 ```
 
-### AWS KMS (LocalStack)
+### AWS KMS (Floci)
 
-Uses LocalStack to emulate AWS KMS.
+Uses Floci to emulate AWS KMS.
 
 **Configuration:**
-- Endpoint: http://localstack:4566
+- Endpoint: http://floci:4566
 - Region: us-east-1
 - Credentials: test/test
 
 ```bash
 cd test/integration/awskms
-docker-compose up -d localstack
+docker-compose up -d floci
 docker-compose run --rm test
 docker-compose down -v
 ```
@@ -166,7 +166,7 @@ docker-compose down -v
 
 Each backend has a `docker-compose.yml` that defines:
 
-1. **Service dependencies** (e.g., LocalStack, Vault server)
+1. **Service dependencies** (e.g., Floci, Vault server)
 2. **Test container** with proper environment
 3. **Volume mounts** for source code
 4. **Network configuration** for service communication
@@ -176,20 +176,20 @@ Example structure (AWS KMS):
 ```yaml
 version: '3.8'
 services:
-  localstack:
-    image: localstack/localstack:latest
+  floci:
+    image: floci/floci:latest
     environment:
-      - SERVICES=kms
-      - DEBUG=1
+      - FLOCI_DEFAULT_REGION=us-east-1
+      - FLOCI_STORAGE_MODE=memory
     ports:
       - "4566:4566"
 
   test:
     build: .
     depends_on:
-      - localstack
+      - floci
     environment:
-      - AWS_ENDPOINT=http://localstack:4566
+      - AWS_ENDPOINT=http://floci:4566
       - AWS_REGION=us-east-1
     volumes:
       - ../../../:/workspace
@@ -261,8 +261,8 @@ docker-compose ps
 # View service logs
 docker-compose logs {service-name}
 
-# Example: LocalStack not starting
-docker-compose logs localstack
+# Example: Floci not starting
+docker-compose logs floci
 ```
 
 ### Permission Issues
@@ -283,7 +283,7 @@ docker-compose run --rm test
 
 ```bash
 # Check network connectivity
-docker-compose exec test ping localstack
+docker-compose exec test ping floci
 
 # Inspect network
 docker network ls
@@ -327,7 +327,7 @@ Approximate times per backend:
 - **Software**: 30 seconds
 - **TPM2**: 60 seconds (SWTPM startup)
 - **PKCS#11**: 45 seconds (SoftHSM initialization)
-- **AWS KMS**: 90 seconds (LocalStack startup)
+- **AWS KMS**: 90 seconds (Floci startup)
 - **GCP KMS**: 30 seconds (mock)
 - **Azure KV**: 30 seconds (mock)
 - **Vault**: 60 seconds (Vault initialization)

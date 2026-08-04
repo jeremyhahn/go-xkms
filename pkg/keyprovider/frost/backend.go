@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -71,7 +73,7 @@ func NewBackend(config *Config) (*FrostBackend, error) {
 
 	// Validate configuration
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid frost config: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid frost config", Err: err}
 	}
 
 	// Create keystore
@@ -133,7 +135,7 @@ func (b *FrostBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 
 	// Validate attributes
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid attributes: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid attributes", Err: err}
 	}
 
 	// Get or create FROST attributes
@@ -168,7 +170,7 @@ func (b *FrostBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 
 	// Validate FROST attributes
 	if err := frostAttrs.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid frost attributes: %w", err)
+		return nil, &errs.Wrapped{Msg: "invalid frost attributes", Err: err}
 	}
 
 	keyID := attrs.CN
@@ -179,7 +181,7 @@ func (b *FrostBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 	// Check if key already exists
 	exists, err := b.keystore.KeyExists(ctx, keyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check key existence: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if exists {
 		return nil, ErrKeyAlreadyExists
@@ -196,7 +198,7 @@ func (b *FrostBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 
 	packages, _, err := b.keyGenerator.Generate(genConfig)
 	if err != nil {
-		return nil, fmt.Errorf("key generation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "key generation failed", Err: err}
 	}
 
 	// Get the package for this participant
@@ -205,7 +207,7 @@ func (b *FrostBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 		participantID = 1 // Default to first participant
 	}
 	if participantID > uint32(len(packages)) {
-		return nil, fmt.Errorf("invalid participant ID: %d", participantID)
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid participant ID: %d", participantID)}
 	}
 
 	pkg := packages[participantID-1]
@@ -224,7 +226,7 @@ func (b *FrostBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 
 	// Store key package
 	if err := b.keystore.StoreKeyPackage(ctx, keyID, pkg, metadata); err != nil {
-		return nil, fmt.Errorf("failed to store key package: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to store key package", Err: err}
 	}
 
 	// Update attributes with group public key
@@ -405,7 +407,7 @@ func (b *FrostBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes
 
 	// Delete existing key
 	if err := b.keystore.DeleteKey(ctx, keyID); err != nil {
-		return fmt.Errorf("failed to delete old key: %w", err)
+		return &errs.Wrapped{Msg: "failed to delete old key", Err: err}
 	}
 
 	// Generate new key with same parameters
@@ -419,7 +421,7 @@ func (b *FrostBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes
 
 	packages, _, err := b.keyGenerator.Generate(genConfig)
 	if err != nil {
-		return fmt.Errorf("key generation failed: %w", err)
+		return &errs.Wrapped{Msg: "key generation failed", Err: err}
 	}
 
 	pkg := packages[metadata.ParticipantID-1]
@@ -438,7 +440,7 @@ func (b *FrostBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes
 
 	// Store new key package
 	if err := b.keystore.StoreKeyPackage(ctx, keyID, pkg, newMetadata); err != nil {
-		return fmt.Errorf("failed to store rotated key: %w", err)
+		return &errs.Wrapped{Msg: "failed to store rotated key", Err: err}
 	}
 
 	return nil

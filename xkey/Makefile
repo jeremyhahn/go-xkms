@@ -144,7 +144,12 @@ INTEGRATION_TEST_FLAGS := -v -tags="integration linux tpm_simulator $(BUILD_TAGS
 # Export the production tag set for tests that build the CLI binary
 # themselves (test/integration buildBinary). Without it the test-built
 # binary lacks codec_json and the go-codec based DAOs fail at runtime.
-export XKEY_CLI_BUILD_TAGS := $(BUILD_TAGS)
+# tpm_simulator is appended (never added to BUILD_TAGS itself) so the
+# CLI-under-test can open the in-process TPM simulator, matching the test
+# binary's own INTEGRATION_TEST_FLAGS above. Without this, "xkey barrier
+# init --strategy tpm2 --tpm-simulator" would fail to link the simulator
+# and integration tests would silently fall through to the real host TPM.
+export XKEY_CLI_BUILD_TAGS := $(BUILD_TAGS) tpm_simulator
 
 # Color output (ANSI escape codes)
 RESET := \033[0m
@@ -226,6 +231,37 @@ dev-browser: frontend-install
 	@# go.work. The xkey module's deps are resolved via the workspace at
 	@# ~/sources/go.work when it exists.
 	@GODEBUG=gotypesalias=1 wails dev -browser -nosyncgomod -m -tags "$(DEV_TAGS)" -ldflags "$(LDFLAGS)"
+
+# Hermetic sandbox dirs used by dev-browser-e2e. Override on the command line
+# if you want a different location, e.g. make dev-browser-e2e E2E_HOME=/mnt/...
+E2E_HOME        ?= /tmp/xkey-e2e-home
+E2E_CONFIG      ?= /tmp/xkey-e2e-config
+E2E_SOFTHSM_DIR ?= /tmp/xkey-e2e-softhsm
+
+.PHONY: e2e-softhsm-setup
+## e2e-softhsm-setup: Idempotently provision a sandboxed SoftHSM2 token (e2e-piv-test) with PIV certs for dev-browser-e2e
+## Entirely isolated under $(E2E_SOFTHSM_DIR) via a dedicated SOFTHSM2_CONF — never reads/writes the host ~/.config/softhsm2.
+e2e-softhsm-setup:
+	@E2E_SOFTHSM_DIR="$(E2E_SOFTHSM_DIR)" bash scripts/e2e-softhsm-setup.sh
+
+.PHONY: dev-browser-e2e
+## dev-browser-e2e: Hermetic browser-mode server for Playwright live-backend tests (isolated XKEY_HOME + XDG_CONFIG_HOME + SOFTHSM2_CONF)
+## Uses /tmp/xkey-e2e-home, /tmp/xkey-e2e-config, and /tmp/xkey-e2e-softhsm so the real ~/.config/xkey and ~/.config/softhsm2 are never touched.
+## Run dev-browser-e2e-clean first to reset the sandbox to a fresh first-run state.
+dev-browser-e2e: frontend-install e2e-softhsm-setup
+	@echo "$(CYAN)$(BOLD)Starting xKey dev (e2e hermetic mode) on :34115...$(RESET)"
+	@echo "$(YELLOW)XKEY_HOME=$(E2E_HOME)  XDG_CONFIG_HOME=$(E2E_CONFIG)  SOFTHSM2_CONF=$(E2E_SOFTHSM_DIR)/softhsm2.conf$(RESET)"
+	@mkdir -p "$(E2E_HOME)" "$(E2E_CONFIG)"
+	@# See dev-browser comment above for GODEBUG and -nosyncgomod rationale.
+	@XKEY_HOME="$(E2E_HOME)" XDG_CONFIG_HOME="$(E2E_CONFIG)" SOFTHSM2_CONF="$(E2E_SOFTHSM_DIR)/softhsm2.conf" \
+		GODEBUG=gotypesalias=1 wails dev -browser -nosyncgomod -m -tags "$(DEV_TAGS)" -ldflags "$(LDFLAGS)"
+
+.PHONY: dev-browser-e2e-clean
+## dev-browser-e2e-clean: Wipe the e2e sandbox dirs so the next dev-browser-e2e run boots into the first-run wizard
+dev-browser-e2e-clean:
+	@echo "$(YELLOW)Removing e2e sandbox: $(E2E_HOME) and $(E2E_CONFIG)/xkey$(RESET)"
+	@rm -rf "$(E2E_HOME)" "$(E2E_CONFIG)/xkey"
+	@echo "$(GREEN)E2E sandbox cleared. Next dev-browser-e2e run starts fresh.$(RESET)"
 
 # ==============================================================================
 # Frontend Targets
@@ -429,6 +465,11 @@ integration-test-cli:
 integration-test-fido2:
 	@echo "$(CYAN)$(BOLD)Running FIDO2 integration tests...$(RESET)"
 	@$(GO) test $(INTEGRATION_TEST_FLAGS) -timeout=10m ./test/integration/fido2/...
+	@# FIDO2 key-backend adapter matrix (software + cloud KMS via mocks; the
+	@# TPM2 host entry is opt-in via XKEY_ALLOW_HOST_TPM and skips here). Runs in
+	@# the devcontainer with INTEGRATION_TEST_FLAGS (includes tpm_simulator), so
+	@# no host hardware is touched by default.
+	@$(GO) test $(INTEGRATION_TEST_FLAGS) -timeout=10m ./pkg/authenticator/keybackend/...
 	@echo "$(GREEN)FIDO2 integration tests passed$(RESET)"
 
 .PHONY: integration-test-uhid
@@ -898,6 +939,15 @@ integration-test-piv-pkcs11:
 ## integration-test-pkcs11: Run all PKCS#11 integration tests (FIDO2 adapter + PIV certs)
 integration-test-pkcs11: integration-test-fido2-adapter integration-test-piv-pkcs11
 	@echo "$(GREEN)$(BOLD)All PKCS#11 integration tests passed$(RESET)"
+
+.PHONY: integration-test-fido2-hardware
+## integration-test-fido2-hardware: Run FIDO2 backend adapter tests against real swtpm + SoftHSM2 in Docker
+integration-test-fido2-hardware:
+	@echo "$(CYAN)$(BOLD)Building FIDO2 hardware-backend test container...$(RESET)"
+	@cd test/integration && docker compose -f docker-compose.fido2-hardware.yml build
+	@echo "$(CYAN)$(BOLD)Running FIDO2 adapter tests against real swtpm + SoftHSM2...$(RESET)"
+	@cd test/integration && docker compose -f docker-compose.fido2-hardware.yml run --rm fido2-hardware-test
+	@echo "$(GREEN)$(BOLD)FIDO2 hardware-backend tests passed$(RESET)"
 
 .PHONY: playwright-test-shell
 ## playwright-test-shell: Open a shell in the Playwright test container for debugging

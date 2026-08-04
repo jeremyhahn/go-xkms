@@ -1,6 +1,6 @@
 # ACME Configuration Reference
 
-Complete configuration reference for the go-trusted-ca ACME server.
+Complete configuration reference for the go-xkms ACME server.
 
 ## Overview
 
@@ -285,8 +285,8 @@ The storage layer uses go-codec for pluggable serialization:
 ```go
 import (
     "github.com/jeremyhahn/go-codec"
-    "github.com/jeremyhahn/go-trusted-ca/pkg/acme/storage"
-    "github.com/jeremyhahn/go-trusted-ca/pkg/acme/storage/objstore"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 )
 
 // Create codec
@@ -610,8 +610,8 @@ The ACME server can also be configured programmatically:
 
 ```go
 import (
-    "github.com/jeremyhahn/go-trusted-ca/pkg/acme/server/handlers"
-    "github.com/jeremyhahn/go-trusted-ca/pkg/acme/storage/objstore"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 )
 
 // Create storage factory

@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
 	"github.com/cloudflare/circl/sign/mldsa/mldsa65"
 	"github.com/cloudflare/circl/sign/mldsa/mldsa87"
@@ -140,7 +142,7 @@ func New(store storage.Backend) (*QuantumBackend, error) {
 // NewWithConfig creates a new QuantumBackend with the given storage and configuration.
 func NewWithConfig(store storage.Backend, config *Config) (*QuantumBackend, error) {
 	if store == nil {
-		return nil, fmt.Errorf("storage backend cannot be nil")
+		return nil, &errs.Message{Msg: "storage backend cannot be nil"}
 	}
 
 	var tracker types.AEADSafetyTracker
@@ -187,7 +189,7 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	if attrs.QuantumAttributes == nil {
@@ -197,10 +199,10 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 	keyID := attrs.ID()
 	exists, err := storage.KeyExists(ctx, b.storage, keyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check key existence: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if exists {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyAlreadyExists, keyID)
+		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", keyID)}
 	}
 
 	var privateKey crypto.PrivateKey
@@ -214,11 +216,11 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 	case strings.HasPrefix(algorithm, "ML-KEM"):
 		privateKey, metadata, err = b.generateMLKEMKey(algorithm, keyID)
 	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedAlgorithm, algorithm)
+		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", algorithm)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("key generation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "key generation failed", Err: err}
 	}
 
 	if err := b.storeKey(ctx, keyID, metadata); err != nil {
@@ -242,12 +244,12 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *keyMetadata, error) {
 	gen, ok := mldsaKeyGenerators[algorithm]
 	if !ok {
-		return nil, nil, fmt.Errorf("%w: %s", ErrUnsupportedAlgorithm, algorithm)
+		return nil, nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", algorithm)}
 	}
 
 	var seed [mldsaSeedSize]byte
 	if _, err := io.ReadFull(rand.Reader, seed[:]); err != nil {
-		return nil, nil, fmt.Errorf("failed to generate seed: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to generate seed", Err: err}
 	}
 
 	pkBytes, sk, pk := gen(&seed)
@@ -276,12 +278,12 @@ func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *
 func (b *QuantumBackend) generateMLKEMKey(algorithm, keyID string) (*MLKEMPrivateKey, *keyMetadata, error) {
 	gen, ok := mlkemGenerators[algorithm]
 	if !ok {
-		return nil, nil, fmt.Errorf("%w: %s", ErrUnsupportedAlgorithm, algorithm)
+		return nil, nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", algorithm)}
 	}
 
 	seedBytes, pubKeyBytes, dk, err := gen()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate ML-KEM key pair: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "failed to generate ML-KEM key pair", Err: err}
 	}
 
 	privateKey := &MLKEMPrivateKey{
@@ -309,11 +311,11 @@ func (b *QuantumBackend) generateMLKEMKey(algorithm, keyID string) (*MLKEMPrivat
 func (b *QuantumBackend) storeKey(ctx context.Context, keyID string, metadata *keyMetadata) error {
 	data, err := json.Marshal(metadata)
 	if err != nil {
-		return fmt.Errorf("failed to serialize key metadata: %w", err)
+		return &errs.Wrapped{Msg: "failed to serialize key metadata", Err: err}
 	}
 
 	if err := storage.SaveKey(ctx, b.storage, keyID, data); err != nil {
-		return fmt.Errorf("failed to store key: %w", err)
+		return &errs.Wrapped{Msg: "failed to store key", Err: err}
 	}
 
 	return nil
@@ -329,21 +331,21 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	keyID := attrs.ID()
 	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
 		if err == storage.ErrNotFound {
-			return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyID)}
 		}
-		return nil, fmt.Errorf("failed to retrieve key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
 	}
 
 	var metadata keyMetadata
 	if err := json.Unmarshal(keyData, &metadata); err != nil {
-		return nil, fmt.Errorf("failed to deserialize key metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to deserialize key metadata", Err: err}
 	}
 
 	switch {
@@ -352,7 +354,7 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 	case strings.HasPrefix(metadata.Algorithm, "ML-KEM"):
 		return b.loadMLKEMKey(&metadata, keyID)
 	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedAlgorithm, metadata.Algorithm)
+		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", metadata.Algorithm)}
 	}
 }
 
@@ -360,11 +362,11 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 func (b *QuantumBackend) loadMLDSAKey(metadata *keyMetadata) (*MLDSAPrivateKey, error) {
 	gen, ok := mldsaKeyGenerators[metadata.Algorithm]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedAlgorithm, metadata.Algorithm)
+		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", metadata.Algorithm)}
 	}
 
 	if len(metadata.Seed) != mldsaSeedSize {
-		return nil, fmt.Errorf("invalid ML-DSA seed size: got %d, want %d", len(metadata.Seed), mldsaSeedSize)
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid ML-DSA seed size: got %d, want %d", len(metadata.Seed), mldsaSeedSize)}
 	}
 
 	var seed [mldsaSeedSize]byte
@@ -388,12 +390,12 @@ func (b *QuantumBackend) loadMLDSAKey(metadata *keyMetadata) (*MLDSAPrivateKey, 
 func (b *QuantumBackend) loadMLKEMKey(metadata *keyMetadata, keyID string) (*MLKEMPrivateKey, error) {
 	loader, ok := mlkemSeedLoaders[metadata.Algorithm]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedAlgorithm, metadata.Algorithm)
+		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", metadata.Algorithm)}
 	}
 
 	pubKeyBytes, dk, err := loader(metadata.Seed)
 	if err != nil {
-		return nil, fmt.Errorf("failed to reconstruct ML-KEM key from seed: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to reconstruct ML-KEM key from seed", Err: err}
 	}
 
 	return &MLKEMPrivateKey{
@@ -419,15 +421,15 @@ func (b *QuantumBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttribut
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	keyID := attrs.ID()
 	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
 		if err == storage.ErrNotFound {
-			return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
+			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyID)}
 		}
-		return fmt.Errorf("failed to delete key: %w", err)
+		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
 	}
 
 	return nil
@@ -444,7 +446,7 @@ func (b *QuantumBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, 
 
 	keyIDs, err := storage.ListKeys(ctx, b.storage)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
 
 	attrs := make([]*types.KeyAttributes, 0, len(keyIDs))
@@ -517,27 +519,27 @@ func (b *QuantumBackend) RotateKey(ctx context.Context, attrs *types.KeyAttribut
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", backend.ErrInvalidAttributes, err)
+		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	keyID := attrs.ID()
 
 	exists, err := storage.KeyExists(ctx, b.storage, keyID)
 	if err != nil {
-		return fmt.Errorf("failed to check key existence: %w", err)
+		return &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if !exists {
-		return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
+		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyID)}
 	}
 
 	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
-		return fmt.Errorf("failed to retrieve key for rotation: %w", err)
+		return &errs.Wrapped{Msg: "failed to retrieve key for rotation", Err: err}
 	}
 
 	var metadata keyMetadata
 	if err := json.Unmarshal(keyData, &metadata); err != nil {
-		return fmt.Errorf("failed to deserialize key metadata: %w", err)
+		return &errs.Wrapped{Msg: "failed to deserialize key metadata", Err: err}
 	}
 
 	var newMetadata *keyMetadata
@@ -548,15 +550,15 @@ func (b *QuantumBackend) RotateKey(ctx context.Context, attrs *types.KeyAttribut
 	case strings.HasPrefix(metadata.Algorithm, "ML-KEM"):
 		_, newMetadata, err = b.generateMLKEMKey(metadata.Algorithm, keyID)
 	default:
-		return fmt.Errorf("%w: %s", ErrUnsupportedAlgorithm, metadata.Algorithm)
+		return &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", metadata.Algorithm)}
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to generate new key for rotation: %w", err)
+		return &errs.Wrapped{Msg: "failed to generate new key for rotation", Err: err}
 	}
 
 	if err := b.storeKey(ctx, keyID, newMetadata); err != nil {
-		return fmt.Errorf("failed to store rotated key: %w", err)
+		return &errs.Wrapped{Msg: "failed to store rotated key", Err: err}
 	}
 
 	// Reset AEAD tracking for the rotated key (ML-KEM only)

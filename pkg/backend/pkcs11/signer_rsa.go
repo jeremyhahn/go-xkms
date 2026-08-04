@@ -23,6 +23,8 @@ import (
 	"io"
 	"math/big"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/miekg/pkcs11"
 )
 
@@ -96,7 +98,7 @@ func (s *pkcs11RSASigner) signPKCS1v15(digest []byte, opts crypto.SignerOpts) ([
 
 	prefix, ok := digestInfoPrefix[hashFunc]
 	if !ok {
-		return nil, fmt.Errorf("%w: unsupported hash for PKCS1v15: %v", ErrUnsupportedOperation, hashFunc)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("unsupported hash for PKCS1v15: %v", hashFunc)}
 	}
 
 	// DigestInfo = prefix || digest
@@ -109,13 +111,13 @@ func (s *pkcs11RSASigner) signPKCS1v15(digest []byte, opts crypto.SignerOpts) ([
 		if err := s.pool.Ctx().SignInit(session, []*pkcs11.Mechanism{
 			pkcs11.NewMechanism(pkcs11.CKM_RSA_PKCS, nil),
 		}, s.privateHandle); err != nil {
-			return fmt.Errorf("pkcs11: RSA PKCS1v15 SignInit: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: RSA PKCS1v15 SignInit", Err: err}
 		}
 
 		var err error
 		signature, err = s.pool.Ctx().Sign(session, signed)
 		if err != nil {
-			return fmt.Errorf("pkcs11: RSA PKCS1v15 Sign: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: RSA PKCS1v15 Sign", Err: err}
 		}
 		return nil
 	})
@@ -134,13 +136,13 @@ func (s *pkcs11RSASigner) signPSS(digest []byte, opts *rsa.PSSOptions) ([]byte, 
 
 	info, ok := hashMap[hashFunc]
 	if !ok {
-		return nil, fmt.Errorf("%w: unsupported hash for PSS: %v", ErrUnsupportedOperation, hashFunc)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("unsupported hash for PSS: %v", hashFunc)}
 	}
 
 	saltLen := opts.SaltLength
 	switch saltLen {
 	case rsa.PSSSaltLengthAuto:
-		return nil, fmt.Errorf("%w: PSSSaltLengthAuto not supported by PKCS#11", ErrUnsupportedOperation)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: "PSSSaltLengthAuto not supported by PKCS#11"}
 	case rsa.PSSSaltLengthEqualsHash:
 		saltLen = int(info.hashLen)
 	}
@@ -155,13 +157,13 @@ func (s *pkcs11RSASigner) signPSS(digest []byte, opts *rsa.PSSOptions) ([]byte, 
 		if err := s.pool.Ctx().SignInit(session, []*pkcs11.Mechanism{
 			pkcs11.NewMechanism(pkcs11.CKM_RSA_PKCS_PSS, pssParams),
 		}, s.privateHandle); err != nil {
-			return fmt.Errorf("pkcs11: RSA PSS SignInit: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: RSA PSS SignInit", Err: err}
 		}
 
 		var err error
 		signature, err = s.pool.Ctx().Sign(session, digest)
 		if err != nil {
-			return fmt.Errorf("pkcs11: RSA PSS Sign: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: RSA PSS Sign", Err: err}
 		}
 		return nil
 	})
@@ -190,13 +192,13 @@ func (s *pkcs11RSASigner) decryptPKCS1v15(ciphertext []byte) ([]byte, error) {
 		if err := s.pool.Ctx().DecryptInit(session, []*pkcs11.Mechanism{
 			pkcs11.NewMechanism(pkcs11.CKM_RSA_PKCS, nil),
 		}, s.privateHandle); err != nil {
-			return fmt.Errorf("pkcs11: RSA PKCS1v15 DecryptInit: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: RSA PKCS1v15 DecryptInit", Err: err}
 		}
 
 		var err error
 		plaintext, err = s.pool.Ctx().Decrypt(session, ciphertext)
 		if err != nil {
-			return fmt.Errorf("pkcs11: RSA PKCS1v15 Decrypt: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: RSA PKCS1v15 Decrypt", Err: err}
 		}
 		return nil
 	})
@@ -215,7 +217,7 @@ func (s *pkcs11RSASigner) decryptOAEP(ciphertext []byte, opts *rsa.OAEPOptions) 
 
 	info, ok := hashMap[hashFunc]
 	if !ok {
-		return nil, fmt.Errorf("%w: unsupported hash for OAEP: %v", ErrUnsupportedOperation, hashFunc)
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("unsupported hash for OAEP: %v", hashFunc)}
 	}
 
 	oaepParams := pkcs11.NewOAEPParams(info.hashAlg, info.mgfAlg, pkcs11.CKZ_DATA_SPECIFIED, opts.Label)
@@ -225,13 +227,13 @@ func (s *pkcs11RSASigner) decryptOAEP(ciphertext []byte, opts *rsa.OAEPOptions) 
 		if err := s.pool.Ctx().DecryptInit(session, []*pkcs11.Mechanism{
 			pkcs11.NewMechanism(pkcs11.CKM_RSA_PKCS_OAEP, oaepParams),
 		}, s.privateHandle); err != nil {
-			return fmt.Errorf("pkcs11: RSA OAEP DecryptInit: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: RSA OAEP DecryptInit", Err: err}
 		}
 
 		var err error
 		plaintext, err = s.pool.Ctx().Decrypt(session, ciphertext)
 		if err != nil {
-			return fmt.Errorf("pkcs11: RSA OAEP Decrypt: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: RSA OAEP Decrypt", Err: err}
 		}
 		return nil
 	})
@@ -251,11 +253,11 @@ func exportRSAPublicKey(pool *SessionPool, pubHandle pkcs11.ObjectHandle) (*rsa.
 			pkcs11.NewAttribute(pkcs11.CKA_PUBLIC_EXPONENT, nil),
 		})
 		if err != nil {
-			return fmt.Errorf("pkcs11: get RSA public key attributes: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: get RSA public key attributes", Err: err}
 		}
 
 		if len(attrs) < 2 || len(attrs[0].Value) == 0 || len(attrs[1].Value) == 0 {
-			return fmt.Errorf("%w: missing modulus or exponent", ErrInvalidKeyAttributes)
+			return &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "missing modulus or exponent"}
 		}
 
 		modulus := new(big.Int).SetBytes(attrs[0].Value)
@@ -346,19 +348,19 @@ func generateRSAKeyPair(pool *SessionPool, id, label []byte, keySize int, isYubi
 	var err error
 	if isYubiKeyPIV {
 		if soPIN == "" {
-			return nil, fmt.Errorf("pkcs11: generate RSA key pair: %w", ErrSOPINRequired)
+			return nil, &errs.Wrapped{Msg: "pkcs11: generate RSA key pair", Err: ErrSOPINRequired}
 		}
 		err = pool.WithSOSession(soPIN, userPIN, genFn)
 	} else {
 		err = pool.WithSession(genFn)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("pkcs11: generate RSA key pair: %w", err)
+		return nil, &errs.Wrapped{Msg: "pkcs11: generate RSA key pair", Err: err}
 	}
 
 	pub, err := exportRSAPublicKey(pool, pubHandle)
 	if err != nil {
-		return nil, fmt.Errorf("pkcs11: export RSA public key after generation: %w", err)
+		return nil, &errs.Wrapped{Msg: "pkcs11: export RSA public key after generation", Err: err}
 	}
 
 	return &pkcs11RSASigner{
@@ -411,12 +413,12 @@ func generateRSAWrappingKeyPair(pool *SessionPool, keyID []byte, keySize int) (*
 		return err
 	})
 	if err != nil {
-		return nil, fmt.Errorf("pkcs11: generate RSA wrapping key pair: %w", err)
+		return nil, &errs.Wrapped{Msg: "pkcs11: generate RSA wrapping key pair", Err: err}
 	}
 
 	pub, err := exportRSAPublicKey(pool, pubHandle)
 	if err != nil {
-		return nil, fmt.Errorf("pkcs11: export wrapping public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "pkcs11: export wrapping public key", Err: err}
 	}
 
 	return &pkcs11RSASigner{
@@ -439,15 +441,15 @@ func findRSASigner(pool *SessionPool, id []byte) (*pkcs11RSASigner, error) {
 			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_RSA),
 			pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 		}); err != nil {
-			return fmt.Errorf("pkcs11: FindObjectsInit for RSA private key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjectsInit for RSA private key", Err: err}
 		}
 		privObjs, _, err := pool.Ctx().FindObjects(session, 1)
 		if err != nil {
 			pool.Ctx().FindObjectsFinal(session)
-			return fmt.Errorf("pkcs11: FindObjects for RSA private key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjects for RSA private key", Err: err}
 		}
 		if err := pool.Ctx().FindObjectsFinal(session); err != nil {
-			return fmt.Errorf("pkcs11: FindObjectsFinal for RSA private key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjectsFinal for RSA private key", Err: err}
 		}
 		if len(privObjs) == 0 {
 			return nil // not found
@@ -460,15 +462,15 @@ func findRSASigner(pool *SessionPool, id []byte) (*pkcs11RSASigner, error) {
 			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_RSA),
 			pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 		}); err != nil {
-			return fmt.Errorf("pkcs11: FindObjectsInit for RSA public key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjectsInit for RSA public key", Err: err}
 		}
 		pubObjs, _, err := pool.Ctx().FindObjects(session, 1)
 		if err != nil {
 			pool.Ctx().FindObjectsFinal(session)
-			return fmt.Errorf("pkcs11: FindObjects for RSA public key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjects for RSA public key", Err: err}
 		}
 		if err := pool.Ctx().FindObjectsFinal(session); err != nil {
-			return fmt.Errorf("pkcs11: FindObjectsFinal for RSA public key: %w", err)
+			return &errs.Wrapped{Msg: "pkcs11: FindObjectsFinal for RSA public key", Err: err}
 		}
 		if len(pubObjs) == 0 {
 			return nil // private found but no public — unusual but handle gracefully

@@ -24,8 +24,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	sshsdk "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/sshstore"
 )
 
 // Phase 1c xkey SSH surface. Every command goes through the SDK's
@@ -60,6 +62,13 @@ var (
 	// ErrSSHClientConstruct wraps any sshsdk.NewREST / NewEmbeddedFile
 	// failure.
 	ErrSSHClientConstruct = errors.New("ssh: failed to construct client")
+
+	// ErrSSHStoreBarrierEncrypted indicates the local SSH store is protected
+	// by an initialized xkey barrier. The CLI has no barrier-unlock flow of
+	// its own today (that lives in the GUI's TPM/PCR-policy auto-unseal
+	// path) — barrier-encrypted SSH data must be managed through the xkey
+	// app until the CLI gains its own unlock flow.
+	ErrSSHStoreBarrierEncrypted = errors.New("ssh: local store is barrier-encrypted; unlock via the xkey app")
 )
 
 // SSHConfigError wraps a configuration-resolution failure. The Op
@@ -87,9 +96,9 @@ var SSHCmd = &cobra.Command{
 Transport selection:
   * When XKMSD_URL is set (or the config file has xkmsd_url set) the
     CLI uses the REST transport to talk to xkmsd.
-  * Otherwise the CLI uses the embedded transport with a file-backed
-    store rooted at ~/.xkey-store/ssh (or whatever the resolved xhome
-    directory provides).
+  * Otherwise the CLI uses the embedded transport with a store rooted
+    at the resolved xhome data directory (or $HOME/.xkey-store as a
+    fallback), using the configured storage engine (file by default).
 
 Both transports expose the same operations, so scripts written
 against one work unchanged against the other.
@@ -209,50 +218,111 @@ var sshAuthorizedRemoveCmd = &cobra.Command{
 // sshClient resolves the transport and returns an sshsdk.Client along
 // with its Close function. The Close returned is always safe to defer;
 // it is a no-op on the REST transport.
-func sshClient(_ *cobra.Command) (sshsdk.Client, func(), error) {
-	url := strings.TrimSpace(os.Getenv("XKMSD_URL"))
-	if url == "" {
-		url = strings.TrimSpace(viper.GetString("xkmsd_url"))
+func sshClient(cmd *cobra.Command) (sshsdk.Client, func(), error) {
+	token := strings.TrimSpace(os.Getenv("XKMSD_TOKEN"))
+
+	// 1. Explicit --server flag selects the transport by URL scheme so the
+	//    same command works over every protocol (rest/grpc/quic/unix/mcp).
+	if cmd != nil {
+		if server, _ := cmd.Flags().GetString("server"); strings.TrimSpace(server) != "" {
+			tlsCA, _ := cmd.Flags().GetString("tls-ca")
+			return sshClientForServer(strings.TrimSpace(server), strings.TrimSpace(tlsCA), token)
+		}
 	}
-	if url != "" {
-		client, err := sshsdk.NewREST(sshsdk.RESTOptions{
-			BaseURL:   url,
-			AuthToken: strings.TrimSpace(os.Getenv("XKMSD_TOKEN")),
-		})
+
+	// 2. XKMSD_URL / config fall back to the REST transport.
+	if u := firstNonEmpty(os.Getenv("XKMSD_URL"), viper.GetString("xkmsd_url")); strings.TrimSpace(u) != "" {
+		client, err := sshsdk.NewREST(sshsdk.RESTOptions{BaseURL: strings.TrimSpace(u), AuthToken: token})
 		if err != nil {
-			return nil, nil, fmt.Errorf("%w: %v", ErrSSHClientConstruct, err)
+			return nil, nil, &SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}
 		}
 		return client, func() { _ = client.Close() }, nil
 	}
-	root, err := resolveXKeySSHRoot()
+
+	// 3. Otherwise use the local shared-store-backed embedded client.
+	backend, err := xkeySSHBackend()
 	if err != nil {
 		return nil, nil, err
 	}
-	client, err := sshsdk.NewEmbeddedFile(sshsdk.EmbeddedFileOptions{RootDir: root})
+	client, err := sshsdk.NewEmbedded(sshsdk.EmbeddedOptions{Backend: backend})
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrSSHClientConstruct, err)
+		return nil, nil, &SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}
 	}
 	return client, func() { _ = client.Close() }, nil
 }
 
-// resolveXKeySSHRoot computes the file-backed store location. Uses the
-// global resolvedHome when set (consistent with the rest of the xkey
-// CLI) and falls back to $HOME/.xkey-store/ssh otherwise. Last-chance
-// fallback is the current working directory so CI invocations without
-// a stable $HOME still function.
-func resolveXKeySSHRoot() (string, error) {
+// sshClientForServer constructs the SDK SSH client for an explicit --server URL.
+// The scheme dispatch (http(s)→REST, grpc(s)→gRPC, unix→gRPC-over-UDS,
+// quic→HTTP/3, mcp(s)→JSON-RPC) lives in the SDK so xkey and other consumers
+// share one code path. tlsCA, when set, verifies the server.
+func sshClientForServer(server, tlsCA, token string) (sshsdk.Client, func(), error) {
+	client, err := sshsdk.NewClientForServer(server, tlsCA, token)
+	if err != nil {
+		return nil, nil, &SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}
+	}
+	return client, func() { _ = client.Close() }, nil
+}
+
+// firstNonEmpty returns the first non-empty trimmed string.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// resolveXKeySSHDataDir computes the base data directory backing the shared
+// SSH store (sshstore.ResolveBackend appends its own "ssh" sub-directory).
+// Uses the global resolvedHome when set (consistent with the rest of the
+// xkey CLI) and falls back to $HOME/.xkey-store otherwise. Last-chance
+// fallback is the current working directory so CI invocations without a
+// stable $HOME still function.
+func resolveXKeySSHDataDir() (string, error) {
 	if resolvedHome != nil {
-		return filepath.Join(resolvedHome.DataDir(), "ssh"), nil
+		return resolvedHome.DataDir(), nil
 	}
 	home, err := os.UserHomeDir()
 	if err == nil && home != "" {
-		return filepath.Join(home, ".xkey-store", "ssh"), nil
+		return filepath.Join(home, ".xkey-store"), nil
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", &SSHConfigError{Op: "resolve_store_root", Err: err}
 	}
-	return filepath.Join(cwd, ".xkey-store", "ssh"), nil
+	return filepath.Join(cwd, ".xkey-store"), nil
+}
+
+// xkeySSHStorageEngineKind resolves the configured go-qrdb storage engine
+// (file/pebble/memory) from the loaded unified config, defaulting to the
+// file engine when no config has been loaded yet (e.g. a direct unit-test
+// call outside the cobra PersistentPreRunE lifecycle).
+func xkeySSHStorageEngineKind() xkmssdk.StorageEngineKind {
+	if cfg := GetConfig(); cfg != nil && cfg.State.StorageEngine != "" {
+		return xkmssdk.StorageEngineKind(cfg.State.StorageEngine)
+	}
+	return xkmssdk.StorageEngineFile
+}
+
+// xkeySSHBackend resolves the shared SSH storage backend for the CLI (see
+// xkey/pkg/sshstore, the single construction point shared with the GUI).
+//
+// The CLI has no barrier-unlock flow of its own: when the barrier has been
+// initialized, this returns ErrSSHStoreBarrierEncrypted rather than guessing
+// at a passphrase prompt or duplicating the GUI's TPM/PCR-policy auto-unseal
+// machinery. When the barrier has never been initialized, this opens the
+// plain (unencrypted) engine store — the same behavior the CLI has always
+// had.
+func xkeySSHBackend() (xkmssdk.StorageBackend, error) {
+	dataDir, err := resolveXKeySSHDataDir()
+	if err != nil {
+		return nil, err
+	}
+	if barrierRootKeyExists(dataDir) {
+		return nil, ErrSSHStoreBarrierEncrypted
+	}
+	return sshstore.ResolveBackend(dataDir, xkeySSHStorageEngineKind(), nil)
 }
 
 // sshPassphraseProvider returns a provider appropriate to the CLI's
@@ -286,6 +356,7 @@ func runSSHKeysGenerate(cmd *cobra.Command, _ []string) error {
 	algo, _ := cmd.Flags().GetString("type")
 	bits, _ := cmd.Flags().GetInt("bits")
 	comment, _ := cmd.Flags().GetString("comment")
+	backend, _ := cmd.Flags().GetString("backend")
 
 	if name == "" {
 		return ErrSSHMissingKeyName
@@ -300,7 +371,7 @@ func runSSHKeysGenerate(cmd *cobra.Command, _ []string) error {
 		algo = "ed25519"
 	}
 	if !isValidSSHAlgorithm(algo) {
-		return fmt.Errorf("%w: %q", ErrSSHInvalidKeyType, algo)
+		return &DetailError{Err: ErrSSHInvalidKeyType, Detail: fmt.Sprintf(": %q", algo)}
 	}
 
 	client, closer, err := sshClient(cmd)
@@ -316,6 +387,7 @@ func runSSHKeysGenerate(cmd *cobra.Command, _ []string) error {
 		Algorithm: algo,
 		RSABits:   bits,
 		Comment:   comment,
+		Backend:   backend,
 	})
 	if err != nil {
 		return err
@@ -692,6 +764,12 @@ func isValidSSHAlgorithm(a string) bool {
 func init() {
 	RootCmd.AddCommand(SSHCmd)
 
+	// --server selects a remote xkmsd over any protocol (http(s)/grpc(s)/unix/
+	// quic/mcp(s)); --tls-ca verifies the server. When unset the command falls
+	// back to XKMSD_URL (REST) then the local embedded store.
+	SSHCmd.PersistentFlags().String("server", "", "Remote xkmsd URL (e.g. grpcs://host:9443, quic://host:8444, unix:///path/xkms.sock)")
+	SSHCmd.PersistentFlags().String("tls-ca", "", "TLS CA certificate file used to verify the server")
+
 	SSHCmd.AddCommand(sshKeysCmd)
 	sshKeysCmd.AddCommand(sshKeysGenerateCmd)
 	sshKeysCmd.AddCommand(sshKeysImportCmd)
@@ -722,6 +800,7 @@ func init() {
 	sshKeysGenerateCmd.Flags().String("type", "ed25519", "Key algorithm (ed25519, rsa, ecdsa-p256, ecdsa-p384, ecdsa-p521)")
 	sshKeysGenerateCmd.Flags().Int("bits", 0, "RSA key size (default 4096 for rsa)")
 	sshKeysGenerateCmd.Flags().String("comment", "", "Free-form key comment")
+	sshKeysGenerateCmd.Flags().String("backend", "", "Crypto backend to generate the key on (software, tpm2, pkcs11, cloud); empty uses the server/embedded default")
 
 	sshKeysImportCmd.Flags().String("name", "", "Key name (defaults to the imported file's basename)")
 	sshKeysImportCmd.Flags().String("comment", "", "Free-form key comment")

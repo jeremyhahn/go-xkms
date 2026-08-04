@@ -109,7 +109,7 @@ provider, err := cloudflare.New(ctx, cloudflare.Config{
 ### Using Provider Factory
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/dns-01/providers"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers"
 
 provider, err := providers.NewProviderFromEnv(ctx, providers.NameCloudflare)
 ```

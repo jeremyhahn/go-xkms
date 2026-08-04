@@ -17,7 +17,11 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildAlgorithmsResponse_SoftwareOnly(t *testing.T) {
@@ -115,7 +119,7 @@ func TestBuildAlgorithmsResponse_QuantumBackend(t *testing.T) {
 
 func TestBuildAlgorithmsResponse_EmptyBackends(t *testing.T) {
 	resp := BuildAlgorithmsResponse(nil, func(name string) (types.Capabilities, error) {
-		return types.Capabilities{}, fmt.Errorf("no backend: %s", name)
+		return types.Capabilities{}, &errs.Message{Msg: fmt.Sprintf("no backend: %s", name)}
 	})
 
 	if len(resp.Signing) != 0 {
@@ -132,7 +136,7 @@ func TestBuildAlgorithmsResponse_CapabilitiesError(t *testing.T) {
 		if name == "software" {
 			return types.Capabilities{Keys: true}, nil
 		}
-		return types.Capabilities{}, fmt.Errorf("backend unavailable: %s", name)
+		return types.Capabilities{}, &errs.Message{Msg: fmt.Sprintf("backend unavailable: %s", name)}
 	}
 
 	resp := BuildAlgorithmsResponse(backends, provider)
@@ -216,7 +220,7 @@ func stubCapabilities(m map[string]types.Capabilities) CapabilitiesProvider {
 	return func(name string) (types.Capabilities, error) {
 		caps, ok := m[name]
 		if !ok {
-			return types.Capabilities{}, fmt.Errorf("unknown backend: %s", name)
+			return types.Capabilities{}, &errs.Message{Msg: fmt.Sprintf("unknown backend: %s", name)}
 		}
 		return caps, nil
 	}
@@ -256,4 +260,49 @@ func assertAlgorithm(t *testing.T, algos []types.AlgorithmInfo, name string, exp
 			t.Errorf("algorithm %q backend[%d]: expected %s, got %s", name, i, b, info.Backends[i])
 		}
 	}
+}
+
+// ============================================================
+// DiscoverAlgorithms — convenience wrapper over the compiled-in
+// backend registry and the global capability provider.
+// ============================================================
+
+func TestDiscoverAlgorithms_NotInitialized(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	// No service configured: every compiled-in backend's capabilities lookup
+	// fails with ErrNotInitialized, so the response must be non-nil with
+	// empty lists rather than panicking.
+	resp := DiscoverAlgorithms()
+	require.NotNil(t, resp)
+	assert.Empty(t, resp.Signing)
+	assert.Empty(t, resp.KeyEncapsulation)
+}
+
+func TestDiscoverAlgorithms_WithConfiguredBackend(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	// Wire a real KeyProvider (not the nil-backend mockKeyStore) under the
+	// "software" name so GetBackendCapabilities can call Capabilities()
+	// without panicking on a nil interface, exercising the success path of
+	// DiscoverAlgorithms end to end (SupportedBackends -> GetBackendCapabilities
+	// -> BuildAlgorithmsResponse).
+	software := newMockKeyStoreWithSealer("software", types.BackendTypeSoftware)
+	err := Initialize(&ServiceConfig{
+		Backends:       map[string]Backend{"software": software},
+		DefaultBackend: "software",
+	})
+	require.NoError(t, err)
+
+	resp := DiscoverAlgorithms()
+	require.NotNil(t, resp)
+
+	// Confirm the capability lookup for the registered backend actually
+	// succeeds (mockSealerBackend.Capabilities() returns a zero-value
+	// Capabilities{}, so it contributes no algorithms, but must not error).
+	caps, err := GetBackendCapabilities("software")
+	require.NoError(t, err)
+	assert.Equal(t, types.Capabilities{}, caps)
 }

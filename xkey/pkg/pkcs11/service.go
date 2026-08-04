@@ -66,7 +66,7 @@ func (t *EmbeddedTransport) GenerateKey(ctx context.Context, req *transport.Gene
 
 	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
+		return nil, &DetailError{Err: ErrBackendNotFound, Detail: fmt.Sprintf(": %s", req.Backend)}
 	}
 
 	attrs := &xkms.KeyAttributes{
@@ -102,7 +102,7 @@ func (t *EmbeddedTransport) GenerateKey(ctx context.Context, req *transport.Gene
 		attrs.KeyAlgorithm = x509.ECDSA
 		parsedCurve, curveErr := xkms.ParseCurve(curve)
 		if curveErr != nil {
-			return nil, fmt.Errorf("invalid curve: %w", curveErr)
+			return nil, &WrappedError{Msg: "invalid curve", Err: curveErr}
 		}
 		attrs.ECCAttributes = &xkms.ECCAttributes{
 			Curve: parsedCurve,
@@ -114,16 +114,16 @@ func (t *EmbeddedTransport) GenerateKey(ctx context.Context, req *transport.Gene
 		privKey, err = ks.GenerateEd25519(ctx, attrs)
 
 	default:
-		return nil, fmt.Errorf("unsupported algorithm: %s", algorithm)
+		return nil, &MessageError{Msg: fmt.Sprintf("unsupported algorithm: %s", algorithm)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate key: %w", err)
+		return nil, &WrappedError{Msg: "failed to generate key", Err: err}
 	}
 
 	pubKeyPEM, err := extractPublicKeyPEM(privKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract public key: %w", err)
+		return nil, &WrappedError{Msg: "failed to extract public key", Err: err}
 	}
 
 	return &transport.GenerateKeyResponse{
@@ -141,24 +141,24 @@ func (t *EmbeddedTransport) Sign(ctx context.Context, req *transport.SignRequest
 
 	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
+		return nil, &DetailError{Err: ErrBackendNotFound, Detail: fmt.Sprintf(": %s", req.Backend)}
 	}
 
 	attrs, err := findKeyAttributes(ctx, ks, req.KeyID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrKeyNotFound, req.KeyID)
+		return nil, &DetailError{Err: ErrKeyNotFound, Detail: fmt.Sprintf(": %s", req.KeyID)}
 	}
 
 	signer, err := ks.Signer(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrSigningFailed, Cause: err}
 	}
 
 	// Ed25519 uses pure signing (no prehashing)
 	if attrs.KeyAlgorithm == x509.Ed25519 {
 		signature, signErr := signer.Sign(nil, req.Data, crypto.Hash(0))
 		if signErr != nil {
-			return nil, fmt.Errorf("%w: %v", ErrSigningFailed, signErr)
+			return nil, &SentinelCauseError{Sentinel: ErrSigningFailed, Cause: signErr}
 		}
 		return &transport.SignResponse{
 			Signature: signature,
@@ -172,7 +172,7 @@ func (t *EmbeddedTransport) Sign(ctx context.Context, req *transport.SignRequest
 
 	signature, err := signer.Sign(nil, digest, hashAlg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrSigningFailed, Cause: err}
 	}
 
 	return &transport.SignResponse{
@@ -188,18 +188,18 @@ func (t *EmbeddedTransport) Verify(ctx context.Context, req *transport.VerifyReq
 
 	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
+		return nil, &DetailError{Err: ErrBackendNotFound, Detail: fmt.Sprintf(": %s", req.Backend)}
 	}
 
 	attrs, err := findKeyAttributes(ctx, ks, req.KeyID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrKeyNotFound, req.KeyID)
+		return nil, &DetailError{Err: ErrKeyNotFound, Detail: fmt.Sprintf(": %s", req.KeyID)}
 	}
 
 	// Get the signer to extract the public key
 	signer, err := ks.Signer(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrVerifyFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrVerifyFailed, Cause: err}
 	}
 
 	pubKey := signer.Public()
@@ -218,12 +218,12 @@ func (t *EmbeddedTransport) Encrypt(ctx context.Context, req *transport.EncryptR
 
 	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
+		return nil, &DetailError{Err: ErrBackendNotFound, Detail: fmt.Sprintf(": %s", req.Backend)}
 	}
 
 	symBackend, ok := ks.KeyProvider().(xkms.SymmetricKeyProvider)
 	if !ok {
-		return nil, fmt.Errorf("%w: backend does not support symmetric encryption", ErrEncryptionFailed)
+		return nil, &DetailError{Err: ErrEncryptionFailed, Detail: ": backend does not support symmetric encryption"}
 	}
 
 	encrypter, err := symBackend.SymmetricEncrypter(ctx, &xkms.KeyAttributes{
@@ -231,12 +231,12 @@ func (t *EmbeddedTransport) Encrypt(ctx context.Context, req *transport.EncryptR
 		StoreType: xkms.StoreType(req.Backend),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEncryptionFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
 	}
 
 	encrypted, err := encrypter.Encrypt(req.Plaintext, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEncryptionFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
 	}
 
 	return &transport.EncryptResponse{
@@ -254,12 +254,12 @@ func (t *EmbeddedTransport) Decrypt(ctx context.Context, req *transport.DecryptR
 
 	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
+		return nil, &DetailError{Err: ErrBackendNotFound, Detail: fmt.Sprintf(": %s", req.Backend)}
 	}
 
 	symBackend, ok := ks.KeyProvider().(xkms.SymmetricKeyProvider)
 	if !ok {
-		return nil, fmt.Errorf("%w: backend does not support symmetric decryption", ErrDecryptionFailed)
+		return nil, &DetailError{Err: ErrDecryptionFailed, Detail: ": backend does not support symmetric decryption"}
 	}
 
 	encrypter, err := symBackend.SymmetricEncrypter(ctx, &xkms.KeyAttributes{
@@ -267,7 +267,7 @@ func (t *EmbeddedTransport) Decrypt(ctx context.Context, req *transport.DecryptR
 		StoreType: xkms.StoreType(req.Backend),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
 	}
 
 	plaintext, err := encrypter.Decrypt(&xkms.EncryptedData{
@@ -276,7 +276,7 @@ func (t *EmbeddedTransport) Decrypt(ctx context.Context, req *transport.DecryptR
 		Tag:        req.Tag,
 	}, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
 	}
 
 	return &transport.DecryptResponse{
@@ -308,29 +308,29 @@ func (t *EmbeddedTransport) DeriveKey(ctx context.Context, req *transport.Derive
 	if len(ikm) == 0 && req.KeyID != "" {
 		ks, err := xkms.GetBackend(req.Backend)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
+			return nil, &DetailError{Err: ErrBackendNotFound, Detail: fmt.Sprintf(": %s", req.Backend)}
 		}
 		ieBackend, ok := ks.KeyProvider().(xkms.ImportExportBackend)
 		if !ok {
-			return nil, fmt.Errorf("%w: backend does not support key material export for derivation", ErrDerivationFailed)
+			return nil, &DetailError{Err: ErrDerivationFailed, Detail: ": backend does not support key material export for derivation"}
 		}
 		attrs, err := findKeyAttributes(ctx, ks, req.KeyID)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %s", ErrKeyNotFound, req.KeyID)
+			return nil, &DetailError{Err: ErrKeyNotFound, Detail: fmt.Sprintf(": %s", req.KeyID)}
 		}
 		ikm, err = ieBackend.ExportKeyMaterial(ctx, attrs)
 		if err != nil {
-			return nil, fmt.Errorf("%w: failed to export key material: %v", ErrDerivationFailed, err)
+			return nil, &DetailError{Err: ErrDerivationFailed, Detail: fmt.Sprintf(": failed to export key material: %v", err)}
 		}
 	}
 
 	if len(ikm) == 0 {
-		return nil, fmt.Errorf("%w: no input key material provided", ErrDerivationFailed)
+		return nil, &DetailError{Err: ErrDerivationFailed, Detail: ": no input key material provided"}
 	}
 
 	derived, err := adapter.DeriveKey(ikm, params)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDerivationFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrDerivationFailed, Cause: err}
 	}
 
 	return &transport.DeriveKeyResponse{
@@ -346,17 +346,17 @@ func (t *EmbeddedTransport) DeriveKeyECDH(ctx context.Context, req *transport.De
 
 	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
+		return nil, &DetailError{Err: ErrBackendNotFound, Detail: fmt.Sprintf(": %s", req.Backend)}
 	}
 
 	kap, ok := ks.KeyProvider().(xkms.KeyAgreementProvider)
 	if !ok {
-		return nil, fmt.Errorf("%w: backend does not support key agreement", ErrDerivationFailed)
+		return nil, &DetailError{Err: ErrDerivationFailed, Detail: ": backend does not support key agreement"}
 	}
 
 	attrs, err := findKeyAttributes(ctx, ks, req.KeyID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrKeyNotFound, req.KeyID)
+		return nil, &DetailError{Err: ErrKeyNotFound, Detail: fmt.Sprintf(": %s", req.KeyID)}
 	}
 
 	kdfHash := req.KDFHash
@@ -377,7 +377,7 @@ func (t *EmbeddedTransport) DeriveKeyECDH(ctx context.Context, req *transport.De
 
 	derived, err := kap.DeriveKeyECDH(context.Background(), attrs, req.PeerPublicKey, kdfParams)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDerivationFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrDerivationFailed, Cause: err}
 	}
 
 	return &transport.DeriveKeyECDHResponse{
@@ -400,20 +400,20 @@ func (t *EmbeddedTransport) WrapKeyByID(ctx context.Context, req *transport.Wrap
 
 	exported, err := xkms.ExportKey(ctx, targetKID, xkms.WrappingAlgorithm(""))
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to export target key: %v", ErrWrappingFailed, err)
+		return nil, &DetailError{Err: ErrWrappingFailed, Detail: fmt.Sprintf(": failed to export target key: %v", err)}
 	}
 
 	// Get the import parameters from the wrapping key's backend.
 	wrappingAlg := xkms.WrappingAlgorithm(req.Algorithm)
 	params, err := getImportParams(ctx, req.WrappingKeyBackend, req.WrappingKeyID, wrappingAlg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrWrappingFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrWrappingFailed, Cause: err}
 	}
 
 	// Wrap using the wrapping key's backend.
 	wrapped, err := xkms.WrapKey(ctx, req.WrappingKeyBackend, exported.WrappedKey, params)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrWrappingFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrWrappingFailed, Cause: err}
 	}
 
 	return &transport.WrapKeyByIDResponse{
@@ -431,7 +431,7 @@ func (t *EmbeddedTransport) UnwrapKeyByID(ctx context.Context, req *transport.Un
 	unwrappingAlg := xkms.WrappingAlgorithm(req.Algorithm)
 	params, err := getImportParams(ctx, req.UnwrappingKeyBackend, req.UnwrappingKeyID, unwrappingAlg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrWrappingFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrWrappingFailed, Cause: err}
 	}
 
 	wrapped := &xkms.WrappedKeyMaterial{
@@ -441,7 +441,7 @@ func (t *EmbeddedTransport) UnwrapKeyByID(ctx context.Context, req *transport.Un
 
 	keyMaterial, err := xkms.UnwrapKey(ctx, req.UnwrappingKeyBackend, wrapped, params)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrWrappingFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrWrappingFailed, Cause: err}
 	}
 
 	return &transport.UnwrapKeyByIDResponse{
@@ -459,22 +459,22 @@ func (t *EmbeddedTransport) ExportKeyMaterial(ctx context.Context, req *transpor
 
 	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
+		return nil, &DetailError{Err: ErrBackendNotFound, Detail: fmt.Sprintf(": %s", req.Backend)}
 	}
 
 	ieBackend, ok := ks.KeyProvider().(xkms.ImportExportBackend)
 	if !ok {
-		return nil, fmt.Errorf("%w: backend does not support key material export", ErrExportFailed)
+		return nil, &DetailError{Err: ErrExportFailed, Detail: ": backend does not support key material export"}
 	}
 
 	attrs, err := findKeyAttributes(ctx, ks, req.KeyID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrKeyNotFound, req.KeyID)
+		return nil, &DetailError{Err: ErrKeyNotFound, Detail: fmt.Sprintf(": %s", req.KeyID)}
 	}
 
 	keyMaterial, err := ieBackend.ExportKeyMaterial(ctx, attrs)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrExportFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
 	return &transport.ExportKeyMaterialResponse{
@@ -599,12 +599,12 @@ func extractPublicKeyPEM(privKey crypto.PrivateKey) (string, error) {
 	case ed25519.PrivateKey:
 		pubKey = k.Public()
 	default:
-		return "", fmt.Errorf("unsupported key type: %T", privKey)
+		return "", &MessageError{Msg: fmt.Sprintf("unsupported key type: %T", privKey)}
 	}
 
 	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal public key: %w", err)
+		return "", &WrappedError{Msg: "failed to marshal public key", Err: err}
 	}
 
 	pemBlock := &pem.Block{
@@ -656,17 +656,17 @@ func verifySignature(pubKey crypto.PublicKey, data, signature []byte, hashName s
 func getImportParams(ctx context.Context, backendName, keyID string, alg xkms.WrappingAlgorithm) (*xkms.ImportParameters, error) {
 	ks, err := xkms.GetBackend(backendName)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, backendName)
+		return nil, &DetailError{Err: ErrBackendNotFound, Detail: fmt.Sprintf(": %s", backendName)}
 	}
 
 	ieBackend, ok := ks.KeyProvider().(xkms.ImportExportBackend)
 	if !ok {
-		return nil, fmt.Errorf("backend %s does not support import/export", backendName)
+		return nil, &MessageError{Msg: fmt.Sprintf("backend %s does not support import/export", backendName)}
 	}
 
 	attrs, err := findKeyAttributes(ctx, ks, keyID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrKeyNotFound, keyID)
+		return nil, &DetailError{Err: ErrKeyNotFound, Detail: fmt.Sprintf(": %s", keyID)}
 	}
 
 	return ieBackend.GetImportParameters(ctx, attrs, alg)

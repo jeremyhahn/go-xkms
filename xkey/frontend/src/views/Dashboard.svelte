@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import GradientHeader from '$lib/components/GradientHeader.svelte';
   import Card from '$lib/components/Card.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
@@ -13,6 +13,7 @@
     mdiLockOpen, mdiClose, mdiClipboardTextOutline
   } from '$lib/utils/icons';
   import { navigateTo } from '$lib/stores/app';
+  import { dashboardRefreshToken } from '$lib/stores/events';
   import { formatRelativeTime } from '$lib/utils/format';
   import { isWailsAvailable, callBackend } from '$lib/api/backend';
   import type { AppStatus, BarrierSealInfo } from '$lib/api/backend';
@@ -67,12 +68,11 @@
 
   async function handleUnsealSuccess(): Promise<void> {
     showUnsealDialog = false;
-    if (isWailsAvailable()) {
-      appStatus = await callBackend<AppStatus>('AppService', 'GetStatus');
-    }
+    await loadData();
   }
 
-  onMount(async () => {
+  /** Fetch all dashboard data from the backend and rebuild reactive state. */
+  async function loadData(): Promise<void> {
     if (isWailsAvailable()) {
       const [statusResult, barrierResult] = await Promise.all([
         callBackend<AppStatus>('AppService', 'GetStatus'),
@@ -94,7 +94,7 @@
     let modeStatus: string;
     let modeStatusType: StatusCard['statusType'];
     if (mode === 'xkmsd') {
-      modeStatus = `Connected to ${serverAddr}`;
+      modeStatus = 'Connected to ' + serverAddr;
       modeStatusType = 'connected';
     } else {
       modeStatus = 'Standalone';
@@ -199,16 +199,37 @@
           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
           .slice(0, 5)
           .map((e, i) => ({
-            id: `dash-audit-${i}`,
+            id: 'dash-audit-' + i,
             type: e.operation,
             title: e.operation,
-            description: e.error || `${e.operation} on ${e.backend || 'local'}`,
+            description: e.error || (e.operation + ' on ' + (e.backend || 'local')),
             timestamp: e.timestamp,
             icon: auditIcon(e.operation),
             success: e.success,
           }));
       }
     }
+  }
+
+  // Subscribe to the barrier-unseal / data-dir-initialized refresh token.
+  // The token starts at 0; onMount handles the initial load directly. Each
+  // subsequent increment (caused by barrier:unlocked or
+  // storage:data_dir_initialized events) triggers a fresh data fetch so the
+  // Dashboard reflects the post-unseal state without requiring navigation.
+  let prevToken = 0;
+  const unsubscribeRefresh = dashboardRefreshToken.subscribe((token) => {
+    if (token > prevToken) {
+      prevToken = token;
+      loadData();
+    }
+  });
+
+  onMount(async () => {
+    await loadData();
+  });
+
+  onDestroy(() => {
+    unsubscribeRefresh();
   });
 </script>
 

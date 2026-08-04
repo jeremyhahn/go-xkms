@@ -274,7 +274,7 @@ func (s *OATHService) ScanQR(displayIndex int) (*QRScanResult, error) {
 		if errors.Is(err, qrscan.ErrInvalidQRContent) {
 			return nil, ErrOATHQRInvalidURI
 		}
-		return nil, fmt.Errorf("%w: %s", ErrOATHQRScanFailed, err.Error())
+		return nil, &DetailError{Err: ErrOATHQRScanFailed, Detail: fmt.Sprintf(": %s", err.Error())}
 	}
 	if len(results) == 0 {
 		return nil, ErrOATHQRNotFound

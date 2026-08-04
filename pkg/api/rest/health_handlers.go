@@ -16,17 +16,17 @@ package rest
 import (
 	"net/http"
 
-	"github.com/jeremyhahn/go-xkms/pkg/health"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // HealthCheckResponse represents the response for health check endpoints.
 type HealthCheckResponse struct {
 	// Status is the overall health status
-	Status health.Status `json:"status"`
+	Status qrdbsdk.HealthCheckStatus `json:"status"`
 	// Message provides additional context
 	Message string `json:"message,omitempty"`
 	// Checks contains individual check results (for readiness)
-	Checks []health.CheckResult `json:"checks,omitempty"`
+	Checks []qrdbsdk.HealthCheckResult `json:"checks,omitempty"`
 }
 
 // LivenessHandler handles GET /health/live requests.
@@ -40,7 +40,7 @@ func (h *HandlerContext) LivenessHandler(w http.ResponseWriter, r *http.Request)
 	if h.HealthChecker == nil {
 		// If no health checker configured, assume healthy
 		resp := HealthCheckResponse{
-			Status:  health.StatusHealthy,
+			Status:  qrdbsdk.HealthCheckStatusHealthy,
 			Message: "Service is alive",
 		}
 		writeJSON(w, resp, http.StatusOK)
@@ -55,7 +55,7 @@ func (h *HandlerContext) LivenessHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	statusCode := http.StatusOK
-	if result.Status == health.StatusUnhealthy {
+	if result.Status == qrdbsdk.HealthCheckStatusUnhealthy {
 		statusCode = http.StatusServiceUnavailable
 	}
 
@@ -75,7 +75,7 @@ func (h *HandlerContext) ReadinessHandler(w http.ResponseWriter, r *http.Request
 	if h.HealthChecker == nil {
 		// If no health checker configured, assume ready
 		resp := HealthCheckResponse{
-			Status:  health.StatusHealthy,
+			Status:  qrdbsdk.HealthCheckStatusHealthy,
 			Message: "Service is ready",
 		}
 		writeJSON(w, resp, http.StatusOK)
@@ -83,7 +83,7 @@ func (h *HandlerContext) ReadinessHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	results := h.HealthChecker.Ready(r.Context())
-	overallStatus := health.AggregateStatus(results)
+	overallStatus := qrdbsdk.AggregateHealthCheckStatus(results)
 
 	resp := HealthCheckResponse{
 		Status: overallStatus,
@@ -92,20 +92,20 @@ func (h *HandlerContext) ReadinessHandler(w http.ResponseWriter, r *http.Request
 
 	// Set message based on status
 	switch overallStatus {
-	case health.StatusHealthy:
+	case qrdbsdk.HealthCheckStatusHealthy:
 		resp.Message = "All checks passed"
-	case health.StatusDegraded:
+	case qrdbsdk.HealthCheckStatusDegraded:
 		resp.Message = "Service is degraded"
-	case health.StatusUnhealthy:
+	case qrdbsdk.HealthCheckStatusUnhealthy:
 		resp.Message = "One or more checks failed"
 	}
 
 	// Return appropriate HTTP status
 	statusCode := http.StatusOK
 	switch overallStatus {
-	case health.StatusUnhealthy:
+	case qrdbsdk.HealthCheckStatusUnhealthy:
 		statusCode = http.StatusServiceUnavailable
-	case health.StatusDegraded:
+	case qrdbsdk.HealthCheckStatusDegraded:
 		// Service is degraded but still serving traffic
 		statusCode = http.StatusOK
 	}
@@ -127,7 +127,7 @@ func (h *HandlerContext) StartupHandler(w http.ResponseWriter, r *http.Request) 
 	if h.HealthChecker == nil {
 		// If no health checker configured, assume started
 		resp := HealthCheckResponse{
-			Status:  health.StatusHealthy,
+			Status:  qrdbsdk.HealthCheckStatusHealthy,
 			Message: "Service has started",
 		}
 		writeJSON(w, resp, http.StatusOK)
@@ -142,7 +142,7 @@ func (h *HandlerContext) StartupHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	statusCode := http.StatusOK
-	if result.Status == health.StatusUnhealthy {
+	if result.Status == qrdbsdk.HealthCheckStatusUnhealthy {
 		// Service not yet started - return 503
 		statusCode = http.StatusServiceUnavailable
 	}

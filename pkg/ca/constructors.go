@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -62,6 +64,15 @@ var (
 // shared Params.KeyStore is used for all identities.
 type KeyStoreFactoryFunc func(cn string) (xkms.Backend, error)
 
+// BackendForStoreFunc resolves an xkms.Backend for a given CA CN and
+// StoreType. It is called once per unique StoreType found in an identity's
+// Keys slice. A nil return with a nil error is not permitted; the function
+// must return a usable Backend or an error.
+//
+// The CA caches the returned backends in a per-instance keystoreMap so a given
+// BackendForStoreFunc is invoked at most once per (cn, storeType) pair.
+type BackendForStoreFunc func(cn string, storeType types.StoreType) (xkms.Backend, error)
+
 // CertStoreFactoryFunc resolves a CertStore for a given CA common name.
 // See KeyStoreFactoryFunc for semantics.
 type CertStoreFactoryFunc func(cn string) (certstore.CertStore, error)
@@ -93,10 +104,10 @@ func (p *Params) ResolveStores(cn string) (xkms.Backend, certstore.CertStore, ob
 	if p.KeyStoreFactory != nil {
 		ks, err = p.KeyStoreFactory(cn)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("ca: keystore factory failed for %q: %w", cn, err)
+			return nil, nil, nil, &errs.Wrapped{Msg: fmt.Sprintf("ca: keystore factory failed for %q", cn), Err: err}
 		}
 		if ks == nil {
-			return nil, nil, nil, fmt.Errorf("%w: keystore factory for %q", ErrStoreFactoryReturnedNil, cn)
+			return nil, nil, nil, &errs.Detail{Err: ErrStoreFactoryReturnedNil, Detail: fmt.Sprintf("keystore factory for %q", cn)}
 		}
 	} else {
 		if p.KeyStore == nil {
@@ -108,10 +119,10 @@ func (p *Params) ResolveStores(cn string) (xkms.Backend, certstore.CertStore, ob
 	if p.CertStoreFactory != nil {
 		cs, err = p.CertStoreFactory(cn)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("ca: certstore factory failed for %q: %w", cn, err)
+			return nil, nil, nil, &errs.Wrapped{Msg: fmt.Sprintf("ca: certstore factory failed for %q", cn), Err: err}
 		}
 		if cs == nil {
-			return nil, nil, nil, fmt.Errorf("%w: certstore factory for %q", ErrStoreFactoryReturnedNil, cn)
+			return nil, nil, nil, &errs.Detail{Err: ErrStoreFactoryReturnedNil, Detail: fmt.Sprintf("certstore factory for %q", cn)}
 		}
 	} else {
 		if p.CertStore == nil {
@@ -123,7 +134,7 @@ func (p *Params) ResolveStores(cn string) (xkms.Backend, certstore.CertStore, ob
 	if p.ObjectStoreFactory != nil {
 		os, err = p.ObjectStoreFactory(cn)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("ca: object store factory failed for %q: %w", cn, err)
+			return nil, nil, nil, &errs.Wrapped{Msg: fmt.Sprintf("ca: object store factory failed for %q", cn), Err: err}
 		}
 		// Nil object store is allowed; it is optional for the CA.
 	} else {
@@ -190,7 +201,7 @@ func NewParentCA(params *Params) (TrustedCA, error) {
 
 	root := params.Identity[0]
 	if err := root.Validate(); err != nil {
-		return nil, fmt.Errorf("ca: root identity invalid: %w", err)
+		return nil, &errs.Wrapped{Msg: "ca: root identity invalid", Err: err}
 	}
 
 	ks, cs, os, err := params.ResolveStores(root.Subject.CommonName)
@@ -200,7 +211,7 @@ func NewParentCA(params *Params) (TrustedCA, error) {
 
 	keyAttrs, err := root.ToKeyAttributes()
 	if err != nil {
-		return nil, fmt.Errorf("ca: root identity key attributes: %w", err)
+		return nil, &errs.Wrapped{Msg: "ca: root identity key attributes", Err: err}
 	}
 	if keyAttrs.KeyType == 0 {
 		keyAttrs.KeyType = types.KeyTypeCA
@@ -213,13 +224,18 @@ func NewParentCA(params *Params) (TrustedCA, error) {
 	cfg := caConfigFromIdentity(root, defaultValidity)
 
 	instance, err := New(&Params{
-		Config:        cfg,
-		KeyAttributes: keyAttrs,
-		KeyStore:      ks,
-		CertStore:     cs,
-		ObjectStore:   os,
-		SerialGen:     params.SerialGen,
-		Profiles:      params.Profiles,
+		Config:             cfg,
+		KeyAttributes:      keyAttrs,
+		KeyStore:           ks,
+		CertStore:          cs,
+		ObjectStore:        os,
+		SerialGen:          params.SerialGen,
+		Profiles:           params.Profiles,
+		BackendForStore:    params.BackendForStore,
+		RequireKeyPassword: params.RequireKeyPassword,
+		// Pass the root Identity as index 0 so New() builds the keystoreMap
+		// from its full multi-key slice (the flat CAConfig keeps only Keys[0]).
+		Identity: []Identity{root},
 	})
 	if err != nil {
 		return nil, err
@@ -265,7 +281,7 @@ func NewIntermediateCA(ctx context.Context, params *Params, parent TrustedCA) (T
 
 	intermediateID := params.Identity[1]
 	if err := intermediateID.Validate(); err != nil {
-		return nil, fmt.Errorf("ca: intermediate identity invalid: %w", err)
+		return nil, &errs.Wrapped{Msg: "ca: intermediate identity invalid", Err: err}
 	}
 
 	ks, cs, os, err := params.ResolveStores(intermediateID.Subject.CommonName)
@@ -275,7 +291,7 @@ func NewIntermediateCA(ctx context.Context, params *Params, parent TrustedCA) (T
 
 	keyAttrs, err := intermediateID.ToKeyAttributes()
 	if err != nil {
-		return nil, fmt.Errorf("ca: intermediate identity key attributes: %w", err)
+		return nil, &errs.Wrapped{Msg: "ca: intermediate identity key attributes", Err: err}
 	}
 	if keyAttrs.KeyType == 0 {
 		keyAttrs.KeyType = types.KeyTypeCA
@@ -290,13 +306,18 @@ func NewIntermediateCA(ctx context.Context, params *Params, parent TrustedCA) (T
 	cfg.IsRootCA = false
 
 	instance, err := New(&Params{
-		Config:        cfg,
-		KeyAttributes: keyAttrs,
-		KeyStore:      ks,
-		CertStore:     cs,
-		ObjectStore:   os,
-		SerialGen:     params.SerialGen,
-		Profiles:      params.Profiles,
+		Config:             cfg,
+		KeyAttributes:      keyAttrs,
+		KeyStore:           ks,
+		CertStore:          cs,
+		ObjectStore:        os,
+		SerialGen:          params.SerialGen,
+		Profiles:           params.Profiles,
+		BackendForStore:    params.BackendForStore,
+		RequireKeyPassword: params.RequireKeyPassword,
+		// Pass the intermediate Identity as index 0 so New() builds the
+		// keystoreMap from its full multi-key slice.
+		Identity: []Identity{intermediateID},
 	})
 	if err != nil {
 		return nil, err
@@ -304,7 +325,7 @@ func NewIntermediateCA(ctx context.Context, params *Params, parent TrustedCA) (T
 
 	caInstance, ok := instance.(*CA)
 	if !ok {
-		return nil, fmt.Errorf("ca: unexpected TrustedCA implementation %T", instance)
+		return nil, &errs.Message{Msg: fmt.Sprintf("ca: unexpected TrustedCA implementation %T", instance)}
 	}
 
 	if err := initializeAsIntermediate(ctx, caInstance, intermediateID, parent); err != nil {
@@ -335,7 +356,7 @@ func initializeAsIntermediate(ctx context.Context, caInstance *CA, identity Iden
 
 	parentCert, err := parent.CACertificate()
 	if err != nil {
-		return fmt.Errorf("ca: retrieve parent certificate: %w", err)
+		return &errs.Wrapped{Msg: "ca: retrieve parent certificate", Err: err}
 	}
 
 	// The parent TrustedCA is itself a crypto.Signer bound to the parent's
@@ -343,16 +364,16 @@ func initializeAsIntermediate(ctx context.Context, caInstance *CA, identity Iden
 	// KeyStore is shared with or distinct from the intermediate's.
 	parentSigner, ok := parent.(crypto.Signer)
 	if !ok {
-		return fmt.Errorf("ca: parent %T does not implement crypto.Signer", parent)
+		return &errs.Message{Msg: fmt.Sprintf("ca: parent %T does not implement crypto.Signer", parent)}
 	}
 
 	cert, err := caInstance.createSingleIntermediateCertificate(ctx, &identity, parentCert, parentSigner)
 	if err != nil {
-		return fmt.Errorf("ca: create intermediate certificate: %w", err)
+		return &errs.Wrapped{Msg: "ca: create intermediate certificate", Err: err}
 	}
 
 	if err := caInstance.certStore.StoreCertificate(cert); err != nil {
-		return fmt.Errorf("ca: store intermediate certificate: %w", err)
+		return &errs.Wrapped{Msg: "ca: store intermediate certificate", Err: err}
 	}
 
 	caInstance.rootCert = parentCert
@@ -388,7 +409,7 @@ func NewCA(ctx context.Context, params *Params) (TrustedCA, TrustedCA, error) {
 	}
 
 	if err := root.Init(ctx); err != nil {
-		return nil, nil, fmt.Errorf("ca: initialize parent ca: %w", err)
+		return nil, nil, &errs.Wrapped{Msg: "ca: initialize parent ca", Err: err}
 	}
 
 	if len(params.Identity) == 1 {

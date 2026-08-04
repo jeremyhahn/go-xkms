@@ -11,7 +11,10 @@
     "moduleDetection": "force",
     "baseUrl": ".",
     "paths": {
-      "$lib/*": ["src/lib/*"]
+      "$lib/*": ["src/lib/*"],
+      "@go-xkms/sdk": ["../../sdk/ts/src/index.ts"],
+      "@xterm/xterm": ["./node_modules/@xterm/xterm"],
+      "@xterm/addon-fit": ["./node_modules/@xterm/addon-fit"]
     }
   },
   "include": ["src/**/*.d.ts", "src/**/*.ts", "src/**/*.svelte"],

@@ -375,6 +375,10 @@ func (b *baseSDKClient) BarrierRekey(_ context.Context, _ *transport.BarrierReke
 	return nil, errNotImplemented
 }
 
+func (b *baseSDKClient) BarrierEnableEncryption(_ context.Context, _ *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (b *baseSDKClient) BarrierGenerateRecoveryKeys(_ context.Context, _ *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
 	return nil, errNotImplemented
 }
@@ -595,6 +599,18 @@ func (b *baseSDKClient) TenantBarrierInit(_ context.Context, _ *transport.Tenant
 
 func (b *baseSDKClient) TenantBarrierUnseal(_ context.Context, _ *transport.TenantBarrierUnsealRequest) error {
 	return errNotImplemented
+}
+
+func (b *baseSDKClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return nil, errNotImplemented
 }
 
 // Init ceremony operations

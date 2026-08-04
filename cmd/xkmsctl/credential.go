@@ -129,7 +129,7 @@ func runCredentialSubmit(cmd *cobra.Command, args []string) error {
 
 	var result credentialSubmitResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("%w: failed to parse submit response: %w", ErrHTTPRequestFailed, err)
+		return &WrappedDetailError{Sentinel: ErrHTTPRequestFailed, Detail: "failed to parse submit response", Err: err}
 	}
 
 	switch printer.format {
@@ -172,7 +172,7 @@ func runCredentialStrategy(cmd *cobra.Command, args []string) error {
 
 	var result credentialStrategyResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("%w: failed to parse strategy response: %w", ErrHTTPRequestFailed, err)
+		return &WrappedDetailError{Sentinel: ErrHTTPRequestFailed, Detail: "failed to parse strategy response", Err: err}
 	}
 
 	switch printer.format {

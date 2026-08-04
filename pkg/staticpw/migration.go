@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
@@ -103,7 +105,7 @@ func MigrateToScopedLayout(backend storage.Backend, tenantID string) (int, error
 
 	keys, err := backend.List(context.Background(), legacyPrefix)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrPasswordNotFound, err)
+		return 0, &errs.Detail{Err: ErrPasswordNotFound, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	count := 0
@@ -137,12 +139,12 @@ func MigrateToScopedLayout(backend storage.Backend, tenantID string) (int, error
 
 		// Write to new location.
 		if putErr := backend.Put(context.Background(), newKey, newData); putErr != nil {
-			return count, fmt.Errorf("%w: %v", ErrMarshalFailed, putErr)
+			return count, &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", putErr)}
 		}
 
 		// Delete old key.
 		if delErr := backend.Delete(context.Background(), key); delErr != nil {
-			return count, fmt.Errorf("%w: %v", ErrPasswordNotFound, delErr)
+			return count, &errs.Detail{Err: ErrPasswordNotFound, Detail: fmt.Sprintf("%v", delErr)}
 		}
 
 		count++
@@ -170,7 +172,7 @@ func MigrateFromBackend(ctx context.Context, backend storage.Backend, prefix str
 
 	keys, err := backend.List(ctx, prefix)
 	if err != nil {
-		return fmt.Errorf("staticpw: failed to list legacy keys: %w", err)
+		return &errs.Wrapped{Msg: "staticpw: failed to list legacy keys", Err: err}
 	}
 
 	for _, key := range keys {

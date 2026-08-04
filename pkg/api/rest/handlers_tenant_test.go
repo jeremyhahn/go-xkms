@@ -57,7 +57,7 @@ func testTenantRegistry(t *testing.T) (*seal.BarrierRegistry, *xkms.XKMSService)
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	creds := seal.Credentials{Secret: "test-password"}
+	creds := seal.Credentials{Secret: []byte("test-password")}
 	err = barrier.Initialize(ctx, creds)
 	require.NoError(t, err)
 

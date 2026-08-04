@@ -23,7 +23,7 @@
 2. `integration-test-pkcs8` (Docker)
 3. `integration-test-pkcs11` (Docker + SoftHSM)
 4. `integration-test-tpm2` (Docker + SWTPM simulator)
-5. `integration-test-awskms` (Docker + LocalStack)
+5. `integration-test-awskms` (Docker + Floci)
 6. `integration-test-gcpkms` (Docker + mock)
 7. `integration-test-azurekv` (Docker + mock)
 8. `integration-test-vault` (Docker + Vault server)
@@ -47,7 +47,7 @@
 ## Docker Images Used
 - `golang:bookworm` — base Go image for most test containers
 - `ghcr.io/stefanberger/swtpm:latest` — TPM2 simulator
-- `localstack/localstack` — AWS service emulator
+- `floci/floci` — AWS service emulator
 - `hashicorp/vault` — HashiCorp Vault
 
 ## Important Notes

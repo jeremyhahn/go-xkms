@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,8 +14,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 )
 
@@ -35,10 +33,10 @@ Examples:
 		deviceID, _ := cmd.Flags().GetString("device-id")
 
 		if account == "" {
-			return fmt.Errorf("--account is required")
+			return ErrAccountFlagRequired
 		}
 		if deviceID == "" {
-			return fmt.Errorf("--device-id is required")
+			return ErrDeviceIDFlagRequired
 		}
 
 		cmd.Printf("TPM device enrollment requires programmatic TPM setup.\n")
@@ -64,10 +62,10 @@ Examples:
 		deviceID, _ := cmd.Flags().GetString("device-id")
 
 		if account == "" {
-			return fmt.Errorf("--account is required")
+			return ErrAccountFlagRequired
 		}
 		if deviceID == "" {
-			return fmt.Errorf("--device-id is required")
+			return ErrDeviceIDFlagRequired
 		}
 
 		cmd.Printf("TPM device attestation requires programmatic TPM setup.\n")

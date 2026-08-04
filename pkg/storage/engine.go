@@ -20,6 +20,8 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
@@ -287,6 +289,6 @@ func OpenEngine(cfg EngineConfig) (Backend, error) {
 		return NewEngineBackend(eng), nil
 
 	default:
-		return nil, fmt.Errorf("%w: %q", ErrUnknownEngine, cfg.Kind)
+		return nil, &errs.Detail{Err: ErrUnknownEngine, Detail: fmt.Sprintf("%q", cfg.Kind)}
 	}
 }

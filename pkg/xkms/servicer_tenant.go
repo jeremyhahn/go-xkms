@@ -15,7 +15,10 @@ package xkms
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -43,10 +46,7 @@ type TenantServicer interface {
 // not carry a strategy, so the tenant inherits the system barrier's
 // strategies (typically the passphrase strategy); TenantBarrierInit then
 // supplies the passphrase that seals the freshly generated tenant root key.
-func (s *XKMSService) CreateTenant(_ context.Context, req *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
-	if s.barrierRegistry == nil {
-		return nil, ErrBarrierRegistryNotConfigured
-	}
+func (s *XKMSService) CreateTenant(ctx context.Context, req *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -57,8 +57,30 @@ func (s *XKMSService) CreateTenant(_ context.Context, req *transport.CreateTenan
 		return nil, ErrTenantNameRequired
 	}
 
-	// Register the sealed tenant shell only. No InitializeTenant call and no
-	// server-generated secret — the barrier stays sealed until Phase 2.
+	// Preferred path: delegate to go-qrdb's TenantService, which owns the
+	// entitlement-gated isolation modes (prefix/barrier/volume/raft) and the
+	// system-managed auto-unseal key-management mode. For a self-managed
+	// dedicated-isolation tenant it registers the barrier SEALED and
+	// uninitialized — preserving xkms's two-phase model (§3.6): the tenant
+	// admin drives Phase 2 via TenantBarrierInit.
+	if s.tenantService != nil {
+		info, err := s.tenantService.CreateTenant(
+			ctx, req.ID, req.Name,
+			qrdbsdk.TenantIsolationType(req.IsolationType),
+			qrdbsdk.WithBarrierAutoUnseal(req.BarrierAutoUnseal),
+		)
+		if err != nil {
+			return nil, err
+		}
+		return &transport.CreateTenantResponse{Tenant: tenantInfoToTransport(info)}, nil
+	}
+
+	// Legacy path: no TenantService wired. Register the sealed tenant shell
+	// only — no InitializeTenant call and no server-generated secret, so the
+	// barrier stays sealed until Phase 2.
+	if s.barrierRegistry == nil {
+		return nil, ErrBarrierRegistryNotConfigured
+	}
 	if _, err := s.barrierRegistry.RegisterTenant(req.ID); err != nil {
 		return nil, err
 	}
@@ -76,13 +98,21 @@ func (s *XKMSService) CreateTenant(_ context.Context, req *transport.CreateTenan
 
 // GetTenant retrieves a tenant by its ID.
 func (s *XKMSService) GetTenant(ctx context.Context, tenantID string) (*transport.GetTenantResponse, error) {
-	if s.barrierRegistry == nil {
-		return nil, ErrBarrierRegistryNotConfigured
-	}
 	if tenantID == "" {
 		return nil, ErrTenantIDRequired
 	}
 
+	if s.tenantService != nil {
+		info, err := s.tenantService.GetTenant(ctx, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		return &transport.GetTenantResponse{Tenant: tenantInfoToTransport(info)}, nil
+	}
+
+	if s.barrierRegistry == nil {
+		return nil, ErrBarrierRegistryNotConfigured
+	}
 	tb, err := s.barrierRegistry.Tenant(tenantID)
 	if err != nil {
 		return nil, err
@@ -98,10 +128,21 @@ func (s *XKMSService) GetTenant(ctx context.Context, tenantID string) (*transpor
 
 // ListTenants returns all registered tenants.
 func (s *XKMSService) ListTenants(ctx context.Context) (*transport.ListTenantsResponse, error) {
+	if s.tenantService != nil {
+		infos, err := s.tenantService.ListTenants(ctx)
+		if err != nil {
+			return nil, err
+		}
+		tenants := make([]transport.TenantInfo, len(infos))
+		for i := range infos {
+			tenants[i] = tenantInfoToTransport(&infos[i])
+		}
+		return &transport.ListTenantsResponse{Tenants: tenants}, nil
+	}
+
 	if s.barrierRegistry == nil {
 		return nil, ErrBarrierRegistryNotConfigured
 	}
-
 	ids := s.barrierRegistry.ListTenants()
 	tenants := make([]transport.TenantInfo, len(ids))
 	for i, id := range ids {
@@ -118,11 +159,14 @@ func (s *XKMSService) ListTenants(ctx context.Context) (*transport.ListTenantsRe
 
 // DeleteTenant deletes a tenant by its ID.
 func (s *XKMSService) DeleteTenant(ctx context.Context, tenantID string) error {
-	if s.barrierRegistry == nil {
-		return ErrBarrierRegistryNotConfigured
-	}
 	if tenantID == "" {
 		return ErrTenantIDRequired
+	}
+	if s.tenantService != nil {
+		return s.tenantService.DeleteTenant(ctx, tenantID)
+	}
+	if s.barrierRegistry == nil {
+		return ErrBarrierRegistryNotConfigured
 	}
 	return s.barrierRegistry.UnregisterTenant(tenantID)
 }
@@ -152,14 +196,31 @@ func (s *XKMSService) DeleteTenant(ctx context.Context, tenantID string) error {
 // This operation is idempotent: if the tenant barrier is already initialized,
 // it returns nil without error.
 func (s *XKMSService) TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error {
-	if s.barrierRegistry == nil {
-		return ErrBarrierRegistryNotConfigured
-	}
 	if req == nil {
 		return ErrNilRequest
 	}
 	if req.TenantID == "" {
 		return ErrTenantIDRequired
+	}
+
+	// Preferred path: delegate to go-qrdb's TenantService, which resolves the
+	// requested seal strategy (passphrase/none/shamir or a hardware/cloud
+	// strategy — tpm2/pkcs11/aws-kms/…) from the injected StrategyRegistry and
+	// initializes the per-tenant barrier with the caller-supplied passphrase.
+	// The server never generates a tenant secret.
+	if s.tenantService != nil {
+		_, err := s.tenantService.TenantBarrierInitWithStrategy(
+			ctx, req.TenantID, req.Passphrase, req.Threshold, req.Shares,
+			seal.StrategyID(req.Strategy),
+		)
+		if err == seal.ErrAlreadyInitialized {
+			return nil
+		}
+		return err
+	}
+
+	if s.barrierRegistry == nil {
+		return ErrBarrierRegistryNotConfigured
 	}
 
 	// Verify tenant exists and resolve the strategy fixed at registration time.
@@ -195,6 +256,16 @@ func (s *XKMSService) TenantBarrierInit(ctx context.Context, req *transport.Tena
 	return nil
 }
 
+// isAlreadyUnsealed reports whether err indicates the tenant barrier was
+// already unsealed — a no-op success for an idempotent unseal. Depending on the
+// seal strategy the composed TenantService may surface either the tenant-scoped
+// sentinel ("tenant barrier is already unsealed") or the generic barrier one
+// ("barrier is already unsealed"), so both are treated as success.
+func isAlreadyUnsealed(err error) bool {
+	return err != nil &&
+		(errors.Is(err, seal.ErrTenantAlreadyUnsealed) || errors.Is(err, seal.ErrAlreadyUnsealed))
+}
+
 // TenantBarrierUnseal unseals the encryption barrier for a specific tenant
 // using the caller-supplied recovery material. The server holds no tenant
 // secret, so it can only unseal with credentials taken from the request:
@@ -205,14 +276,35 @@ func (s *XKMSService) TenantBarrierInit(ctx context.Context, req *transport.Tena
 //
 // If the tenant barrier is already unsealed, this is a no-op that returns nil.
 func (s *XKMSService) TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error {
-	if s.barrierRegistry == nil {
-		return ErrBarrierRegistryNotConfigured
-	}
 	if req == nil {
 		return ErrNilRequest
 	}
 	if req.TenantID == "" {
 		return ErrTenantIDRequired
+	}
+
+	// Preferred path: delegate to go-qrdb's TenantService. A Shamir share is
+	// submitted toward the quorum threshold; otherwise the caller-supplied key
+	// material unseals the barrier directly.
+	if s.tenantService != nil {
+		if len(req.Share) > 0 {
+			_, err := s.tenantService.TenantBarrierUnsealShare(ctx, req.TenantID, string(req.Share))
+			if isAlreadyUnsealed(err) {
+				return nil
+			}
+			return err
+		}
+		if err := s.tenantService.TenantBarrierUnseal(ctx, req.TenantID, req.Key); err != nil {
+			if isAlreadyUnsealed(err) {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
+
+	if s.barrierRegistry == nil {
+		return ErrBarrierRegistryNotConfigured
 	}
 
 	// Verify tenant exists.
@@ -228,6 +320,78 @@ func (s *XKMSService) TenantBarrierUnseal(ctx context.Context, req *transport.Te
 
 	creds := tenantUnsealCredentials(req)
 	return s.barrierRegistry.UnsealTenant(ctx, req.TenantID, creds)
+}
+
+// TenantBarrierStatus reports the current state of a per-tenant barrier
+// (sealed/initialized flags, active seal strategy, hardware-backing, and Shamir
+// quorum parameters). It delegates to the composed TenantService when wired,
+// falling back to the barrier registry's status for the legacy path.
+func (s *XKMSService) TenantBarrierStatus(ctx context.Context, tenantID string) (*transport.TenantBarrierStatusResponse, error) {
+	if tenantID == "" {
+		return nil, ErrTenantIDRequired
+	}
+
+	if s.tenantService != nil {
+		status, err := s.tenantService.TenantBarrierStatus(ctx, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		return tenantBarrierStatusToTransport(status), nil
+	}
+
+	if s.barrierRegistry == nil {
+		return nil, ErrBarrierRegistryNotConfigured
+	}
+	st, err := s.barrierRegistry.TenantStatus(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return &transport.TenantBarrierStatusResponse{
+		TenantID:       tenantID,
+		Sealed:         st.Sealed,
+		Strategy:       string(st.Strategy),
+		HardwareBacked: st.HardwareBacked,
+	}, nil
+}
+
+// UpdateTenantEntitlements updates a tenant's feature entitlements (which
+// isolation tiers and dedicated-storage features its plan permits). It requires
+// the composed TenantService; the legacy barrier-registry path has no
+// entitlement plane.
+func (s *XKMSService) UpdateTenantEntitlements(ctx context.Context, req *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	if req.TenantID == "" {
+		return nil, ErrTenantIDRequired
+	}
+	if s.tenantService == nil {
+		return nil, ErrTenantServiceNotConfigured
+	}
+	info, err := s.tenantService.UpdateEntitlements(ctx, req.TenantID, transportToEntitlements(req.Entitlements))
+	if err != nil {
+		return nil, err
+	}
+	return &transport.UpdateTenantEntitlementsResponse{Tenant: tenantInfoToTransport(info)}, nil
+}
+
+// UpdateTenantQuotas updates a tenant's resource quotas. It requires the
+// composed TenantService; the legacy barrier-registry path has no quota plane.
+func (s *XKMSService) UpdateTenantQuotas(ctx context.Context, req *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	if req.TenantID == "" {
+		return nil, ErrTenantIDRequired
+	}
+	if s.tenantService == nil {
+		return nil, ErrTenantServiceNotConfigured
+	}
+	info, err := s.tenantService.UpdateQuotas(ctx, req.TenantID, transportToQuotas(req.Quotas))
+	if err != nil {
+		return nil, err
+	}
+	return &transport.UpdateTenantQuotasResponse{Tenant: tenantInfoToTransport(info)}, nil
 }
 
 // validateTenantStrategy ensures the strategy named in a TenantBarrierInit
@@ -271,7 +435,7 @@ func tenantInitCredentials(req *transport.TenantBarrierInitRequest) (seal.Creden
 		if req.Passphrase == "" {
 			return seal.Credentials{}, ErrTenantPassphraseRequired
 		}
-		return seal.Credentials{Secret: req.Passphrase}, nil
+		return seal.Credentials{Secret: []byte(req.Passphrase)}, nil
 	}
 }
 
@@ -281,7 +445,7 @@ func tenantInitCredentials(req *transport.TenantBarrierInitRequest) (seal.Creden
 // present.
 func tenantUnsealCredentials(req *transport.TenantBarrierUnsealRequest) seal.Credentials {
 	if len(req.Share) > 0 {
-		return seal.Credentials{Secret: string(req.Share)}
+		return seal.Credentials{Secret: req.Share}
 	}
-	return seal.Credentials{Secret: string(req.Key)}
+	return seal.Credentials{Secret: req.Key}
 }

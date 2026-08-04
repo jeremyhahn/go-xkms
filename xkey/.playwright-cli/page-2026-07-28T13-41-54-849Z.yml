@@ -1,0 +1,212 @@
+- generic [ref=e2]:
+  - generic [ref=e312]:
+    - navigation "Main navigation" [ref=e313]:
+      - generic [ref=e314]:
+        - generic [ref=e315]:
+          - img [ref=e317]
+          - generic [ref=e318]: xKey
+        - button "Collapse sidebar" [ref=e319] [cursor=pointer]:
+          - img [ref=e320]
+      - generic [ref=e322]:
+        - generic [ref=e323]:
+          - generic [ref=e324]: OVERVIEW
+          - button "Dashboard" [ref=e325] [cursor=pointer]:
+            - img [ref=e326]
+            - generic [ref=e328]: Dashboard
+          - button "Pairing" [ref=e329] [cursor=pointer]:
+            - img [ref=e330]
+            - generic [ref=e332]: Pairing
+          - button "TPM 2.0" [ref=e333] [cursor=pointer]:
+            - img [ref=e334]
+            - generic [ref=e336]: TPM 2.0
+        - generic [ref=e337]:
+          - generic [ref=e338]: STORE
+          - button "Keys" [ref=e339] [cursor=pointer]:
+            - img [ref=e340]
+            - generic [ref=e342]: Keys
+          - button "Trust Store" [ref=e343] [cursor=pointer]:
+            - img [ref=e344]
+            - generic [ref=e346]: Trust Store
+          - button "Certificates" [ref=e347] [cursor=pointer]:
+            - img [ref=e348]
+            - generic [ref=e350]: Certificates
+        - generic [ref=e351]:
+          - generic [ref=e352]: APPLICATIONS
+          - button "SSH" [ref=e353] [cursor=pointer]:
+            - img [ref=e354]
+            - generic [ref=e356]: SSH
+          - button "FIDO2" [ref=e357] [cursor=pointer]:
+            - img [ref=e358]
+            - generic [ref=e360]: FIDO2
+          - button "OATH" [ref=e361] [cursor=pointer]:
+            - img [ref=e362]
+            - generic [ref=e364]: OATH
+          - button "PIV" [ref=e365] [cursor=pointer]:
+            - img [ref=e366]
+            - generic [ref=e368]: PIV
+          - button "Passwords" [ref=e369] [cursor=pointer]:
+            - img [ref=e370]
+            - generic [ref=e372]: Passwords
+          - button "Sealed Data" [ref=e373] [cursor=pointer]:
+            - img [ref=e374]
+            - generic [ref=e376]: Sealed Data
+          - button "Browser" [ref=e377] [cursor=pointer]:
+            - img [ref=e378]
+            - generic [ref=e380]: Browser
+        - generic [ref=e381]:
+          - generic [ref=e382]: MANAGEMENT
+          - button "Audit Log" [ref=e383] [cursor=pointer]:
+            - img [ref=e384]
+            - generic [ref=e386]: Audit Log
+          - button "Admin" [ref=e387] [cursor=pointer]:
+            - img [ref=e388]
+            - generic [ref=e390]: Admin
+        - generic [ref=e391]:
+          - generic [ref=e392]: DEVELOPER TOOLS
+          - button "OIDC" [ref=e393] [cursor=pointer]:
+            - img [ref=e394]
+            - generic [ref=e396]: OIDC
+          - button "API Explorer" [ref=e397] [cursor=pointer]:
+            - img [ref=e398]
+            - generic [ref=e400]: API Explorer
+      - generic [ref=e401]:
+        - generic "Standalone mode" [ref=e402]:
+          - generic [ref=e404]: Standalone
+        - button "Theme" [ref=e405] [cursor=pointer]:
+          - img [ref=e406]
+          - generic [ref=e408]: Theme
+        - button "Settings" [ref=e409] [cursor=pointer]:
+          - img [ref=e410]
+          - generic [ref=e412]: Settings
+    - main [ref=e413]:
+      - generic [ref=e415]:
+        - button "Lock app" [ref=e416] [cursor=pointer]:
+          - img [ref=e417]
+          - generic [ref=e419]: Lock
+        - button "No touch pending" [disabled] [ref=e420]:
+          - img [ref=e422]
+      - generic [ref=e425]:
+        - generic [ref=e427]:
+          - generic [ref=e428]:
+            - heading "xKey" [level=1] [ref=e429]
+            - paragraph [ref=e430]: Virtual Security Key
+          - generic [ref=e432]:
+            - generic [ref=e433]: v0.1.0-dev
+            - status "N/A" [ref=e434]:
+              - generic [ref=e436]: N/A
+        - generic [ref=e437]:
+          - generic [ref=e438]:
+            - button "Mode Standalone N/A" [ref=e439] [cursor=pointer]:
+              - generic [ref=e440]:
+                - img [ref=e442]
+                - generic [ref=e444]:
+                  - generic [ref=e445]: Mode
+                  - generic [ref=e446]: Standalone
+                - status "N/A" [ref=e447]:
+                  - generic [ref=e449]: N/A
+            - button "Storage Not Encrypted Disconnected" [ref=e450] [cursor=pointer]:
+              - generic [ref=e451]:
+                - img [ref=e453]
+                - generic [ref=e455]:
+                  - generic [ref=e456]: Storage
+                  - generic [ref=e457]: Not Encrypted
+                - status "Disconnected" [ref=e458]:
+                  - generic [ref=e460]: Disconnected
+            - button "TPM 2.0 Available Warning" [ref=e461] [cursor=pointer]:
+              - generic [ref=e462]:
+                - img [ref=e464]
+                - generic [ref=e466]:
+                  - generic [ref=e467]: TPM 2.0
+                  - generic [ref=e468]: Available
+                - status "Warning" [ref=e469]:
+                  - generic [ref=e471]: Warning
+            - button "Barrier Unsealed Verified" [ref=e472] [cursor=pointer]:
+              - generic [ref=e473]:
+                - img [ref=e475]
+                - generic [ref=e477]:
+                  - generic [ref=e478]: Barrier
+                  - generic [ref=e479]: Unsealed
+                - status "Verified" [ref=e480]:
+                  - generic [ref=e482]: Verified
+          - button "Barrier Encryption Passphrase (AES-256-GCM) Verified" [ref=e484] [cursor=pointer]:
+            - generic [ref=e485]:
+              - img [ref=e487]
+              - generic [ref=e489]:
+                - generic [ref=e490]: Barrier Encryption
+                - generic [ref=e491]: Passphrase (AES-256-GCM)
+              - status "Verified" [ref=e492]:
+                - generic [ref=e494]: Verified
+          - generic [ref=e497]:
+            - heading "Key Inventory" [level=2] [ref=e498]
+            - generic [ref=e499]:
+              - button "0 OATH Accounts" [ref=e500] [cursor=pointer]:
+                - img [ref=e501]
+                - generic [ref=e503]:
+                  - generic [ref=e504]: "0"
+                  - generic [ref=e505]: OATH Accounts
+              - button "0 FIDO2 Credentials" [ref=e507] [cursor=pointer]:
+                - img [ref=e508]
+                - generic [ref=e510]:
+                  - generic [ref=e511]: "0"
+                  - generic [ref=e512]: FIDO2 Credentials
+              - button "0 PIV Certificates" [ref=e514] [cursor=pointer]:
+                - img [ref=e515]
+                - generic [ref=e517]:
+                  - generic [ref=e518]: "0"
+                  - generic [ref=e519]: PIV Certificates
+              - button "0 Remote Keys" [ref=e521] [cursor=pointer]:
+                - img [ref=e522]
+                - generic [ref=e524]:
+                  - generic [ref=e525]: "0"
+                  - generic [ref=e526]: Remote Keys
+          - generic [ref=e527]:
+            - generic [ref=e528]:
+              - heading "Recent Activity" [level=2] [ref=e529]
+              - button "View All" [ref=e530] [cursor=pointer]
+            - generic [ref=e531]:
+              - generic [ref=e532]:
+                - img [ref=e534]
+                - generic [ref=e536]:
+                  - generic [ref=e537]: config_updated
+                  - generic [ref=e538]: config_updated on local
+                - generic [ref=e539]: just now
+              - generic [ref=e540]:
+                - img [ref=e542]
+                - generic [ref=e544]:
+                  - generic [ref=e545]: pin_verified
+                  - generic [ref=e546]: pin_verified on tpm2
+                - generic [ref=e547]: just now
+              - generic [ref=e548]:
+                - img [ref=e550]
+                - generic [ref=e552]:
+                  - generic [ref=e553]: pin_changed
+                  - generic [ref=e554]: pin_changed on tpm2
+                - generic [ref=e555]: just now
+              - generic [ref=e556]:
+                - img [ref=e558]
+                - generic [ref=e560]:
+                  - generic [ref=e561]: service_started
+                  - generic [ref=e562]: service_started on local
+                - generic [ref=e563]: just now
+              - generic [ref=e564]:
+                - img [ref=e566]
+                - generic [ref=e568]:
+                  - generic [ref=e569]: barrier_initialized
+                  - generic [ref=e570]: barrier_initialized on local
+                - generic [ref=e571]: just now
+          - generic [ref=e572]:
+            - generic [ref=e573]: v0.1.0-dev
+            - generic [ref=e574]: linux/amd64
+            - generic [ref=e575]: go1.26.4
+            - generic [ref=e576]: "Uptime: 40s"
+  - generic:
+    - alert [ref=e577]:
+      - img [ref=e579]
+      - generic [ref=e581]: Setup completed with security warnings — check the results panel below
+      - button "Dismiss notification" [ref=e582] [cursor=pointer]:
+        - img [ref=e583]
+    - alert [ref=e586]:
+      - img [ref=e588]
+      - generic [ref=e590]: Setup wizard completed successfully
+      - button "Dismiss notification" [ref=e591] [cursor=pointer]:
+        - img [ref=e592]

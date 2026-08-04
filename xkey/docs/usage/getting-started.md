@@ -877,7 +877,7 @@ test/integration/
 │   ├── tpm2_integration_test.go      # TPM2 simulator tests
 │   └── symmetric_integration_test.go # Symmetric encryption tests
 ├── pkcs11/             # PKCS#11/SoftHSM tests
-├── awskms/             # AWS KMS/LocalStack tests
+├── awskms/             # AWS KMS/Floci tests
 ├── gcpkms/             # GCP KMS mock tests
 ├── azurekv/            # Azure Key Vault mock tests
 └── vault/              # HashiCorp Vault tests

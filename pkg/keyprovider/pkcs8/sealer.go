@@ -27,6 +27,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/mem"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"golang.org/x/crypto/hkdf"
@@ -65,7 +67,7 @@ func (b *PKCS8Backend) CanSeal() bool {
 // Returns SealedData containing the encrypted payload, or error.
 func (b *PKCS8Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
 	if opts == nil || opts.KeyAttributes == nil {
-		return nil, fmt.Errorf("seal options with KeyAttributes required")
+		return nil, &errs.Message{Msg: "seal options with KeyAttributes required"}
 	}
 
 	b.mu.RLock()
@@ -80,31 +82,31 @@ func (b *PKCS8Backend) Seal(ctx context.Context, data []byte, opts *types.SealOp
 	// Load the private key
 	privateKey, err := b.GetKey(ctx, keyAttrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load sealing key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to load sealing key", Err: err}
 	}
 
 	// Derive the sealing key from the private key material
 	sealingKey, err := deriveSealingKey(privateKey, keyAttrs.ID())
 	if err != nil {
-		return nil, fmt.Errorf("failed to derive sealing key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to derive sealing key", Err: err}
 	}
 	defer mem.Zero(sealingKey)
 
 	// Create AES-GCM cipher
 	block, err := aes.NewCipher(sealingKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create AES cipher", Err: err}
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// Generate random nonce
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 	}
 
 	// Encrypt with AAD if provided
@@ -153,16 +155,16 @@ func (b *PKCS8Backend) Seal(ctx context.Context, data []byte, opts *types.SealOp
 // Returns the original plaintext data, or error if unsealing fails.
 func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
-		return nil, fmt.Errorf("sealed data is required")
+		return nil, &errs.Message{Msg: "sealed data is required"}
 	}
 
 	// Verify this is a software backend sealed data
 	if sealed.Backend != types.BackendTypeSoftware {
-		return nil, fmt.Errorf("sealed data was not created by software backend (got %s)", sealed.Backend)
+		return nil, &errs.Message{Msg: fmt.Sprintf("sealed data was not created by software backend (got %s)", sealed.Backend)}
 	}
 
 	if opts == nil || opts.KeyAttributes == nil {
-		return nil, fmt.Errorf("unseal options with KeyAttributes required")
+		return nil, &errs.Message{Msg: "unseal options with KeyAttributes required"}
 	}
 
 	b.mu.RLock()
@@ -176,38 +178,36 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 
 	// Verify key ID matches (check both KeyID() and legacy ID() formats)
 	if sealed.KeyID != "" && sealed.KeyID != keyAttrs.KeyID() && sealed.KeyID != keyAttrs.ID() {
-		return nil, fmt.Errorf("key ID mismatch: sealed with %s, attempting unseal with %s",
-			sealed.KeyID, keyAttrs.KeyID())
+		return nil, &errs.Message{Msg: fmt.Sprintf("key ID mismatch: sealed with %s, attempting unseal with %s", sealed.KeyID, keyAttrs.KeyID())}
 	}
 
 	// Load the private key
 	privateKey, err := b.GetKey(ctx, keyAttrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load sealing key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to load sealing key", Err: err}
 	}
 
 	// Derive the sealing key from the private key material
 	sealingKey, err := deriveSealingKey(privateKey, keyAttrs.ID())
 	if err != nil {
-		return nil, fmt.Errorf("failed to derive sealing key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to derive sealing key", Err: err}
 	}
 	defer mem.Zero(sealingKey)
 
 	// Create AES-GCM cipher
 	block, err := aes.NewCipher(sealingKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create AES cipher", Err: err}
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// Verify nonce size
 	if len(sealed.Nonce) != gcm.NonceSize() {
-		return nil, fmt.Errorf("invalid nonce size: expected %d, got %d",
-			gcm.NonceSize(), len(sealed.Nonce))
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: expected %d, got %d", gcm.NonceSize(), len(sealed.Nonce))}
 	}
 
 	// Decrypt with AAD if provided
@@ -224,7 +224,7 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 
 	plaintext, err := gcm.Open(nil, sealed.Nonce, ciphertextWithTag, aad)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt (check password/key and AAD): %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to decrypt (check password/key and AAD)", Err: err}
 	}
 
 	return plaintext, nil
@@ -246,7 +246,7 @@ func deriveSealingKey(privateKey crypto.PrivateKey, keyID string) ([]byte, error
 		// Ed25519 private key is the seed (first 32 bytes)
 		keyMaterial = k[:32]
 	default:
-		return nil, fmt.Errorf("unsupported key type for sealing: %T", privateKey)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type for sealing: %T", privateKey)}
 	}
 
 	// Create HKDF with SHA-256
@@ -258,7 +258,7 @@ func deriveSealingKey(privateKey crypto.PrivateKey, keyID string) ([]byte, error
 	// Derive 32 bytes for AES-256
 	derivedKey := make([]byte, 32)
 	if _, err := io.ReadFull(hkdfReader, derivedKey); err != nil {
-		return nil, fmt.Errorf("HKDF key derivation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "HKDF key derivation failed", Err: err}
 	}
 
 	return derivedKey, nil

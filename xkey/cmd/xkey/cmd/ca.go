@@ -345,14 +345,14 @@ func parseSANs(sanStr string) ([]string, error) {
 
 		colonIdx := strings.Index(entry, ":")
 		if colonIdx < 1 {
-			return nil, fmt.Errorf("%w: missing TYPE: prefix in %q", ErrCASANParseFailed, entry)
+			return nil, &DetailError{Err: ErrCASANParseFailed, Detail: fmt.Sprintf(": missing TYPE: prefix in %q", entry)}
 		}
 
 		sanType := strings.ToUpper(entry[:colonIdx])
 		sanValue := entry[colonIdx+1:]
 
 		if sanValue == "" {
-			return nil, fmt.Errorf("%w: empty value in %q", ErrCASANParseFailed, entry)
+			return nil, &DetailError{Err: ErrCASANParseFailed, Detail: fmt.Sprintf(": empty value in %q", entry)}
 		}
 
 		switch sanType {
@@ -360,13 +360,13 @@ func parseSANs(sanStr string) ([]string, error) {
 			sans = append(sans, "DNS:"+sanValue)
 		case "IP":
 			if net.ParseIP(sanValue) == nil {
-				return nil, fmt.Errorf("%w: invalid IP address %q", ErrCASANParseFailed, sanValue)
+				return nil, &DetailError{Err: ErrCASANParseFailed, Detail: fmt.Sprintf(": invalid IP address %q", sanValue)}
 			}
 			sans = append(sans, "IP:"+sanValue)
 		case "EMAIL":
 			sans = append(sans, "Email:"+sanValue)
 		default:
-			return nil, fmt.Errorf("%w: unsupported SAN type %q", ErrCASANParseFailed, sanType)
+			return nil, &DetailError{Err: ErrCASANParseFailed, Detail: fmt.Sprintf(": unsupported SAN type %q", sanType)}
 		}
 	}
 
@@ -377,7 +377,7 @@ func parseSANs(sanStr string) ([]string, error) {
 func parseReasonCode(reason string) (int, error) {
 	code, ok := reasonCodes[strings.ToLower(strings.TrimSpace(reason))]
 	if !ok {
-		return 0, fmt.Errorf("%w: %q", ErrCAInvalidReasonCode, reason)
+		return 0, &DetailError{Err: ErrCAInvalidReasonCode, Detail: fmt.Sprintf(": %q", reason)}
 	}
 	return code, nil
 }
@@ -389,7 +389,7 @@ func writeOutput(outputPath string, data []byte) error {
 		return err
 	}
 	if err := os.WriteFile(outputPath, data, 0600); err != nil {
-		return fmt.Errorf("%w: %v", ErrCAOutputWriteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCAOutputWriteFailed, Cause: err}
 	}
 	fmt.Fprintf(os.Stderr, "Written to %s\n", outputPath)
 	return nil
@@ -399,14 +399,14 @@ func writeOutput(outputPath string, data []byte) error {
 func runCAInfo(cmd *cobra.Command, args []string) error {
 	client, err := getSDKClient()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCAInfoFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCAInfoFailed, Cause: err}
 	}
 	defer func() { _ = client.Close() }()
 
 	ctx := context.Background()
 	resp, err := client.GetCACertificate(ctx, &transport.GetCACertificateRequest{})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCAInfoFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCAInfoFailed, Cause: err}
 	}
 
 	fmt.Printf("CA Certificate Information\n")
@@ -441,12 +441,12 @@ func runCAIssue(cmd *cobra.Command, args []string) error {
 
 	sans, err := parseSANs(sanStr)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCAIssueFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCAIssueFailed, Cause: err}
 	}
 
 	client, err := getSDKClient()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCAIssueFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCAIssueFailed, Cause: err}
 	}
 	defer func() { _ = client.Close() }()
 
@@ -460,7 +460,7 @@ func runCAIssue(cmd *cobra.Command, args []string) error {
 		Algorithm:    algorithm,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCAIssueFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCAIssueFailed, Cause: err}
 	}
 
 	fmt.Fprintf(os.Stderr, "Certificate issued: serial=%s\n", resp.SerialNumber)
@@ -491,12 +491,12 @@ func runCASignCSR(cmd *cobra.Command, args []string) error {
 
 	csrPEM, err := os.ReadFile(csrPath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCACSRReadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCACSRReadFailed, Cause: err}
 	}
 
 	client, err := getSDKClient()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCASignCSRFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCASignCSRFailed, Cause: err}
 	}
 	defer func() { _ = client.Close() }()
 
@@ -507,7 +507,7 @@ func runCASignCSR(cmd *cobra.Command, args []string) error {
 		ValidityDays: validityDays,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCASignCSRFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCASignCSRFailed, Cause: err}
 	}
 
 	fmt.Fprintf(os.Stderr, "CSR signed: serial=%s\n", resp.SerialNumber)
@@ -528,12 +528,12 @@ func runCARevoke(cmd *cobra.Command, args []string) error {
 	reasonStr, _ := cmd.Flags().GetString("reason")
 	reasonCode, err := parseReasonCode(reasonStr)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCARevokeFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCARevokeFailed, Cause: err}
 	}
 
 	client, err := getSDKClient()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCARevokeFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCARevokeFailed, Cause: err}
 	}
 	defer func() { _ = client.Close() }()
 
@@ -543,7 +543,7 @@ func runCARevoke(cmd *cobra.Command, args []string) error {
 		Reason:       reasonCode,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCARevokeFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCARevokeFailed, Cause: err}
 	}
 
 	if resp.Success {
@@ -561,14 +561,14 @@ func runCACRL(cmd *cobra.Command, args []string) error {
 
 	client, err := getSDKClient()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCACRLFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCACRLFailed, Cause: err}
 	}
 	defer func() { _ = client.Close() }()
 
 	ctx := context.Background()
 	resp, err := client.GenerateCRL(ctx, &transport.GenerateCRLRequest{})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCACRLFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCACRLFailed, Cause: err}
 	}
 
 	return writeOutput(outputPath, resp.CRLPEM)
@@ -580,7 +580,7 @@ func runCACheckRevocation(cmd *cobra.Command, args []string) error {
 
 	client, err := getSDKClient()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCACheckRevocationFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCACheckRevocationFailed, Cause: err}
 	}
 	defer func() { _ = client.Close() }()
 
@@ -589,7 +589,7 @@ func runCACheckRevocation(cmd *cobra.Command, args []string) error {
 		SerialNumber: serial,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCACheckRevocationFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCACheckRevocationFailed, Cause: err}
 	}
 
 	if resp.Revoked {
@@ -608,14 +608,14 @@ func runCABundle(cmd *cobra.Command, args []string) error {
 
 	client, err := getSDKClient()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCABundleFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCABundleFailed, Cause: err}
 	}
 	defer func() { _ = client.Close() }()
 
 	ctx := context.Background()
 	resp, err := client.GetCABundle(ctx, &transport.GetCABundleRequest{})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCABundleFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCABundleFailed, Cause: err}
 	}
 
 	return writeOutput(outputPath, resp.BundlePEM)

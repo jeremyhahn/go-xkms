@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // compositeCertStore implements the CertStore interface by composing
@@ -98,7 +100,7 @@ func (cs *compositeCertStore) StoreCertificate(cert *x509.Certificate) error {
 	if !cs.allowRevoked {
 		revoked, err := cs.isRevokedLocked(cert)
 		if err != nil {
-			return fmt.Errorf("failed to check revocation status: %w", err)
+			return &errs.Wrapped{Msg: "failed to check revocation status", Err: err}
 		}
 		if revoked {
 			return ErrCertRevoked
@@ -106,7 +108,7 @@ func (cs *compositeCertStore) StoreCertificate(cert *x509.Certificate) error {
 	}
 
 	if err := cs.storage.SaveCert(context.Background(), cert.Subject.CommonName, cert); err != nil {
-		return fmt.Errorf("failed to store certificate: %w", err)
+		return &errs.Wrapped{Msg: "failed to store certificate", Err: err}
 	}
 
 	return nil
@@ -127,7 +129,7 @@ func (cs *compositeCertStore) GetCertificate(cn string) (*x509.Certificate, erro
 
 	cert, err := cs.storage.GetCert(context.Background(), cn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get certificate", Err: err}
 	}
 
 	return cert, nil
@@ -147,7 +149,7 @@ func (cs *compositeCertStore) DeleteCertificate(cn string) error {
 	}
 
 	if err := cs.storage.DeleteCert(context.Background(), cn); err != nil {
-		return fmt.Errorf("failed to delete certificate: %w", err)
+		return &errs.Wrapped{Msg: "failed to delete certificate", Err: err}
 	}
 
 	return nil
@@ -164,7 +166,7 @@ func (cs *compositeCertStore) ListCertificates() ([]*x509.Certificate, error) {
 
 	ids, err := cs.storage.ListCerts(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("failed to list certificates: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list certificates", Err: err}
 	}
 
 	var certs []*x509.Certificate
@@ -209,12 +211,12 @@ func (cs *compositeCertStore) StoreCertificateChain(chain []*x509.Certificate) e
 	// Validate each certificate in the chain
 	for i, cert := range chain {
 		if cert == nil {
-			return fmt.Errorf("%w: certificate at index %d is nil", ErrChainInvalid, i)
+			return &errs.Detail{Err: ErrChainInvalid, Detail: fmt.Sprintf("certificate at index %d is nil", i)}
 		}
 	}
 
 	if err := cs.storage.SaveCertChain(context.Background(), cn, chain); err != nil {
-		return fmt.Errorf("failed to store certificate chain: %w", err)
+		return &errs.Wrapped{Msg: "failed to store certificate chain", Err: err}
 	}
 
 	return nil
@@ -235,7 +237,7 @@ func (cs *compositeCertStore) GetCertificateChain(cn string) ([]*x509.Certificat
 
 	chain, err := cs.storage.GetCertChain(context.Background(), cn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get certificate chain: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get certificate chain", Err: err}
 	}
 
 	return chain, nil
@@ -343,7 +345,7 @@ func (cs *compositeCertStore) VerifyCertificate(cert *x509.Certificate, roots *x
 	// Perform verification
 	_, err := cert.Verify(opts)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrVerificationFailed, err)
+		return &errs.Detail{Err: ErrVerificationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return nil
@@ -419,7 +421,7 @@ func (cs *compositeCertStore) Close() error {
 
 	// Close underlying storage
 	if err := cs.storage.Close(); err != nil {
-		return fmt.Errorf("failed to close storage: %w", err)
+		return &errs.Wrapped{Msg: "failed to close storage", Err: err}
 	}
 
 	return nil

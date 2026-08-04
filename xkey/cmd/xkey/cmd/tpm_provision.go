@@ -161,11 +161,11 @@ func parseGoldenPCRs(s string) ([]uint, error) {
 
 		val, err := strconv.ParseUint(part, 10, 32)
 		if err != nil {
-			return nil, fmt.Errorf("%w: invalid PCR index %q: %v", ErrInvalidPCRIndices, part, err)
+			return nil, &DetailError{Err: ErrInvalidPCRIndices, Detail: fmt.Sprintf(": invalid PCR index %q: %v", part, err)}
 		}
 
 		if val > 23 {
-			return nil, fmt.Errorf("%w: PCR index %d out of range (0-23)", ErrInvalidPCRIndices, val)
+			return nil, &DetailError{Err: ErrInvalidPCRIndices, Detail: fmt.Sprintf(": PCR index %d out of range (0-23)", val)}
 		}
 
 		result = append(result, uint(val))
@@ -188,7 +188,7 @@ func validatePCRBank(bank string) error {
 	}
 
 	if !validBanks[strings.ToLower(bank)] {
-		return fmt.Errorf("%w: %q (valid: sha1, sha256, sha384, sha512)", ErrInvalidPCRBank, bank)
+		return &DetailError{Err: ErrInvalidPCRBank, Detail: fmt.Sprintf(": %q (valid: sha1, sha256, sha384, sha512)", bank)}
 	}
 
 	return nil
@@ -208,7 +208,7 @@ func runTPMInstall(cmd *cobra.Command, args []string) error {
 	// Open TPM for provisioning with PCR overrides
 	tpm, err := openTPMForProvisioningWithPCROverrides(installPCRBank, goldenPCRs, installPlatformPCR)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTPMDeviceNotFound, err)
+		return &SentinelCauseError{Sentinel: ErrTPMDeviceNotFound, Cause: err}
 	}
 	defer func() { _ = tpm.Close() }()
 
@@ -258,7 +258,7 @@ func runTPMInstall(cmd *cobra.Command, args []string) error {
 
 	// Run Install (safe provisioning)
 	if err := tpm.Install(soPIN, nil); err != nil {
-		return fmt.Errorf("%w: %v", ErrProvisioningFailed, err)
+		return &SentinelCauseError{Sentinel: ErrProvisioningFailed, Cause: err}
 	}
 
 	result.Success = true
@@ -310,7 +310,7 @@ func runTPMProvision(cmd *cobra.Command, args []string) error {
 		reader := bufio.NewReader(os.Stdin)
 		input, err := reader.ReadString('\n')
 		if err != nil {
-			return fmt.Errorf("failed to read input: %w", err)
+			return &WrappedError{Msg: "failed to read input", Err: err}
 		}
 
 		input = strings.TrimSpace(input)
@@ -323,7 +323,7 @@ func runTPMProvision(cmd *cobra.Command, args []string) error {
 	// Open TPM for provisioning with PCR overrides
 	tpm, err := openTPMForProvisioningWithPCROverrides(provisionPCRBank, goldenPCRs, provisionPlatformPCR)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTPMDeviceNotFound, err)
+		return &SentinelCauseError{Sentinel: ErrTPMDeviceNotFound, Cause: err}
 	}
 	defer func() { _ = tpm.Close() }()
 
@@ -340,7 +340,7 @@ func runTPMProvision(cmd *cobra.Command, args []string) error {
 
 	// Run full Provision (destructive)
 	if err := tpm.Provision(soPIN); err != nil {
-		return fmt.Errorf("%w: %v", ErrProvisioningFailed, err)
+		return &SentinelCauseError{Sentinel: ErrProvisioningFailed, Cause: err}
 	}
 
 	result := &ProvisionResult{

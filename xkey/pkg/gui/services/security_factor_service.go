@@ -132,7 +132,7 @@ func (s *SecurityFactorService) SetClientCert(cert *tls.Certificate) {
 // ListFactors returns all active auth factors for the given user.
 func (s *SecurityFactorService) ListFactors(userID string) (*ListFactorsResponse, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("security_factor: user ID required")
+		return nil, &MessageError{Msg: "security_factor: user ID required"}
 	}
 	path := fmt.Sprintf("/api/v1/users/%s/factors", userID)
 	var resp ListFactorsResponse
@@ -145,7 +145,7 @@ func (s *SecurityFactorService) ListFactors(userID string) (*ListFactorsResponse
 // AddFactor enrolls a new auth factor for the given user.
 func (s *SecurityFactorService) AddFactor(userID string, req AddFactorRequest) (*AddFactorResponse, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("security_factor: user ID required")
+		return nil, &MessageError{Msg: "security_factor: user ID required"}
 	}
 	if req.Type == "" {
 		return nil, ErrInvalidFactorType
@@ -162,7 +162,7 @@ func (s *SecurityFactorService) AddFactor(userID string, req AddFactorRequest) (
 // cannot be removed without admin override.
 func (s *SecurityFactorService) RemoveFactor(userID, factorID string) error {
 	if userID == "" || factorID == "" {
-		return fmt.Errorf("security_factor: user ID and factor ID required")
+		return &MessageError{Msg: "security_factor: user ID and factor ID required"}
 	}
 	path := fmt.Sprintf("/api/v1/users/%s/factors/%s", userID, factorID)
 	return s.delete(path)
@@ -171,7 +171,7 @@ func (s *SecurityFactorService) RemoveFactor(userID, factorID string) error {
 // RotateFactor enrolls a replacement credential and revokes the old one atomically.
 func (s *SecurityFactorService) RotateFactor(userID string, req RotateFactorRequest) (*AddFactorResponse, error) {
 	if userID == "" || req.FactorID == "" {
-		return nil, fmt.Errorf("security_factor: user ID and factor ID required")
+		return nil, &MessageError{Msg: "security_factor: user ID and factor ID required"}
 	}
 	path := fmt.Sprintf("/api/v1/users/%s/factors/%s/rotate", userID, req.FactorID)
 	var resp AddFactorResponse
@@ -184,7 +184,7 @@ func (s *SecurityFactorService) RotateFactor(userID string, req RotateFactorRequ
 // RelabelFactor updates the human-readable label of a factor.
 func (s *SecurityFactorService) RelabelFactor(userID, factorID, label string) error {
 	if userID == "" || factorID == "" {
-		return fmt.Errorf("security_factor: user ID and factor ID required")
+		return &MessageError{Msg: "security_factor: user ID and factor ID required"}
 	}
 	path := fmt.Sprintf("/api/v1/users/%s/factors/%s/label", userID, factorID)
 	return s.patch(path, map[string]string{"label": label})
@@ -193,7 +193,7 @@ func (s *SecurityFactorService) RelabelFactor(userID, factorID, label string) er
 // SetMFAPolicy configures the tenant-level MFA requirement.
 func (s *SecurityFactorService) SetMFAPolicy(req MFAPolicyRequest) error {
 	if req.TenantID == "" {
-		return fmt.Errorf("security_factor: tenant ID required")
+		return &MessageError{Msg: "security_factor: tenant ID required"}
 	}
 	path := fmt.Sprintf("/api/v1/tenants/%s/security/mfa-policy", req.TenantID)
 	return s.put(path, req, nil)
@@ -220,16 +220,16 @@ func (s *SecurityFactorService) ProbeAdminCert() map[string]bool {
 func (s *SecurityFactorService) LoginMTLS() (*FactorLoginResult, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("security_factor: locate home dir: %w", err)
+		return nil, &WrappedError{Msg: "security_factor: locate home dir", Err: err}
 	}
 	certPath := filepath.Join(home, ".xkey", "admin.pem")
 	certPEM, err := os.ReadFile(certPath)
 	if err != nil {
-		return nil, fmt.Errorf("security_factor: read admin cert: %w", err)
+		return nil, &WrappedError{Msg: "security_factor: read admin cert", Err: err}
 	}
 	cert, err := tls.X509KeyPair(certPEM, certPEM)
 	if err != nil {
-		return nil, fmt.Errorf("security_factor: parse admin cert: %w", err)
+		return nil, &WrappedError{Msg: "security_factor: parse admin cert", Err: err}
 	}
 	s.clientCert = &cert
 
@@ -244,7 +244,7 @@ func (s *SecurityFactorService) LoginMTLS() (*FactorLoginResult, error) {
 // In Wails, this calls the native CTAP2 bridge rather than navigator.credentials.
 func (s *SecurityFactorService) LoginFIDO2(username string) (*FactorLoginResult, error) {
 	if username == "" {
-		return nil, fmt.Errorf("security_factor: username required for FIDO2 login")
+		return nil, &MessageError{Msg: "security_factor: username required for FIDO2 login"}
 	}
 	// Delegate to the FIDO2 bridge which handles native CTAP2 interaction.
 	var result FactorLoginResult
@@ -259,7 +259,7 @@ func (s *SecurityFactorService) LoginPIV() (*FactorLoginResult, error) {
 	// Read the authentication certificate from slot 9a.
 	certPEM, err := s.ReadPIVCertPEM("9a")
 	if err != nil {
-		return nil, fmt.Errorf("security_factor: read PIV cert: %w", err)
+		return nil, &WrappedError{Msg: "security_factor: read PIV cert", Err: err}
 	}
 	var result FactorLoginResult
 	if err := s.post("/api/v1/auth/piv/login", map[string]string{"cert_pem": certPEM}, &result); err != nil {
@@ -310,7 +310,7 @@ func (s *SecurityFactorService) EnumeratePIVCards() ([]PIVCardInfo, error) {
 func (s *SecurityFactorService) ReadPIVCertPEM(slot string) (string, error) {
 	cert, err := s.pivSvc.GetCertificate(slot)
 	if err != nil {
-		return "", fmt.Errorf("security_factor: read PIV cert slot %s: %w", slot, err)
+		return "", &WrappedError{Msg: fmt.Sprintf("security_factor: read PIV cert slot %s", slot), Err: err}
 	}
 	return cert.PEM, nil
 }
@@ -354,7 +354,7 @@ func (s *SecurityFactorService) get(path string, dst any) error {
 	}
 	req, err := http.NewRequestWithContext(s.ctx, http.MethodGet, base+path, nil)
 	if err != nil {
-		return fmt.Errorf("security_factor: build request: %w", err)
+		return &WrappedError{Msg: "security_factor: build request", Err: err}
 	}
 	return s.do(req, dst)
 }
@@ -378,7 +378,7 @@ func (s *SecurityFactorService) delete(path string) error {
 	}
 	req, err := http.NewRequestWithContext(s.ctx, http.MethodDelete, base+path, nil)
 	if err != nil {
-		return fmt.Errorf("security_factor: build request: %w", err)
+		return &WrappedError{Msg: "security_factor: build request", Err: err}
 	}
 	return s.do(req, nil)
 }
@@ -390,13 +390,13 @@ func (s *SecurityFactorService) sendJSON(method, path string, body, dst any) err
 	}
 	encoded, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("security_factor: encode request body: %w", err)
+		return &WrappedError{Msg: "security_factor: encode request body", Err: err}
 	}
 	req, err := http.NewRequestWithContext(
 		s.ctx, method, base+path, bytes.NewReader(encoded),
 	)
 	if err != nil {
-		return fmt.Errorf("security_factor: build request: %w", err)
+		return &WrappedError{Msg: "security_factor: build request", Err: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	return s.do(req, dst)
@@ -410,13 +410,13 @@ type apiErrBody struct {
 func (s *SecurityFactorService) do(req *http.Request, dst any) error {
 	resp, err := s.httpClient().Do(req)
 	if err != nil {
-		return fmt.Errorf("security_factor: %s %s: %w", req.Method, req.URL.Path, err)
+		return &WrappedError{Msg: fmt.Sprintf("security_factor: %s %s", req.Method, req.URL.Path), Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("security_factor: read response: %w", err)
+		return &WrappedError{Msg: "security_factor: read response", Err: err}
 	}
 
 	if resp.StatusCode >= 400 {
@@ -429,12 +429,12 @@ func (s *SecurityFactorService) do(req *http.Request, dst any) error {
 		if msg == "" {
 			msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
 		}
-		return fmt.Errorf("security_factor: %s %s: %s", req.Method, req.URL.Path, msg)
+		return &MessageError{Msg: fmt.Sprintf("security_factor: %s %s: %s", req.Method, req.URL.Path, msg)}
 	}
 
 	if dst != nil && len(data) > 0 {
 		if err := json.Unmarshal(data, dst); err != nil {
-			return fmt.Errorf("security_factor: decode response: %w", err)
+			return &WrappedError{Msg: "security_factor: decode response", Err: err}
 		}
 	}
 	return nil

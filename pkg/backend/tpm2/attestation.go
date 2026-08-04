@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -56,7 +58,7 @@ func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, non
 	// Perform TPM2_Certify via the low-level TPM interface
 	result, err := b.tpm.CertifyKey(attrs, nonce, b.keyBackend)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrAttestationFailed, err)
+		return nil, &errs.Detail{Err: ErrAttestationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Build certificate chain: [IAK cert, EK cert]

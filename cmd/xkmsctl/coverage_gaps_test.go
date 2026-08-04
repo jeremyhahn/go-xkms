@@ -33,8 +33,8 @@ import (
 	"testing"
 	"time"
 
-	trustresolver "github.com/jeremyhahn/go-xkms/pkg/trust/resolver"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	trustresolver "github.com/jeremyhahn/go-xkms/pkg/trust/resolver"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/cobra"

@@ -502,6 +502,13 @@ func (m *mockService) BarrierGenerateRecoveryKeys(_ context.Context, _ *transpor
 	return &transport.BarrierRecoveryKeysResponse{}, nil
 }
 
+func (m *mockService) BarrierEnableEncryption(_ context.Context, _ *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.BarrierEnableEncryptionResponse{}, nil
+}
+
 func (m *mockService) BarrierRecoverWithKeys(_ context.Context, _ *transport.BarrierRecoverWithKeysRequest) error {
 	if m.shouldFail {
 		return errMock
@@ -857,6 +864,18 @@ func (m *mockService) TenantBarrierUnseal(_ context.Context, _ *transport.Tenant
 		return errMock
 	}
 	return nil
+}
+
+func (m *mockService) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return nil, nil
 }
 
 func (m *mockService) GetInitStatus(_ context.Context) (*transport.InitStatusResponse, error) {

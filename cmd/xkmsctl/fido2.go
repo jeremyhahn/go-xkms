@@ -74,12 +74,12 @@ func defaultFIDO2HandlerFactory(config *fido2.Config) (fido2.Handler, error) {
 
 		device, err := virtualdevice.NewNativeVirtualDevice(deviceConfig)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create virtual device: %w", err)
+			return nil, &WrappedError{Sentinel: ErrCreateVirtualDeviceFailed, Err: err}
 		}
 
 		virtualEnumerator := virtualdevice.NewNativeVirtualDeviceEnumerator()
 		if err := virtualEnumerator.RegisterDevice(device); err != nil {
-			return nil, fmt.Errorf("failed to register virtual device: %w", err)
+			return nil, &WrappedError{Sentinel: ErrRegisterVirtualDeviceFailed, Err: err}
 		}
 		enumerator = virtualEnumerator
 	} else {
@@ -95,12 +95,12 @@ func defaultFIDO2HandlerFactory(config *fido2.Config) (fido2.Handler, error) {
 func newFileCredentialStorage(stateDir string) (authenticator.StatefulCredentialStorage, error) {
 	backend, err := client.NewFileStorageBackend(stateDir)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrVirtualStorageInit, err)
+		return nil, &WrappedError{Sentinel: ErrVirtualStorageInit, Err: err}
 	}
 
 	storage, err := authenticator.NewBackendStorage(backend, "fido2/virtual/")
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrVirtualCredentialStorageInit, err)
+		return nil, &WrappedError{Sentinel: ErrVirtualCredentialStorageInit, Err: err}
 	}
 
 	return storage, nil
@@ -137,7 +137,7 @@ func runFIDO2ListDevicesWithWriter(cmd *cobra.Command, args []string, writer io.
 	fidoConfig := fido2.DefaultConfig
 	handler, err := fido2HandlerFactory(&fidoConfig)
 	if err != nil {
-		handleError(fmt.Errorf("failed to create FIDO2 handler: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
 	defer func() { _ = handler.Close() }()
@@ -145,7 +145,7 @@ func runFIDO2ListDevicesWithWriter(cmd *cobra.Command, args []string, writer io.
 	// List devices
 	devices, err := handler.ListDevices()
 	if err != nil {
-		handleError(fmt.Errorf("failed to list FIDO2 devices: %w", err))
+		handleError(&WrappedError{Sentinel: ErrListFIDO2DevicesFailed, Err: err})
 		return
 	}
 
@@ -206,7 +206,7 @@ func runFIDO2WaitDeviceWithWriter(cmd *cobra.Command, args []string, writer io.W
 	fidoConfig := fido2.DefaultConfig
 	handler, err := fido2HandlerFactory(&fidoConfig)
 	if err != nil {
-		handleError(fmt.Errorf("failed to create FIDO2 handler: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
 	defer func() { _ = handler.Close() }()
@@ -217,7 +217,7 @@ func runFIDO2WaitDeviceWithWriter(cmd *cobra.Command, args []string, writer io.W
 
 	device, err := handler.WaitForDevice(ctx)
 	if err != nil {
-		handleError(fmt.Errorf("failed while waiting for device: %w", err))
+		handleError(&WrappedError{Sentinel: ErrWaitForDeviceFailed, Err: err})
 		return
 	}
 
@@ -269,7 +269,7 @@ func runFIDO2RegisterWithWriter(cmd *cobra.Command, args []string, writer io.Wri
 	fidoConfig.RequireUserVerification = requireUV
 	handler, err := fido2HandlerFactory(&fidoConfig)
 	if err != nil {
-		handleError(fmt.Errorf("failed to create FIDO2 handler: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
 	defer func() { _ = handler.Close() }()
@@ -290,7 +290,7 @@ func runFIDO2RegisterWithWriter(cmd *cobra.Command, args []string, writer io.Wri
 	// Register the credential
 	result, err := handler.EnrollKey(enrollConfig)
 	if err != nil {
-		handleError(fmt.Errorf("failed to register credential: %w", err))
+		handleError(&WrappedError{Sentinel: ErrRegisterCredentialFailed, Err: err})
 		return
 	}
 
@@ -352,24 +352,24 @@ func runFIDO2AuthenticateWithWriter(cmd *cobra.Command, args []string, writer io
 	outputHex, _ := cmd.Flags().GetBool("hex")
 
 	if credIDStr == "" {
-		handleError(fmt.Errorf("credential-id is required"))
+		handleError(ErrCredentialIDRequired)
 		return
 	}
 	if saltStr == "" {
-		handleError(fmt.Errorf("salt is required"))
+		handleError(ErrSaltRequired)
 		return
 	}
 
 	// Decode credential ID and salt (support both base64 and hex)
 	credID, err := decodeCredentialData(credIDStr)
 	if err != nil {
-		handleError(fmt.Errorf("invalid credential-id: %w", err))
+		handleError(&WrappedError{Sentinel: ErrInvalidCredentialID, Err: err})
 		return
 	}
 
 	salt, err := decodeCredentialData(saltStr)
 	if err != nil {
-		handleError(fmt.Errorf("invalid salt: %w", err))
+		handleError(&WrappedError{Sentinel: ErrInvalidSalt, Err: err})
 		return
 	}
 
@@ -381,7 +381,7 @@ func runFIDO2AuthenticateWithWriter(cmd *cobra.Command, args []string, writer io
 	fidoConfig.RequireUserVerification = requireUV
 	handler, err := fido2HandlerFactory(&fidoConfig)
 	if err != nil {
-		handleError(fmt.Errorf("failed to create FIDO2 handler: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
 	defer func() { _ = handler.Close() }()
@@ -400,7 +400,7 @@ func runFIDO2AuthenticateWithWriter(cmd *cobra.Command, args []string, writer io
 	// Authenticate
 	derivedKey, err := handler.UnlockWithKey(authConfig)
 	if err != nil {
-		handleError(fmt.Errorf("authentication failed: %w", err))
+		handleError(&WrappedError{Sentinel: ErrAuthenticationFailed, Err: err})
 		return
 	}
 
@@ -457,7 +457,7 @@ func runFIDO2InfoWithWriter(cmd *cobra.Command, args []string, writer io.Writer)
 	fidoConfig.DevicePath = devicePath
 	handler, err := fido2HandlerFactory(&fidoConfig)
 	if err != nil {
-		handleError(fmt.Errorf("failed to create FIDO2 handler: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
 	defer func() { _ = handler.Close() }()
@@ -465,12 +465,12 @@ func runFIDO2InfoWithWriter(cmd *cobra.Command, args []string, writer io.Writer)
 	// List devices and get info for first one (or specified device)
 	devices, err := handler.ListDevices()
 	if err != nil {
-		handleError(fmt.Errorf("failed to list devices: %w", err))
+		handleError(&WrappedError{Sentinel: ErrListDevicesFailed, Err: err})
 		return
 	}
 
 	if len(devices) == 0 {
-		handleError(fmt.Errorf("no FIDO2 devices found"))
+		handleError(ErrNoFIDO2DevicesFound)
 		return
 	}
 
@@ -486,7 +486,7 @@ func runFIDO2InfoWithWriter(cmd *cobra.Command, args []string, writer io.Writer)
 			}
 		}
 		if !found {
-			handleError(fmt.Errorf("device not found: %s", devicePath))
+			handleError(&WrappedDetailError{Sentinel: ErrDeviceNotFound, Detail: devicePath})
 			return
 		}
 	} else {
@@ -563,5 +563,5 @@ func decodeCredentialData(s string) ([]byte, error) {
 		return data, nil
 	}
 
-	return nil, fmt.Errorf("could not decode as base64 or hex")
+	return nil, ErrDecodeBase64OrHex
 }

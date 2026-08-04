@@ -25,6 +25,8 @@ import (
 	"hash"
 	"io"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/x25519"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -86,24 +88,24 @@ func (b *SoftwareBackend) DeriveKeyECDH(
 
 	// Validate inputs
 	if privateKeyAttrs == nil {
-		return nil, fmt.Errorf("%w: private key attributes cannot be nil", backend.ErrInvalidAttributes)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "private key attributes cannot be nil"}
 	}
 	if len(peerPublicKey) == 0 {
-		return nil, fmt.Errorf("%w: peer public key cannot be empty", ErrInvalidPublicKey)
+		return nil, &errs.Detail{Err: ErrInvalidPublicKey, Detail: "peer public key cannot be empty"}
 	}
 	if kdfParams == nil {
-		return nil, fmt.Errorf("%w: KDF parameters cannot be nil", ErrInvalidKDFParams)
+		return nil, &errs.Detail{Err: ErrInvalidKDFParams, Detail: "KDF parameters cannot be nil"}
 	}
 
 	// Validate and apply KDF defaults
 	if err := kdfParams.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidKDFParams, err)
+		return nil, &errs.Detail{Err: ErrInvalidKDFParams, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Get the private key
 	privateKey, err := b.pkcs8Backend.GetKey(ctx, privateKeyAttrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get private key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get private key", Err: err}
 	}
 
 	// Perform ECDH based on key type
@@ -114,7 +116,7 @@ func (b *SoftwareBackend) DeriveKeyECDH(
 	case *x25519.PrivateKeyStorage:
 		sharedSecret, err = b.deriveECDHWithX25519(key, peerPublicKey)
 	default:
-		return nil, fmt.Errorf("%w: expected ECDSA or X25519 key, got %T", ErrUnsupportedKeyType, privateKey)
+		return nil, &errs.Detail{Err: ErrUnsupportedKeyType, Detail: fmt.Sprintf("expected ECDSA or X25519 key, got %T", privateKey)}
 	}
 
 	if err != nil {
@@ -130,30 +132,29 @@ func (b *SoftwareBackend) deriveECDHWithNIST(privateKey *ecdsa.PrivateKey, peerP
 	// Parse the peer's public key
 	peerPublicKey, err := parseNISTPublicKey(peerPublicKeyBytes, privateKey.Curve)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidPublicKey, err)
+		return nil, &errs.Detail{Err: ErrInvalidPublicKey, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Verify curves match
 	if privateKey.Curve != peerPublicKey.Curve {
-		return nil, fmt.Errorf("%w: private key uses %s, peer public key uses %s",
-			ErrCurveMismatch, privateKey.Curve.Params().Name, peerPublicKey.Curve.Params().Name)
+		return nil, &errs.Detail{Err: ErrCurveMismatch, Detail: fmt.Sprintf("private key uses %s, peer public key uses %s", privateKey.Curve.Params().Name, peerPublicKey.Curve.Params().Name)}
 	}
 
 	// Convert to crypto/ecdh for the ECDH operation
 	ecdhPrivate, err := privateKey.ECDH()
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert private key to ECDH: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to convert private key to ECDH", Err: err}
 	}
 
 	ecdhPeer, err := peerPublicKey.ECDH()
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert peer public key to ECDH: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to convert peer public key to ECDH", Err: err}
 	}
 
 	// Perform ECDH
 	sharedSecret, err := ecdhPrivate.ECDH(ecdhPeer)
 	if err != nil {
-		return nil, fmt.Errorf("ECDH operation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "ECDH operation failed", Err: err}
 	}
 
 	return sharedSecret, nil
@@ -164,13 +165,13 @@ func (b *SoftwareBackend) deriveECDHWithX25519(privateKey *x25519.PrivateKeyStor
 	// Parse the peer's X25519 public key
 	peerPublicKey, err := parseX25519PublicKey(peerPublicKeyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidPublicKey, err)
+		return nil, &errs.Detail{Err: ErrInvalidPublicKey, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	// Perform ECDH
 	sharedSecret, err := privateKey.PrivateKey().ECDH(peerPublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("X25519 ECDH operation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "X25519 ECDH operation failed", Err: err}
 	}
 
 	return sharedSecret, nil
@@ -182,7 +183,7 @@ func (b *SoftwareBackend) applyKDF(sharedSecret []byte, params *types.KDFParams)
 	case types.KDFAlgorithmHKDF:
 		return applyHKDF(sharedSecret, params)
 	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedKDFAlgorithm, params.Algorithm)
+		return nil, &errs.Detail{Err: ErrUnsupportedKDFAlgorithm, Detail: fmt.Sprintf("%s", params.Algorithm)}
 	}
 }
 
@@ -199,7 +200,7 @@ func applyHKDF(sharedSecret []byte, params *types.KDFParams) ([]byte, error) {
 	// Derive key
 	derivedKey := make([]byte, params.KeyLength)
 	if _, err := io.ReadFull(reader, derivedKey); err != nil {
-		return nil, fmt.Errorf("HKDF derivation failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "HKDF derivation failed", Err: err}
 	}
 
 	return derivedKey, nil
@@ -221,7 +222,7 @@ func getHashFunc(name string) (func() hash.Hash, error) {
 	case "SHA3-512":
 		return sha3.New512, nil
 	default:
-		return nil, fmt.Errorf("unsupported hash algorithm: %s", name)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", name)}
 	}
 }
 
@@ -231,14 +232,14 @@ func getHashFunc(name string) (func() hash.Hash, error) {
 //   - Uncompressed point format (0x04 || X || Y)
 func parseNISTPublicKey(data []byte, expectedCurve elliptic.Curve) (*ecdsa.PublicKey, error) {
 	if len(data) == 0 {
-		return nil, fmt.Errorf("public key data is empty")
+		return nil, &errs.Message{Msg: "public key data is empty"}
 	}
 
 	// Try DER-encoded SubjectPublicKeyInfo first
 	if pubKey, err := x509.ParsePKIXPublicKey(data); err == nil {
 		ecdsaPub, ok := pubKey.(*ecdsa.PublicKey)
 		if !ok {
-			return nil, fmt.Errorf("DER data contains non-ECDSA key: %T", pubKey)
+			return nil, &errs.Message{Msg: fmt.Sprintf("DER data contains non-ECDSA key: %T", pubKey)}
 		}
 		return ecdsaPub, nil
 	}
@@ -257,30 +258,30 @@ func parseNISTPublicKey(data []byte, expectedCurve elliptic.Curve) (*ecdsa.Publi
 
 		ecdhPub, err := ecdhCurve.NewPublicKey(data)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse uncompressed point: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to parse uncompressed point", Err: err}
 		}
 
 		// Convert back to ECDSA public key by going through DER
 		// This is a bit roundabout, but ensures proper validation
 		derBytes, err := x509.MarshalPKIXPublicKey(ecdhPub)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal ECDH public key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to marshal ECDH public key", Err: err}
 		}
 
 		pubKey, err := x509.ParsePKIXPublicKey(derBytes)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse marshaled public key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to parse marshaled public key", Err: err}
 		}
 
 		ecdsaPub, ok := pubKey.(*ecdsa.PublicKey)
 		if !ok {
-			return nil, fmt.Errorf("unexpected key type after conversion: %T", pubKey)
+			return nil, &errs.Message{Msg: fmt.Sprintf("unexpected key type after conversion: %T", pubKey)}
 		}
 
 		return ecdsaPub, nil
 	}
 
-	return nil, fmt.Errorf("unrecognized public key format (length: %d)", len(data))
+	return nil, &errs.Message{Msg: fmt.Sprintf("unrecognized public key format (length: %d)", len(data))}
 }
 
 // parseX25519PublicKey parses an X25519 public key from various formats.
@@ -289,17 +290,17 @@ func parseNISTPublicKey(data []byte, expectedCurve elliptic.Curve) (*ecdsa.Publi
 //   - Raw 32-byte public key
 func parseX25519PublicKey(data []byte) (*ecdh.PublicKey, error) {
 	if len(data) == 0 {
-		return nil, fmt.Errorf("public key data is empty")
+		return nil, &errs.Message{Msg: "public key data is empty"}
 	}
 
 	// Try DER-encoded SubjectPublicKeyInfo first
 	if pubKey, err := x509.ParsePKIXPublicKey(data); err == nil {
 		ecdhPub, ok := pubKey.(*ecdh.PublicKey)
 		if !ok {
-			return nil, fmt.Errorf("DER data contains non-X25519 key: %T", pubKey)
+			return nil, &errs.Message{Msg: fmt.Sprintf("DER data contains non-X25519 key: %T", pubKey)}
 		}
 		if ecdhPub.Curve() != ecdh.X25519() {
-			return nil, fmt.Errorf("expected X25519 curve, got %v", ecdhPub.Curve())
+			return nil, &errs.Message{Msg: fmt.Sprintf("expected X25519 curve, got %v", ecdhPub.Curve())}
 		}
 		return ecdhPub, nil
 	}
@@ -308,12 +309,12 @@ func parseX25519PublicKey(data []byte) (*ecdh.PublicKey, error) {
 	if len(data) == 32 {
 		pubKey, err := ecdh.X25519().NewPublicKey(data)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse raw X25519 public key: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to parse raw X25519 public key", Err: err}
 		}
 		return pubKey, nil
 	}
 
-	return nil, fmt.Errorf("unrecognized X25519 public key format (length: %d, expected 32 or DER)", len(data))
+	return nil, &errs.Message{Msg: fmt.Sprintf("unrecognized X25519 public key format (length: %d, expected 32 or DER)", len(data))}
 }
 
 // nistCurveToECDH returns the crypto/ecdh curve for a NIST curve name.
@@ -326,7 +327,7 @@ func nistCurveToECDH(name string) (ecdh.Curve, error) {
 	case "P-521":
 		return ecdh.P521(), nil
 	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedCurve, name)
+		return nil, &errs.Detail{Err: ErrUnsupportedCurve, Detail: fmt.Sprintf("%s", name)}
 	}
 }
 
@@ -372,8 +373,7 @@ func (b *SoftwareBackend) DeriveKeyECDHSecure(
 ) (*types.ECDHResult, error) {
 	// Check for supported derivation mode
 	if kdfParams != nil && kdfParams.DerivationMode != types.KeyDerivationModeExport {
-		return nil, fmt.Errorf("%w: software backend only supports EXPORT mode, got %s",
-			ErrDerivationModeNotSupported, kdfParams.DerivationMode)
+		return nil, &errs.Detail{Err: ErrDerivationModeNotSupported, Detail: fmt.Sprintf("software backend only supports EXPORT mode, got %s", kdfParams.DerivationMode)}
 	}
 
 	// Delegate to DeriveKeyECDH
@@ -400,8 +400,7 @@ func (b *SoftwareBackend) UseResidentKey(
 	data []byte,
 	params *types.OperationParams,
 ) ([]byte, error) {
-	return nil, fmt.Errorf("%w: software backend does not support resident keys",
-		ErrDerivationModeNotSupported)
+	return nil, &errs.Detail{Err: ErrDerivationModeNotSupported, Detail: "software backend does not support resident keys"}
 }
 
 // DestroyResidentKey destroys an HSM/TPM-resident derived key.
@@ -413,8 +412,7 @@ func (b *SoftwareBackend) DestroyResidentKey(
 	ctx context.Context,
 	handle *types.DerivedKeyHandle,
 ) error {
-	return fmt.Errorf("%w: software backend does not support resident keys",
-		ErrDerivationModeNotSupported)
+	return &errs.Detail{Err: ErrDerivationModeNotSupported, Detail: "software backend does not support resident keys"}
 }
 
 // Verify KeyAgreementBackend interface compliance at compile time

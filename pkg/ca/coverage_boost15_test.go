@@ -93,9 +93,9 @@ func TestLoad_IntermediateCertNotFound_B15(t *testing.T) {
 	// Add a fake intermediate identity to the config so HasIntermediate() is
 	// true. Use a CN that is not present in the cert store.
 	intermediateIdentity := Identity{
-		Subject:  Subject{CommonName: "Nonexistent Intermediate CA"},
-		IsRoot:   false,
-		Keys:     []*types.KeyConfig{{KeyAlgorithm: types.AlgorithmECDSA, StoreType: types.StoreSoftware, KeyType: "CA"}},
+		Subject: Subject{CommonName: "Nonexistent Intermediate CA"},
+		IsRoot:  false,
+		Keys:    []*types.KeyConfig{{KeyAlgorithm: types.AlgorithmECDSA, StoreType: types.StoreSoftware, KeyType: "CA"}},
 	}
 	rootCA.config.Identity = append(rootCA.config.Identity, intermediateIdentity)
 	rootCA.config.SelectedCA = 1
@@ -659,11 +659,11 @@ func TestImportDistributionCRLs_HTTPGetError_B15(t *testing.T) {
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
-		SerialNumber:            serial,
-		Subject:                 pkix.Name{CommonName: "crl-get-error-b15"},
-		NotBefore:               time.Now().Add(-time.Hour),
-		NotAfter:                time.Now().Add(24 * time.Hour),
-		CRLDistributionPoints:   []string{closedURL + "/crl.crl"},
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "crl-get-error-b15"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		CRLDistributionPoints: []string{closedURL + "/crl.crl"},
 	}
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	require.NoError(t, err)

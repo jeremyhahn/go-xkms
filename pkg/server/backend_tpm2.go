@@ -29,11 +29,38 @@ func (s *Server) initTPM2Backend() error {
 		devicePath = "/dev/tpmrm0"
 	}
 
+	// When the seal autodetect already opened this TPM (node-barrier flip),
+	// reuse that single open: build the general backend over the SAME TPM
+	// connection via NewBackendWithTPM. A second independent open would hang a
+	// swtpm emulator; sharing the connection also keeps one PlatformKeyStore /
+	// policy state. The shared TPM is closed once, at node shutdown
+	// (nodeSealClose), not by this backend (externalTPM).
+	if shared, ok := s.nodeSealTPM.(*tpm2backend.Backend); ok {
+		tpmBackend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
+			TPM:    shared.TPM(),
+			KeyDir: s.config.Storage.Path + "/tpm2-keys",
+			Logger: s.logger,
+		})
+		if err != nil {
+			return &ErrBackendCreate{Backend: "TPM2", Err: err}
+		}
+		s.keyProviders["tpm2"] = tpmBackend
+		s.logger.Info("TPM2 backend reuses the seal autodetect's single TPM open", "backend", "tpm2", "device", devicePath)
+		return nil
+	}
+
 	// Create TPM2 backend configuration
 	tpmConfig := &tpm2backend.Config{
-		Device: devicePath,
-		KeyDir: s.config.Storage.Path + "/tpm2-keys",
-		CN:     "xkms",
+		Device:          devicePath,
+		KeyDir:          s.config.Storage.Path + "/tpm2-keys",
+		CN:              "xkms",
+		UseSimulator:    s.config.Backends.TPM2.UseSimulator,
+		SimulatorHost:   s.config.Backends.TPM2.SimulatorHost,
+		SimulatorPort:   s.config.Backends.TPM2.SimulatorPort,
+		SRKHandle:       s.config.Backends.TPM2.SRKHandle,
+		PlatformPolicy:  s.config.Backends.TPM2.PlatformPolicy,
+		PlatformPCR:     s.config.Backends.TPM2.PlatformPCR,
+		PlatformPCRBank: s.config.Backends.TPM2.PlatformPCRBank,
 	}
 
 	// Create TPM2 backend

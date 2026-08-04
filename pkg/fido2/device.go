@@ -21,6 +21,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/fxamacker/cbor/v2"
 )
 
@@ -90,7 +92,7 @@ func NewCTAPHIDDevice(device HIDDevice, config *Config) (*CTAPHIDDevice, error) 
 		if closeErr := device.Close(); closeErr != nil {
 			log.Printf("failed to close device after init error: %v", closeErr)
 		}
-		return nil, fmt.Errorf("failed to initialize CTAP channel: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to initialize CTAP channel", Err: err}
 	}
 
 	return ctapDev, nil
@@ -104,16 +106,16 @@ func (d *CTAPHIDDevice) init() error {
 
 	resp, err := d.sendCommand(CIDBroadcast, CTAPHID_INIT, nonce, d.config.Timeout)
 	if err != nil {
-		return fmt.Errorf("CTAPHID_INIT failed: %w", err)
+		return &errs.Wrapped{Msg: "CTAPHID_INIT failed", Err: err}
 	}
 
 	if len(resp) < 17 {
-		return fmt.Errorf("invalid CTAPHID_INIT response length: %d", len(resp))
+		return &errs.Message{Msg: fmt.Sprintf("invalid CTAPHID_INIT response length: %d", len(resp))}
 	}
 
 	// Verify nonce echo
 	if !bytes.Equal(resp[:8], nonce) {
-		return fmt.Errorf("nonce mismatch in CTAPHID_INIT response")
+		return &errs.Message{Msg: "nonce mismatch in CTAPHID_INIT response"}
 	}
 
 	// Extract channel ID
@@ -130,7 +132,7 @@ func (d *CTAPHIDDevice) sendCommand(cid uint32, cmd byte, data []byte, timeout t
 	// Send all packets
 	for _, packet := range packets {
 		if _, err := d.device.Write(packet); err != nil {
-			return nil, fmt.Errorf("failed to write HID packet: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to write HID packet", Err: err}
 		}
 	}
 
@@ -215,16 +217,16 @@ func (d *CTAPHIDDevice) readResponseSync(expectedCID uint32) ([]byte, error) {
 	packet := make([]byte, HIDPacketSize)
 	n, err := d.device.Read(packet)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read first packet: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to read first packet", Err: err}
 	}
 	if n != HIDPacketSize {
-		return nil, fmt.Errorf("incomplete first packet: got %d bytes", n)
+		return nil, &errs.Message{Msg: fmt.Sprintf("incomplete first packet: got %d bytes", n)}
 	}
 
 	// Parse first packet
 	cid := binary.BigEndian.Uint32(packet[0:4])
 	if cid != expectedCID {
-		return nil, fmt.Errorf("channel ID mismatch: expected 0x%08X, got 0x%08X", expectedCID, cid)
+		return nil, &errs.Message{Msg: fmt.Sprintf("channel ID mismatch: expected 0x%08X, got 0x%08X", expectedCID, cid)}
 	}
 
 	cmd := packet[4]
@@ -240,7 +242,7 @@ func (d *CTAPHIDDevice) readResponseSync(expectedCID uint32) ([]byte, error) {
 	if cmd == CTAPHID_ERROR {
 		if n >= 8 {
 			errCode := packet[7]
-			return nil, fmt.Errorf("CTAPHID error: 0x%02X", errCode)
+			return nil, &errs.Message{Msg: fmt.Sprintf("CTAPHID error: 0x%02X", errCode)}
 		}
 		return nil, ErrDeviceError
 	}
@@ -270,21 +272,21 @@ func (d *CTAPHIDDevice) readResponseSync(expectedCID uint32) ([]byte, error) {
 		packet := make([]byte, HIDPacketSize)
 		n, err := d.device.Read(packet)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read continuation packet: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to read continuation packet", Err: err}
 		}
 		if n != HIDPacketSize {
-			return nil, fmt.Errorf("incomplete continuation packet: got %d bytes", n)
+			return nil, &errs.Message{Msg: fmt.Sprintf("incomplete continuation packet: got %d bytes", n)}
 		}
 
 		// Verify CID and sequence
 		packetCID := binary.BigEndian.Uint32(packet[0:4])
 		if packetCID != expectedCID {
-			return nil, fmt.Errorf("channel ID mismatch in continuation")
+			return nil, &errs.Message{Msg: "channel ID mismatch in continuation"}
 		}
 
 		packetSeq := packet[4]
 		if packetSeq != seq {
-			return nil, fmt.Errorf("sequence mismatch: expected %d, got %d", seq, packetSeq)
+			return nil, &errs.Message{Msg: fmt.Sprintf("sequence mismatch: expected %d, got %d", seq, packetSeq)}
 		}
 
 		// Copy payload
@@ -313,7 +315,7 @@ func (d *CTAPHIDDevice) SendCBOR(cmd byte, request interface{}) ([]byte, error) 
 	if request != nil {
 		enc, err := cbor.Marshal(request)
 		if err != nil {
-			return nil, fmt.Errorf("failed to encode CBOR request: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to encode CBOR request", Err: err}
 		}
 		payload = append(payload, enc...)
 	}
@@ -325,7 +327,7 @@ func (d *CTAPHIDDevice) SendCBOR(cmd byte, request interface{}) ([]byte, error) 
 	}
 
 	if len(resp) == 0 {
-		return nil, fmt.Errorf("empty CBOR response")
+		return nil, &errs.Message{Msg: "empty CBOR response"}
 	}
 
 	// First byte is status code
@@ -346,33 +348,33 @@ func (d *CTAPHIDDevice) SendCBOR(cmd byte, request interface{}) ([]byte, error) 
 func (d *CTAPHIDDevice) handleCTAPError(status byte) error {
 	switch status {
 	case StatusInvalidCommand:
-		return fmt.Errorf("invalid CTAP command")
+		return &errs.Message{Msg: "invalid CTAP command"}
 	case StatusInvalidParameter:
-		return fmt.Errorf("invalid parameter")
+		return &errs.Message{Msg: "invalid parameter"}
 	case StatusInvalidLength:
-		return fmt.Errorf("invalid length")
+		return &errs.Message{Msg: "invalid length"}
 	case StatusInvalidSeq:
-		return fmt.Errorf("invalid sequence")
+		return &errs.Message{Msg: "invalid sequence"}
 	case StatusTimeout:
 		return ErrOperationTimeout
 	case StatusChannelBusy:
-		return fmt.Errorf("channel busy")
+		return &errs.Message{Msg: "channel busy"}
 	case StatusInvalidCBOR:
 		return ErrInvalidCBOR
 	case StatusUnsupportedExtension:
 		return ErrUnsupportedExtension
 	case StatusCredentialExcluded:
-		return fmt.Errorf("credential excluded")
+		return &errs.Message{Msg: "credential excluded"}
 	case StatusUserActionPending:
 		return ErrUserPresenceRequired
 	case StatusOperationDenied:
-		return fmt.Errorf("operation denied")
+		return &errs.Message{Msg: "operation denied"}
 	case StatusNoCredentials:
 		return ErrCredentialNotFound
 	case StatusUserActionTimeout:
 		return ErrOperationTimeout
 	case StatusNotAllowed:
-		return fmt.Errorf("operation not allowed")
+		return &errs.Message{Msg: "operation not allowed"}
 	case StatusPINInvalid:
 		return ErrInvalidPIN
 	case StatusPINBlocked:
@@ -382,9 +384,9 @@ func (d *CTAPHIDDevice) handleCTAPError(status byte) error {
 	case StatusUPRequired:
 		return ErrUserPresenceRequired
 	case StatusUVBlocked:
-		return fmt.Errorf("user verification blocked")
+		return &errs.Message{Msg: "user verification blocked"}
 	default:
-		return fmt.Errorf("CTAP error: 0x%02X", status)
+		return &errs.Message{Msg: fmt.Sprintf("CTAP error: 0x%02X", status)}
 	}
 }
 

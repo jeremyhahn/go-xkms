@@ -60,21 +60,21 @@ var certSaveCmd = &cobra.Command{
 		// #nosec G304 - Certificate file path from CLI argument
 		certPEM, err := os.ReadFile(certFile)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read certificate file: %w", err))
+			handleError(&WrappedError{Sentinel: ErrCertFileRead, Err: err})
 			return
 		}
 
 		// Parse PEM block
 		block, _ := pem.Decode(certPEM)
 		if block == nil {
-			handleError(fmt.Errorf("failed to decode PEM block"))
+			handleError(ErrDecodePEMBlockFailed)
 			return
 		}
 
 		// Parse X.509 certificate to validate it
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			handleError(fmt.Errorf("failed to parse certificate: %w", err))
+			handleError(&WrappedError{Sentinel: ErrParseCertificateFailed, Err: err})
 			return
 		}
 
@@ -88,14 +88,14 @@ var certSaveCmd = &cobra.Command{
 func saveCert(cfg *Config, printer *Printer, keyID, certPEM string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -108,7 +108,7 @@ func saveCert(cfg *Config, printer *Printer, keyID, certPEM string) {
 	}
 
 	if err := cl.SaveCertificate(ctx, req); err != nil {
-		handleError(fmt.Errorf("failed to save certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrSaveCertificateFailed, Err: err})
 		return
 	}
 
@@ -138,14 +138,14 @@ var certGetCmd = &cobra.Command{
 func getCert(cfg *Config, printer *Printer, keyID string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -153,20 +153,20 @@ func getCert(cfg *Config, printer *Printer, keyID string) {
 
 	resp, err := cl.GetCertificate(ctx, cfg.Backend, keyID)
 	if err != nil {
-		handleError(fmt.Errorf("failed to get certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGetCertificateFailed, Err: err})
 		return
 	}
 
 	// Parse the certificate
 	block, _ := pem.Decode([]byte(resp.CertificatePEM))
 	if block == nil {
-		handleError(fmt.Errorf("failed to decode certificate PEM"))
+		handleError(ErrDecodeCertificatePEMFailed)
 		return
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		handleError(fmt.Errorf("failed to parse certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrParseCertificateFailed, Err: err})
 		return
 	}
 
@@ -198,21 +198,21 @@ var certDeleteCmd = &cobra.Command{
 func deleteCert(cfg *Config, printer *Printer, keyID string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
 	printVerbose("Connected to xkms service")
 
 	if err := cl.DeleteCertificate(ctx, cfg.Backend, keyID); err != nil {
-		handleError(fmt.Errorf("failed to delete certificate: %w", err))
+		handleError(&WrappedError{Sentinel: ErrDeleteCertificateFailed, Err: err})
 		return
 	}
 
@@ -240,14 +240,14 @@ var certListCmd = &cobra.Command{
 func listCerts(cfg *Config, printer *Printer) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -255,7 +255,7 @@ func listCerts(cfg *Config, printer *Printer) {
 
 	resp, err := cl.ListCertificates(ctx, cfg.Backend)
 	if err != nil {
-		handleError(fmt.Errorf("failed to list certificates: %w", err))
+		handleError(&WrappedError{Sentinel: ErrListCertificatesFailed, Err: err})
 		return
 	}
 
@@ -293,14 +293,14 @@ var certExistsCmd = &cobra.Command{
 func certExists(cfg *Config, printer *Printer, keyID string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -308,7 +308,7 @@ func certExists(cfg *Config, printer *Printer, keyID string) {
 
 	exists, err := cl.CertificateExists(ctx, cfg.Backend, keyID)
 	if err != nil {
-		handleError(fmt.Errorf("failed to check certificate existence: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCheckCertificateExistenceFailed, Err: err})
 		return
 	}
 
@@ -340,21 +340,21 @@ var certSaveChainCmd = &cobra.Command{
 			// #nosec G304 - Certificate file path from CLI argument
 			certPEM, err := os.ReadFile(certFile)
 			if err != nil {
-				handleError(fmt.Errorf("failed to read certificate file %s: %w", certFile, err))
+				handleError(&CertFileReadError{Path: certFile, Err: err})
 				return
 			}
 
 			// Parse PEM block
 			block, _ := pem.Decode(certPEM)
 			if block == nil {
-				handleError(fmt.Errorf("failed to decode PEM block from %s", certFile))
+				handleError(&PEMBlockDecodeError{Path: certFile})
 				return
 			}
 
 			// Parse X.509 certificate
 			cert, err := x509.ParseCertificate(block.Bytes)
 			if err != nil {
-				handleError(fmt.Errorf("failed to parse certificate from %s: %w", certFile, err))
+				handleError(&CertFileParseError{Path: certFile, Err: err})
 				return
 			}
 
@@ -370,14 +370,14 @@ var certSaveChainCmd = &cobra.Command{
 func saveChain(cfg *Config, printer *Printer, keyID string, chainPEMs []string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -390,7 +390,7 @@ func saveChain(cfg *Config, printer *Printer, keyID string, chainPEMs []string) 
 	}
 
 	if err := cl.SaveCertificateChain(ctx, req); err != nil {
-		handleError(fmt.Errorf("failed to save certificate chain: %w", err))
+		handleError(&WrappedError{Sentinel: ErrSaveCertificateChainFailed, Err: err})
 		return
 	}
 
@@ -420,14 +420,14 @@ var certGetChainCmd = &cobra.Command{
 func getChain(cfg *Config, printer *Printer, keyID string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
-		handleError(fmt.Errorf("failed to create client: %w", err))
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
 	defer func() { _ = cl.Close() }()
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		handleError(fmt.Errorf("failed to connect: %w", err))
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
 		return
 	}
 
@@ -435,7 +435,7 @@ func getChain(cfg *Config, printer *Printer, keyID string) {
 
 	resp, err := cl.GetCertificateChain(ctx, cfg.Backend, keyID)
 	if err != nil {
-		handleError(fmt.Errorf("failed to get certificate chain: %w", err))
+		handleError(&WrappedError{Sentinel: ErrGetCertificateChainFailed, Err: err})
 		return
 	}
 
@@ -444,13 +444,13 @@ func getChain(cfg *Config, printer *Printer, keyID string) {
 	for i, certPEM := range resp.ChainPEM {
 		block, _ := pem.Decode([]byte(certPEM))
 		if block == nil {
-			handleError(fmt.Errorf("failed to decode certificate %d PEM", i+1))
+			handleError(&CertPEMDecodeError{Index: i + 1})
 			return
 		}
 
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			handleError(fmt.Errorf("failed to parse certificate %d: %w", i+1, err))
+			handleError(&CertIndexParseError{Index: i + 1, Err: err})
 			return
 		}
 		chain = append(chain, cert)
@@ -470,13 +470,13 @@ func generateCA(cn, org, ou, country, province, locality string, validityDays in
 	// Generate key pair
 	privKey, err := generateKeyPair(keyAlg, keySize)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate key pair: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrKeyGenFailed, Err: err}
 	}
 
 	// Generate serial number
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate serial number: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrGenerateSerialNumberFailed, Err: err}
 	}
 
 	// Build subject
@@ -521,13 +521,13 @@ func generateCA(cn, org, ou, country, province, locality string, validityDays in
 	// Self-sign the certificate
 	certBytes, err := x509.CreateCertificate(rand.Reader, template, template, pubKey, privKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create certificate: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrCreateCertificateFailed, Err: err}
 	}
 
 	// Parse the certificate
 	cert, err := x509.ParseCertificate(certBytes)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse certificate: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrParseCertificateFailed, Err: err}
 	}
 
 	return cert, privKey, nil
@@ -543,13 +543,13 @@ func issueCertificate(
 	// Generate key pair
 	privKey, err := generateKeyPair(keyAlg, keySize)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate key pair: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrKeyGenFailed, Err: err}
 	}
 
 	// Generate serial number
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate serial number: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrGenerateSerialNumberFailed, Err: err}
 	}
 
 	// Build subject
@@ -611,13 +611,13 @@ func issueCertificate(
 	// Sign the certificate with CA
 	certBytes, err := x509.CreateCertificate(rand.Reader, template, caCert, pubKey, caKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create certificate: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrCreateCertificateFailed, Err: err}
 	}
 
 	// Parse the certificate
 	cert, err := x509.ParseCertificate(certBytes)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse certificate: %w", err)
+		return nil, nil, &WrappedError{Sentinel: ErrParseCertificateFailed, Err: err}
 	}
 
 	return cert, privKey, nil
@@ -707,7 +707,7 @@ Example:
 		keyOutputFile, _ := cmd.Flags().GetString("key-output")
 
 		if cn == "" {
-			handleError(fmt.Errorf("common name (--cn) is required"))
+			handleError(ErrCommonNameRequired)
 			return
 		}
 
@@ -716,7 +716,7 @@ Example:
 		// Generate CA using local xkms
 		caCert, caKey, err := generateCA(cn, org, ou, country, province, locality, validityDays, keyAlg, keySize)
 		if err != nil {
-			handleError(fmt.Errorf("failed to generate CA: %w", err))
+			handleError(&WrappedError{Sentinel: ErrGenerateCAFailed, Err: err})
 			return
 		}
 
@@ -729,7 +729,7 @@ Example:
 		// Output private key
 		keyBytes, err := x509.MarshalPKCS8PrivateKey(caKey)
 		if err != nil {
-			handleError(fmt.Errorf("failed to marshal private key: %w", err))
+			handleError(&WrappedError{Sentinel: ErrMarshalPrivateKeyFailed, Err: err})
 			return
 		}
 		keyPEM := pem.EncodeToMemory(&pem.Block{
@@ -741,7 +741,7 @@ Example:
 		if outputFile != "" {
 			// #nosec G306 - Certificate files need to be readable
 			if err := os.WriteFile(outputFile, certPEM, 0644); err != nil {
-				handleError(fmt.Errorf("failed to write certificate: %w", err))
+				handleError(&WrappedError{Sentinel: ErrWriteCertificateFailed, Err: err})
 				return
 			}
 			printVerbose("Certificate written to: %s", outputFile)
@@ -750,7 +750,7 @@ Example:
 		if keyOutputFile != "" {
 			// #nosec G306 - Key files should be protected
 			if err := os.WriteFile(keyOutputFile, keyPEM, 0600); err != nil {
-				handleError(fmt.Errorf("failed to write private key: %w", err))
+				handleError(&WrappedError{Sentinel: ErrWritePrivateKeyFailed, Err: err})
 				return
 			}
 			printVerbose("Private key written to: %s", keyOutputFile)
@@ -852,15 +852,15 @@ Examples:
 		keyOutputFile, _ := cmd.Flags().GetString("key-output")
 
 		if caCertFile == "" {
-			handleError(fmt.Errorf("CA certificate file (--ca-cert) is required"))
+			handleError(ErrCACertFileRequired)
 			return
 		}
 		if caKeyFile == "" {
-			handleError(fmt.Errorf("CA private key file (--ca-key) is required"))
+			handleError(ErrCAKeyFileRequired)
 			return
 		}
 		if cn == "" {
-			handleError(fmt.Errorf("common name (--cn) is required"))
+			handleError(ErrCommonNameRequired)
 			return
 		}
 
@@ -869,29 +869,29 @@ Examples:
 		// Load CA certificate
 		caCertPEM, err := os.ReadFile(caCertFile)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read CA certificate: %w", err))
+			handleError(&WrappedError{Sentinel: ErrReadCACertificateFailed, Err: err})
 			return
 		}
 		caCertBlock, _ := pem.Decode(caCertPEM)
 		if caCertBlock == nil {
-			handleError(fmt.Errorf("failed to decode CA certificate PEM"))
+			handleError(ErrDecodeCACertificatePEMFailed)
 			return
 		}
 		caCert, err := x509.ParseCertificate(caCertBlock.Bytes)
 		if err != nil {
-			handleError(fmt.Errorf("failed to parse CA certificate: %w", err))
+			handleError(&WrappedError{Sentinel: ErrParseCACertificateFailed, Err: err})
 			return
 		}
 
 		// Load CA private key
 		caKeyPEM, err := os.ReadFile(caKeyFile)
 		if err != nil {
-			handleError(fmt.Errorf("failed to read CA private key: %w", err))
+			handleError(&WrappedError{Sentinel: ErrReadCAPrivateKeyFailed, Err: err})
 			return
 		}
 		caKeyBlock, _ := pem.Decode(caKeyPEM)
 		if caKeyBlock == nil {
-			handleError(fmt.Errorf("failed to decode CA private key PEM"))
+			handleError(ErrDecodeCAPrivateKeyPEMFailed)
 			return
 		}
 		caKey, err := x509.ParsePKCS8PrivateKey(caKeyBlock.Bytes)
@@ -902,7 +902,7 @@ Examples:
 				// Try EC private key
 				caKey, err = x509.ParseECPrivateKey(caKeyBlock.Bytes)
 				if err != nil {
-					handleError(fmt.Errorf("failed to parse CA private key: %w", err))
+					handleError(&WrappedError{Sentinel: ErrParseCAPrivateKeyFailed, Err: err})
 					return
 				}
 			}
@@ -919,7 +919,7 @@ Examples:
 			for _, ipStr := range splitAndTrim(ipAddrs) {
 				ip := net.ParseIP(ipStr)
 				if ip == nil {
-					handleError(fmt.Errorf("invalid IP address: %s", ipStr))
+					handleError(&WrappedDetailError{Sentinel: ErrInvalidIPAddress, Detail: ipStr})
 					return
 				}
 				ipList = append(ipList, ip)
@@ -939,7 +939,7 @@ Examples:
 			dnsList, ipList, emailList,
 		)
 		if err != nil {
-			handleError(fmt.Errorf("failed to issue certificate: %w", err))
+			handleError(&WrappedError{Sentinel: ErrIssueCertificateFailed, Err: err})
 			return
 		}
 
@@ -952,7 +952,7 @@ Examples:
 		// Output private key
 		keyBytes, err := x509.MarshalPKCS8PrivateKey(key)
 		if err != nil {
-			handleError(fmt.Errorf("failed to marshal private key: %w", err))
+			handleError(&WrappedError{Sentinel: ErrMarshalPrivateKeyFailed, Err: err})
 			return
 		}
 		keyPEM := pem.EncodeToMemory(&pem.Block{
@@ -964,7 +964,7 @@ Examples:
 		if outputFile != "" {
 			// #nosec G306 - Certificate files need to be readable
 			if err := os.WriteFile(outputFile, certPEM, 0644); err != nil {
-				handleError(fmt.Errorf("failed to write certificate: %w", err))
+				handleError(&WrappedError{Sentinel: ErrWriteCertificateFailed, Err: err})
 				return
 			}
 			printVerbose("Certificate written to: %s", outputFile)
@@ -973,7 +973,7 @@ Examples:
 		if keyOutputFile != "" {
 			// #nosec G306 - Key files should be protected
 			if err := os.WriteFile(keyOutputFile, keyPEM, 0600); err != nil {
-				handleError(fmt.Errorf("failed to write private key: %w", err))
+				handleError(&WrappedError{Sentinel: ErrWritePrivateKeyFailed, Err: err})
 				return
 			}
 			printVerbose("Private key written to: %s", keyOutputFile)

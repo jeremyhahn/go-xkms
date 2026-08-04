@@ -26,53 +26,53 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/health"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // TestHealthCheckerLivenessIntegration tests liveness probe
 func TestHealthCheckerLivenessIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 	ctx := context.Background()
 
 	// Liveness should always succeed if process is running
 	result := checker.Live(ctx)
 	assert.Equal(t, "liveness", result.Name)
-	assert.Equal(t, health.StatusHealthy, result.Status)
+	assert.Equal(t, qrdbsdk.HealthCheckStatusHealthy, result.Status)
 	assert.Equal(t, "Service is alive", result.Message)
 	assert.Greater(t, result.Latency, time.Duration(0))
 }
 
 // TestHealthCheckerReadinessIntegration tests readiness probe
 func TestHealthCheckerReadinessIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 	ctx := context.Background()
 
 	t.Run("NoChecksRegistered", func(t *testing.T) {
 		results := checker.Ready(ctx)
 		require.Len(t, results, 1, "Should have default result")
 		assert.Equal(t, "default", results[0].Name)
-		assert.Equal(t, health.StatusHealthy, results[0].Status)
+		assert.Equal(t, qrdbsdk.HealthCheckStatusHealthy, results[0].Status)
 		assert.Contains(t, results[0].Message, "No readiness checks")
 	})
 
 	t.Run("WithHealthyChecks", func(t *testing.T) {
-		checker := health.NewChecker()
+		checker := qrdbsdk.NewHealthChecker()
 
 		// Register healthy checks
-		checker.RegisterCheck("database", func(ctx context.Context) health.CheckResult {
-			return health.CheckResult{
+		checker.RegisterCheck("database", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+			return qrdbsdk.HealthCheckResult{
 				Name:    "database",
-				Status:  health.StatusHealthy,
+				Status:  qrdbsdk.HealthCheckStatusHealthy,
 				Message: "Database connection OK",
 			}
 		})
 
-		checker.RegisterCheck("cache", func(ctx context.Context) health.CheckResult {
-			return health.CheckResult{
+		checker.RegisterCheck("cache", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+			return qrdbsdk.HealthCheckResult{
 				Name:    "cache",
-				Status:  health.StatusHealthy,
+				Status:  qrdbsdk.HealthCheckStatusHealthy,
 				Message: "Cache connection OK",
 			}
 		})
@@ -82,27 +82,27 @@ func TestHealthCheckerReadinessIntegration(t *testing.T) {
 
 		// Verify both checks are healthy
 		for _, result := range results {
-			assert.Equal(t, health.StatusHealthy, result.Status)
+			assert.Equal(t, qrdbsdk.HealthCheckStatusHealthy, result.Status)
 			assert.Greater(t, result.Latency, time.Duration(0))
 		}
 	})
 
 	t.Run("WithUnhealthyCheck", func(t *testing.T) {
-		checker := health.NewChecker()
+		checker := qrdbsdk.NewHealthChecker()
 
 		// Register one healthy and one unhealthy check
-		checker.RegisterCheck("healthy-service", func(ctx context.Context) health.CheckResult {
-			return health.CheckResult{
+		checker.RegisterCheck("healthy-service", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+			return qrdbsdk.HealthCheckResult{
 				Name:    "healthy-service",
-				Status:  health.StatusHealthy,
+				Status:  qrdbsdk.HealthCheckStatusHealthy,
 				Message: "Service is OK",
 			}
 		})
 
-		checker.RegisterCheck("unhealthy-service", func(ctx context.Context) health.CheckResult {
-			return health.CheckResult{
+		checker.RegisterCheck("unhealthy-service", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+			return qrdbsdk.HealthCheckResult{
 				Name:    "unhealthy-service",
-				Status:  health.StatusUnhealthy,
+				Status:  qrdbsdk.HealthCheckStatusUnhealthy,
 				Message: "Service connection failed",
 				Error:   "connection timeout",
 			}
@@ -116,7 +116,7 @@ func TestHealthCheckerReadinessIntegration(t *testing.T) {
 		for _, result := range results {
 			if result.Name == "unhealthy-service" {
 				foundUnhealthy = true
-				assert.Equal(t, health.StatusUnhealthy, result.Status)
+				assert.Equal(t, qrdbsdk.HealthCheckStatusUnhealthy, result.Status)
 				assert.NotEmpty(t, result.Error)
 			}
 		}
@@ -124,31 +124,31 @@ func TestHealthCheckerReadinessIntegration(t *testing.T) {
 	})
 
 	t.Run("WithDegradedCheck", func(t *testing.T) {
-		checker := health.NewChecker()
+		checker := qrdbsdk.NewHealthChecker()
 
-		checker.RegisterCheck("degraded-service", func(ctx context.Context) health.CheckResult {
-			return health.CheckResult{
+		checker.RegisterCheck("degraded-service", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+			return qrdbsdk.HealthCheckResult{
 				Name:    "degraded-service",
-				Status:  health.StatusDegraded,
+				Status:  qrdbsdk.HealthCheckStatusDegraded,
 				Message: "Service running with reduced capacity",
 			}
 		})
 
 		results := checker.Ready(ctx)
 		require.Len(t, results, 1, "Should have 1 check result")
-		assert.Equal(t, health.StatusDegraded, results[0].Status)
+		assert.Equal(t, qrdbsdk.HealthCheckStatusDegraded, results[0].Status)
 	})
 }
 
 // TestHealthCheckerStartupIntegration tests startup probe
 func TestHealthCheckerStartupIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 	ctx := context.Background()
 
 	t.Run("NotStarted", func(t *testing.T) {
 		result := checker.Startup(ctx)
 		assert.Equal(t, "startup", result.Name)
-		assert.Equal(t, health.StatusUnhealthy, result.Status)
+		assert.Equal(t, qrdbsdk.HealthCheckStatusUnhealthy, result.Status)
 		assert.Contains(t, result.Message, "not complete")
 		assert.False(t, checker.IsStarted())
 	})
@@ -157,7 +157,7 @@ func TestHealthCheckerStartupIntegration(t *testing.T) {
 		checker.MarkStarted()
 		result := checker.Startup(ctx)
 		assert.Equal(t, "startup", result.Name)
-		assert.Equal(t, health.StatusHealthy, result.Status)
+		assert.Equal(t, qrdbsdk.HealthCheckStatusHealthy, result.Status)
 		assert.Contains(t, result.Message, "fully initialized")
 		assert.True(t, checker.IsStarted())
 
@@ -168,23 +168,23 @@ func TestHealthCheckerStartupIntegration(t *testing.T) {
 	t.Run("MarkNotStarted", func(t *testing.T) {
 		checker.MarkNotStarted()
 		result := checker.Startup(ctx)
-		assert.Equal(t, health.StatusUnhealthy, result.Status)
+		assert.Equal(t, qrdbsdk.HealthCheckStatusUnhealthy, result.Status)
 		assert.False(t, checker.IsStarted())
 	})
 }
 
 // TestHealthCheckerRegisterUnregisterIntegration tests check registration
 func TestHealthCheckerRegisterUnregisterIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 	ctx := context.Background()
 
 	// Register a check
 	checkCalled := false
-	checker.RegisterCheck("test-check", func(ctx context.Context) health.CheckResult {
+	checker.RegisterCheck("test-check", func(ctx context.Context) qrdbsdk.HealthCheckResult {
 		checkCalled = true
-		return health.CheckResult{
+		return qrdbsdk.HealthCheckResult{
 			Name:   "test-check",
-			Status: health.StatusHealthy,
+			Status: qrdbsdk.HealthCheckStatusHealthy,
 		}
 	})
 
@@ -210,23 +210,23 @@ func TestHealthCheckerRegisterUnregisterIntegration(t *testing.T) {
 
 // TestHealthCheckerReplaceCheckIntegration tests replacing an existing check
 func TestHealthCheckerReplaceCheckIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 	ctx := context.Background()
 
 	// Register first version of check
-	checker.RegisterCheck("service", func(ctx context.Context) health.CheckResult {
-		return health.CheckResult{
+	checker.RegisterCheck("service", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+		return qrdbsdk.HealthCheckResult{
 			Name:    "service",
-			Status:  health.StatusHealthy,
+			Status:  qrdbsdk.HealthCheckStatusHealthy,
 			Message: "Version 1",
 		}
 	})
 
 	// Replace with second version
-	checker.RegisterCheck("service", func(ctx context.Context) health.CheckResult {
-		return health.CheckResult{
+	checker.RegisterCheck("service", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+		return qrdbsdk.HealthCheckResult{
 			Name:    "service",
-			Status:  health.StatusHealthy,
+			Status:  qrdbsdk.HealthCheckStatusHealthy,
 			Message: "Version 2",
 		}
 	})
@@ -243,7 +243,7 @@ func TestHealthCheckerReplaceCheckIntegration(t *testing.T) {
 
 // TestHealthCheckerNilCheckIntegration tests registering nil check
 func TestHealthCheckerNilCheckIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 
 	// Register nil check (should be ignored)
 	checker.RegisterCheck("nil-check", nil)
@@ -258,39 +258,39 @@ func TestHealthCheckerIsHealthyIntegration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("AllHealthy", func(t *testing.T) {
-		checker := health.NewChecker()
+		checker := qrdbsdk.NewHealthChecker()
 
-		checker.RegisterCheck("service1", func(ctx context.Context) health.CheckResult {
-			return health.CheckResult{Status: health.StatusHealthy}
+		checker.RegisterCheck("service1", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+			return qrdbsdk.HealthCheckResult{Status: qrdbsdk.HealthCheckStatusHealthy}
 		})
-		checker.RegisterCheck("service2", func(ctx context.Context) health.CheckResult {
-			return health.CheckResult{Status: health.StatusHealthy}
+		checker.RegisterCheck("service2", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+			return qrdbsdk.HealthCheckResult{Status: qrdbsdk.HealthCheckStatusHealthy}
 		})
 
 		assert.True(t, checker.IsHealthy(ctx))
 	})
 
 	t.Run("OneUnhealthy", func(t *testing.T) {
-		checker := health.NewChecker()
+		checker := qrdbsdk.NewHealthChecker()
 
-		checker.RegisterCheck("healthy", func(ctx context.Context) health.CheckResult {
-			return health.CheckResult{Status: health.StatusHealthy}
+		checker.RegisterCheck("healthy", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+			return qrdbsdk.HealthCheckResult{Status: qrdbsdk.HealthCheckStatusHealthy}
 		})
-		checker.RegisterCheck("unhealthy", func(ctx context.Context) health.CheckResult {
-			return health.CheckResult{Status: health.StatusUnhealthy}
+		checker.RegisterCheck("unhealthy", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+			return qrdbsdk.HealthCheckResult{Status: qrdbsdk.HealthCheckStatusUnhealthy}
 		})
 
 		assert.False(t, checker.IsHealthy(ctx))
 	})
 
 	t.Run("OneDegraded", func(t *testing.T) {
-		checker := health.NewChecker()
+		checker := qrdbsdk.NewHealthChecker()
 
-		checker.RegisterCheck("healthy", func(ctx context.Context) health.CheckResult {
-			return health.CheckResult{Status: health.StatusHealthy}
+		checker.RegisterCheck("healthy", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+			return qrdbsdk.HealthCheckResult{Status: qrdbsdk.HealthCheckStatusHealthy}
 		})
-		checker.RegisterCheck("degraded", func(ctx context.Context) health.CheckResult {
-			return health.CheckResult{Status: health.StatusDegraded}
+		checker.RegisterCheck("degraded", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+			return qrdbsdk.HealthCheckResult{Status: qrdbsdk.HealthCheckStatusDegraded}
 		})
 
 		assert.False(t, checker.IsHealthy(ctx))
@@ -299,7 +299,7 @@ func TestHealthCheckerIsHealthyIntegration(t *testing.T) {
 
 // TestHealthCheckerUptimeIntegration tests uptime tracking
 func TestHealthCheckerUptimeIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 
 	// Wait a bit
 	time.Sleep(100 * time.Millisecond)
@@ -313,51 +313,51 @@ func TestHealthCheckerUptimeIntegration(t *testing.T) {
 func TestHealthCheckerAggregateStatusIntegration(t *testing.T) {
 	tests := []struct {
 		name     string
-		results  []health.CheckResult
-		expected health.Status
+		results  []qrdbsdk.HealthCheckResult
+		expected qrdbsdk.HealthCheckStatus
 	}{
 		{
 			name: "AllHealthy",
-			results: []health.CheckResult{
-				{Status: health.StatusHealthy},
-				{Status: health.StatusHealthy},
+			results: []qrdbsdk.HealthCheckResult{
+				{Status: qrdbsdk.HealthCheckStatusHealthy},
+				{Status: qrdbsdk.HealthCheckStatusHealthy},
 			},
-			expected: health.StatusHealthy,
+			expected: qrdbsdk.HealthCheckStatusHealthy,
 		},
 		{
 			name: "OneUnhealthy",
-			results: []health.CheckResult{
-				{Status: health.StatusHealthy},
-				{Status: health.StatusUnhealthy},
+			results: []qrdbsdk.HealthCheckResult{
+				{Status: qrdbsdk.HealthCheckStatusHealthy},
+				{Status: qrdbsdk.HealthCheckStatusUnhealthy},
 			},
-			expected: health.StatusUnhealthy,
+			expected: qrdbsdk.HealthCheckStatusUnhealthy,
 		},
 		{
 			name: "OneDegraded",
-			results: []health.CheckResult{
-				{Status: health.StatusHealthy},
-				{Status: health.StatusDegraded},
+			results: []qrdbsdk.HealthCheckResult{
+				{Status: qrdbsdk.HealthCheckStatusHealthy},
+				{Status: qrdbsdk.HealthCheckStatusDegraded},
 			},
-			expected: health.StatusDegraded,
+			expected: qrdbsdk.HealthCheckStatusDegraded,
 		},
 		{
 			name: "UnhealthyAndDegraded",
-			results: []health.CheckResult{
-				{Status: health.StatusUnhealthy},
-				{Status: health.StatusDegraded},
+			results: []qrdbsdk.HealthCheckResult{
+				{Status: qrdbsdk.HealthCheckStatusUnhealthy},
+				{Status: qrdbsdk.HealthCheckStatusDegraded},
 			},
-			expected: health.StatusUnhealthy,
+			expected: qrdbsdk.HealthCheckStatusUnhealthy,
 		},
 		{
 			name:     "Empty",
-			results:  []health.CheckResult{},
-			expected: health.StatusHealthy,
+			results:  []qrdbsdk.HealthCheckResult{},
+			expected: qrdbsdk.HealthCheckStatusHealthy,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			status := health.AggregateStatus(tc.results)
+			status := qrdbsdk.AggregateHealthCheckStatus(tc.results)
 			assert.Equal(t, tc.expected, status)
 		})
 	}
@@ -365,18 +365,18 @@ func TestHealthCheckerAggregateStatusIntegration(t *testing.T) {
 
 // TestHealthCheckerConcurrentIntegration tests concurrent health checks
 func TestHealthCheckerConcurrentIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 	ctx := context.Background()
 
 	// Register multiple checks
 	for i := 0; i < 10; i++ {
 		name := fmt.Sprintf("check-%d", i)
-		checker.RegisterCheck(name, func(ctx context.Context) health.CheckResult {
+		checker.RegisterCheck(name, func(ctx context.Context) qrdbsdk.HealthCheckResult {
 			// Simulate some work
 			time.Sleep(10 * time.Millisecond)
-			return health.CheckResult{
+			return qrdbsdk.HealthCheckResult{
 				Name:   name,
-				Status: health.StatusHealthy,
+				Status: qrdbsdk.HealthCheckStatusHealthy,
 			}
 		})
 	}
@@ -399,22 +399,22 @@ func TestHealthCheckerConcurrentIntegration(t *testing.T) {
 
 // TestHealthCheckerContextCancellationIntegration tests context cancellation
 func TestHealthCheckerContextCancellationIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 
 	// Register a slow check
-	checker.RegisterCheck("slow-check", func(ctx context.Context) health.CheckResult {
+	checker.RegisterCheck("slow-check", func(ctx context.Context) qrdbsdk.HealthCheckResult {
 		select {
 		case <-ctx.Done():
-			return health.CheckResult{
+			return qrdbsdk.HealthCheckResult{
 				Name:    "slow-check",
-				Status:  health.StatusUnhealthy,
+				Status:  qrdbsdk.HealthCheckStatusUnhealthy,
 				Message: "Check cancelled",
 				Error:   ctx.Err().Error(),
 			}
 		case <-time.After(5 * time.Second):
-			return health.CheckResult{
+			return qrdbsdk.HealthCheckResult{
 				Name:   "slow-check",
-				Status: health.StatusHealthy,
+				Status: qrdbsdk.HealthCheckStatusHealthy,
 			}
 		}
 	})
@@ -430,14 +430,14 @@ func TestHealthCheckerContextCancellationIntegration(t *testing.T) {
 
 // TestHealthCheckerHTTPHandlerIntegration tests HTTP handler integration
 func TestHealthCheckerHTTPHandlerIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 	checker.MarkStarted()
 
 	// Register some checks
-	checker.RegisterCheck("service", func(ctx context.Context) health.CheckResult {
-		return health.CheckResult{
+	checker.RegisterCheck("service", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+		return qrdbsdk.HealthCheckResult{
 			Name:    "service",
-			Status:  health.StatusHealthy,
+			Status:  qrdbsdk.HealthCheckStatusHealthy,
 			Message: "Service is healthy",
 		}
 	})
@@ -446,7 +446,7 @@ func TestHealthCheckerHTTPHandlerIntegration(t *testing.T) {
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			result := checker.Live(r.Context())
 			w.Header().Set("Content-Type", "application/json")
-			if result.Status == health.StatusHealthy {
+			if result.Status == qrdbsdk.HealthCheckStatusHealthy {
 				w.WriteHeader(http.StatusOK)
 			} else {
 				w.WriteHeader(http.StatusServiceUnavailable)
@@ -463,10 +463,10 @@ func TestHealthCheckerHTTPHandlerIntegration(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result health.CheckResult
+		var result qrdbsdk.HealthCheckResult
 		err := json.NewDecoder(resp.Body).Decode(&result)
 		require.NoError(t, err)
-		assert.Equal(t, health.StatusHealthy, result.Status)
+		assert.Equal(t, qrdbsdk.HealthCheckStatusHealthy, result.Status)
 	})
 
 	t.Run("ReadinessEndpoint", func(t *testing.T) {
@@ -474,8 +474,8 @@ func TestHealthCheckerHTTPHandlerIntegration(t *testing.T) {
 			results := checker.Ready(r.Context())
 			w.Header().Set("Content-Type", "application/json")
 
-			status := health.AggregateStatus(results)
-			if status == health.StatusHealthy {
+			status := qrdbsdk.AggregateHealthCheckStatus(results)
+			if status == qrdbsdk.HealthCheckStatusHealthy {
 				w.WriteHeader(http.StatusOK)
 			} else {
 				w.WriteHeader(http.StatusServiceUnavailable)
@@ -492,7 +492,7 @@ func TestHealthCheckerHTTPHandlerIntegration(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var results []health.CheckResult
+		var results []qrdbsdk.HealthCheckResult
 		err := json.NewDecoder(resp.Body).Decode(&results)
 		require.NoError(t, err)
 		assert.Greater(t, len(results), 0)
@@ -502,7 +502,7 @@ func TestHealthCheckerHTTPHandlerIntegration(t *testing.T) {
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			result := checker.Startup(r.Context())
 			w.Header().Set("Content-Type", "application/json")
-			if result.Status == health.StatusHealthy {
+			if result.Status == qrdbsdk.HealthCheckStatusHealthy {
 				w.WriteHeader(http.StatusOK)
 			} else {
 				w.WriteHeader(http.StatusServiceUnavailable)
@@ -519,66 +519,66 @@ func TestHealthCheckerHTTPHandlerIntegration(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result health.CheckResult
+		var result qrdbsdk.HealthCheckResult
 		err := json.NewDecoder(resp.Body).Decode(&result)
 		require.NoError(t, err)
-		assert.Equal(t, health.StatusHealthy, result.Status)
+		assert.Equal(t, qrdbsdk.HealthCheckStatusHealthy, result.Status)
 	})
 }
 
 // TestHealthCheckerRealWorldScenarioIntegration simulates a real-world scenario
 func TestHealthCheckerRealWorldScenarioIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 	ctx := context.Background()
 
 	// Simulate service initialization
 	assert.False(t, checker.IsStarted(), "Should not be started initially")
 
 	// Register dependency checks
-	checker.RegisterCheck("database", func(ctx context.Context) health.CheckResult {
+	checker.RegisterCheck("database", func(ctx context.Context) qrdbsdk.HealthCheckResult {
 		// Simulate database connection check
 		time.Sleep(10 * time.Millisecond)
-		return health.CheckResult{
+		return qrdbsdk.HealthCheckResult{
 			Name:    "database",
-			Status:  health.StatusHealthy,
+			Status:  qrdbsdk.HealthCheckStatusHealthy,
 			Message: "PostgreSQL connection OK",
 		}
 	})
 
-	checker.RegisterCheck("cache", func(ctx context.Context) health.CheckResult {
+	checker.RegisterCheck("cache", func(ctx context.Context) qrdbsdk.HealthCheckResult {
 		// Simulate cache connection check
 		time.Sleep(5 * time.Millisecond)
-		return health.CheckResult{
+		return qrdbsdk.HealthCheckResult{
 			Name:    "cache",
-			Status:  health.StatusHealthy,
+			Status:  qrdbsdk.HealthCheckStatusHealthy,
 			Message: "Redis connection OK",
 		}
 	})
 
-	checker.RegisterCheck("storage", func(ctx context.Context) health.CheckResult {
+	checker.RegisterCheck("storage", func(ctx context.Context) qrdbsdk.HealthCheckResult {
 		// Simulate storage check
 		time.Sleep(15 * time.Millisecond)
-		return health.CheckResult{
+		return qrdbsdk.HealthCheckResult{
 			Name:    "storage",
-			Status:  health.StatusHealthy,
+			Status:  qrdbsdk.HealthCheckStatusHealthy,
 			Message: "S3 bucket accessible",
 		}
 	})
 
 	// Startup should fail before initialization complete
 	startup := checker.Startup(ctx)
-	assert.Equal(t, health.StatusUnhealthy, startup.Status)
+	assert.Equal(t, qrdbsdk.HealthCheckStatusUnhealthy, startup.Status)
 
 	// Mark service as started
 	checker.MarkStarted()
 
 	// Startup should now succeed
 	startup = checker.Startup(ctx)
-	assert.Equal(t, health.StatusHealthy, startup.Status)
+	assert.Equal(t, qrdbsdk.HealthCheckStatusHealthy, startup.Status)
 
 	// Liveness should always succeed
 	liveness := checker.Live(ctx)
-	assert.Equal(t, health.StatusHealthy, liveness.Status)
+	assert.Equal(t, qrdbsdk.HealthCheckStatusHealthy, liveness.Status)
 
 	// Readiness should check all dependencies
 	readiness := checker.Ready(ctx)
@@ -588,25 +588,25 @@ func TestHealthCheckerRealWorldScenarioIntegration(t *testing.T) {
 	assert.True(t, checker.IsHealthy(ctx))
 
 	// Simulate a degraded dependency
-	checker.RegisterCheck("cache", func(ctx context.Context) health.CheckResult {
-		return health.CheckResult{
+	checker.RegisterCheck("cache", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+		return qrdbsdk.HealthCheckResult{
 			Name:    "cache",
-			Status:  health.StatusDegraded,
+			Status:  qrdbsdk.HealthCheckStatusDegraded,
 			Message: "Redis connection slow",
 		}
 	})
 
 	// Readiness should now show degraded state
 	readiness = checker.Ready(ctx)
-	aggregateStatus := health.AggregateStatus(readiness)
-	assert.Equal(t, health.StatusDegraded, aggregateStatus)
+	aggregateStatus := qrdbsdk.AggregateHealthCheckStatus(readiness)
+	assert.Equal(t, qrdbsdk.HealthCheckStatusDegraded, aggregateStatus)
 	assert.False(t, checker.IsHealthy(ctx))
 
 	// Simulate a failed dependency
-	checker.RegisterCheck("database", func(ctx context.Context) health.CheckResult {
-		return health.CheckResult{
+	checker.RegisterCheck("database", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+		return qrdbsdk.HealthCheckResult{
 			Name:    "database",
-			Status:  health.StatusUnhealthy,
+			Status:  qrdbsdk.HealthCheckStatusUnhealthy,
 			Message: "Database connection failed",
 			Error:   "connection timeout after 30s",
 		}
@@ -614,13 +614,13 @@ func TestHealthCheckerRealWorldScenarioIntegration(t *testing.T) {
 
 	// Readiness should now show unhealthy state
 	readiness = checker.Ready(ctx)
-	aggregateStatus = health.AggregateStatus(readiness)
-	assert.Equal(t, health.StatusUnhealthy, aggregateStatus)
+	aggregateStatus = qrdbsdk.AggregateHealthCheckStatus(readiness)
+	assert.Equal(t, qrdbsdk.HealthCheckStatusUnhealthy, aggregateStatus)
 	assert.False(t, checker.IsHealthy(ctx))
 
 	// Liveness should still succeed (process is still alive)
 	liveness = checker.Live(ctx)
-	assert.Equal(t, health.StatusHealthy, liveness.Status)
+	assert.Equal(t, qrdbsdk.HealthCheckStatusHealthy, liveness.Status)
 
 	// Verify uptime is tracked
 	uptime := checker.Uptime()
@@ -629,16 +629,16 @@ func TestHealthCheckerRealWorldScenarioIntegration(t *testing.T) {
 
 // TestHealthCheckerLatencyMeasurementIntegration tests latency measurement
 func TestHealthCheckerLatencyMeasurementIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 	ctx := context.Background()
 
 	// Register check with known delay
 	expectedDelay := 50 * time.Millisecond
-	checker.RegisterCheck("slow-service", func(ctx context.Context) health.CheckResult {
+	checker.RegisterCheck("slow-service", func(ctx context.Context) qrdbsdk.HealthCheckResult {
 		time.Sleep(expectedDelay)
-		return health.CheckResult{
+		return qrdbsdk.HealthCheckResult{
 			Name:   "slow-service",
-			Status: health.StatusHealthy,
+			Status: qrdbsdk.HealthCheckStatusHealthy,
 		}
 	})
 
@@ -654,13 +654,13 @@ func TestHealthCheckerLatencyMeasurementIntegration(t *testing.T) {
 
 // TestHealthCheckerMultipleNameSettingIntegration tests check name handling
 func TestHealthCheckerMultipleNameSettingIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 	ctx := context.Background()
 
 	// Register check that doesn't set name
-	checker.RegisterCheck("auto-name", func(ctx context.Context) health.CheckResult {
-		return health.CheckResult{
-			Status:  health.StatusHealthy,
+	checker.RegisterCheck("auto-name", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+		return qrdbsdk.HealthCheckResult{
+			Status:  qrdbsdk.HealthCheckStatusHealthy,
 			Message: "Check without explicit name",
 		}
 	})
@@ -675,13 +675,13 @@ func TestHealthCheckerMultipleNameSettingIntegration(t *testing.T) {
 
 // TestHealthCheckerJSONSerializationIntegration tests JSON serialization
 func TestHealthCheckerJSONSerializationIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 	ctx := context.Background()
 
-	checker.RegisterCheck("test-service", func(ctx context.Context) health.CheckResult {
-		return health.CheckResult{
+	checker.RegisterCheck("test-service", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+		return qrdbsdk.HealthCheckResult{
 			Name:    "test-service",
-			Status:  health.StatusHealthy,
+			Status:  qrdbsdk.HealthCheckStatusHealthy,
 			Message: "Service is OK",
 			Latency: 123 * time.Millisecond,
 		}
@@ -695,18 +695,18 @@ func TestHealthCheckerJSONSerializationIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Deserialize
-	var decoded health.CheckResult
+	var decoded qrdbsdk.HealthCheckResult
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
 
 	assert.Equal(t, "test-service", decoded.Name)
-	assert.Equal(t, health.StatusHealthy, decoded.Status)
+	assert.Equal(t, qrdbsdk.HealthCheckStatusHealthy, decoded.Status)
 	assert.Equal(t, "Service is OK", decoded.Message)
 }
 
 // TestHealthCheckerKubernetesPatternIntegration tests Kubernetes probe pattern
 func TestHealthCheckerKubernetesPatternIntegration(t *testing.T) {
-	checker := health.NewChecker()
+	checker := qrdbsdk.NewHealthChecker()
 
 	// Setup HTTP server with Kubernetes-style endpoints
 	mux := http.NewServeMux()
@@ -714,7 +714,7 @@ func TestHealthCheckerKubernetesPatternIntegration(t *testing.T) {
 	// Liveness probe - always succeeds if process is running
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		result := checker.Live(r.Context())
-		if result.Status == health.StatusHealthy {
+		if result.Status == qrdbsdk.HealthCheckStatusHealthy {
 			w.WriteHeader(http.StatusOK)
 			io.WriteString(w, "OK")
 		} else {
@@ -725,8 +725,8 @@ func TestHealthCheckerKubernetesPatternIntegration(t *testing.T) {
 	// Readiness probe - checks dependencies
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		results := checker.Ready(r.Context())
-		status := health.AggregateStatus(results)
-		if status == health.StatusHealthy {
+		status := qrdbsdk.AggregateHealthCheckStatus(results)
+		if status == qrdbsdk.HealthCheckStatusHealthy {
 			w.WriteHeader(http.StatusOK)
 			io.WriteString(w, "OK")
 		} else {
@@ -737,7 +737,7 @@ func TestHealthCheckerKubernetesPatternIntegration(t *testing.T) {
 	// Startup probe - checks if initialization is complete
 	mux.HandleFunc("/startupz", func(w http.ResponseWriter, r *http.Request) {
 		result := checker.Startup(r.Context())
-		if result.Status == health.StatusHealthy {
+		if result.Status == qrdbsdk.HealthCheckStatusHealthy {
 			w.WriteHeader(http.StatusOK)
 			io.WriteString(w, "OK")
 		} else {
@@ -761,10 +761,10 @@ func TestHealthCheckerKubernetesPatternIntegration(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// Register a healthy check
-	checker.RegisterCheck("backend", func(ctx context.Context) health.CheckResult {
-		return health.CheckResult{
+	checker.RegisterCheck("backend", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+		return qrdbsdk.HealthCheckResult{
 			Name:   "backend",
-			Status: health.StatusHealthy,
+			Status: qrdbsdk.HealthCheckStatusHealthy,
 		}
 	})
 

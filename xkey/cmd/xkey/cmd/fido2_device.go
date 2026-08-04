@@ -54,8 +54,7 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 			}
 		}
 		if device == nil {
-			return nil, fmt.Errorf("%w: device '%s' not found in paired devices",
-				ErrFIDO2DeviceBackendCreationFailed, cfg.PhoneDevice)
+			return nil, &DetailError{Err: ErrFIDO2DeviceBackendCreationFailed, Detail: fmt.Sprintf(": device '%s' not found in paired devices", cfg.PhoneDevice)}
 		}
 	} else if phoneCfg.DefaultDevice != "" {
 		// Use default device
@@ -142,7 +141,7 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 
 	if err := backend.Connect(ctx); err != nil {
 		_ = backend.Close()
-		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, fmt.Errorf("phone connection failed: %w", err))
+		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, &WrappedError{Msg: "phone connection failed", Err: err})
 	}
 
 	// Check if the address changed (Android RPA rotation)
@@ -188,14 +187,14 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 // reconstructStaticKey reconstructs a noise.DHKey from the private key bytes.
 func reconstructStaticKey(privateKey []byte) (*noise.DHKey, error) {
 	if len(privateKey) != 32 {
-		return nil, fmt.Errorf("invalid private key length: expected 32, got %d", len(privateKey))
+		return nil, &MessageError{Msg: fmt.Sprintf("invalid private key length: expected 32, got %d", len(privateKey))}
 	}
 
 	// Use X25519 to derive the public key from the private key
 	// curve25519.X25519 computes: public = scalar * basepoint
 	public, err := curve25519.X25519(privateKey, curve25519.Basepoint)
 	if err != nil {
-		return nil, fmt.Errorf("failed to derive public key: %w", err)
+		return nil, &WrappedError{Msg: "failed to derive public key", Err: err}
 	}
 
 	return &noise.DHKey{

@@ -522,7 +522,7 @@ func createPIVStorage(cfg *PIVConfig, logger *slog.Logger) (xkms.PIVCertificateS
 		// Create file storage backend
 		backend, err := xkms.NewFileStorageBackend(cfg.StoragePath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create file storage backend: %w", err)
+			return nil, &WrappedError{Msg: "failed to create file storage backend", Err: err}
 		}
 		fileConfig := &xkms.PIVFileStorageConfig{
 			Backend:    backend,
@@ -854,7 +854,7 @@ func parseCertificateAuto(data []byte) (*x509.Certificate, CertFormat, error) {
 	block, _ := pem.Decode(data)
 	if block != nil {
 		if block.Type != "CERTIFICATE" {
-			return nil, "", fmt.Errorf("invalid PEM block type: %s", block.Type)
+			return nil, "", &MessageError{Msg: fmt.Sprintf("invalid PEM block type: %s", block.Type)}
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {

@@ -1,6 +1,6 @@
 # Multi-Tenancy
 
-go-trusted-ca supports multi-tenant deployments where each tenant has isolated data, dedicated CA hierarchy, and independent configuration.
+go-xkms supports multi-tenant deployments where each tenant has isolated data, dedicated CA hierarchy, and independent configuration.
 
 ## Overview
 

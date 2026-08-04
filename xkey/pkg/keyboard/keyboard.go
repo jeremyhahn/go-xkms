@@ -89,7 +89,7 @@ type Keyboard struct {
 func New(logger *slog.Logger) (*Keyboard, error) {
 	device, err := uhidOpener()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrKeyboardOpenFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrKeyboardOpenFailed, Cause: err}
 	}
 
 	cfg := &uhid.CreateConfig{
@@ -104,7 +104,7 @@ func New(logger *slog.Logger) (*Keyboard, error) {
 
 	if err := device.Create(cfg); err != nil {
 		_ = device.Close()
-		return nil, fmt.Errorf("%w: %v", ErrKeyboardCreateFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrKeyboardCreateFailed, Cause: err}
 	}
 
 	logger.Info("virtual keyboard created",
@@ -146,12 +146,11 @@ func (k *Keyboard) TypeString(s string) error {
 	for i, r := range s {
 		mapping, ok := LookupScancode(r)
 		if !ok {
-			return fmt.Errorf("%w: %q (U+%04X) at position %d",
-				ErrUnsupportedChar, string(r), r, i)
+			return &DetailError{Err: ErrUnsupportedChar, Detail: fmt.Sprintf(": %q (U+%04X) at position %d", string(r), r, i)}
 		}
 
 		if err := k.typeKey(mapping.Scancode, mapping.Shift); err != nil {
-			return fmt.Errorf("%w: %v", ErrTypeFailed, err)
+			return &SentinelCauseError{Sentinel: ErrTypeFailed, Cause: err}
 		}
 
 		// Delay between keystrokes to prevent host input buffer overrun.

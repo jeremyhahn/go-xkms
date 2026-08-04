@@ -24,7 +24,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"math/big"
-	"os"
 	"sync"
 	"testing"
 
@@ -47,18 +46,19 @@ type backendEntry struct {
 var testBackends []backendEntry
 
 func init() {
+	// Only software (pure in-process, no hardware) is registered by default.
+	// The TPM2 backend is registered ONLY under the `tpm_simulator` build tag
+	// (see adapter_integration_tpm2_test.go), where it targets the in-process
+	// MS TPM reference simulator — NEVER the host's real /dev/tpmrm0. This keeps
+	// `go test -tags integration` from ever touching host TPM hardware, which on
+	// a machine with a real TPM could disrupt other consumers (LUKS, etc.).
+	// PKCS#11 (SoftHSM) and cloud backends register from their own companion files.
 	testBackends = append(testBackends,
 		backendEntry{
 			name:     "software",
 			skip:     func(t *testing.T) { t.Helper() },
 			adapter:  newSoftwareAdapter,
 			hardware: false,
-		},
-		backendEntry{
-			name:     "tpm2",
-			skip:     skipIfNoTPM,
-			adapter:  newTPM2Adapter,
-			hardware: true,
 		},
 	)
 }
@@ -67,18 +67,6 @@ func init() {
 // Called from build-tagged companion files (e.g., adapter_integration_pkcs11_test.go).
 func registerBackend(entry backendEntry) {
 	testBackends = append(testBackends, entry)
-}
-
-// ---------------------------------------------------------------------------
-// Skip helpers
-// ---------------------------------------------------------------------------
-
-// skipIfNoTPM skips the test if /dev/tpmrm0 is not available.
-func skipIfNoTPM(t *testing.T) {
-	t.Helper()
-	if _, err := os.Stat("/dev/tpmrm0"); err != nil {
-		t.Skip("TPM device /dev/tpmrm0 not available")
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -95,20 +83,6 @@ func newSoftwareAdapter(t *testing.T) *BackendAdapter {
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 	return NewBackendAdapter(backend, xkms.BackendTypeSoftware)
-}
-
-// newTPM2Adapter creates a BackendAdapter backed by a real TPM2 backend.
-func newTPM2Adapter(t *testing.T) *BackendAdapter {
-	t.Helper()
-	keyDir := t.TempDir()
-	config := &xkms.TPM2BackendConfig{
-		Device: "/dev/tpmrm0",
-		KeyDir: keyDir,
-	}
-	backend, err := xkms.NewTPM2Backend(config)
-	require.NoError(t, err)
-	t.Cleanup(func() { backend.Close() })
-	return NewBackendAdapter(backend, xkms.BackendTypeTPM2)
 }
 
 // ---------------------------------------------------------------------------

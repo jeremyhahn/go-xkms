@@ -680,3 +680,125 @@ func TestTenantScopedBackend_GenerateEd25519_RealKey(t *testing.T) {
 	_, ok := key.(ed25519.PrivateKey)
 	assert.True(t, ok, "expected ed25519.PrivateKey")
 }
+
+// ============================================================
+// Unified Key ID methods and lifecycle accessors — passthrough
+// coverage using recordingBackend (canned nil/nil) and mockKeyStore
+// (real key material) to exercise both trivial passthrough and
+// realistic success/error propagation.
+// ============================================================
+
+func TestTenantScopedBackend_GetKeyByID_Passthrough(t *testing.T) {
+	base := &recordingBackend{}
+	tsb := NewTenantScopedBackend(base, "acme")
+
+	key, err := tsb.GetKeyByID(context.Background(), "some-key")
+	require.NoError(t, err)
+	assert.Nil(t, key)
+}
+
+func TestTenantScopedBackend_GetSignerByID_Passthrough(t *testing.T) {
+	base := &recordingBackend{}
+	tsb := NewTenantScopedBackend(base, "acme")
+
+	signer, err := tsb.GetSignerByID(context.Background(), "some-key")
+	require.NoError(t, err)
+	assert.Nil(t, signer)
+}
+
+func TestTenantScopedBackend_GetDecrypterByID_Passthrough(t *testing.T) {
+	base := &recordingBackend{}
+	tsb := NewTenantScopedBackend(base, "acme")
+
+	decrypter, err := tsb.GetDecrypterByID(context.Background(), "some-key")
+	require.NoError(t, err)
+	assert.Nil(t, decrypter)
+}
+
+func TestTenantScopedBackend_KeyProvider_Passthrough(t *testing.T) {
+	software := newMockKeyStoreWithSealer("sw", "software")
+	tsb := NewTenantScopedBackend(software, "acme")
+
+	kp := tsb.KeyProvider()
+	require.NotNil(t, kp)
+	assert.Same(t, software.backend, kp)
+}
+
+func TestTenantScopedBackend_CertStorage_Passthrough(t *testing.T) {
+	base := &recordingBackend{}
+	tsb := NewTenantScopedBackend(base, "acme")
+
+	// recordingBackend.CertStorage returns nil; verify the wrapper delegates
+	// rather than substituting its own value.
+	assert.Nil(t, tsb.CertStorage())
+}
+
+func TestTenantScopedBackend_GetKeyByID_RealBackend_Success(t *testing.T) {
+	software := newMockKeyStore("sw")
+	ctx := context.Background()
+	_, err := software.GenerateECDSA(ctx, &types.KeyAttributes{CN: "my-ec-key"})
+	require.NoError(t, err)
+
+	tsb := NewTenantScopedBackend(software, "acme")
+
+	key, err := tsb.GetKeyByID(ctx, "my-ec-key")
+	require.NoError(t, err)
+	require.NotNil(t, key)
+	_, ok := key.(*ecdsa.PrivateKey)
+	assert.True(t, ok, "expected *ecdsa.PrivateKey")
+}
+
+func TestTenantScopedBackend_GetKeyByID_RealBackend_NotFound(t *testing.T) {
+	software := newMockKeyStore("sw")
+	tsb := NewTenantScopedBackend(software, "acme")
+
+	_, err := tsb.GetKeyByID(context.Background(), "missing-key")
+	require.Error(t, err)
+}
+
+func TestTenantScopedBackend_GetSignerByID_RealBackend_Success(t *testing.T) {
+	software := newMockKeyStore("sw")
+	ctx := context.Background()
+	_, err := software.GenerateECDSA(ctx, &types.KeyAttributes{CN: "signer-key"})
+	require.NoError(t, err)
+
+	tsb := NewTenantScopedBackend(software, "acme")
+
+	signer, err := tsb.GetSignerByID(ctx, "signer-key")
+	require.NoError(t, err)
+	require.NotNil(t, signer)
+}
+
+func TestTenantScopedBackend_GetSignerByID_RealBackend_NotFound(t *testing.T) {
+	software := newMockKeyStore("sw")
+	tsb := NewTenantScopedBackend(software, "acme")
+
+	_, err := tsb.GetSignerByID(context.Background(), "missing-signer")
+	require.Error(t, err)
+}
+
+func TestTenantScopedBackend_GetDecrypterByID_RealBackend_Success(t *testing.T) {
+	software := newMockKeyStore("sw")
+	ctx := context.Background()
+	_, err := software.GenerateRSA(ctx, &types.KeyAttributes{CN: "decrypt-key"})
+	require.NoError(t, err)
+
+	tsb := NewTenantScopedBackend(software, "acme")
+
+	decrypter, err := tsb.GetDecrypterByID(ctx, "decrypt-key")
+	require.NoError(t, err)
+	require.NotNil(t, decrypter)
+}
+
+func TestTenantScopedBackend_GetDecrypterByID_RealBackend_UnsupportedKey(t *testing.T) {
+	software := newMockKeyStore("sw")
+	ctx := context.Background()
+	// ECDSA keys do not implement crypto.Decrypter in mockKeyStore.
+	_, err := software.GenerateECDSA(ctx, &types.KeyAttributes{CN: "ec-decrypt-key"})
+	require.NoError(t, err)
+
+	tsb := NewTenantScopedBackend(software, "acme")
+
+	_, err = tsb.GetDecrypterByID(ctx, "ec-decrypt-key")
+	require.Error(t, err)
+}

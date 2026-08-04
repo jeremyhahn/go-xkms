@@ -63,6 +63,9 @@ type mockBarrierClient struct {
 	genKeysReq      *transport.BarrierGenerateRecoveryKeysRequest
 	recoverErr      error
 	recoverReq      *transport.BarrierRecoverWithKeysRequest
+	enableEncResp   *transport.BarrierEnableEncryptionResponse
+	enableEncErr    error
+	enableEncReq    *transport.BarrierEnableEncryptionRequest
 
 	// PIN ops
 	setSOPINReq    *transport.SetSOPINRequest
@@ -116,6 +119,11 @@ func (m *mockBarrierClient) BarrierRekey(_ context.Context, req *transport.Barri
 func (m *mockBarrierClient) BarrierGenerateRecoveryKeys(_ context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
 	m.genKeysReq = req
 	return m.genKeysResp, m.genKeysErr
+}
+
+func (m *mockBarrierClient) BarrierEnableEncryption(_ context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	m.enableEncReq = req
+	return m.enableEncResp, m.enableEncErr
 }
 
 func (m *mockBarrierClient) BarrierRecoverWithKeys(_ context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
@@ -191,6 +199,10 @@ func resetBarrierFlags(t *testing.T) {
 	barrierFlagSOPin = ""
 	barrierFlagUserPin = ""
 	barrierRecoveryShs = nil
+	barrierEncTenantID = ""
+	barrierEncStrategy = ""
+	barrierEncMechanism = ""
+	barrierEncAvailability = ""
 }
 
 // -----------------------------------------------------------------------------
@@ -199,14 +211,15 @@ func resetBarrierFlags(t *testing.T) {
 
 func TestBarrierCmd_HasCanonicalSubcommands(t *testing.T) {
 	want := map[string]bool{
-		"status":        false,
-		"init":          false,
-		"init-shamir":   false,
-		"unseal":        false,
-		"unseal-shares": false,
-		"seal":          false,
-		"rekey":         false,
-		"recovery":      false,
+		"status":            false,
+		"init":              false,
+		"init-shamir":       false,
+		"unseal":            false,
+		"unseal-shares":     false,
+		"seal":              false,
+		"rekey":             false,
+		"recovery":          false,
+		"enable-encryption": false,
 	}
 	for _, c := range barrierCmd.Commands() {
 		if _, ok := want[c.Name()]; ok {
@@ -1173,5 +1186,67 @@ func TestBarrierSealConfirmationError_Unwrap(t *testing.T) {
 	err := &BarrierSealConfirmationError{Err: inner}
 	if !errors.Is(err, inner) {
 		t.Error("BarrierSealConfirmationError should unwrap to its inner error")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// enable-encryption
+// -----------------------------------------------------------------------------
+
+func TestRunBarrierEnableEncryptionCmd_Success(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierEncStrategy = "passphrase"
+	barrierSecret = "hunter2"
+	barrierEncTenantID = "acme"
+
+	mock := &mockBarrierClient{
+		enableEncResp: &transport.BarrierEnableEncryptionResponse{
+			Status: "migration_started",
+			Scope:  "tenant",
+		},
+	}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	out := new(bytes.Buffer)
+	cmd := barrierEnableEncryptionCmd
+	cmd.SetOut(out)
+	if err := runBarrierEnableEncryptionCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mock.enableEncReq == nil {
+		t.Fatal("expected enable-encryption request to be sent")
+	}
+	if mock.enableEncReq.Strategy != "passphrase" {
+		t.Errorf("strategy = %q, want passphrase", mock.enableEncReq.Strategy)
+	}
+	if mock.enableEncReq.Passphrase != "hunter2" {
+		t.Errorf("passphrase = %q, want hunter2", mock.enableEncReq.Passphrase)
+	}
+	if mock.enableEncReq.TenantID != "acme" {
+		t.Errorf("tenant id = %q, want acme", mock.enableEncReq.TenantID)
+	}
+	if !strings.Contains(out.String(), "migration_started") {
+		t.Errorf("expected status in output; got %q", out.String())
+	}
+}
+
+func TestRunBarrierEnableEncryptionCmd_MissingStrategy(t *testing.T) {
+	resetBarrierFlags(t)
+	// No --strategy set.
+
+	mock := &mockBarrierClient{}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	cmd := barrierEnableEncryptionCmd
+	cmd.SetOut(new(bytes.Buffer))
+	err := runBarrierEnableEncryptionCmd(cmd, nil)
+
+	var typed *BarrierEnableEncryptionStrategyRequiredError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierEnableEncryptionStrategyRequiredError, got %T (%v)", err, err)
+	}
+	if mock.enableEncReq != nil {
+		t.Error("client must not be called when --strategy is missing")
 	}
 }

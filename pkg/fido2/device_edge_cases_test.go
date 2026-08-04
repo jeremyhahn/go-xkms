@@ -19,10 +19,11 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/stretchr/testify/assert"
@@ -45,7 +46,7 @@ type TimeoutThenSuccessDeviceFC struct {
 
 func (d *TimeoutThenSuccessDeviceFC) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -157,7 +158,7 @@ func (d *TimeoutThenSuccessDeviceFC) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // SingleDeviceEnumeratorFC returns a single device
@@ -203,7 +204,7 @@ type AlwaysTimeoutDeviceFC struct {
 
 func (d *AlwaysTimeoutDeviceFC) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -289,7 +290,7 @@ func (d *AlwaysTimeoutDeviceFC) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // Tests for UnlockWithKey retry on user presence required - covers fido2.go:215-216
@@ -308,7 +309,7 @@ type UserPresenceThenSuccessDeviceFC struct {
 
 func (d *UserPresenceThenSuccessDeviceFC) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -420,7 +421,7 @@ func (d *UserPresenceThenSuccessDeviceFC) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // Tests for WaitForDevice with enumerate error - covers fido2.go:278
@@ -492,7 +493,7 @@ type EmptyResponseDeviceFC struct {
 
 func (d *EmptyResponseDeviceFC) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -547,7 +548,7 @@ func (d *EmptyResponseDeviceFC) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // Tests for readResponseSync with incomplete first packet - covers device.go:220-221
@@ -584,7 +585,7 @@ func (d *IncompletePacketDeviceFC) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // Tests for readResponseSync channel ID mismatch - covers device.go:226-227
@@ -617,7 +618,7 @@ type CIDMismatchDeviceFC struct {
 
 func (d *CIDMismatchDeviceFC) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -677,7 +678,7 @@ func (d *CIDMismatchDeviceFC) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // Tests for readResponseSync keepalive handling - covers device.go:233-237
@@ -705,7 +706,7 @@ type KeepaliveDeviceFC struct {
 
 func (d *KeepaliveDeviceFC) Write(data []byte) (int, error) {
 	if len(data) < HIDPacketSize {
-		return 0, fmt.Errorf("packet too short")
+		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
 	cmd := data[4]
@@ -783,7 +784,7 @@ func (d *KeepaliveDeviceFC) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }
 
 // Tests for readResponseSync error response - covers device.go:240-245
@@ -828,5 +829,5 @@ func (d *CTAPHIDErrorDeviceFC) Read(data []byte) (int, error) {
 		return d.readBuf.Read(data)
 	}
 
-	return 0, fmt.Errorf("no data")
+	return 0, &errs.Message{Msg: "no data"}
 }

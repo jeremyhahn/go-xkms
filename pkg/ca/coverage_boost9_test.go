@@ -30,8 +30,8 @@ import (
 	"testing"
 	"time"
 
-	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
 	objstore "github.com/jeremyhahn/go-objstore/pkg/common"
+	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"

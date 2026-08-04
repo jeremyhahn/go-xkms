@@ -171,7 +171,7 @@ func GetTemplate(name string) (*ProviderTemplate, error) {
 	name = strings.ToLower(name)
 	template, ok := BuiltinTemplates[name]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrTemplateNotFound, name)
+		return nil, &DetailError{Err: ErrTemplateNotFound, Detail: fmt.Sprintf(": %s", name)}
 	}
 	return template, nil
 }
@@ -318,7 +318,7 @@ func (c *ExtendedProviderConfig) Validate() error {
 		}
 
 		if template.RequiresRegion && c.Region == "" {
-			return fmt.Errorf("oidc: template '%s' requires --region", c.Template)
+			return &MessageError{Msg: fmt.Sprintf("oidc: template '%s' requires --region", c.Template)}
 		}
 	}
 

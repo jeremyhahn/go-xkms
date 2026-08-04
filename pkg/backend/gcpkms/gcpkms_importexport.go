@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
@@ -75,17 +77,17 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 
 	importJob, err := b.client.CreateImportJob(ctx, createReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create import job: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create import job", Err: err}
 	}
 
 	// Parse the wrapping public key from the import job
 	if importJob.PublicKey == nil {
-		return nil, fmt.Errorf("import job has no public key")
+		return nil, &errs.Message{Msg: "import job has no public key"}
 	}
 
 	publicKey, err := parsePublicKey(importJob.PublicKey.Pem)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse wrapping public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse wrapping public key", Err: err}
 	}
 
 	// Determine expiration time (GCP import jobs are valid for 3 days)
@@ -117,7 +119,7 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 	// Ensure we have an RSA public key
 	rsaPubKey, ok := params.WrappingPublicKey.(*rsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("%w: wrapping public key must be RSA", backend.ErrInvalidKeyType)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "wrapping public key must be RSA"}
 	}
 
 	var wrapped []byte
@@ -138,11 +140,11 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 		wrapped, err = wrapping.WrapRSAAES(keyMaterial, rsaPubKey, hybridAlgorithm)
 
 	default:
-		return nil, fmt.Errorf("%w: unsupported wrapping algorithm %s", backend.ErrInvalidAlgorithm, params.Algorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported wrapping algorithm %s", params.Algorithm)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to wrap key material", Err: err}
 	}
 
 	return &backend.WrappedKeyMaterial{
@@ -158,7 +160,7 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 // This method exists to satisfy the ImportExportBackend interface but is not used
 // for GCP KMS imports.
 func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
-	return nil, fmt.Errorf("%w: unwrapping is performed by GCP KMS HSM during import", backend.ErrNotSupported)
+	return nil, &errs.Detail{Err: backend.ErrNotSupported, Detail: "unwrapping is performed by GCP KMS HSM during import"}
 }
 
 // ImportKey imports externally generated key material into GCP KMS.
@@ -215,13 +217,13 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		}
 
 	default:
-		return fmt.Errorf("%w: unsupported wrapping algorithm %s", backend.ErrInvalidAlgorithm, wrapped.Algorithm)
+		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported wrapping algorithm %s", wrapped.Algorithm)}
 	}
 
 	// Import the crypto key version
 	keyVersion, err := b.client.ImportCryptoKeyVersion(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to import crypto key version: %w", err)
+		return &errs.Wrapped{Msg: "failed to import crypto key version", Err: err}
 	}
 
 	// Store metadata about the imported key
@@ -238,12 +240,12 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	if b.config.KeyStorage != nil {
 		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
-			return fmt.Errorf("failed to save metadata: %w", err)
+			return &errs.Wrapped{Msg: "failed to save metadata", Err: err}
 		}
 	}
 
@@ -282,13 +284,13 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		Name: cryptoKeyName,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to get crypto key: %v", backend.ErrKeyNotFound, err)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get crypto key: %v", err)}
 	}
 
 	// Check if the key version is exportable
 	// In GCP KMS, only SOFTWARE keys can be exported, and only if they're marked as exportable
 	if cryptoKey.Primary == nil {
-		return nil, fmt.Errorf("crypto key has no primary version")
+		return nil, &errs.Message{Msg: "crypto key has no primary version"}
 	}
 
 	// GCP KMS keys created with ProtectionLevel_SOFTWARE can be exportable
@@ -322,7 +324,7 @@ func mapWrappingAlgorithmToImportMethod(algorithm backend.WrappingAlgorithm) (km
 		backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
 		return kmspb.ImportJob_RSA_OAEP_4096_SHA256, nil
 	default:
-		return 0, fmt.Errorf("%w: unsupported wrapping algorithm for GCP KMS: %s", backend.ErrInvalidAlgorithm, algorithm)
+		return 0, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported wrapping algorithm for GCP KMS: %s", algorithm)}
 	}
 }
 
@@ -345,7 +347,7 @@ func mapKeyAttributesToAlgorithm(attrs *types.KeyAttributes) (kmspb.CryptoKeyVer
 		return kmspb.CryptoKeyVersion_EC_SIGN_P256_SHA256, nil
 
 	default:
-		return 0, fmt.Errorf("%w: unsupported key algorithm %s", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+		return 0, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported key algorithm %s", attrs.KeyAlgorithm)}
 	}
 }
 

@@ -1,6 +1,6 @@
 # Quickstart Guide
 
-Get started with go-trusted-ca in 5 minutes.
+Get started with go-xkms in 5 minutes.
 
 ## Prerequisites
 
@@ -152,7 +152,7 @@ make docker-build
 # Run with default config (HTTPS on :8443)
 docker run -d -p 8443:8443 \
   -v $(pwd)/data:/var/lib/trustedca \
-  go-trusted-ca:latest
+  go-xkms:latest
 ```
 
 ### Docker Compose
@@ -161,7 +161,7 @@ docker run -d -p 8443:8443 \
 version: '3.8'
 services:
   acme-server:
-    image: go-trusted-ca:latest
+    image: go-xkms:latest
     ports:
       - "8443:8443"
       - "9443:9443"
@@ -177,7 +177,7 @@ volumes:
 
 ## Monitoring
 
-go-trusted-ca exposes Prometheus metrics:
+go-xkms exposes Prometheus metrics:
 
 ```bash
 # View metrics (via HTTPS)

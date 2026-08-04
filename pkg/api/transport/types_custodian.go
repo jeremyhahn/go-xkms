@@ -89,3 +89,30 @@ type TenantBarrierInitRequest = qrdbtransport.TenantBarrierInitRequest
 
 // TenantBarrierUnsealRequest contains parameters for unsealing a tenant barrier.
 type TenantBarrierUnsealRequest = qrdbtransport.TenantBarrierUnsealRequest
+
+// TenantIsolationType identifies a tenant's isolation mode (prefix / barrier /
+// volume / raft).
+type TenantIsolationType = qrdbtransport.TenantIsolationType
+
+// TenantQuotas describes a tenant's resource quotas.
+type TenantQuotas = qrdbtransport.TenantQuotas
+
+// TenantEntitlements describes which isolation tiers and dedicated-storage
+// features a tenant's plan permits.
+type TenantEntitlements = qrdbtransport.TenantEntitlements
+
+// TenantBarrierStatusResponse reports the current state of a per-tenant barrier
+// (sealed/initialized, active strategy, hardware-backing, Shamir quorum).
+type TenantBarrierStatusResponse = qrdbtransport.TenantBarrierStatusResponse
+
+// UpdateTenantEntitlementsRequest updates a tenant's feature entitlements.
+type UpdateTenantEntitlementsRequest = qrdbtransport.UpdateTenantEntitlementsRequest
+
+// UpdateTenantEntitlementsResponse contains the updated tenant.
+type UpdateTenantEntitlementsResponse = qrdbtransport.UpdateTenantEntitlementsResponse
+
+// UpdateTenantQuotasRequest updates a tenant's resource quotas.
+type UpdateTenantQuotasRequest = qrdbtransport.UpdateTenantQuotasRequest
+
+// UpdateTenantQuotasResponse contains the updated tenant.
+type UpdateTenantQuotasResponse = qrdbtransport.UpdateTenantQuotasResponse

@@ -17,7 +17,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/xml"
-	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -118,17 +117,17 @@ func (p *XMLParser) Format() string {
 func (p *XMLParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidFile, err)
+		return nil, &SentinelCauseError{Sentinel: ErrInvalidFile, Cause: err}
 	}
 
 	var kpFile keePassFile
 	if err := xml.Unmarshal(data, &kpFile); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrParseError, err)
+		return nil, &SentinelCauseError{Sentinel: ErrParseError, Cause: err}
 	}
 
 	// Validate structure.
 	if kpFile.Root.Group.UUID == "" {
-		return nil, fmt.Errorf("%w: missing root group", ErrInvalidXMLStructure)
+		return nil, &DetailError{Err: ErrInvalidXMLStructure, Detail: ": missing root group"}
 	}
 
 	entries := make([]*ParsedEntry, 0)

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -471,13 +472,18 @@ func TestDeploy_DeployerSuccess(t *testing.T) {
 // TestDeploy_DeployerFailure verifies Deploy propagates a deployer error when
 // the underlying Deployer.Deploy call fails.
 func TestDeploy_DeployerFailure(t *testing.T) {
-	// Use a non-writable path to force os.WriteFile to fail.
+	// Force os.WriteFile to fail via a path whose parent segment is a regular
+	// FILE (fails even as root, unlike a plain "/non-existent-dir" which root
+	// can create).
+	dir := t.TempDir()
+	notADir := filepath.Join(dir, "notadir")
+	require.NoError(t, os.WriteFile(notADir, []byte("x"), 0o600))
 	cfg := DefaultConfig()
 	cfg.Accounts["test-ca"] = validAccountConfig()
 	spec := testCertSpec("test-ca")
 	spec.Deploy = &DeployConfig{
-		CertPath: "/non-existent-dir/cert.pem",
-		KeyPath:  "/non-existent-dir/key.pem",
+		CertPath: filepath.Join(notADir, "cert.pem"),
+		KeyPath:  filepath.Join(notADir, "key.pem"),
 	}
 	cfg.Certificates["web"] = spec
 
@@ -562,10 +568,14 @@ func TestBuildCSR_WithInvalidURI(t *testing.T) {
 func TestDeployer_KeyMkdirError(t *testing.T) {
 	dir := t.TempDir()
 	d := NewDeployer(testLogger())
-	// certPath is in a valid dir but keyPath has a non-existent root.
+	// keyPath's parent segment is a regular FILE, so directory creation fails
+	// even when the test runs as root (a plain "/non-existent-dir" is writable
+	// by root and would not error).
+	notADir := filepath.Join(dir, "notadir")
+	require.NoError(t, os.WriteFile(notADir, []byte("x"), 0o600))
 	cfg := &DeployConfig{
 		CertPath: dir + "/cert.pem",
-		KeyPath:  "/non-existent-dir/sub/key.pem",
+		KeyPath:  filepath.Join(notADir, "sub", "key.pem"),
 	}
 
 	cert, key := selfSignedCert(t, "test", time.Hour)

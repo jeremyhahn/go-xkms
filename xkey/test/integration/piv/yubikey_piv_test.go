@@ -78,7 +78,7 @@ func detectTokenLabel() (string, error) {
 	cmd := exec.Command("pkcs11-tool", "--module", yukiLibraryPath, "--list-slots")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("pkcs11-tool failed: %w: %s", err, string(output))
+		return "", &DetailError{Err: &WrappedError{Msg: "pkcs11-tool failed", Err: err}, Detail: fmt.Sprintf(": %s", string(output))}
 	}
 
 	// Parse token label from output like:
@@ -86,7 +86,7 @@ func detectTokenLabel() (string, error) {
 	re := regexp.MustCompile(`token label\s*:\s*(.+)`)
 	matches := re.FindStringSubmatch(string(output))
 	if len(matches) < 2 {
-		return "", fmt.Errorf("no token label found in pkcs11-tool output:\n%s", string(output))
+		return "", &MessageError{Msg: fmt.Sprintf("no token label found in pkcs11-tool output:\n%s", string(output))}
 	}
 
 	return strings.TrimSpace(matches[1]), nil

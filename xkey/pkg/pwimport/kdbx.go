@@ -44,7 +44,7 @@ func (p *KDBXParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidFile, err)
+		return nil, &SentinelCauseError{Sentinel: ErrInvalidFile, Cause: err}
 	}
 	defer func() { _ = file.Close() }()
 
@@ -52,12 +52,12 @@ func (p *KDBXParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry
 	db.Credentials = gokeepasslib.NewPasswordCredentials(opts.Password)
 
 	if err := gokeepasslib.NewDecoder(file).Decode(db); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
 	}
 
 	// Unlock protected values (passwords are encrypted in memory by default).
 	if err := db.UnlockProtectedEntries(); err != nil {
-		return nil, fmt.Errorf("%w: failed to unlock protected entries: %v", ErrDecryptionFailed, err)
+		return nil, &DetailError{Err: ErrDecryptionFailed, Detail: fmt.Sprintf(": failed to unlock protected entries: %v", err)}
 	}
 
 	entries := make([]*ParsedEntry, 0)

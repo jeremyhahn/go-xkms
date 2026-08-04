@@ -48,6 +48,18 @@ type Key struct {
 
 	// Comment is the optional free-form key comment.
 	Comment string `json:"comment,omitempty"`
+
+	// Backend identifies the crypto backend holding the private half when
+	// this is a backend-backed key (software / tpm2 / pkcs11 / cloud /
+	// remote xkms). Empty for legacy software keys sealed in the SDK.
+	Backend string `json:"backend,omitempty"`
+
+	// BackendKeyID is the backend-scoped identifier (the underlying key's
+	// CN, e.g. "ssh-user-local-laptop") of a backend-backed key. Together
+	// with Backend it identifies the platform key that holds this SSH key's
+	// private half, so a unified key view can correlate the two. Empty for
+	// software keys whose PEM is sealed in the SDK.
+	BackendKeyID string `json:"backend_key_id,omitempty"`
 }
 
 // PublicKey is the transport-safe export of a public key without any
@@ -95,6 +107,13 @@ type GenerateRequest struct {
 	Algorithm string `json:"algorithm"`
 	RSABits   int    `json:"rsa_bits,omitempty"`
 	Comment   string `json:"comment,omitempty"`
+
+	// Backend optionally selects the crypto backend on which to generate
+	// the key (software / tpm2 / pkcs11 / cloud / remote xkms). When empty,
+	// the embedded transport generates a software key sealed in-process;
+	// when set, the key is created on that backend and signing is delegated
+	// (the private key never leaves a hardware backend).
+	Backend string `json:"backend,omitempty"`
 }
 
 // ImportRequest carries inputs for KeysClient.Import. The PEM bytes

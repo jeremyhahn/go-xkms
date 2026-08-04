@@ -26,6 +26,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
@@ -90,11 +92,11 @@ func (t *Transport) Connect(ctx context.Context) error {
 		if t.config.TLSCAFile != "" {
 			caCert, err := os.ReadFile(t.config.TLSCAFile)
 			if err != nil {
-				return fmt.Errorf("failed to read CA certificate: %w", err)
+				return &errs.Wrapped{Msg: "failed to read CA certificate", Err: err}
 			}
 			caCertPool := x509.NewCertPool()
 			if !caCertPool.AppendCertsFromPEM(caCert) {
-				return fmt.Errorf("failed to parse CA certificate")
+				return &errs.Message{Msg: "failed to parse CA certificate"}
 			}
 			tlsConfig.RootCAs = caCertPool
 		}
@@ -103,7 +105,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 		if t.config.TLSCertFile != "" && t.config.TLSKeyFile != "" {
 			cert, err := tls.LoadX509KeyPair(t.config.TLSCertFile, t.config.TLSKeyFile)
 			if err != nil {
-				return fmt.Errorf("failed to load client certificate: %w", err)
+				return &errs.Wrapped{Msg: "failed to load client certificate", Err: err}
 			}
 			tlsConfig.Certificates = []tls.Certificate{cert}
 		}
@@ -116,7 +118,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 	// Connect to the server
 	conn, err := grpc.NewClient(t.config.Address, opts...)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrConnectionFailed, err)
+		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	t.conn = conn
@@ -128,7 +130,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 		if closeErr := t.conn.Close(); closeErr != nil {
 			log.Printf("failed to close gRPC connection after health check failure: %v", closeErr)
 		}
-		return fmt.Errorf("%w: %v", ErrConnectionFailed, err)
+		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	t.connected = true
@@ -723,7 +725,7 @@ func (t *Transport) DeriveKey(ctx context.Context, req *transport.DeriveKeyReque
 
 	resp, err := t.client.DeriveKey(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("derive key failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "derive key failed", Err: err}
 	}
 
 	return &transport.DeriveKeyResponse{
@@ -753,7 +755,7 @@ func (t *Transport) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKeyE
 
 	resp, err := t.client.DeriveKeyECDH(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("derive key ECDH failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "derive key ECDH failed", Err: err}
 	}
 
 	return &transport.DeriveKeyECDHResponse{
@@ -777,7 +779,7 @@ func (t *Transport) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDR
 
 	resp, err := t.client.WrapKeyByID(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("wrap key by ID failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "wrap key by ID failed", Err: err}
 	}
 
 	return &transport.WrapKeyByIDResponse{
@@ -808,7 +810,7 @@ func (t *Transport) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyB
 
 	resp, err := t.client.UnwrapKeyByID(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("unwrap key by ID failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "unwrap key by ID failed", Err: err}
 	}
 
 	return &transport.UnwrapKeyByIDResponse{
@@ -832,7 +834,7 @@ func (t *Transport) ExportKeyMaterial(ctx context.Context, req *transport.Export
 
 	resp, err := t.client.ExportKeyMaterial(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("export key material failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "export key material failed", Err: err}
 	}
 
 	return &transport.ExportKeyMaterialResponse{
@@ -945,7 +947,7 @@ func (t *Transport) Seal(ctx context.Context, req *transport.SealRequest) (*tran
 		Aad:     req.AAD,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("seal failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "seal failed", Err: err}
 	}
 
 	return &transport.SealResponse{
@@ -971,7 +973,7 @@ func (t *Transport) Unseal(ctx context.Context, req *transport.UnsealRequest) (*
 		Aad:        req.AAD,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("unseal failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "unseal failed", Err: err}
 	}
 
 	return &transport.UnsealResponse{
@@ -989,7 +991,7 @@ func (t *Transport) CanSeal(ctx context.Context, backend string) (*transport.Can
 		Backend: backend,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("can seal check failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "can seal check failed", Err: err}
 	}
 
 	return &transport.CanSealResponse{
@@ -1010,7 +1012,7 @@ func (t *Transport) AttestKey(ctx context.Context, req *transport.AttestKeyReque
 		Nonce:   req.Nonce,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("attest key failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "attest key failed", Err: err}
 	}
 
 	return &transport.AttestKeyResponse{
@@ -1036,7 +1038,7 @@ func (t *Transport) BarrierInitialize(ctx context.Context, req *transport.Barrie
 		Secret: req.Secret,
 	})
 	if err != nil {
-		return fmt.Errorf("barrier initialize failed: %w", err)
+		return &errs.Wrapped{Msg: "barrier initialize failed", Err: err}
 	}
 
 	return nil
@@ -1052,7 +1054,7 @@ func (t *Transport) BarrierUnseal(ctx context.Context, req *transport.BarrierUns
 		Secret: req.Secret,
 	})
 	if err != nil {
-		return fmt.Errorf("barrier unseal failed: %w", err)
+		return &errs.Wrapped{Msg: "barrier unseal failed", Err: err}
 	}
 
 	return nil
@@ -1066,7 +1068,7 @@ func (t *Transport) BarrierSeal(ctx context.Context) error {
 
 	_, err := t.client.BarrierSeal(ctx, &emptypb.Empty{})
 	if err != nil {
-		return fmt.Errorf("barrier seal failed: %w", err)
+		return &errs.Wrapped{Msg: "barrier seal failed", Err: err}
 	}
 
 	return nil
@@ -1080,7 +1082,7 @@ func (t *Transport) BarrierStatus(ctx context.Context) (*transport.BarrierStatus
 
 	resp, err := t.client.BarrierStatus(ctx, &emptypb.Empty{})
 	if err != nil {
-		return nil, fmt.Errorf("barrier status failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "barrier status failed", Err: err}
 	}
 
 	return &transport.BarrierStatusResponse{
@@ -1101,7 +1103,7 @@ func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *transport.
 		Secret: req.Secret,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("barrier initialize shamir failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "barrier initialize shamir failed", Err: err}
 	}
 
 	return &transport.BarrierInitializeShamirResponse{
@@ -1121,7 +1123,7 @@ func (t *Transport) BarrierUnsealWithShare(ctx context.Context, req *transport.B
 		Share: req.Share,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("barrier unseal with share failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "barrier unseal with share failed", Err: err}
 	}
 
 	return &transport.BarrierUnsealShareResponse{
@@ -1141,7 +1143,7 @@ func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *transport.
 		Shares: req.Shares,
 	})
 	if err != nil {
-		return fmt.Errorf("barrier unseal with shares failed: %w", err)
+		return &errs.Wrapped{Msg: "barrier unseal with shares failed", Err: err}
 	}
 
 	return nil
@@ -1158,7 +1160,7 @@ func (t *Transport) BarrierRekey(ctx context.Context, req *transport.BarrierReke
 		Total:     int32(req.Total),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("barrier rekey failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "barrier rekey failed", Err: err}
 	}
 
 	return &transport.BarrierRekeyResponse{
@@ -1179,13 +1181,39 @@ func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *transp
 		Total:     int32(req.Total),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("barrier generate recovery keys failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "barrier generate recovery keys failed", Err: err}
 	}
 
 	return &transport.BarrierRecoveryKeysResponse{
 		Threshold:   int(resp.Threshold),
 		TotalShares: int(resp.TotalShares),
 		ShareCount:  int(resp.ShareCount),
+	}, nil
+}
+
+// BarrierEnableEncryption migrates a previously-unencrypted barrier to a keyed
+// strategy in place.
+func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.BarrierEnableEncryption(ctx, &pb.BarrierEnableEncryptionRequest{
+		TenantId:        req.TenantID,
+		Strategy:        req.Strategy,
+		Mechanism:       req.Mechanism,
+		Availability:    req.Availability,
+		Passphrase:      req.Passphrase,
+		ShamirThreshold: int32(req.ShamirThreshold),
+		ShamirTotal:     int32(req.ShamirTotal),
+	})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "barrier enable encryption failed", Err: err}
+	}
+
+	return &transport.BarrierEnableEncryptionResponse{
+		Status: resp.Status,
+		Scope:  resp.Scope,
 	}, nil
 }
 
@@ -1199,7 +1227,7 @@ func (t *Transport) BarrierRecoverWithKeys(ctx context.Context, req *transport.B
 		Keys: req.Keys,
 	})
 	if err != nil {
-		return fmt.Errorf("barrier recover with keys failed: %w", err)
+		return &errs.Wrapped{Msg: "barrier recover with keys failed", Err: err}
 	}
 
 	return nil
@@ -1213,19 +1241,22 @@ func (t *Transport) BarrierDeleteRecoveryKeys(ctx context.Context) error {
 
 	_, err := t.client.BarrierDeleteRecoveryKeys(ctx, &emptypb.Empty{})
 	if err != nil {
-		return fmt.Errorf("barrier delete recovery keys failed: %w", err)
+		return &errs.Wrapped{Msg: "barrier delete recovery keys failed", Err: err}
 	}
 
 	return nil
 }
 
 // BarrierHasRecoveryKeys checks if recovery keys exist.
-// Note: This method is not available in the gRPC proto; the server does not expose this endpoint.
 func (t *Transport) BarrierHasRecoveryKeys(ctx context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	return nil, ErrNotImplemented
+	resp, err := t.client.BarrierHasRecoveryKeys(ctx, &emptypb.Empty{})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "barrier has recovery keys failed", Err: err}
+	}
+	return &transport.BarrierHasRecoveryKeysResponse{HasKeys: resp.HasKeys}, nil
 }
 
 // BarrierGenerateRootToken generates a one-time root token by proving
@@ -1239,7 +1270,7 @@ func (t *Transport) BarrierGenerateRootToken(ctx context.Context, req *transport
 		Shares: req.Shares,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("barrier generate root token failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "barrier generate root token failed", Err: err}
 	}
 
 	return &transport.BarrierRootTokenResponse{
@@ -1261,7 +1292,7 @@ func (t *Transport) SetSOPIN(ctx context.Context, req *transport.SetSOPINRequest
 		NewSoPin:     req.NewSOPIN,
 	})
 	if err != nil {
-		return fmt.Errorf("set SO PIN failed: %w", err)
+		return &errs.Wrapped{Msg: "set SO PIN failed", Err: err}
 	}
 
 	return nil
@@ -1278,7 +1309,7 @@ func (t *Transport) SetUserPIN(ctx context.Context, req *transport.SetUserPINReq
 		NewUserPin: req.NewUserPIN,
 	})
 	if err != nil {
-		return fmt.Errorf("set user PIN failed: %w", err)
+		return &errs.Wrapped{Msg: "set user PIN failed", Err: err}
 	}
 
 	return nil
@@ -1295,7 +1326,7 @@ func (t *Transport) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPINR
 		NewSoPin:     req.NewSOPIN,
 	})
 	if err != nil {
-		return fmt.Errorf("change SO PIN failed: %w", err)
+		return &errs.Wrapped{Msg: "change SO PIN failed", Err: err}
 	}
 
 	return nil
@@ -1312,7 +1343,7 @@ func (t *Transport) ChangeUserPIN(ctx context.Context, req *transport.ChangeUser
 		NewUserPin:     req.NewUserPIN,
 	})
 	if err != nil {
-		return fmt.Errorf("change user PIN failed: %w", err)
+		return &errs.Wrapped{Msg: "change user PIN failed", Err: err}
 	}
 
 	return nil
@@ -1328,7 +1359,7 @@ func (t *Transport) VerifySOPIN(ctx context.Context, req *transport.VerifySOPINR
 		SoPin: req.SOPIN,
 	})
 	if err != nil {
-		return fmt.Errorf("verify SO PIN failed: %w", err)
+		return &errs.Wrapped{Msg: "verify SO PIN failed", Err: err}
 	}
 
 	return nil
@@ -1344,7 +1375,7 @@ func (t *Transport) VerifyUserPIN(ctx context.Context, req *transport.VerifyUser
 		UserPin: req.UserPIN,
 	})
 	if err != nil {
-		return fmt.Errorf("verify user PIN failed: %w", err)
+		return &errs.Wrapped{Msg: "verify user PIN failed", Err: err}
 	}
 
 	return nil
@@ -1358,7 +1389,7 @@ func (t *Transport) GetLockoutStatus(ctx context.Context) (*transport.LockoutSta
 
 	resp, err := t.client.GetLockoutStatus(ctx, &emptypb.Empty{})
 	if err != nil {
-		return nil, fmt.Errorf("get lockout status failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "get lockout status failed", Err: err}
 	}
 
 	return &transport.LockoutStatusResponse{
@@ -1380,7 +1411,7 @@ func (t *Transport) ResetLockout(ctx context.Context, req *transport.ResetLockou
 		SoPin: req.SOPIN,
 	})
 	if err != nil {
-		return fmt.Errorf("reset lockout failed: %w", err)
+		return &errs.Wrapped{Msg: "reset lockout failed", Err: err}
 	}
 
 	return nil
@@ -1399,7 +1430,7 @@ func (t *Transport) GetCABundle(ctx context.Context, req *transport.GetCABundleR
 		Algorithm: req.Algorithm,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("get CA bundle failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "get CA bundle failed", Err: err}
 	}
 
 	return &transport.GetCABundleResponse{
@@ -1419,7 +1450,7 @@ func (t *Transport) GetCACertificate(ctx context.Context, req *transport.GetCACe
 		Identity: req.Identity,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("get CA certificate failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "get CA certificate failed", Err: err}
 	}
 
 	return &transport.GetCACertificateResponse{
@@ -1445,7 +1476,7 @@ func (t *Transport) SignCSR(ctx context.Context, req *transport.SignCSRRequest) 
 		ValidityDays: int32(req.ValidityDays),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("sign CSR failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "sign CSR failed", Err: err}
 	}
 
 	return &transport.SignCSRResponse{
@@ -1480,7 +1511,7 @@ func (t *Transport) IssueCertificate(ctx context.Context, req *transport.IssueCe
 		Algorithm:    req.Algorithm,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("issue certificate failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "issue certificate failed", Err: err}
 	}
 
 	return &transport.IssueCertificateResponse{
@@ -1502,7 +1533,7 @@ func (t *Transport) RevokeCertificate(ctx context.Context, req *transport.Revoke
 		Reason:       int32(req.Reason),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("revoke certificate failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "revoke certificate failed", Err: err}
 	}
 
 	return &transport.RevokeCertificateResponse{
@@ -1519,7 +1550,7 @@ func (t *Transport) GenerateCRL(ctx context.Context, _ *transport.GenerateCRLReq
 
 	resp, err := t.client.GenerateCRL(ctx, &pb.GenerateCRLRequest{})
 	if err != nil {
-		return nil, fmt.Errorf("generate CRL failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "generate CRL failed", Err: err}
 	}
 
 	return &transport.GenerateCRLResponse{
@@ -1537,7 +1568,7 @@ func (t *Transport) IsRevoked(ctx context.Context, req *transport.IsRevokedReque
 		SerialNumber: req.SerialNumber,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("is revoked check failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "is revoked check failed", Err: err}
 	}
 
 	return &transport.IsRevokedResponse{
@@ -1561,7 +1592,7 @@ func (t *Transport) IssueEKCertificate(ctx context.Context, req *transport.Issue
 		EkPublicKey:  req.EKPublicKey,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("issue EK certificate failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "issue EK certificate failed", Err: err}
 	}
 
 	return &transport.IssueEKCertificateResponse{
@@ -1583,7 +1614,7 @@ func (t *Transport) IssueAKCertificate(ctx context.Context, req *transport.Issue
 		PublicKey:    req.PublicKey,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("issue AK certificate failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "issue AK certificate failed", Err: err}
 	}
 
 	return &transport.IssueAKCertificateResponse{
@@ -1605,7 +1636,7 @@ func (t *Transport) SignTCGCSR(ctx context.Context, req *transport.SignTCGCSRReq
 		TcgCsr:       req.TCGCSR,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("sign TCG CSR failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "sign TCG CSR failed", Err: err}
 	}
 
 	return &transport.SignTCGCSRResponse{
@@ -1626,7 +1657,7 @@ func (t *Transport) EnrollDevice(ctx context.Context, req *transport.EnrollDevic
 		PackedCsr:    req.PackedCSR,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("enroll device failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "enroll device failed", Err: err}
 	}
 
 	return &transport.EnrollDeviceResponse{
@@ -1650,7 +1681,7 @@ func (t *Transport) ListPIVSlots(ctx context.Context, req *transport.ListPIVSlot
 		Backend: req.Backend,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list PIV slots failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "list PIV slots failed", Err: err}
 	}
 
 	slots := make([]transport.PIVSlotStatus, len(resp.Slots))
@@ -1685,7 +1716,7 @@ func (t *Transport) GetPIVCertificate(ctx context.Context, req *transport.GetPIV
 		Format:  req.Format,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("get PIV certificate failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "get PIV certificate failed", Err: err}
 	}
 
 	return &transport.GetPIVCertificateResponse{
@@ -1708,7 +1739,7 @@ func (t *Transport) StorePIVCertificate(ctx context.Context, req *transport.Stor
 		Format:      req.Format,
 	})
 	if err != nil {
-		return fmt.Errorf("store PIV certificate failed: %w", err)
+		return &errs.Wrapped{Msg: "store PIV certificate failed", Err: err}
 	}
 
 	return nil
@@ -1725,7 +1756,7 @@ func (t *Transport) DeletePIVCertificate(ctx context.Context, req *transport.Del
 		Slot:    req.Slot,
 	})
 	if err != nil {
-		return fmt.Errorf("delete PIV certificate failed: %w", err)
+		return &errs.Wrapped{Msg: "delete PIV certificate failed", Err: err}
 	}
 
 	return nil
@@ -1744,7 +1775,7 @@ func (t *Transport) GeneratePIVKey(ctx context.Context, req *transport.GenerateP
 		Subject:   req.Subject,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("generate PIV key failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "generate PIV key failed", Err: err}
 	}
 
 	return &transport.GeneratePIVKeyResponse{
@@ -1767,7 +1798,7 @@ func (t *Transport) ImportPIVCertificate(ctx context.Context, req *transport.Sto
 		Format:      req.Format,
 	})
 	if err != nil {
-		return fmt.Errorf("import PIV certificate failed: %w", err)
+		return &errs.Wrapped{Msg: "import PIV certificate failed", Err: err}
 	}
 
 	return nil
@@ -1785,7 +1816,7 @@ func (t *Transport) ExportPIVCertificate(ctx context.Context, req *transport.Get
 		Format:  req.Format,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("export PIV certificate failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "export PIV certificate failed", Err: err}
 	}
 
 	return &transport.GetPIVCertificateResponse{
@@ -1807,7 +1838,7 @@ func (t *Transport) GeneratePIVCSR(ctx context.Context, req *transport.GenerateP
 		Subject: req.Subject,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("generate PIV CSR failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "generate PIV CSR failed", Err: err}
 	}
 
 	return &transport.GeneratePIVCSRResponse{
@@ -1832,7 +1863,7 @@ func (t *Transport) CreateCustodianGroup(ctx context.Context, req *transport.Cre
 
 	resp, err := t.client.CreateCustodianGroup(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("create custodian group failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "create custodian group failed", Err: err}
 	}
 
 	return &transport.CreateCustodianGroupResponse{
@@ -1850,7 +1881,7 @@ func (t *Transport) GetCustodianGroup(ctx context.Context, groupID string) (*tra
 		GroupId: groupID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("get custodian group failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "get custodian group failed", Err: err}
 	}
 
 	return &transport.GetCustodianGroupResponse{
@@ -1866,7 +1897,7 @@ func (t *Transport) ListCustodianGroups(ctx context.Context) (*transport.ListCus
 
 	resp, err := t.client.ListCustodianGroups(ctx, &pb.ListCustodianGroupsRequest{})
 	if err != nil {
-		return nil, fmt.Errorf("list custodian groups failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "list custodian groups failed", Err: err}
 	}
 
 	groups := make([]transport.CustodianGroupInfo, len(resp.GetGroups()))
@@ -1889,7 +1920,7 @@ func (t *Transport) DeleteCustodianGroup(ctx context.Context, groupID string) er
 		GroupId: groupID,
 	})
 	if err != nil {
-		return fmt.Errorf("delete custodian group failed: %w", err)
+		return &errs.Wrapped{Msg: "delete custodian group failed", Err: err}
 	}
 	return nil
 }
@@ -1910,7 +1941,7 @@ func (t *Transport) AddCustodianMember(ctx context.Context, req *transport.AddCu
 
 	resp, err := t.client.AddCustodianMember(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("add custodian member failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "add custodian member failed", Err: err}
 	}
 
 	member := resp.GetMember()
@@ -1934,7 +1965,7 @@ func (t *Transport) RemoveCustodianMember(ctx context.Context, req *transport.Re
 		UserId:  req.UserID,
 	})
 	if err != nil {
-		return fmt.Errorf("remove custodian member failed: %w", err)
+		return &errs.Wrapped{Msg: "remove custodian member failed", Err: err}
 	}
 	return nil
 }
@@ -1949,7 +1980,7 @@ func (t *Transport) DistributeShares(ctx context.Context, req *transport.Distrib
 		GroupId: req.GroupID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("distribute shares failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "distribute shares failed", Err: err}
 	}
 
 	return &transport.DistributeSharesResponse{
@@ -1977,7 +2008,7 @@ func (t *Transport) SubmitShare(ctx context.Context, req *transport.SubmitShareR
 
 	resp, err := t.client.SubmitShare(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("submit share failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "submit share failed", Err: err}
 	}
 
 	return &transport.SubmitShareResponse{
@@ -1993,7 +2024,7 @@ func (t *Transport) ListShares(ctx context.Context) (*transport.ListSharesRespon
 
 	resp, err := t.client.ListShares(ctx, &pb.ListSharesRequest{})
 	if err != nil {
-		return nil, fmt.Errorf("list shares failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "list shares failed", Err: err}
 	}
 
 	shares := make([]transport.ShareInfo, len(resp.GetShares()))
@@ -2025,7 +2056,7 @@ func (t *Transport) GetShareCollectionStatus(ctx context.Context, groupID string
 		GroupId: groupID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("get share collection status failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "get share collection status failed", Err: err}
 	}
 
 	return &transport.ShareCollectionStatus{
@@ -2052,7 +2083,7 @@ func (t *Transport) CreateTenant(ctx context.Context, req *transport.CreateTenan
 
 	resp, err := t.client.CreateTenant(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("create tenant failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "create tenant failed", Err: err}
 	}
 
 	return &transport.CreateTenantResponse{
@@ -2070,7 +2101,7 @@ func (t *Transport) GetTenant(ctx context.Context, tenantID string) (*transport.
 		TenantId: tenantID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("get tenant failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "get tenant failed", Err: err}
 	}
 
 	return &transport.GetTenantResponse{
@@ -2086,7 +2117,7 @@ func (t *Transport) ListTenants(ctx context.Context) (*transport.ListTenantsResp
 
 	resp, err := t.client.ListTenants(ctx, &pb.ListTenantsRequest{})
 	if err != nil {
-		return nil, fmt.Errorf("list tenants failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "list tenants failed", Err: err}
 	}
 
 	tenants := make([]transport.TenantInfo, len(resp.GetTenants()))
@@ -2109,7 +2140,7 @@ func (t *Transport) DeleteTenant(ctx context.Context, tenantID string) error {
 		TenantId: tenantID,
 	})
 	if err != nil {
-		return fmt.Errorf("delete tenant failed: %w", err)
+		return &errs.Wrapped{Msg: "delete tenant failed", Err: err}
 	}
 	return nil
 }
@@ -2126,7 +2157,7 @@ func (t *Transport) TenantBarrierInit(ctx context.Context, req *transport.Tenant
 		Threshold: int32(req.Threshold),
 	})
 	if err != nil {
-		return fmt.Errorf("tenant barrier init failed: %w", err)
+		return &errs.Wrapped{Msg: "tenant barrier init failed", Err: err}
 	}
 	return nil
 }
@@ -2150,9 +2181,59 @@ func (t *Transport) TenantBarrierUnseal(ctx context.Context, req *transport.Tena
 		ShareValues: shareValues,
 	})
 	if err != nil {
-		return fmt.Errorf("tenant barrier unseal failed: %w", err)
+		return &errs.Wrapped{Msg: "tenant barrier unseal failed", Err: err}
 	}
 	return nil
+}
+
+// TenantBarrierStatus reports the status of a per-tenant barrier.
+func (t *Transport) TenantBarrierStatus(ctx context.Context, tenantID string) (*transport.TenantBarrierStatusResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.TenantBarrierStatus(ctx, &pb.TenantBarrierStatusRequest{TenantId: tenantID})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "tenant barrier status failed", Err: err}
+	}
+	return &transport.TenantBarrierStatusResponse{
+		TenantID:        resp.GetTenantId(),
+		Sealed:          resp.GetSealed(),
+		Initialized:     resp.GetInitialized(),
+		Strategy:        resp.GetStrategy(),
+		HardwareBacked:  resp.GetHardwareBacked(),
+		ShamirThreshold: int(resp.GetShamirThreshold()),
+		ShamirTotal:     int(resp.GetShamirTotal()),
+	}, nil
+}
+
+// UpdateTenantEntitlements updates a tenant's feature entitlements.
+func (t *Transport) UpdateTenantEntitlements(ctx context.Context, req *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.UpdateTenantEntitlements(ctx, &pb.UpdateTenantEntitlementsRequest{
+		TenantId:     req.TenantID,
+		Entitlements: tenantEntitlementsToPB(req.Entitlements),
+	})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "update tenant entitlements failed", Err: err}
+	}
+	return &transport.UpdateTenantEntitlementsResponse{Tenant: pbTenantInfoToTransport(resp.GetTenant())}, nil
+}
+
+// UpdateTenantQuotas updates a tenant's resource quotas.
+func (t *Transport) UpdateTenantQuotas(ctx context.Context, req *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.UpdateTenantQuotas(ctx, &pb.UpdateTenantQuotasRequest{
+		TenantId: req.TenantID,
+		Quotas:   tenantQuotasToPB(req.Quotas),
+	})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "update tenant quotas failed", Err: err}
+	}
+	return &transport.UpdateTenantQuotasResponse{Tenant: pbTenantInfoToTransport(resp.GetTenant())}, nil
 }
 
 // ==================== Init Ceremony Operations ====================
@@ -2242,7 +2323,7 @@ func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserReq
 		TenantId:    req.TenantID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create user failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "create user failed", Err: err}
 	}
 	return &transport.GetUserResponse{User: protoToUserInfo(resp.GetUser())}, nil
 }
@@ -2254,7 +2335,7 @@ func (t *Transport) ListUsers(ctx context.Context, _ ...transport.ListOption) (*
 	}
 	resp, err := t.client.ListUsers(ctx, &pb.ListUsersRequest{})
 	if err != nil {
-		return nil, fmt.Errorf("list users failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "list users failed", Err: err}
 	}
 	users := make([]transport.UserInfo, len(resp.GetUsers()))
 	for i, u := range resp.GetUsers() {
@@ -2270,7 +2351,7 @@ func (t *Transport) GetUser(ctx context.Context, username string) (*transport.Ge
 	}
 	resp, err := t.client.GetUser(ctx, &pb.GetUserRequest{Username: username})
 	if err != nil {
-		return nil, fmt.Errorf("get user failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "get user failed", Err: err}
 	}
 	return &transport.GetUserResponse{User: protoToUserInfo(resp.GetUser())}, nil
 }
@@ -2281,7 +2362,7 @@ func (t *Transport) DeleteUser(ctx context.Context, username string) error {
 		return ErrNotConnected
 	}
 	if _, err := t.client.DeleteUser(ctx, &pb.DeleteUserRequest{Username: username}); err != nil {
-		return fmt.Errorf("delete user failed: %w", err)
+		return &errs.Wrapped{Msg: "delete user failed", Err: err}
 	}
 	return nil
 }
@@ -2292,7 +2373,7 @@ func (t *Transport) EnableUser(ctx context.Context, username string) error {
 		return ErrNotConnected
 	}
 	if _, err := t.client.EnableUser(ctx, &pb.EnableUserRequest{Username: username}); err != nil {
-		return fmt.Errorf("enable user failed: %w", err)
+		return &errs.Wrapped{Msg: "enable user failed", Err: err}
 	}
 	return nil
 }
@@ -2303,7 +2384,7 @@ func (t *Transport) DisableUser(ctx context.Context, username string) error {
 		return ErrNotConnected
 	}
 	if _, err := t.client.DisableUser(ctx, &pb.DisableUserRequest{Username: username}); err != nil {
-		return fmt.Errorf("disable user failed: %w", err)
+		return &errs.Wrapped{Msg: "disable user failed", Err: err}
 	}
 	return nil
 }
@@ -2318,7 +2399,7 @@ func (t *Transport) BindUserCert(ctx context.Context, username, thumbprint strin
 		Thumbprint:   thumbprint,
 		NotAfterUnix: notAfterUnix,
 	}); err != nil {
-		return fmt.Errorf("bind user cert failed: %w", err)
+		return &errs.Wrapped{Msg: "bind user cert failed", Err: err}
 	}
 	return nil
 }
@@ -2330,7 +2411,7 @@ func (t *Transport) ListUserCredentials(ctx context.Context, username string) (*
 	}
 	resp, err := t.client.ListUserCredentials(ctx, &pb.ListUserCredentialsRequest{Username: username})
 	if err != nil {
-		return nil, fmt.Errorf("list user credentials failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "list user credentials failed", Err: err}
 	}
 	creds := make([]transport.CredentialInfo, len(resp.GetCredentials()))
 	for i, c := range resp.GetCredentials() {
@@ -2360,7 +2441,7 @@ func (t *Transport) PasswordAdd(ctx context.Context, req *transport.PasswordAddR
 
 	resp, err := t.client.PasswordAdd(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("password add failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "password add failed", Err: err}
 	}
 
 	return &transport.PasswordAddResponse{
@@ -2383,11 +2464,11 @@ func (t *Transport) PasswordGet(ctx context.Context, req *transport.PasswordGetR
 
 	resp, err := t.client.PasswordGet(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("password get failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "password get failed", Err: err}
 	}
 
 	if resp.Entry == nil {
-		return nil, fmt.Errorf("no password entry returned")
+		return nil, &errs.Message{Msg: "no password entry returned"}
 	}
 
 	return convertPasswordEntryToTransport(resp.Entry), nil
@@ -2407,7 +2488,7 @@ func (t *Transport) PasswordList(ctx context.Context, req *transport.PasswordLis
 
 	resp, err := t.client.PasswordList(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("password list failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "password list failed", Err: err}
 	}
 
 	passwords := make([]transport.PasswordGetResponse, len(resp.Passwords))
@@ -2443,7 +2524,7 @@ func (t *Transport) PasswordUpdate(ctx context.Context, req *transport.PasswordU
 
 	_, err := t.client.PasswordUpdate(ctx, pbReq)
 	if err != nil {
-		return fmt.Errorf("password update failed: %w", err)
+		return &errs.Wrapped{Msg: "password update failed", Err: err}
 	}
 	return nil
 }
@@ -2460,7 +2541,7 @@ func (t *Transport) PasswordDelete(ctx context.Context, req *transport.PasswordD
 
 	_, err := t.client.PasswordDelete(ctx, pbReq)
 	if err != nil {
-		return fmt.Errorf("password delete failed: %w", err)
+		return &errs.Wrapped{Msg: "password delete failed", Err: err}
 	}
 	return nil
 }
@@ -2477,7 +2558,7 @@ func (t *Transport) PasswordStoreUnlock(ctx context.Context, req *transport.Pass
 
 	_, err := t.client.PasswordStoreUnlock(ctx, pbReq)
 	if err != nil {
-		return fmt.Errorf("password store unlock failed: %w", err)
+		return &errs.Wrapped{Msg: "password store unlock failed", Err: err}
 	}
 	return nil
 }
@@ -2490,7 +2571,7 @@ func (t *Transport) PasswordStoreLock(ctx context.Context) error {
 
 	_, err := t.client.PasswordStoreLock(ctx, &pb.PasswordStoreLockRequest{})
 	if err != nil {
-		return fmt.Errorf("password store lock failed: %w", err)
+		return &errs.Wrapped{Msg: "password store lock failed", Err: err}
 	}
 	return nil
 }
@@ -2503,7 +2584,7 @@ func (t *Transport) PasswordStoreStatus(ctx context.Context) (*transport.Passwor
 
 	resp, err := t.client.PasswordStoreStatus(ctx, &pb.PasswordStoreStatusRequest{})
 	if err != nil {
-		return nil, fmt.Errorf("password store status failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "password store status failed", Err: err}
 	}
 
 	return &transport.PasswordStoreStatusResponse{
@@ -2537,7 +2618,7 @@ func (t *Transport) PasswordGenerate(ctx context.Context, req *transport.Passwor
 
 	resp, err := t.client.PasswordGenerate(ctx, pbReq)
 	if err != nil {
-		return nil, fmt.Errorf("password generate failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "password generate failed", Err: err}
 	}
 
 	return &transport.PasswordGenerateResponse{
@@ -2789,12 +2870,16 @@ func pbTenantInfoToTransport(ti *pb.TenantInfo) transport.TenantInfo {
 	createdAt, _ := time.Parse(time.RFC3339, ti.GetCreatedAt())
 	updatedAt, _ := time.Parse(time.RFC3339, ti.GetUpdatedAt())
 
-	return transport.TenantInfo{
-		ID:        ti.GetId(),
-		Name:      ti.GetName(),
-		CreatedAt: createdAt,
-		UpdatedAt: updatedAt,
+	out := transport.TenantInfo{
+		ID:            ti.GetId(),
+		Name:          ti.GetName(),
+		IsolationType: transport.TenantIsolationType(ti.GetIsolationType()),
+		CreatedAt:     createdAt,
+		UpdatedAt:     updatedAt,
 	}
+	out.Quotas = pbQuotasToTransport(ti.GetQuotas())
+	out.Entitlements = pbEntitlementsToTransport(ti.GetEntitlements())
+	return out
 }
 
 // ConvertJSONToBytes converts json.RawMessage to bytes, handling both

@@ -83,7 +83,7 @@ func (s *CertificateService) ListCertificates(backend string) (result []RemoteCe
 		if r := recover(); r != nil {
 			s.log.Error("panic in ListCertificates", "recover", r)
 			result = nil
-			retErr = fmt.Errorf("certificate_service: panic in ListCertificates: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("certificate_service: panic in ListCertificates: %v", r)}
 		}
 	}()
 
@@ -118,7 +118,7 @@ func (s *CertificateService) ListAllCertificates() (result []RemoteCertificateIn
 		if r := recover(); r != nil {
 			s.log.Error("panic in ListAllCertificates", "recover", r)
 			result = nil
-			retErr = fmt.Errorf("certificate_service: panic in ListAllCertificates: %v", r)
+			retErr = &MessageError{Msg: fmt.Sprintf("certificate_service: panic in ListAllCertificates: %v", r)}
 		}
 	}()
 

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -17,7 +19,7 @@ import (
 // This is used to load external EK certificates onto the TPM for MakeCredential operations.
 func CertificateToTPMPublic(cert *x509.Certificate) (*tpm2.TPMTPublic, error) {
 	if cert == nil {
-		return nil, fmt.Errorf("certificate is nil")
+		return nil, &errs.Message{Msg: "certificate is nil"}
 	}
 
 	switch pub := cert.PublicKey.(type) {
@@ -26,7 +28,7 @@ func CertificateToTPMPublic(cert *x509.Certificate) (*tpm2.TPMTPublic, error) {
 	case *ecdsa.PublicKey:
 		return ecdsaPublicKeyToTPMPublic(pub)
 	default:
-		return nil, fmt.Errorf("unsupported public key type: %T", cert.PublicKey)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported public key type: %T", cert.PublicKey)}
 	}
 }
 
@@ -34,7 +36,7 @@ func CertificateToTPMPublic(cert *x509.Certificate) (*tpm2.TPMTPublic, error) {
 // Uses EK default attributes (restricted decryption with null scheme).
 func rsaPublicKeyToTPMPublic(pub *rsa.PublicKey) (*tpm2.TPMTPublic, error) {
 	if pub == nil {
-		return nil, fmt.Errorf("RSA public key is nil")
+		return nil, &errs.Message{Msg: "RSA public key is nil"}
 	}
 
 	keyBits := uint16(pub.N.BitLen())
@@ -82,7 +84,7 @@ func rsaPublicKeyToTPMPublic(pub *rsa.PublicKey) (*tpm2.TPMTPublic, error) {
 // Uses EK default attributes (restricted decryption with null scheme).
 func ecdsaPublicKeyToTPMPublic(pub *ecdsa.PublicKey) (*tpm2.TPMTPublic, error) {
 	if pub == nil {
-		return nil, fmt.Errorf("ECDSA public key is nil")
+		return nil, &errs.Message{Msg: "ECDSA public key is nil"}
 	}
 
 	var curveID tpm2.TPMECCCurve
@@ -94,7 +96,7 @@ func ecdsaPublicKeyToTPMPublic(pub *ecdsa.PublicKey) (*tpm2.TPMTPublic, error) {
 	case "P-521":
 		curveID = tpm2.TPMECCNistP521
 	default:
-		return nil, fmt.Errorf("unsupported ECC curve: %s", pub.Curve.Params().Name)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported ECC curve: %s", pub.Curve.Params().Name)}
 	}
 
 	eccParams := tpm2.TPMSECCParms{

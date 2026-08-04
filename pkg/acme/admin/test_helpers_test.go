@@ -3,9 +3,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-ca.
+// This file is part of go-xkms.
 //
-// go-trusted-ca is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -122,8 +122,11 @@ func createTestInfrastructure(t *testing.T) (ca.TCGCA, acmestorage.Factory, func
 	certStorageBackend, err := xkmssdk.NewFileStorageBackend(caDir + "/certs")
 	require.NoError(t, err)
 
-	// Create software backend for key operations
-	softwareBackend, err := xkmssdk.NewPKCS8Backend(&xkmssdk.PKCS8BackendConfig{
+	// Create software backend for key operations. The software backend wraps
+	// pkcs8 with AllowPlaintextKeys: true, which is the documented contract for
+	// non-CA / passwordless test material; the raw pkcs8 backend would reject
+	// the test CA's password-less root key.
+	softwareBackend, err := xkmssdk.NewSoftwareBackend(&xkmssdk.SoftwareBackendConfig{
 		KeyStorage: keyStorageBackend,
 	})
 	require.NoError(t, err)

@@ -17,6 +17,8 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // CertAdapter wraps a Backend to provide certificate-specific operations.
@@ -48,12 +50,12 @@ func (ca *CertAdapter) SaveCert(ctx context.Context, id string, cert *x509.Certi
 		return ErrInvalidID
 	}
 	if cert == nil {
-		return fmt.Errorf("certificate cannot be nil")
+		return &errs.Message{Msg: "certificate cannot be nil"}
 	}
 
 	certData := cert.Raw
 	if len(certData) == 0 {
-		return fmt.Errorf("certificate has no raw data")
+		return &errs.Message{Msg: "certificate has no raw data"}
 	}
 
 	key := CertPath(id)
@@ -74,7 +76,7 @@ func (ca *CertAdapter) GetCert(ctx context.Context, id string) (*x509.Certificat
 
 	cert, err := x509.ParseCertificate(certData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse certificate", Err: err}
 	}
 
 	return cert, nil
@@ -97,17 +99,17 @@ func (ca *CertAdapter) SaveCertChain(ctx context.Context, id string, chain []*x5
 		return ErrInvalidID
 	}
 	if len(chain) == 0 {
-		return fmt.Errorf("certificate chain cannot be empty")
+		return &errs.Message{Msg: "certificate chain cannot be empty"}
 	}
 
 	// Concatenate all certificate raw data
 	var chainData []byte
 	for i, cert := range chain {
 		if cert == nil {
-			return fmt.Errorf("certificate at index %d is nil", i)
+			return &errs.Message{Msg: fmt.Sprintf("certificate at index %d is nil", i)}
 		}
 		if len(cert.Raw) == 0 {
-			return fmt.Errorf("certificate at index %d has no raw data", i)
+			return &errs.Message{Msg: fmt.Sprintf("certificate at index %d has no raw data", i)}
 		}
 		chainData = append(chainData, cert.Raw...)
 	}
@@ -130,7 +132,7 @@ func (ca *CertAdapter) GetCertChain(ctx context.Context, id string) ([]*x509.Cer
 
 	certs, err := x509.ParseCertificates(chainData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse certificate chain: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to parse certificate chain", Err: err}
 	}
 
 	return certs, nil

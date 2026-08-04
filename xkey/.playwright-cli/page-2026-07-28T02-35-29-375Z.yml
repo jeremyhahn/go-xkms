@@ -1,0 +1,42 @@
+- generic [ref=e217]:
+  - generic [ref=e218]:
+    - generic [ref=e219]:
+      - img [ref=e262]
+      - generic [ref=e221]: Welcome
+    - generic [ref=e223]:
+      - img [ref=e284]
+      - generic [ref=e225]: Deployment
+    - generic [ref=e227]:
+      - generic [ref=e228]: "3"
+      - generic [ref=e229]: Mode
+    - generic [ref=e231]:
+      - generic [ref=e232]: "4"
+      - generic [ref=e233]: Security
+    - generic [ref=e235]:
+      - generic [ref=e236]: "5"
+      - generic [ref=e237]: Storage
+    - generic [ref=e239]:
+      - generic [ref=e240]: "6"
+      - generic [ref=e241]: Summary
+  - generic [ref=e286]:
+    - heading "Operating Mode" [level=2] [ref=e287]
+    - paragraph [ref=e288]: Choose how xKey should operate.
+    - generic [ref=e289]:
+      - generic [ref=e290] [cursor=pointer]:
+        - radio "Standalone All keys and credentials stored locally. No server needed." [checked] [ref=e291]
+        - generic [ref=e292]:
+          - generic [ref=e293]: Standalone
+          - generic [ref=e294]: All keys and credentials stored locally. No server needed.
+      - generic [ref=e295] [cursor=pointer]:
+        - radio "Server Connect to an xkmsd server for centralized key management." [ref=e296]
+        - generic [ref=e297]:
+          - generic [ref=e298]: Server
+          - generic [ref=e299]: Connect to an xkmsd server for centralized key management.
+      - generic [ref=e300] [cursor=pointer]:
+        - radio "Both Local storage with server connection for remote operations." [ref=e301]
+        - generic [ref=e302]:
+          - generic [ref=e303]: Both
+          - generic [ref=e304]: Local storage with server connection for remote operations.
+    - generic [ref=e305]:
+      - button "Back" [ref=e306] [cursor=pointer]
+      - button "Next" [ref=e307] [cursor=pointer]

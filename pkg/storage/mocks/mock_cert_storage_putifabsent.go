@@ -15,7 +15,8 @@ package mocks
 
 import (
 	"context"
-	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // PutIfAbsent stores value under key only when key is absent, performing the
@@ -27,7 +28,7 @@ func (m *MockCertStorage) PutIfAbsent(_ context.Context, key string, value []byt
 	defer m.mu.Unlock()
 
 	if m.closed {
-		return false, fmt.Errorf("storage is closed")
+		return false, &errs.Message{Msg: "storage is closed"}
 	}
 
 	if _, exists := m.data[key]; exists {

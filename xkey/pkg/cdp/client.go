@@ -135,7 +135,7 @@ func NewClient(host string, port int, logger *slog.Logger) (*Client, error) {
 	dialer := websocket.DefaultDialer
 	conn, _, err := dialer.Dial(wsURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCDPConnectionFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCDPConnectionFailed, Cause: err}
 	}
 
 	c := &Client{
@@ -166,8 +166,8 @@ func discoverWebSocketURL(host string, port int) (string, error) {
 	// No page targets found — create a blank tab.
 	wsURL, err = createBlankTarget(baseURL)
 	if err != nil {
-		return "", fmt.Errorf("%w: no page targets and failed to create one: %w",
-			ErrCDPWebSocketURLNotFound, err)
+		return "", &SentinelCauseError{Sentinel: ErrCDPWebSocketURLNotFound,
+			Cause: &WrappedError{Msg: "no page targets and failed to create one", Err: err}}
 	}
 
 	return wsURL, nil
@@ -177,18 +177,18 @@ func discoverWebSocketURL(host string, port int) (string, error) {
 func findPageTarget(baseURL string) (string, error) {
 	resp, err := http.Get(baseURL + "/json")
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrCDPVersionFetchFailed, err)
+		return "", &SentinelCauseError{Sentinel: ErrCDPVersionFetchFailed, Cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrCDPVersionFetchFailed, err)
+		return "", &SentinelCauseError{Sentinel: ErrCDPVersionFetchFailed, Cause: err}
 	}
 
 	var targets []pageTarget
 	if err := json.Unmarshal(body, &targets); err != nil {
-		return "", fmt.Errorf("%w: %w", ErrCDPResponseParseFailed, err)
+		return "", &SentinelCauseError{Sentinel: ErrCDPResponseParseFailed, Cause: err}
 	}
 
 	for i := range targets {
@@ -205,23 +205,23 @@ func findPageTarget(baseURL string) (string, error) {
 func createBlankTarget(baseURL string) (string, error) {
 	req, err := http.NewRequest(http.MethodPut, baseURL+"/json/new?about:blank", nil)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrCDPRequestFailed, err)
+		return "", &SentinelCauseError{Sentinel: ErrCDPRequestFailed, Cause: err}
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrCDPVersionFetchFailed, err)
+		return "", &SentinelCauseError{Sentinel: ErrCDPVersionFetchFailed, Cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrCDPVersionFetchFailed, err)
+		return "", &SentinelCauseError{Sentinel: ErrCDPVersionFetchFailed, Cause: err}
 	}
 
 	var target pageTarget
 	if err := json.Unmarshal(body, &target); err != nil {
-		return "", fmt.Errorf("%w: %w", ErrCDPResponseParseFailed, err)
+		return "", &SentinelCauseError{Sentinel: ErrCDPResponseParseFailed, Cause: err}
 	}
 
 	if target.WebSocketDebuggerURL == "" {
@@ -304,7 +304,7 @@ func (c *Client) send(ctx context.Context, method string, params interface{}) (j
 
 	data, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCDPRequestFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCDPRequestFailed, Cause: err}
 	}
 
 	ch := make(chan rawResponse, 1)
@@ -319,7 +319,7 @@ func (c *Client) send(ctx context.Context, method string, params interface{}) (j
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
-		return nil, fmt.Errorf("%w: %w", ErrCDPWriteFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCDPWriteFailed, Cause: err}
 	}
 
 	select {
@@ -327,11 +327,10 @@ func (c *Client) send(ctx context.Context, method string, params interface{}) (j
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
-		return nil, fmt.Errorf("%w: %w", ErrCDPRequestTimeout, ctx.Err())
+		return nil, &SentinelCauseError{Sentinel: ErrCDPRequestTimeout, Cause: ctx.Err()}
 	case resp := <-ch:
 		if resp.Error != nil {
-			return nil, fmt.Errorf("%w: code=%d message=%s",
-				ErrCDPProtocolError, resp.Error.Code, resp.Error.Message)
+			return nil, &DetailError{Err: ErrCDPProtocolError, Detail: fmt.Sprintf(": code=%d message=%s", resp.Error.Code, resp.Error.Message)}
 		}
 		return resp.Result, nil
 	case <-c.done:
@@ -346,7 +345,7 @@ func (c *Client) Enable(ctx context.Context) error {
 	}
 	_, err := c.send(ctx, "WebAuthn.enable", &enableParams{EnableUI: false})
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCDPEnableFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCDPEnableFailed, Cause: err}
 	}
 	return nil
 }
@@ -360,12 +359,12 @@ func (c *Client) AddVirtualAuthenticator(ctx context.Context, opts *Authenticato
 
 	result, err := c.send(ctx, "WebAuthn.addVirtualAuthenticator", &addParams{Options: opts})
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrCDPAuthenticatorFailed, err)
+		return "", &SentinelCauseError{Sentinel: ErrCDPAuthenticatorFailed, Cause: err}
 	}
 
 	var parsed addAuthenticatorResult
 	if err := json.Unmarshal(result, &parsed); err != nil {
-		return "", fmt.Errorf("%w: %w", ErrCDPResponseParseFailed, err)
+		return "", &SentinelCauseError{Sentinel: ErrCDPResponseParseFailed, Cause: err}
 	}
 
 	c.logger.Info("virtual authenticator created",
@@ -388,7 +387,7 @@ func (c *Client) AddCredential(ctx context.Context, authenticatorID string, cred
 		Credential:      cred,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCDPCredentialFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCDPCredentialFailed, Cause: err}
 	}
 
 	c.logger.Debug("credential added",
@@ -411,14 +410,14 @@ func (c *Client) GetCredentials(ctx context.Context, authenticatorID string) ([]
 		AuthenticatorID: authenticatorID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCDPGetCredentialsFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCDPGetCredentialsFailed, Cause: err}
 	}
 
 	var parsed struct {
 		Credentials []Credential `json:"credentials"`
 	}
 	if err := json.Unmarshal(result, &parsed); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCDPResponseParseFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCDPResponseParseFailed, Cause: err}
 	}
 
 	return parsed.Credentials, nil
@@ -434,7 +433,7 @@ func (c *Client) RemoveVirtualAuthenticator(ctx context.Context, authenticatorID
 		AuthenticatorID: authenticatorID,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCDPRemoveFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCDPRemoveFailed, Cause: err}
 	}
 
 	c.logger.Info("virtual authenticator removed",
@@ -447,7 +446,7 @@ func (c *Client) RemoveVirtualAuthenticator(ctx context.Context, authenticatorID
 func (c *Client) Disable(ctx context.Context) error {
 	_, err := c.send(ctx, "WebAuthn.disable", nil)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCDPDisableFailed, err)
+		return &SentinelCauseError{Sentinel: ErrCDPDisableFailed, Cause: err}
 	}
 	return nil
 }
@@ -476,7 +475,7 @@ func (c *Client) Close() error {
 	c.mu.Unlock()
 
 	if closeErr != nil {
-		return fmt.Errorf("%w: %w", ErrCDPConnectionFailed, closeErr)
+		return &SentinelCauseError{Sentinel: ErrCDPConnectionFailed, Cause: closeErr}
 	}
 	return nil
 }
@@ -497,7 +496,7 @@ func MarshalRequest(method string, params interface{}) ([]byte, error) {
 func UnmarshalResponse(data []byte) (*cdpResponse, error) {
 	var resp cdpResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCDPResponseParseFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrCDPResponseParseFailed, Cause: err}
 	}
 	return &resp, nil
 }

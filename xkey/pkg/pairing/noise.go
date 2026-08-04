@@ -15,7 +15,6 @@ package pairing
 
 import (
 	"errors"
-	"fmt"
 
 	flynnNoise "github.com/flynn/noise"
 
@@ -164,7 +163,7 @@ func EncodeStaticKey(key *flynnNoise.DHKey) string {
 func DecodeStaticKey(encoded string) (*flynnNoise.DHKey, error) {
 	key, err := noiseproto.DecodeStaticKey(encoded)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidNoiseMessage, err)
+		return nil, &SentinelCauseError{Sentinel: ErrInvalidNoiseMessage, Cause: err}
 	}
 	return key, nil
 }

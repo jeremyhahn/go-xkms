@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -46,7 +48,7 @@ func (k *tpm2SymmetricKey) KeySize() int {
 // The key material is sealed in the TPM and can only be used through
 // TPM operations (Unseal).
 func (k *tpm2SymmetricKey) Raw() ([]byte, error) {
-	return nil, fmt.Errorf("TPM2 symmetric keys do not expose raw key material: %w", kbackend.ErrNotSupported)
+	return nil, &errs.Wrapped{Msg: "TPM2 symmetric keys do not expose raw key material", Err: kbackend.ErrNotSupported}
 }
 
 // tpm2AESEncrypter implements SymmetricEncrypter for TPM-backed AES keys.
@@ -85,7 +87,7 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 	// TPM 2.0 spec only supports AES-128 and AES-256
 	keySize := attrs.SymmetricAlgorithm.KeySize()
 	if keySize != 128 && keySize != 256 {
-		return nil, fmt.Errorf("tpm2: unsupported AES key size %d, TPM 2.0 supports 128 or 256 bits", keySize)
+		return nil, &errs.Message{Msg: fmt.Sprintf("tpm2: unsupported AES key size %d, TPM 2.0 supports 128 or 256 bits", keySize)}
 	}
 
 	if tpm.transport == nil {
@@ -96,7 +98,7 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 	srkHandle := tpm2.TPMHandle(tpm.config.SSRK.Handle)
 	srkName, _, err := tpm.ReadHandle(srkHandle)
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to read SRK: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to read SRK", Err: err}
 	}
 
 	// Check if key already exists by trying to load the private blob
@@ -110,7 +112,7 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 	keyBytes := keySize / 8 // Convert bits to bytes
 	keyMaterial := make([]byte, keyBytes)
 	if _, err := tpm.random.Read(keyMaterial); err != nil {
-		return nil, fmt.Errorf("tpm2: failed to generate key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to generate key material", Err: err}
 	}
 
 	// Build keyed hash template for sealing the AES key
@@ -154,7 +156,7 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 	}.Execute(tpm.transport)
 
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to create symmetric key: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to create symmetric key", Err: err}
 	}
 
 	// Marshal the key blob for storage
@@ -163,14 +165,14 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 
 	// Save private blob
 	if err := tpm.backend.Save(attrs, privateBlob, ".priv", false); err != nil {
-		return nil, fmt.Errorf("tpm2: failed to save private blob: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to save private blob", Err: err}
 	}
 
 	// Save public blob
 	if err := tpm.backend.Save(attrs, publicBlob, ".pub", false); err != nil {
 		// Cleanup private blob on failure
 		_ = tpm.backend.Delete(attrs)
-		return nil, fmt.Errorf("tpm2: failed to save public blob: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to save public blob", Err: err}
 	}
 
 	// Initialize AEAD tracking options for this key
@@ -220,23 +222,23 @@ func (tpm *TPM2) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey
 	// Load public blob to verify key exists
 	publicBlob, err := tpm.backend.Get(attrs, ".pub")
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to load public blob: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to load public blob", Err: err}
 	}
 
 	// Unmarshal public structure to verify it's valid
 	tpmPublic, err := tpm2.Unmarshal[tpm2.TPM2BPublic](publicBlob)
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to unmarshal public blob: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to unmarshal public blob", Err: err}
 	}
 
 	pub, err := tpmPublic.Contents()
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to get public contents: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to get public contents", Err: err}
 	}
 
 	// Verify it's a keyed hash (sealed data object)
 	if pub.Type != tpm2.TPMAlgKeyedHash {
-		return nil, fmt.Errorf("tpm2: key is not a keyed hash (sealed) object, type: %v", pub.Type)
+		return nil, &errs.Message{Msg: fmt.Sprintf("tpm2: key is not a keyed hash (sealed) object, type: %v", pub.Type)}
 	}
 
 	// Create the symmetric key object (without exposing key material)
@@ -302,14 +304,14 @@ func (e *tpm2AESEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions)
 	// STEP 1: Check bytes limit before encryption
 	if e.tpm.tracker != nil {
 		if err := e.tpm.tracker.IncrementBytes(keyID, int64(len(plaintext))); err != nil {
-			return nil, fmt.Errorf("AEAD safety check failed: %w (consider rotating this key)", err)
+			return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (consider rotating this key)"}
 		}
 	}
 
 	// Load the TPM key to get key material
 	keyMaterial, err := e.loadKeyMaterial()
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to load key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to load key material", Err: err}
 	}
 	defer func() {
 		// Zero out key material after use
@@ -321,13 +323,13 @@ func (e *tpm2AESEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions)
 	// Create AES cipher
 	block, err := aes.NewCipher(keyMaterial)
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to create cipher", Err: err}
 	}
 
 	// Create GCM mode
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to create GCM", Err: err}
 	}
 
 	// STEP 2: Generate or use provided nonce
@@ -335,19 +337,19 @@ func (e *tpm2AESEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions)
 	if opts.Nonce != nil {
 		nonce = opts.Nonce
 		if len(nonce) != gcm.NonceSize() {
-			return nil, fmt.Errorf("invalid nonce size: %d (expected %d)", len(nonce), gcm.NonceSize())
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: %d (expected %d)", len(nonce), gcm.NonceSize())}
 		}
 	} else {
 		nonce = make([]byte, gcm.NonceSize())
 		if _, err := e.tpm.random.Read(nonce); err != nil {
-			return nil, fmt.Errorf("tpm2: failed to generate nonce: %w", err)
+			return nil, &errs.Wrapped{Msg: "tpm2: failed to generate nonce", Err: err}
 		}
 	}
 
 	// STEP 3: Check nonce uniqueness before encryption
 	if e.tpm.tracker != nil {
 		if err := e.tpm.tracker.CheckNonce(keyID, nonce); err != nil {
-			return nil, fmt.Errorf("AEAD safety check failed: %w (CRITICAL: rotate this key immediately)", err)
+			return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
 		}
 	}
 
@@ -398,7 +400,7 @@ func (e *tpm2AESEncrypter) Decrypt(data *types.EncryptedData, opts *types.Decryp
 	// Load the TPM key to get key material
 	keyMaterial, err := e.loadKeyMaterial()
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to load key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to load key material", Err: err}
 	}
 	defer func() {
 		// Zero out key material after use
@@ -410,13 +412,13 @@ func (e *tpm2AESEncrypter) Decrypt(data *types.EncryptedData, opts *types.Decryp
 	// Create AES cipher
 	block, err := aes.NewCipher(keyMaterial)
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to create cipher: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to create cipher", Err: err}
 	}
 
 	// Create GCM mode
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to create GCM: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to create GCM", Err: err}
 	}
 
 	// Reconstruct ciphertext with tag (GCM expects tag appended)
@@ -425,7 +427,7 @@ func (e *tpm2AESEncrypter) Decrypt(data *types.EncryptedData, opts *types.Decryp
 	// Decrypt and verify
 	plaintext, err := gcm.Open(nil, data.Nonce, fullCiphertext, opts.AdditionalData)
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: decryption failed (authentication error): %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: decryption failed (authentication error)", Err: err}
 	}
 
 	return plaintext, nil
@@ -443,29 +445,29 @@ func (e *tpm2AESEncrypter) loadKeyMaterial() ([]byte, error) {
 	srkHandle := tpm2.TPMHandle(e.tpm.config.SSRK.Handle)
 	srkName, _, err := e.tpm.ReadHandle(srkHandle)
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to read SRK: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to read SRK", Err: err}
 	}
 
 	// Load key blobs from storage
 	privateBlob, err := e.tpm.backend.Get(e.attrs, ".priv")
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to load private blob: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to load private blob", Err: err}
 	}
 
 	publicBlob, err := e.tpm.backend.Get(e.attrs, ".pub")
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to load public blob: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to load public blob", Err: err}
 	}
 
 	// Unmarshal blobs
 	tpmPrivate, err := tpm2.Unmarshal[tpm2.TPM2BPrivate](privateBlob)
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to unmarshal private blob: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to unmarshal private blob", Err: err}
 	}
 
 	tpmPublic, err := tpm2.Unmarshal[tpm2.TPM2BPublic](publicBlob)
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to unmarshal public blob: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to unmarshal public blob", Err: err}
 	}
 
 	// Load the sealed object into TPM
@@ -479,7 +481,7 @@ func (e *tpm2AESEncrypter) loadKeyMaterial() ([]byte, error) {
 	}.Execute(e.tpm.transport)
 
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to load sealed key: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to load sealed key", Err: err}
 	}
 	defer func() { _, _ = tpm2.FlushContext{FlushHandle: loadResp.ObjectHandle}.Execute(e.tpm.transport) }()
 
@@ -493,7 +495,7 @@ func (e *tpm2AESEncrypter) loadKeyMaterial() ([]byte, error) {
 	}.Execute(e.tpm.transport)
 
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to unseal key material: %w", err)
+		return nil, &errs.Wrapped{Msg: "tpm2: failed to unseal key material", Err: err}
 	}
 
 	// Return the unsealed key material
@@ -503,15 +505,15 @@ func (e *tpm2AESEncrypter) loadKeyMaterial() ([]byte, error) {
 // validateSymmetricKeyAttributes validates key attributes for symmetric operations.
 func validateSymmetricKeyAttributes(attrs *types.KeyAttributes) error {
 	if attrs == nil {
-		return fmt.Errorf("tpm2: attributes cannot be nil")
+		return &errs.Message{Msg: "tpm2: attributes cannot be nil"}
 	}
 
 	if attrs.CN == "" {
-		return fmt.Errorf("tpm2: CN (Common Name) is required")
+		return &errs.Message{Msg: "tpm2: CN (Common Name) is required"}
 	}
 
 	if !attrs.IsSymmetric() {
-		return fmt.Errorf("tpm2: key algorithm is not symmetric: %s", attrs.KeyAlgorithm)
+		return &errs.Message{Msg: fmt.Sprintf("tpm2: key algorithm is not symmetric: %s", attrs.KeyAlgorithm)}
 	}
 
 	return nil

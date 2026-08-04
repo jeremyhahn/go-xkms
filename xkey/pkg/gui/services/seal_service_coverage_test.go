@@ -132,10 +132,17 @@ func TestSealService_Coverage_DefaultBackend(t *testing.T) {
 	assert.Equal(t, string(xkms.BackendTypeTPM2), svc.DefaultBackend())
 }
 
+// TestSealService_Coverage_SetDefaultBackend_Custom verifies that an unknown
+// backend ID ("pkcs11" is a barrier strategy, not a seal-namespace backend)
+// triggers auto-select rather than pinning the seal service to an invalid
+// backend. With no client configured, auto-select is a no-op and the
+// constructor default ("tpm2") is preserved.
 func TestSealService_Coverage_SetDefaultBackend_Custom(t *testing.T) {
 	svc := NewSealService(t.TempDir())
+	// "pkcs11" is not in knownSealerMeta, so auto-select runs.
+	// With no client configured, auto-select is a no-op; default stays "tpm2".
 	svc.SetDefaultBackend("pkcs11")
-	assert.Equal(t, "pkcs11", svc.DefaultBackend())
+	assert.Equal(t, string(xkms.BackendTypeTPM2), svc.DefaultBackend())
 }
 
 func TestSealService_Coverage_AutoSelectDefault_NoAvailable(t *testing.T) {

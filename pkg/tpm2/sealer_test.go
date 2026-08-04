@@ -344,8 +344,11 @@ func TestDefaultSealKeyAttributes(t *testing.T) {
 	assert.NotNil(t, attrs.Parent)
 }
 
-// TestDefaultSealKeyAttributes_NoPlatformSRK verifies the error when
-// PlatformSRK is not configured.
+// TestDefaultSealKeyAttributes_NoPlatformSRK verifies the error when neither
+// PlatformSRK nor the SSRK fallback is configured. defaultSealKeyAttributes
+// falls back to the SSRK when the Platform SRK is absent (see its doc
+// comment), so the surfaced error is the SSRK's, wrapped by
+// defaultSealKeyAttributes, rather than the raw PlatformSRK error.
 func TestDefaultSealKeyAttributes_NoPlatformSRK(t *testing.T) {
 	tpm2Instance := &TPM2{
 		config: &Config{},
@@ -353,7 +356,7 @@ func TestDefaultSealKeyAttributes_NoPlatformSRK(t *testing.T) {
 
 	_, err := tpm2Instance.defaultSealKeyAttributes()
 	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidPlatformSRKConfiguration))
+	assert.True(t, errors.Is(err, ErrSSRKConfigNil))
 }
 
 // TestDefaultUnsealKeyAttributes verifies the default unseal key attributes
@@ -372,8 +375,11 @@ func TestDefaultUnsealKeyAttributes(t *testing.T) {
 	assert.NotNil(t, attrs.Parent)
 }
 
-// TestDefaultUnsealKeyAttributes_NoPlatformSRK verifies the error when
-// PlatformSRK is not configured.
+// TestDefaultUnsealKeyAttributes_NoPlatformSRK verifies the error when neither
+// PlatformSRK nor the SSRK fallback is configured. defaultUnsealKeyAttributes
+// falls back to the SSRK when the Platform SRK is absent (see its doc
+// comment), so the surfaced error is the SSRK's, wrapped by
+// defaultUnsealKeyAttributes, rather than the raw PlatformSRK error.
 func TestDefaultUnsealKeyAttributes_NoPlatformSRK(t *testing.T) {
 	tpm2Instance := &TPM2{
 		config: &Config{},
@@ -381,5 +387,5 @@ func TestDefaultUnsealKeyAttributes_NoPlatformSRK(t *testing.T) {
 
 	_, err := tpm2Instance.defaultUnsealKeyAttributes("some-key")
 	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidPlatformSRKConfiguration))
+	assert.True(t, errors.Is(err, ErrSSRKConfigNil))
 }

@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
@@ -49,7 +51,7 @@ func (k *awsKMSSymmetricKey) KeySize() int {
 // Raw returns an error because AWS KMS keys cannot expose raw key material.
 // The key material stays in AWS KMS and can only be used through KMS operations.
 func (k *awsKMSSymmetricKey) Raw() ([]byte, error) {
-	return nil, fmt.Errorf("AWS KMS symmetric keys do not expose raw key material: %w", backend.ErrNotSupported)
+	return nil, &errs.Wrapped{Msg: "AWS KMS symmetric keys do not expose raw key material", Err: backend.ErrNotSupported}
 }
 
 // awsKMSSymmetricEncrypter implements types.SymmetricEncrypter using AWS KMS.
@@ -70,21 +72,21 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	defer b.mu.Unlock()
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %w", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Joined{Lead: backend.ErrInvalidAttributes, Cause: err}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: attributes specify asymmetric algorithm: %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("attributes specify asymmetric algorithm: %s", attrs.KeyAlgorithm)}
 	}
 
 	// AWS KMS only supports 256-bit symmetric keys (AES-256-GCM)
 	if attrs.SymmetricAlgorithm.KeySize() != 256 {
-		return nil, fmt.Errorf("%w: AWS KMS only supports AES-256 symmetric keys, got: %d bits", backend.ErrNotSupported, attrs.SymmetricAlgorithm.KeySize())
+		return nil, &errs.Detail{Err: backend.ErrNotSupported, Detail: fmt.Sprintf("AWS KMS only supports AES-256 symmetric keys, got: %d bits", attrs.SymmetricAlgorithm.KeySize())}
 	}
 
 	// Check if key already exists
 	if _, exists := b.metadata[attrs.CN]; exists {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyAlreadyExists, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	// Create the KMS key with SYMMETRIC_DEFAULT spec (AES-256-GCM)
@@ -111,7 +113,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 
 	output, err := b.client.CreateKey(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create symmetric key in AWS KMS: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to create symmetric key in AWS KMS", Err: err}
 	}
 
 	keyID := aws.ToString(output.KeyMetadata.KeyId)
@@ -140,7 +142,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
 	b.metadata[attrs.CN] = metadataBytes
@@ -176,28 +178,28 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	defer b.mu.RUnlock()
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %w", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Joined{Lead: backend.ErrInvalidAttributes, Cause: err}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: attributes specify asymmetric algorithm: %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("attributes specify asymmetric algorithm: %s", attrs.KeyAlgorithm)}
 	}
 
 	// Check if metadata exists
 	metadataBytes, exists := b.metadata[attrs.CN]
 	if !exists {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	// Extract key ID from metadata
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to unmarshal metadata", Err: err}
 	}
 
 	keyID, ok := metadata["key_id"].(string)
 	if !ok {
-		return nil, fmt.Errorf("invalid metadata: missing key_id")
+		return nil, &errs.Message{Msg: "invalid metadata: missing key_id"}
 	}
 
 	// Verify key exists in KMS
@@ -205,7 +207,7 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 		KeyId: aws.String(keyID),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to describe key: %v", backend.ErrKeyNotFound, err)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to describe key: %v", err)}
 	}
 
 	return &awsKMSSymmetricKey{
@@ -222,11 +224,11 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 	}
 
 	if err := attrs.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %w", backend.ErrInvalidAttributes, err)
+		return nil, &errs.Joined{Lead: backend.ErrInvalidAttributes, Cause: err}
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, fmt.Errorf("%w: attributes specify asymmetric algorithm: %s", backend.ErrInvalidKeyType, attrs.KeyAlgorithm)
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("attributes specify asymmetric algorithm: %s", attrs.KeyAlgorithm)}
 	}
 
 	// Get the key ID
@@ -238,7 +240,7 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 	b.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
 	return &awsKMSSymmetricEncrypter{
@@ -271,7 +273,7 @@ func (e *awsKMSSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 	// STEP 1: Check bytes limit before encryption
 	if e.backend.tracker != nil {
 		if err := e.backend.tracker.IncrementBytes(keyID, int64(len(plaintext))); err != nil {
-			return nil, fmt.Errorf("AEAD safety check failed: %w (consider rotating this key)", err)
+			return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (consider rotating this key)"}
 		}
 	}
 
@@ -292,7 +294,7 @@ func (e *awsKMSSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 
 	output, err := e.backend.client.Encrypt(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("AWS KMS encryption failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "AWS KMS encryption failed", Err: err}
 	}
 
 	// AWS KMS returns an opaque ciphertext blob that includes everything
@@ -329,7 +331,7 @@ func (e *awsKMSSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 
 	output, err := e.backend.client.Decrypt(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("AWS KMS decryption failed (authentication or key error): %w", err)
+		return nil, &errs.Wrapped{Msg: "AWS KMS decryption failed (authentication or key error)", Err: err}
 	}
 
 	return output.Plaintext, nil

@@ -49,25 +49,70 @@ cleanup() {
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# 1. Start swtpm (software TPM 2.0 simulator)
+# 1. Start an ephemeral swtpm (software TPM 2.0) on a unix socket.
 # ---------------------------------------------------------------------------
-echo "[entrypoint] Starting swtpm on port ${SWTPM_PORT}..."
+# Mirrors go-trusted-platform's devcontainer start_swtpm: a fresh TPM state on
+# every container start (no persistence, nothing to clear) exposed as a
+# unix-socket "device". The xkey/xkms binaries open this socket exactly like a
+# real hardware TPM (config: device=<sock>, simulator=false). The in-process
+# google simulator (UseSimulator) is unit-tests-only and never linked here.
+SWTPM_SOCK="${SWTPM_STATE}/swtpm.sock"
+echo "[entrypoint] Starting ephemeral swtpm on ${SWTPM_SOCK}..."
+rm -rf "${SWTPM_STATE}"
 mkdir -p "${SWTPM_STATE}"
+# --create-ek-cert / --create-platform-cert provision the TPM with an EK
+# certificate (and platform cert) at the standard NV indices, exactly like a
+# real TPM ships from the manufacturer. xkms reads the RSA EK cert from
+# 0x01C00002 (DefaultTPMConfig.EK.CertHandle) during provisioning so the EK is
+# verifiable instead of "EK certificate not available".
+swtpm_setup --tpm2 --tpmstate "${SWTPM_STATE}" --overwrite --pcr-banks sha256 \
+    --create-ek-cert --create-platform-cert
 swtpm socket \
-    --tpmstate dir="${SWTPM_STATE}" \
     --tpm2 \
-    --server type=tcp,port="${SWTPM_PORT}" \
-    --ctrl type=tcp,port="${SWTPM_CTRL_PORT}" \
-    --flags not-need-init &
+    --tpmstate dir="${SWTPM_STATE}" \
+    --server type=unixio,path="${SWTPM_SOCK}" \
+    --ctrl type=unixio,path="${SWTPM_SOCK}.ctrl" \
+    --flags startup-clear,not-need-init \
+    --log level=1,file="${SWTPM_STATE}/swtpm.log" &
 SWTPM_PID=$!
 CLEANUP_PIDS+=("$SWTPM_PID")
-sleep 1
 
-if ! kill -0 "$SWTPM_PID" 2>/dev/null; then
+# Wait for the swtpm command socket to be ready before any client connects.
+for _ in $(seq 1 30); do
+    [ -S "${SWTPM_SOCK}" ] && break
+    sleep 0.2
+done
+if [ ! -S "${SWTPM_SOCK}" ] || ! kill -0 "$SWTPM_PID" 2>/dev/null; then
     echo "[entrypoint] ERROR: swtpm failed to start"
+    cat "${SWTPM_STATE}/swtpm.log" 2>/dev/null || true
     exit 1
 fi
-echo "[entrypoint] swtpm running (PID ${SWTPM_PID})"
+echo "[entrypoint] swtpm running (PID ${SWTPM_PID}, socket ${SWTPM_SOCK})"
+
+# ---------------------------------------------------------------------------
+# 1.5. Write xkey unified config pointing the TPM at the swtpm socket device.
+# ---------------------------------------------------------------------------
+# AutoInitialize reads ~/.config/xkey/xkey.yaml via config.Load(). Both the
+# global/platform TPM (top-level `tpm:`) and the tpm2 backend point at the
+# swtpm unix socket as their device with simulator=false, so xkms opens it via
+# linuxudstpm and provisions a fresh TPM. The FIDO2 service then registers a
+# real "tpm2" backend so Playwright tests A-1..A-5 can verify it.
+XKEY_CFG_DIR="${HOME}/.config/xkey"
+mkdir -p "${XKEY_CFG_DIR}"
+cat > "${XKEY_CFG_DIR}/xkey.yaml" <<XKEYCFG
+tpm:
+  device: ${SWTPM_SOCK}
+  simulator: false
+backends:
+  local:
+    - id: tpm2-swtpm
+      category: tpm2
+      name: "TPM 2.0 (swtpm)"
+      tpm2:
+        device: ${SWTPM_SOCK}
+        simulator: false
+XKEYCFG
+echo "[entrypoint] Wrote xkey config for swtpm at ${XKEY_CFG_DIR}/xkey.yaml"
 
 # ---------------------------------------------------------------------------
 # 2. Start Xvfb virtual display
@@ -126,43 +171,11 @@ export GOFLAGS='-buildvcs=false'
 # wails dev fails with: internal error: package "github.com/jeremyhahn/go-qrdb/sdk/go"
 # without types was imported from ".../xkey/pkg/pcr_policy". The siblings are
 # bind-mounted at /go-<name> by docker-compose.yml.
-cat > /tmp/go.work <<'WORKEOF'
-go 1.26.4
-
-toolchain go1.26.4
-
-use (
-	/workspace
-	/workspace/sdk/go
-	/workspace/xkey
-	/go-codec
-	/go-frost
-	/go-objstore
-	/go-qrdb
-	/go-qrdb/sdk/go
-	/go-quicraft
-	/go-truststrap
-)
-
-// Mirror the host go.work replace directives (translated to the container's
-// bind-mount paths) so `go mod download all` can resolve the in-house modules'
-// fake versions (v0.0.0 / alpha tags) to the local workspace copies. `use`
-// alone covers `go build`, but the module-graph download needs these.
-replace (
-	github.com/jeremyhahn/go-frost v0.0.0 => /go-frost
-	github.com/jeremyhahn/go-frost v0.1.4-alpha => /go-frost
-	github.com/jeremyhahn/go-frost v0.1.5-alpha => /go-frost
-	github.com/jeremyhahn/go-frost v0.1.6-alpha => /go-frost
-	github.com/jeremyhahn/go-objstore v0.0.0 => /go-objstore
-	github.com/jeremyhahn/go-objstore v0.1.4-alpha => /go-objstore
-	github.com/jeremyhahn/go-qrdb v0.0.0 => /go-qrdb
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0 => /go-qrdb/sdk/go
-	github.com/jeremyhahn/go-quicraft v0.0.0 => /go-quicraft
-	github.com/jeremyhahn/go-xkms v0.0.0 => /workspace
-	github.com/jeremyhahn/go-xkms v0.2.2-alpha => /workspace
-	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0 => /workspace/sdk/go
-)
-WORKEOF
+# Generate the container Go workspace via the single canonical generator
+# (scripts/gen-gowork.sh) so the replace set never drifts from the other
+# container contexts. Siblings are bind-mounted at /go-<name>; repo root is
+# /workspace.
+bash /workspace/scripts/gen-gowork.sh /workspace /tmp/go.work
 export GOWORK=/tmp/go.work
 
 # The upstream google/go-sev-guest v0.14.0 module was re-tagged, causing

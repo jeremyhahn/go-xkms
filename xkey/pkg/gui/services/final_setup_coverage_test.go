@@ -16,12 +16,12 @@ package services
 import (
 	"context"
 	"errors"
-	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -968,7 +968,7 @@ func TestFSC_ApplyUserOnboarding_GUIConfigSaveError(t *testing.T) {
 
 	svc.SetConfigFunc(func() *GUIConfigData { return &GUIConfigData{} })
 	svc.SetConfigSaveFunc(func(_ *GUIConfigData) error {
-		return fmt.Errorf("disk full")
+		return &MessageError{Msg: "disk full"}
 	})
 
 	var eventLog []*events.Event

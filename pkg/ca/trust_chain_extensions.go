@@ -27,6 +27,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // aiaHTTPClient downloads AIA-referenced issuer certificates. A dedicated
@@ -155,7 +157,7 @@ func (ca *CA) TrustedIntermediateCertPoolWithXSigner(cert *x509.Certificate, xsi
 // Thread-safe: Yes (pure function of its inputs)
 func (ca *CA) ParseBundle(bundle []byte) ([]*x509.Certificate, error) {
 	if len(bundle) == 0 {
-		return nil, fmt.Errorf("%w: empty bundle", ErrInvalidPEM)
+		return nil, &errs.Detail{Err: ErrInvalidPEM, Detail: "empty bundle"}
 	}
 
 	certs := make([]*x509.Certificate, 0)
@@ -168,7 +170,7 @@ func (ca *CA) ParseBundle(bundle []byte) ([]*x509.Certificate, error) {
 		if block.Type == "CERTIFICATE" {
 			cert, err := x509.ParseCertificate(block.Bytes)
 			if err != nil {
-				return nil, fmt.Errorf("%w: failed to parse certificate: %v", ErrInvalidCertificate, err)
+				return nil, &errs.Detail{Err: ErrInvalidCertificate, Detail: fmt.Sprintf("failed to parse certificate: %v", err)}
 			}
 			certs = append(certs, cert)
 		}
@@ -179,7 +181,7 @@ func (ca *CA) ParseBundle(bundle []byte) ([]*x509.Certificate, error) {
 	}
 
 	if len(certs) == 0 {
-		return nil, fmt.Errorf("%w: no certificates found", ErrInvalidPEM)
+		return nil, &errs.Detail{Err: ErrInvalidPEM, Detail: "no certificates found"}
 	}
 	return certs, nil
 }
@@ -198,7 +200,7 @@ func (ca *CA) RootCertificate(childCert *x509.Certificate) (*x509.Certificate, e
 
 	if childCert.Issuer.CommonName == childCert.Subject.CommonName {
 		if !childCert.IsCA {
-			return nil, fmt.Errorf("%w: self-signed non-CA certificate", ErrInvalidCertificateChain)
+			return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: "self-signed non-CA certificate"}
 		}
 		return childCert, nil
 	}
@@ -212,7 +214,7 @@ func (ca *CA) RootCertificate(childCert *x509.Certificate) (*x509.Certificate, e
 	current := childCert
 	for hop := 0; hop < 10; hop++ {
 		if visited[current.Subject.CommonName] {
-			return nil, fmt.Errorf("%w: circular chain detected", ErrInvalidCertificateChain)
+			return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: "circular chain detected"}
 		}
 		visited[current.Subject.CommonName] = true
 
@@ -233,20 +235,20 @@ func (ca *CA) RootCertificate(childCert *x509.Certificate) (*x509.Certificate, e
 			case rootCert != nil && rootCert.Subject.CommonName == issuerCN:
 				return rootCert, nil
 			default:
-				return nil, fmt.Errorf("%w: issuer %s not found", ErrRootNotFound, issuerCN)
+				return nil, &errs.Detail{Err: ErrRootNotFound, Detail: fmt.Sprintf("issuer %s not found", issuerCN)}
 			}
 		}
 
 		if issuerCert.Issuer.CommonName == issuerCert.Subject.CommonName {
 			if !issuerCert.IsCA {
-				return nil, fmt.Errorf("%w: self-signed non-CA certificate", ErrInvalidCertificateChain)
+				return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: "self-signed non-CA certificate"}
 			}
 			return issuerCert, nil
 		}
 
 		current = issuerCert
 	}
-	return nil, fmt.Errorf("%w: chain too long", ErrInvalidCertificateChain)
+	return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: "chain too long"}
 }
 
 // ImportIssuingCAs recursively downloads every certificate listed in the
@@ -269,26 +271,25 @@ func (ca *CA) ImportIssuingCAs(ctx context.Context, cert *x509.Certificate) erro
 		// #nosec G107 - URL is from X.509 certificate AIA extension (issuer-controlled)
 		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, issuerURL, nil)
 		if reqErr != nil {
-			return fmt.Errorf("%w: failed to build request %s: %v", ErrStorageError, issuerURL, reqErr)
+			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to build request %s: %v", issuerURL, reqErr)}
 		}
 		resp, err := aiaHTTPClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("%w: failed to download %s: %v", ErrStorageError, issuerURL, err)
+			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to download %s: %v", issuerURL, err)}
 		}
 
 		body, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			return fmt.Errorf("%w: failed to read %s: %v", ErrStorageError, issuerURL, readErr)
+			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to read %s: %v", issuerURL, readErr)}
 		}
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("%w: AIA download %s returned status %d",
-				ErrStorageError, issuerURL, resp.StatusCode)
+			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("AIA download %s returned status %d", issuerURL, resp.StatusCode)}
 		}
 
 		issuerCert, err := parseAIACertificate(body)
 		if err != nil {
-			return fmt.Errorf("%w: %s: %v", ErrInvalidCertificate, issuerURL, err)
+			return &errs.Detail{Err: ErrInvalidCertificate, Detail: fmt.Sprintf("%s: %v", issuerURL, err)}
 		}
 
 		// Skip if the certificate already exists in the store.
@@ -322,7 +323,7 @@ func parseAIACertificate(body []byte) (*x509.Certificate, error) {
 	}
 	block, _ := pem.Decode(body)
 	if block == nil {
-		return nil, fmt.Errorf("payload is neither DER nor PEM")
+		return nil, &errs.Message{Msg: "payload is neither DER nor PEM"}
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {

@@ -19,7 +19,6 @@ package xkey
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,12 +33,14 @@ import (
 func TestCLI_PolicyCreate_Success(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	stdout := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "create", "test-secure-boot",
 		"--pcrs", "0,1,2,3,7",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(stdout, "Created policy") {
@@ -58,11 +59,13 @@ func TestCLI_PolicyCreate_Success(t *testing.T) {
 func TestCLI_PolicyCreate_MissingPCRs(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	errOutput := RunXKeyExpectFailure(t, binary, "",
 		"policy", "create", "bad-policy",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(errOutput, "pcrs") {
@@ -75,12 +78,14 @@ func TestCLI_PolicyCreate_MissingPCRs(t *testing.T) {
 func TestCLI_PolicyCreate_InvalidBank(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	errOutput := RunXKeyExpectFailure(t, binary, "",
 		"policy", "create", "bad-bank-policy",
 		"--pcrs", "0,7",
 		"--bank", "md5",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(errOutput, "invalid bank") && !strings.Contains(errOutput, "bank") {
@@ -88,34 +93,25 @@ func TestCLI_PolicyCreate_InvalidBank(t *testing.T) {
 	}
 }
 
-// TestCLI_PolicyCreate_SHA384Bank verifies SHA-384 bank handling. When the
-// TPM allocates a SHA-384 PCR bank, policy creation must succeed; when the
-// bank is not allocated (common on hardware TPMs that only enable SHA-256),
-// the CLI must fail with a clear error identifying the missing bank.
+// TestCLI_PolicyCreate_SHA384Bank verifies SHA-384 bank handling. The shared
+// swtpm instance is provisioned with both the sha256 and sha384 PCR banks
+// (see startAndProvisionSwtpm in swtpm_test_helpers.go), so policy creation
+// against the sha384 bank must always succeed.
 func TestCLI_PolicyCreate_SHA384Bank(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
-	args := []string{
+	stdout := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "create", "sha384-policy",
 		"--pcrs", "0,7",
 		"--bank", "sha384",
-		"--store", storePath,
-	}
+		"--tpm-device", device,
+		"--store", storePath)
 
-	// The kernel exposes one sysfs directory per allocated PCR bank.
-	if _, err := os.Stat("/sys/class/tpm/tpm0/pcr-sha384"); err == nil {
-		stdout := RunXKeyExpectSuccess(t, binary, "", args...)
-		if !strings.Contains(stdout, "Created policy") {
-			t.Errorf("Expected 'Created policy' in output, got: %s", stdout)
-		}
-		return
-	}
-
-	errOutput := RunXKeyExpectFailure(t, binary, "", args...)
-	if !strings.Contains(errOutput, "sha384") {
-		t.Errorf("Expected error identifying the sha384 bank, got: %s", errOutput)
+	if !strings.Contains(stdout, "Created policy") {
+		t.Errorf("Expected 'Created policy' in output, got: %s", stdout)
 	}
 }
 
@@ -128,10 +124,12 @@ func TestCLI_PolicyCreate_SHA384Bank(t *testing.T) {
 func TestCLI_PolicyList_Empty(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	stdout := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "list",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(stdout, "No policies found") {
@@ -144,6 +142,7 @@ func TestCLI_PolicyList_Empty(t *testing.T) {
 func TestCLI_PolicyList_ShowsCreatedPolicy(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create a policy first.
@@ -151,11 +150,13 @@ func TestCLI_PolicyList_ShowsCreatedPolicy(t *testing.T) {
 		"policy", "create", "list-test-policy",
 		"--pcrs", "0,2,7",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	// List and verify.
 	stdout := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "list",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(stdout, "list-test-policy") {
@@ -171,6 +172,7 @@ func TestCLI_PolicyList_ShowsCreatedPolicy(t *testing.T) {
 func TestCLI_PolicyList_MultiplePolicies(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create two policies.
@@ -178,17 +180,20 @@ func TestCLI_PolicyList_MultiplePolicies(t *testing.T) {
 		"policy", "create", "policy-alpha",
 		"--pcrs", "0,1",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	RunXKeyExpectSuccess(t, binary, "",
 		"policy", "create", "policy-beta",
 		"--pcrs", "2,3,7",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	// List and verify both appear.
 	stdout := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "list",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(stdout, "policy-alpha") {
@@ -208,16 +213,19 @@ func TestCLI_PolicyList_MultiplePolicies(t *testing.T) {
 func TestCLI_PolicyGet_Success(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	RunXKeyExpectSuccess(t, binary, "",
 		"policy", "create", "get-test-policy",
 		"--pcrs", "0,7",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	stdout := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "get", "get-test-policy",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(stdout, "get-test-policy") {
@@ -236,6 +244,7 @@ func TestCLI_PolicyGet_Success(t *testing.T) {
 func TestCLI_PolicyGet_NotFound(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create the store first with a dummy policy so the store exists.
@@ -243,10 +252,12 @@ func TestCLI_PolicyGet_NotFound(t *testing.T) {
 		"policy", "create", "dummy",
 		"--pcrs", "0",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	errOutput := RunXKeyExpectFailure(t, binary, "",
 		"policy", "get", "nonexistent-policy",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(errOutput, "not found") {
@@ -263,6 +274,7 @@ func TestCLI_PolicyGet_NotFound(t *testing.T) {
 func TestCLI_PolicyDelete_Success(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create a policy.
@@ -270,11 +282,13 @@ func TestCLI_PolicyDelete_Success(t *testing.T) {
 		"policy", "create", "delete-me",
 		"--pcrs", "0,1,2,3,7",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	// Delete it.
 	stdout := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "delete", "delete-me",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(stdout, "Deleted policy") {
@@ -284,6 +298,7 @@ func TestCLI_PolicyDelete_Success(t *testing.T) {
 	// Verify it is gone from the list.
 	listOut := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "list",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if strings.Contains(listOut, "delete-me") {
@@ -296,6 +311,7 @@ func TestCLI_PolicyDelete_Success(t *testing.T) {
 func TestCLI_PolicyDelete_NotFound(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create a dummy so the store directory exists.
@@ -303,10 +319,12 @@ func TestCLI_PolicyDelete_NotFound(t *testing.T) {
 		"policy", "create", "keeper",
 		"--pcrs", "0",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	errOutput := RunXKeyExpectFailure(t, binary, "",
 		"policy", "delete", "ghost-policy",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(errOutput, "not found") {
@@ -323,6 +341,7 @@ func TestCLI_PolicyDelete_NotFound(t *testing.T) {
 func TestCLI_PolicyCreateListDelete_Lifecycle(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Step 1: Create.
@@ -330,6 +349,7 @@ func TestCLI_PolicyCreateListDelete_Lifecycle(t *testing.T) {
 		"policy", "create", "lifecycle-policy",
 		"--pcrs", "0,1,2,3,7",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(createOut, "Created policy") {
@@ -339,6 +359,7 @@ func TestCLI_PolicyCreateListDelete_Lifecycle(t *testing.T) {
 	// Step 2: List and verify presence.
 	listOut := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "list",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(listOut, "lifecycle-policy") {
@@ -348,6 +369,7 @@ func TestCLI_PolicyCreateListDelete_Lifecycle(t *testing.T) {
 	// Step 3: Delete.
 	deleteOut := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "delete", "lifecycle-policy",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(deleteOut, "Deleted policy") {
@@ -357,6 +379,7 @@ func TestCLI_PolicyCreateListDelete_Lifecycle(t *testing.T) {
 	// Step 4: Verify empty list.
 	finalList := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "list",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if strings.Contains(finalList, "lifecycle-policy") {
@@ -373,16 +396,19 @@ func TestCLI_PolicyCreateListDelete_Lifecycle(t *testing.T) {
 func TestCLI_PolicyExport_Success(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	RunXKeyExpectSuccess(t, binary, "",
 		"policy", "create", "export-test",
 		"--pcrs", "0,7",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	stdout := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "export", "export-test",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	var exported struct {
@@ -414,6 +440,7 @@ func TestCLI_PolicyExport_Success(t *testing.T) {
 func TestCLI_PolicyExport_NotFound(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create a dummy so store exists.
@@ -421,10 +448,12 @@ func TestCLI_PolicyExport_NotFound(t *testing.T) {
 		"policy", "create", "exists",
 		"--pcrs", "0",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	errOutput := RunXKeyExpectFailure(t, binary, "",
 		"policy", "export", "no-such-policy",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(errOutput, "not found") {
@@ -441,6 +470,7 @@ func TestCLI_PolicyExport_NotFound(t *testing.T) {
 func TestCLI_PolicySetAutoUnseal_Success(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create a policy.
@@ -448,11 +478,13 @@ func TestCLI_PolicySetAutoUnseal_Success(t *testing.T) {
 		"policy", "create", "auto-test",
 		"--pcrs", "0,1,2,3",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	// Set auto-unseal.
 	stdout := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "set-auto-unseal", "auto-test",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(stdout, "Auto-unseal policy set") {
@@ -462,6 +494,7 @@ func TestCLI_PolicySetAutoUnseal_Success(t *testing.T) {
 	// Verify it shows in the list.
 	listOut := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "list",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(listOut, "[auto-unseal]") {
@@ -474,6 +507,7 @@ func TestCLI_PolicySetAutoUnseal_Success(t *testing.T) {
 func TestCLI_PolicySetAutoUnseal_NotFound(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create a dummy so store exists.
@@ -481,10 +515,12 @@ func TestCLI_PolicySetAutoUnseal_NotFound(t *testing.T) {
 		"policy", "create", "placeholder",
 		"--pcrs", "0",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	errOutput := RunXKeyExpectFailure(t, binary, "",
 		"policy", "set-auto-unseal", "nonexistent",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(errOutput, "not found") {
@@ -497,6 +533,7 @@ func TestCLI_PolicySetAutoUnseal_NotFound(t *testing.T) {
 func TestCLI_PolicyClearAutoUnseal_Success(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create and set auto-unseal.
@@ -504,15 +541,18 @@ func TestCLI_PolicyClearAutoUnseal_Success(t *testing.T) {
 		"policy", "create", "clear-test",
 		"--pcrs", "0,7",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	RunXKeyExpectSuccess(t, binary, "",
 		"policy", "set-auto-unseal", "clear-test",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	// Clear auto-unseal.
 	stdout := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "clear-auto-unseal",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(stdout, "Auto-unseal policy cleared") {
@@ -522,6 +562,7 @@ func TestCLI_PolicyClearAutoUnseal_Success(t *testing.T) {
 	// Verify auto-unseal tag is gone from the list.
 	listOut := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "list",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if strings.Contains(listOut, "[auto-unseal]") {
@@ -534,6 +575,7 @@ func TestCLI_PolicyClearAutoUnseal_Success(t *testing.T) {
 func TestCLI_PolicyDeleteAutoUnseal_Blocked(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create and set auto-unseal.
@@ -541,15 +583,18 @@ func TestCLI_PolicyDeleteAutoUnseal_Blocked(t *testing.T) {
 		"policy", "create", "protected-policy",
 		"--pcrs", "0,1",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	RunXKeyExpectSuccess(t, binary, "",
 		"policy", "set-auto-unseal", "protected-policy",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	// Attempt to delete should fail.
 	errOutput := RunXKeyExpectFailure(t, binary, "",
 		"policy", "delete", "protected-policy",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(errOutput, "auto-unseal") && !strings.Contains(errOutput, "clear") {
@@ -566,6 +611,7 @@ func TestCLI_PolicyDeleteAutoUnseal_Blocked(t *testing.T) {
 func TestCLI_PolicyVerify_MatchesCurrent(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create a policy with current PCR values.
@@ -573,11 +619,13 @@ func TestCLI_PolicyVerify_MatchesCurrent(t *testing.T) {
 		"policy", "create", "verify-match",
 		"--pcrs", "0,1,2,3",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	// Verify should pass since PCR values have not changed.
 	stdout := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "verify", "verify-match",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(stdout, "VALID") {
@@ -590,6 +638,7 @@ func TestCLI_PolicyVerify_MatchesCurrent(t *testing.T) {
 func TestCLI_PolicyVerify_NotFound(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create a dummy so store exists.
@@ -597,10 +646,12 @@ func TestCLI_PolicyVerify_NotFound(t *testing.T) {
 		"policy", "create", "dummy",
 		"--pcrs", "0",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	errOutput := RunXKeyExpectFailure(t, binary, "",
 		"policy", "verify", "ghost",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(errOutput, "not found") {
@@ -617,16 +668,19 @@ func TestCLI_PolicyVerify_NotFound(t *testing.T) {
 func TestCLI_PolicyRefresh_Success(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	RunXKeyExpectSuccess(t, binary, "",
 		"policy", "create", "refresh-test",
 		"--pcrs", "0,7",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	stdout := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "refresh", "refresh-test",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(stdout, "Refreshed policy") {
@@ -639,6 +693,7 @@ func TestCLI_PolicyRefresh_Success(t *testing.T) {
 func TestCLI_PolicyRefresh_NotFound(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create a dummy so store exists.
@@ -646,10 +701,12 @@ func TestCLI_PolicyRefresh_NotFound(t *testing.T) {
 		"policy", "create", "dummy",
 		"--pcrs", "0",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	errOutput := RunXKeyExpectFailure(t, binary, "",
 		"policy", "refresh", "missing-policy",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(errOutput, "not found") {
@@ -668,12 +725,13 @@ func TestCLI_PolicyRefresh_NotFound(t *testing.T) {
 func TestCLI_PolicyBarrierAutoUnseal_Lifecycle(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 	password := "pcr-auto-unseal-test-42!"
 
 	// Step 1: Initialize barrier with TPM2 strategy.
 	initOut := RunXKeyExpectSuccess(t, binary, password+"\n"+password+"\n",
-		"barrier", "init", "--strategy", "tpm2", "--data-dir", dataDir)
+		"barrier", "init", "--strategy", "tpm2", "--tpm-device", device, "--data-dir", dataDir)
 
 	if !strings.Contains(initOut, "Barrier initialized successfully") {
 		t.Fatalf("Barrier init failed, output: %s", initOut)
@@ -707,6 +765,7 @@ func TestCLI_PolicyBarrierAutoUnseal_Lifecycle(t *testing.T) {
 		"policy", "create", "auto-unseal-policy",
 		"--pcrs", "0,1,2,3",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(createOut, "Created policy") {
@@ -716,6 +775,7 @@ func TestCLI_PolicyBarrierAutoUnseal_Lifecycle(t *testing.T) {
 	// Step 4: Designate the policy for auto-unseal.
 	autoOut := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "set-auto-unseal", "auto-unseal-policy",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(autoOut, "Auto-unseal policy set") {
@@ -727,6 +787,7 @@ func TestCLI_PolicyBarrierAutoUnseal_Lifecycle(t *testing.T) {
 	// should match the current PCR values.
 	verifyOut := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "verify", "auto-unseal-policy",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(verifyOut, "VALID") {
@@ -736,6 +797,7 @@ func TestCLI_PolicyBarrierAutoUnseal_Lifecycle(t *testing.T) {
 	// Step 6: Verify auto-unseal tag appears in list.
 	listOut := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "list",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(listOut, "[auto-unseal]") {
@@ -744,7 +806,7 @@ func TestCLI_PolicyBarrierAutoUnseal_Lifecycle(t *testing.T) {
 
 	// Step 7: Unseal the barrier with password to confirm it still works.
 	unsealOut := RunXKeyExpectSuccess(t, binary, password+"\n",
-		"barrier", "unseal", "--data-dir", dataDir)
+		"barrier", "unseal", "--tpm-device", device, "--data-dir", dataDir)
 
 	if !strings.Contains(unsealOut, "unsealed") {
 		t.Errorf("Barrier unseal failed, output: %s", unsealOut)
@@ -752,7 +814,7 @@ func TestCLI_PolicyBarrierAutoUnseal_Lifecycle(t *testing.T) {
 
 	// Step 8: Seal the barrier again.
 	sealOut := RunXKeyExpectSuccess(t, binary, "",
-		"barrier", "seal", "--data-dir", dataDir)
+		"barrier", "seal", "--tpm-device", device, "--data-dir", dataDir)
 
 	if !strings.Contains(sealOut, "sealed") {
 		t.Errorf("Barrier seal failed, output: %s", sealOut)
@@ -768,6 +830,7 @@ func TestCLI_PolicyBarrierAutoUnseal_Lifecycle(t *testing.T) {
 func TestCLI_PolicyList_Pagination(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create three policies.
@@ -776,6 +839,7 @@ func TestCLI_PolicyList_Pagination(t *testing.T) {
 			"policy", "create", name,
 			"--pcrs", "0",
 			"--bank", "sha256",
+			"--tpm-device", device,
 			"--store", storePath)
 	}
 
@@ -784,6 +848,7 @@ func TestCLI_PolicyList_Pagination(t *testing.T) {
 		"policy", "list",
 		"--page", "1",
 		"--page-size", "2",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	if !strings.Contains(stdout, "page") || !strings.Contains(stdout, "3 total") {
@@ -805,6 +870,7 @@ func TestCLI_PolicyList_Pagination(t *testing.T) {
 func TestCLI_PolicySetAutoUnseal_Replaces(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
+	device := swtpmDevicePath(t)
 	storePath := filepath.Join(dataDir, "policies")
 
 	// Create two policies.
@@ -812,27 +878,32 @@ func TestCLI_PolicySetAutoUnseal_Replaces(t *testing.T) {
 		"policy", "create", "first-auto",
 		"--pcrs", "0",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	RunXKeyExpectSuccess(t, binary, "",
 		"policy", "create", "second-auto",
 		"--pcrs", "0,7",
 		"--bank", "sha256",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	// Set first as auto-unseal.
 	RunXKeyExpectSuccess(t, binary, "",
 		"policy", "set-auto-unseal", "first-auto",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	// Replace with second.
 	RunXKeyExpectSuccess(t, binary, "",
 		"policy", "set-auto-unseal", "second-auto",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	// Verify the exported second policy shows auto_unseal=true.
 	exportOut := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "export", "second-auto",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	var exported struct {
@@ -848,6 +919,7 @@ func TestCLI_PolicySetAutoUnseal_Replaces(t *testing.T) {
 	// Verify first-auto no longer has auto-unseal.
 	firstExport := RunXKeyExpectSuccess(t, binary, "",
 		"policy", "export", "first-auto",
+		"--tpm-device", device,
 		"--store", storePath)
 
 	var firstEx struct {

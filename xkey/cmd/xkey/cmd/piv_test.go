@@ -24,13 +24,14 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/spf13/viper"
 	"math/big"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/spf13/viper"
 )
 
 // TestPIVConfig_Validate tests all validation paths for PIVConfig.

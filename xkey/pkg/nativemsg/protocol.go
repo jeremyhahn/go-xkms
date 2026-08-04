@@ -66,26 +66,25 @@ const (
 func ReadMessage(r io.Reader) (*NativeMessage, error) {
 	var lengthBuf [headerSize]byte
 	if _, err := io.ReadFull(r, lengthBuf[:]); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrReadFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrReadFailed, Cause: err}
 	}
 
 	length := binary.LittleEndian.Uint32(lengthBuf[:])
 	if length == 0 {
-		return nil, fmt.Errorf("%w: zero-length message", ErrReadFailed)
+		return nil, &DetailError{Err: ErrReadFailed, Detail: ": zero-length message"}
 	}
 	if length > MaxMessageSize {
-		return nil, fmt.Errorf("%w: %d bytes exceeds %d byte limit",
-			ErrMessageTooLarge, length, MaxMessageSize)
+		return nil, &DetailError{Err: ErrMessageTooLarge, Detail: fmt.Sprintf(": %d bytes exceeds %d byte limit", length, MaxMessageSize)}
 	}
 
 	payload := make([]byte, length)
 	if _, err := io.ReadFull(r, payload); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrReadFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrReadFailed, Cause: err}
 	}
 
 	var msg NativeMessage
 	if err := json.Unmarshal(payload, &msg); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrReadFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrReadFailed, Cause: err}
 	}
 
 	return &msg, nil
@@ -95,22 +94,21 @@ func ReadMessage(r io.Reader) (*NativeMessage, error) {
 func WriteMessage(w io.Writer, msg *NativeMessage) error {
 	payload, err := json.Marshal(msg)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrWriteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrWriteFailed, Cause: err}
 	}
 
 	if len(payload) > MaxMessageSize {
-		return fmt.Errorf("%w: %d bytes exceeds %d byte limit",
-			ErrMessageTooLarge, len(payload), MaxMessageSize)
+		return &DetailError{Err: ErrMessageTooLarge, Detail: fmt.Sprintf(": %d bytes exceeds %d byte limit", len(payload), MaxMessageSize)}
 	}
 
 	var lengthBuf [headerSize]byte
 	binary.LittleEndian.PutUint32(lengthBuf[:], uint32(len(payload)))
 
 	if _, err := w.Write(lengthBuf[:]); err != nil {
-		return fmt.Errorf("%w: %v", ErrWriteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrWriteFailed, Cause: err}
 	}
 	if _, err := w.Write(payload); err != nil {
-		return fmt.Errorf("%w: %v", ErrWriteFailed, err)
+		return &SentinelCauseError{Sentinel: ErrWriteFailed, Cause: err}
 	}
 
 	return nil

@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
@@ -112,7 +114,7 @@ func (s *SealedPlatformStore) Put(ctx context.Context, name string, secret []byt
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.backend.Put(ctx, platformStorePrefix+name, secret); err != nil {
-		return fmt.Errorf("seal: put %q: %w", name, err)
+		return &errs.Wrapped{Msg: fmt.Sprintf("seal: put %q", name), Err: err}
 	}
 	s.logger.DebugContext(ctx, "secret stored", "name", name)
 	return nil
@@ -132,7 +134,7 @@ func (s *SealedPlatformStore) Get(ctx context.Context, name string) ([]byte, err
 		if errors.Is(err, storage.ErrNotFound) {
 			return nil, ErrSecretNotFound
 		}
-		return nil, fmt.Errorf("seal: get %q: %w", name, err)
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("seal: get %q", name), Err: err}
 	}
 	s.logger.DebugContext(ctx, "secret retrieved", "name", name)
 	return plaintext, nil
@@ -149,7 +151,7 @@ func (s *SealedPlatformStore) Delete(ctx context.Context, name string) error {
 		if errors.Is(err, storage.ErrNotFound) {
 			return ErrSecretNotFound
 		}
-		return fmt.Errorf("seal: delete %q: %w", name, err)
+		return &errs.Wrapped{Msg: fmt.Sprintf("seal: delete %q", name), Err: err}
 	}
 	s.logger.DebugContext(ctx, "secret deleted", "name", name)
 	return nil
@@ -164,7 +166,7 @@ func (s *SealedPlatformStore) Exists(ctx context.Context, name string) (bool, er
 	defer s.mu.RUnlock()
 	exists, err := s.backend.Exists(ctx, platformStorePrefix+name)
 	if err != nil {
-		return false, fmt.Errorf("seal: exists %q: %w", name, err)
+		return false, &errs.Wrapped{Msg: fmt.Sprintf("seal: exists %q", name), Err: err}
 	}
 	return exists, nil
 }
@@ -176,7 +178,7 @@ func (s *SealedPlatformStore) List(ctx context.Context) ([]string, error) {
 	defer s.mu.RUnlock()
 	keys, err := s.backend.List(ctx, platformStorePrefix)
 	if err != nil {
-		return nil, fmt.Errorf("seal: list: %w", err)
+		return nil, &errs.Wrapped{Msg: "seal: list", Err: err}
 	}
 	names := make([]string, 0, len(keys))
 	for _, key := range keys {
@@ -190,20 +192,20 @@ func (s *SealedPlatformStore) List(ctx context.Context) ([]string, error) {
 // This is used to refresh PCR-bound seals after system state changes.
 func (s *SealedPlatformStore) Reseal(ctx context.Context, name string) error {
 	if err := validateSecretName(name); err != nil {
-		return fmt.Errorf("%w: %w", ErrResealFailed, err)
+		return &errs.Joined{Lead: ErrResealFailed, Cause: err}
 	}
 
 	plaintext, err := s.Get(ctx, name)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrResealFailed, err)
+		return &errs.Joined{Lead: ErrResealFailed, Cause: err}
 	}
 
 	if err := s.Delete(ctx, name); err != nil {
-		return fmt.Errorf("%w: %w", ErrResealFailed, err)
+		return &errs.Joined{Lead: ErrResealFailed, Cause: err}
 	}
 
 	if err := s.Put(ctx, name, plaintext); err != nil {
-		return fmt.Errorf("%w: %w", ErrResealFailed, err)
+		return &errs.Joined{Lead: ErrResealFailed, Cause: err}
 	}
 
 	s.logger.InfoContext(ctx, "secret resealed", "name", name)

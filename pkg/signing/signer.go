@@ -21,6 +21,8 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // Signer wraps a crypto.Signer and provides enhanced signing capabilities
@@ -74,7 +76,7 @@ func (s *Signer) signWithOpts(rand io.Reader, digest []byte, opts *SignerOpts) (
 	// Get the actual digest (may be computed from BlobData)
 	actualDigest, err := opts.GetDigest(digest)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get digest: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get digest", Err: err}
 	}
 
 	// Determine signing options based on key type
@@ -87,7 +89,7 @@ func (s *Signer) signWithOpts(rand io.Reader, digest []byte, opts *SignerOpts) (
 	case ed25519.PublicKey:
 		return s.signEd25519(rand, actualDigest, opts)
 	default:
-		return nil, fmt.Errorf("%w: %T", ErrUnsupportedAlgorithm, key)
+		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%T", key)}
 	}
 }
 

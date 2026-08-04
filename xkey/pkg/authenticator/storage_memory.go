@@ -310,6 +310,7 @@ func (m *MemoryStorage) copyCredential(cred *StoredCredential) *StoredCredential
 		RPUPPolicy:          cred.RPUPPolicy,
 		RPResidentKeyPolicy: cred.RPResidentKeyPolicy,
 		RPAttestationPref:   cred.RPAttestationPref,
+		BackendID:           cred.BackendID,
 	}
 
 	// Copy byte slices

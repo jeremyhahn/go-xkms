@@ -35,6 +35,8 @@ import (
 	"fmt"
 	"sync"
 
+	xerrs "github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/ebfe/scard"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
@@ -62,13 +64,13 @@ var (
 // NewBackend creates a new SmartCard-HSM backend instance.
 func NewBackend(config *Config) (*Backend, error) {
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("smartcardhsm: %w", err)
+		return nil, &xerrs.Wrapped{Msg: "smartcardhsm", Err: err}
 	}
 
 	// Create embedded PKCS#11 backend
 	pkcs11Backend, err := pkcs11backend.NewBackend(config.Config)
 	if err != nil {
-		return nil, fmt.Errorf("smartcardhsm: failed to create PKCS#11 backend: %w", err)
+		return nil, &xerrs.Wrapped{Msg: "smartcardhsm: failed to create PKCS#11 backend", Err: err}
 	}
 
 	return &Backend{
@@ -100,7 +102,7 @@ func (b *Backend) Initialize(ctx context.Context) error {
 
 	// Initialize PKCS#11 backend first
 	if err := b.Backend.Initialize(ctx); err != nil {
-		return fmt.Errorf("smartcardhsm: PKCS#11 initialization failed: %w", err)
+		return &xerrs.Wrapped{Msg: "smartcardhsm: PKCS#11 initialization failed", Err: err}
 	}
 
 	// Initialize PC/SC context for APDU commands
@@ -124,7 +126,7 @@ func (b *Backend) Close() error {
 	// Disconnect from card
 	if b.card != nil {
 		if err := b.card.Disconnect(scard.LeaveCard); err != nil {
-			errs = append(errs, fmt.Errorf("card disconnect: %w", err))
+			errs = append(errs, &xerrs.Wrapped{Msg: "card disconnect", Err: err})
 		}
 		b.card = nil
 	}
@@ -132,20 +134,20 @@ func (b *Backend) Close() error {
 	// Release PC/SC context
 	if b.pcscCtx != nil {
 		if err := b.pcscCtx.Release(); err != nil {
-			errs = append(errs, fmt.Errorf("pcsc release: %w", err))
+			errs = append(errs, &xerrs.Wrapped{Msg: "pcsc release", Err: err})
 		}
 		b.pcscCtx = nil
 	}
 
 	// Close PKCS#11 backend
 	if err := b.Backend.Close(); err != nil {
-		errs = append(errs, fmt.Errorf("pkcs11 close: %w", err))
+		errs = append(errs, &xerrs.Wrapped{Msg: "pkcs11 close", Err: err})
 	}
 
 	b.connected = false
 
 	if len(errs) > 0 {
-		return fmt.Errorf("smartcardhsm: close errors: %v", errs)
+		return &xerrs.Message{Msg: fmt.Sprintf("smartcardhsm: close errors: %v", errs)}
 	}
 	return nil
 }
@@ -169,14 +171,14 @@ func (b *Backend) SupportsDKEK() bool {
 func (b *Backend) initPCSC() error {
 	ctx, err := scard.EstablishContext()
 	if err != nil {
-		return fmt.Errorf("failed to establish PC/SC context: %w", err)
+		return &xerrs.Wrapped{Msg: "failed to establish PC/SC context", Err: err}
 	}
 	b.pcscCtx = ctx
 
 	// Find SmartCard-HSM reader
 	readers, err := ctx.ListReaders()
 	if err != nil {
-		return fmt.Errorf("failed to list readers: %w", err)
+		return &xerrs.Wrapped{Msg: "failed to list readers", Err: err}
 	}
 
 	var readerName string
@@ -200,7 +202,7 @@ func (b *Backend) initPCSC() error {
 	// Connect to card
 	card, err := ctx.Connect(readerName, scard.ShareShared, scard.ProtocolAny)
 	if err != nil {
-		return fmt.Errorf("failed to connect to card: %w", err)
+		return &xerrs.Wrapped{Msg: "failed to connect to card", Err: err}
 	}
 	b.card = card
 
@@ -215,7 +217,7 @@ func (b *Backend) transmit(apdu *APDU) (*Response, error) {
 
 	raw, err := b.card.Transmit(apdu.Bytes())
 	if err != nil {
-		return nil, fmt.Errorf("transmit failed: %w", err)
+		return nil, &xerrs.Wrapped{Msg: "transmit failed", Err: err}
 	}
 
 	return ParseResponse(raw), nil

@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -28,6 +27,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
@@ -483,7 +484,7 @@ func (s *AutoFillService) IgnoreDomain(domain string) (*ipc.AutofillResult, erro
 	}
 
 	if domain == "" {
-		return nil, fmt.Errorf("%w: domain is required", ErrAutoFillSaveInvalidInput)
+		return nil, &DetailError{Err: ErrAutoFillSaveInvalidInput, Detail: ": domain is required"}
 	}
 
 	s.ignoredDomains.Store(strings.ToLower(domain), true)
@@ -665,7 +666,7 @@ func (s *AutoFillService) authenticateWithCTAP2(challenge string) (*ipc.Autofill
 
 	challengeBytes, err := base64.StdEncoding.DecodeString(challenge)
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid challenge encoding", ErrAutoFillAuthFailed)
+		return nil, &DetailError{Err: ErrAutoFillAuthFailed, Detail: ": invalid challenge encoding"}
 	}
 
 	clientDataHash := sha256.Sum256(challengeBytes)
@@ -689,13 +690,13 @@ func (s *AutoFillService) authenticateWithCTAP2(challenge string) (*ipc.Autofill
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrAutoFillAuthFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrAutoFillAuthFailed, Cause: err}
 	}
 
 	if err := s.verifier.Verify(resp.AuthData, resp.Signature, clientDataHash[:]); err != nil {
 		s.log.Warn("CTAP2 assertion verification failed",
 			"error", err)
-		return nil, fmt.Errorf("%w: %v", ErrAutoFillVerificationFailed, err)
+		return nil, &SentinelCauseError{Sentinel: ErrAutoFillVerificationFailed, Cause: err}
 	}
 
 	if s.auditStore != nil {
@@ -772,16 +773,16 @@ func (s *AutoFillService) registerCredential() error {
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAutoFillAuthFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAutoFillAuthFailed, Cause: err}
 	}
 
 	authData, err := authenticator.ParseAuthData(resp.AuthData)
 	if err != nil {
-		return fmt.Errorf("%w: failed to parse auth data: %v", ErrAutoFillAuthFailed, err)
+		return &DetailError{Err: ErrAutoFillAuthFailed, Detail: fmt.Sprintf(": failed to parse auth data: %v", err)}
 	}
 
 	if !authData.HasAttestedCredentialData() {
-		return fmt.Errorf("%w: no attested credential data in response", ErrAutoFillAuthFailed)
+		return &DetailError{Err: ErrAutoFillAuthFailed, Detail: ": no attested credential data in response"}
 	}
 
 	s.credID = authData.CredentialID
@@ -789,7 +790,7 @@ func (s *AutoFillService) registerCredential() error {
 
 	verifier, err := xkms.NewAssertionVerifier(autofillRPID, pubKeyCOSE)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAutoFillAuthFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAutoFillAuthFailed, Cause: err}
 	}
 	s.verifier = verifier
 

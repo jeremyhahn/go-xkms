@@ -120,23 +120,23 @@ func runAgentStart(cmd *cobra.Command, args []string) error {
 	storeDir := agentStoreDir()
 	store, err := agent.NewFileStore(storeDir, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAgentStartFailed, Cause: err}
 	}
 
 	// Create enrollment service with a placeholder CA.
 	// In production, the CA service would be wired to the barrier-backed CA.
 	enrollment, err := agent.NewEnrollmentService(cfg, &placeholderCA{}, store, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAgentStartFailed, Cause: err}
 	}
 
 	server, err := agent.NewServer(cfg, enrollment, logger)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAgentStartFailed, Cause: err}
 	}
 
 	if err := server.Start(); err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentStartFailed, err)
+		return &SentinelCauseError{Sentinel: ErrAgentStartFailed, Cause: err}
 	}
 
 	fmt.Printf("Agent server started\n")

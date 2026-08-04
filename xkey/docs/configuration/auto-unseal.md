@@ -190,6 +190,39 @@ xkey barrier status
 xkey barrier status --json
 ```
 
+### TPM2 Device Selection
+
+The `tpm2` strategy (`xkey barrier init --strategy tpm2`, and any subsequent
+`unseal`/`seal` against a tpm2-sealed barrier) resolves which TPM to use via:
+
+```bash
+xkey barrier init --strategy tpm2 --tpm-device /dev/tpm0
+xkey barrier init --strategy tpm2 --tpm-simulator
+```
+
+Priority (highest to lowest):
+
+1. `--tpm-device` / `--tpm-simulator` flags
+2. `TPM_DEVICE_PATH` environment variable (device path only; same variable
+   honored by the xkmsd server)
+3. `/dev/tpmrm0` (default)
+
+`--tpm-simulator` selects the in-process TPM simulator instead of a hardware
+device (requires a build with `-tags tpm_simulator`) and is intended for
+development and automated testing only -- it must never be used against
+production data. `xkey extension serve` accepts the same two flags for
+headless unsealing of a tpm2-sealed barrier.
+
+Note for test authors: the in-process simulator starts a brand-new, blank
+virtual TPM inside every OS process, so it cannot back a multi-step CLI
+workflow that spans several `xkey` invocations (e.g. `init` then `unseal`
+then `seal`, each a separate process). The CLI integration test suite
+(`xkey/test/integration`) instead points `--tpm-device` at an ephemeral
+`swtpm` instance that is started and provisioned once per test binary (see
+`swtpm_test_helpers.go`) -- swtpm is a persistent external TPM emulator, so
+every "xkey" subprocess that connects to its unix-socket device sees the
+same on-disk TPM state, exactly like real hardware.
+
 ### Barrier Data Directory Resolution
 
 Priority (highest to lowest):

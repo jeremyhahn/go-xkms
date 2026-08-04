@@ -110,8 +110,12 @@ func TestDefaultMultiIdentityCAConfigWithIntermediate_ReturnsValidDefaults(t *te
 	if intermediateID.Valid != DefaultIntermediateValidityYears {
 		t.Errorf("Intermediate Valid: expected %d, got %d", DefaultIntermediateValidityYears, intermediateID.Valid)
 	}
-	if intermediateID.ParentCA != "Root CA" {
-		t.Errorf("Intermediate ParentCA: expected %q, got %q", "Root CA", intermediateID.ParentCA)
+	// ParentCA is deliberately unset in the default: sequential chaining
+	// already signs the single intermediate with the root, and a hardcoded
+	// name would go stale when callers rename the root's CommonName. Named
+	// (sibling) topologies set ParentCA explicitly.
+	if intermediateID.ParentCA != "" {
+		t.Errorf("Intermediate ParentCA: expected empty, got %q", intermediateID.ParentCA)
 	}
 
 	// SelectedCA should be 1 (intermediate)
@@ -1306,5 +1310,139 @@ func TestConfigBuilder_BuildError(t *testing.T) {
 	}
 	if err.Error() != "build error" {
 		t.Fatalf("expected build error, got: %v", err)
+	}
+}
+
+// =============================================================================
+// Password wiring / at-rest encryption config tests
+// =============================================================================
+
+// TestDefaultMultiIdentityCAConfig_RequireKeyPasswordDefault verifies that the
+// out-of-the-box configuration has RequireKeyPassword=false: an empty key
+// password is allowed so operators can start without pre-configuring a
+// password. Setting RequireKeyPassword=true is an explicit opt-in.
+func TestDefaultMultiIdentityCAConfig_RequireKeyPasswordDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultMultiIdentityCAConfig()
+	if cfg.RequireKeyPassword {
+		t.Error("DefaultMultiIdentityCAConfig: RequireKeyPassword must default to false (empty password is allowed)")
+	}
+
+	cfgWithIntermediate := DefaultMultiIdentityCAConfigWithIntermediate()
+	if cfgWithIntermediate.RequireKeyPassword {
+		t.Error("DefaultMultiIdentityCAConfigWithIntermediate: RequireKeyPassword must default to false (empty password is allowed)")
+	}
+}
+
+// TestToKeyAttributes_KeyConfigPasswordWired verifies that a non-empty
+// KeyConfig.Password is propagated into KeyAttributes.Password so the pkcs8
+// backend can write an encrypted-at-rest PKCS#8 blob.
+func TestToKeyAttributes_KeyConfigPasswordWired(t *testing.T) {
+	t.Parallel()
+
+	id := Identity{
+		Subject: Subject{CommonName: "Test CA"},
+		Valid:   DefaultRootValidityYears,
+		Keys: []*types.KeyConfig{
+			{
+				KeyAlgorithm: types.AlgorithmECDSA,
+				Hash:         types.HashSHA256,
+				StoreType:    types.StoreSoftware,
+				ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
+				Password:     "per-key-secret",
+			},
+		},
+		IsRoot: true,
+	}
+
+	attrs, err := id.ToKeyAttributes()
+	if err != nil {
+		t.Fatalf("ToKeyAttributes: %v", err)
+	}
+	if attrs.Password == nil {
+		t.Fatal("attrs.Password must not be nil when KeyConfig.Password is set")
+	}
+	pwBytes := attrs.Password.Bytes()
+	if string(pwBytes) != "per-key-secret" {
+		t.Errorf("attrs.Password bytes: got %q, want %q", string(pwBytes), "per-key-secret")
+	}
+}
+
+// TestToKeyAttributes_SoftwareKeystorePasswordFallback verifies that when
+// KeyConfig.Password is empty, Identity.Keystores.Software.Password is used
+// as the fallback so all keys in the identity share the software keystore
+// passphrase without repeating it per-key.
+func TestToKeyAttributes_SoftwareKeystorePasswordFallback(t *testing.T) {
+	t.Parallel()
+
+	id := Identity{
+		Subject: Subject{CommonName: "Test CA"},
+		Valid:   DefaultRootValidityYears,
+		Keys: []*types.KeyConfig{
+			{
+				KeyAlgorithm: types.AlgorithmECDSA,
+				Hash:         types.HashSHA256,
+				StoreType:    types.StoreSoftware,
+				ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
+				// Password intentionally empty — should fall through to keystore level
+			},
+		},
+		IsRoot: true,
+		Keystores: &CAKeystoresConfig{
+			Software: &CAKeystoreSoftwareConfig{
+				Password: "keystore-level-secret",
+			},
+		},
+	}
+
+	attrs, err := id.ToKeyAttributes()
+	if err != nil {
+		t.Fatalf("ToKeyAttributes: %v", err)
+	}
+	if attrs.Password == nil {
+		t.Fatal("attrs.Password must not be nil when Keystores.Software.Password is set")
+	}
+	pwBytes := attrs.Password.Bytes()
+	if string(pwBytes) != "keystore-level-secret" {
+		t.Errorf("attrs.Password bytes: got %q, want %q", string(pwBytes), "keystore-level-secret")
+	}
+}
+
+// TestToKeyAttributes_KeyConfigPasswordTakesPrecedence verifies that a
+// per-key password overrides the identity-wide software keystore password.
+func TestToKeyAttributes_KeyConfigPasswordTakesPrecedence(t *testing.T) {
+	t.Parallel()
+
+	id := Identity{
+		Subject: Subject{CommonName: "Test CA"},
+		Valid:   DefaultRootValidityYears,
+		Keys: []*types.KeyConfig{
+			{
+				KeyAlgorithm: types.AlgorithmECDSA,
+				Hash:         types.HashSHA256,
+				StoreType:    types.StoreSoftware,
+				ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
+				Password:     "per-key-wins",
+			},
+		},
+		IsRoot: true,
+		Keystores: &CAKeystoresConfig{
+			Software: &CAKeystoreSoftwareConfig{
+				Password: "keystore-level-loses",
+			},
+		},
+	}
+
+	attrs, err := id.ToKeyAttributes()
+	if err != nil {
+		t.Fatalf("ToKeyAttributes: %v", err)
+	}
+	if attrs.Password == nil {
+		t.Fatal("attrs.Password must not be nil")
+	}
+	pwBytes := attrs.Password.Bytes()
+	if string(pwBytes) != "per-key-wins" {
+		t.Errorf("attrs.Password bytes: got %q, want %q (per-key should win)", string(pwBytes), "per-key-wins")
 	}
 }

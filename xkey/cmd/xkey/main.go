@@ -104,7 +104,7 @@ func initGUILogging(args []string) error {
 	if filePath != "" {
 		file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 		if err != nil {
-			return fmt.Errorf("open log file %s: %w", filePath, err)
+			return &WrappedError{Msg: fmt.Sprintf("open log file %s", filePath), Err: err}
 		}
 		output = file
 	}

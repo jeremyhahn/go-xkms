@@ -153,7 +153,7 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 	if output == "" {
 		dir, err := getBackupDir()
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrBackupCreateFailed, err)
+			return &SentinelCauseError{Sentinel: ErrBackupCreateFailed, Cause: err}
 		}
 		timestamp := time.Now().Format("20060102-150405")
 		output = filepath.Join(dir, fmt.Sprintf("backup-%s.xkb", timestamp))
@@ -162,7 +162,7 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 	// Ensure output directory exists
 	outputDir := filepath.Dir(output)
 	if err := os.MkdirAll(outputDir, 0700); err != nil {
-		return fmt.Errorf("%w: cannot create backup directory: %v", ErrBackupCreateFailed, err)
+		return &DetailError{Err: ErrBackupCreateFailed, Detail: fmt.Sprintf(": cannot create backup directory: %v", err)}
 	}
 
 	// Derive or generate encryption key
@@ -174,7 +174,7 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 		var err error
 		key, err = generateRandomKey()
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrBackupCreateFailed, err)
+			return &SentinelCauseError{Sentinel: ErrBackupCreateFailed, Cause: err}
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generated encryption key (save this):\n  %s\n\n", hex.EncodeToString(key))
 	}
@@ -188,13 +188,13 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupCreateFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupCreateFailed, Cause: err}
 	}
 
 	// Write the manifest as a placeholder backup file.
 	// The backup service will replace this with encrypted data once integrated.
 	if err := os.WriteFile(output, manifestJSON, 0600); err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupCreateFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupCreateFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Backup created: %s\n", output)
@@ -214,9 +214,9 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	// Validate the file exists
 	if _, err := os.Stat(filePath); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("%w: %s", ErrBackupFileNotFound, filePath)
+			return &DetailError{Err: ErrBackupFileNotFound, Detail: fmt.Sprintf(": %s", filePath)}
 		}
-		return fmt.Errorf("%w: %v", ErrBackupRestoreFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupRestoreFailed, Cause: err}
 	}
 
 	// Resolve the decryption key
@@ -228,12 +228,12 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	// Read and parse the backup file
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupRestoreFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupRestoreFailed, Cause: err}
 	}
 
 	var manifest backupManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupDecryptFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupDecryptFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Restoring from: %s\n", filePath)
@@ -253,7 +253,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 func runBackupList(cmd *cobra.Command, args []string) error {
 	dir, err := getBackupDir()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupCreateFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupCreateFailed, Cause: err}
 	}
 
 	entries, err := os.ReadDir(dir)
@@ -262,7 +262,7 @@ func runBackupList(cmd *cobra.Command, args []string) error {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No backups found.")
 			return nil
 		}
-		return fmt.Errorf("%w: %v", ErrBackupCreateFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupCreateFailed, Cause: err}
 	}
 
 	var backups []os.DirEntry
@@ -304,9 +304,9 @@ func runBackupContents(cmd *cobra.Command, args []string) error {
 	// Validate the file exists
 	if _, err := os.Stat(filePath); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("%w: %s", ErrBackupFileNotFound, filePath)
+			return &DetailError{Err: ErrBackupFileNotFound, Detail: fmt.Sprintf(": %s", filePath)}
 		}
-		return fmt.Errorf("%w: %v", ErrBackupRestoreFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupRestoreFailed, Cause: err}
 	}
 
 	// Resolve the decryption key
@@ -318,12 +318,12 @@ func runBackupContents(cmd *cobra.Command, args []string) error {
 	// Read and parse the backup file
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupRestoreFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupRestoreFailed, Cause: err}
 	}
 
 	var manifest backupManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return fmt.Errorf("%w: %v", ErrBackupDecryptFailed, err)
+		return &SentinelCauseError{Sentinel: ErrBackupDecryptFailed, Cause: err}
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Backup Contents: %s\n\n", filepath.Base(filePath))
@@ -370,10 +370,10 @@ func resolveDecryptionKey(password, keyHex string) ([]byte, error) {
 	if keyHex != "" {
 		key, err := hex.DecodeString(keyHex)
 		if err != nil {
-			return nil, fmt.Errorf("%w: invalid hex key: %v", ErrBackupDecryptFailed, err)
+			return nil, &DetailError{Err: ErrBackupDecryptFailed, Detail: fmt.Sprintf(": invalid hex key: %v", err)}
 		}
 		if len(key) != 32 {
-			return nil, fmt.Errorf("%w: key must be 32 bytes, got %d", ErrBackupDecryptFailed, len(key))
+			return nil, &DetailError{Err: ErrBackupDecryptFailed, Detail: fmt.Sprintf(": key must be 32 bytes, got %d", len(key))}
 		}
 		return key, nil
 	}

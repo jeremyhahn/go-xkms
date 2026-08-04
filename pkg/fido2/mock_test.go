@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/fxamacker/cbor/v2"
 )
 
@@ -59,7 +61,7 @@ func (m *MockHIDDevice) Write(data []byte) (int, error) {
 	defer m.mu.Unlock()
 
 	if m.closed {
-		return 0, fmt.Errorf("device closed")
+		return 0, &errs.Message{Msg: "device closed"}
 	}
 
 	n, err := m.writeBuf.Write(data)
@@ -81,7 +83,7 @@ func (m *MockHIDDevice) Read(data []byte) (int, error) {
 	defer m.mu.Unlock()
 
 	if m.closed {
-		return 0, fmt.Errorf("device closed")
+		return 0, &errs.Message{Msg: "device closed"}
 	}
 
 	return m.readBuf.Read(data)
@@ -384,7 +386,7 @@ func (e *MockHIDDeviceEnumerator) Open(path string) (HIDDevice, error) {
 
 	dev, ok := e.devices[path]
 	if !ok {
-		return nil, fmt.Errorf("device not found: %s", path)
+		return nil, &errs.Message{Msg: fmt.Sprintf("device not found: %s", path)}
 	}
 	return dev, nil
 }

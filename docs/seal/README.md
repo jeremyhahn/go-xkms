@@ -9,16 +9,43 @@ only values are encrypted.
 go-xkms is the **canonical home for every hardware-backed and cloud-KMS
 sealing strategy** in the stack. It owns the implementations; go-qrdb owns
 the barrier itself and the `StrategyRegistry` plug point that xkms registers
-into at composition time. There is no hardware code in qrdb.
+into at composition time. There is no hardware code in qrdb. The embedded qrdb SDK node
+uses `pkg/server.BuildTenantInfra` (shared with the daemon) to wire per-tenant
+isolation and per-tenant enable-encryption support.
 
-There is exactly **one barrier** at runtime: qrdb's `StorageBarrier`, layered
-by `initializeBarrier` over the embedded qrdb node's KV (see
-`pkg/server/qrdb_node.go`). The server injects xkms's hardware seal strategies
-(TPM2 / PKCS#11 / cloud KMS) into that barrier via
+There is exactly **one barrier** at runtime. How it is provisioned depends on
+the deployment:
+
+**Node-barrier mode (embedded qrdb + auto-unseal, the secure default).** When
+`storage.backend: qrdb`, `barrier.enabled: true`, and an auto-unseal credential
+is available (a TPM/HSM seal strategy, or a boot passphrase), xkms uses the
+**qrdb node's own barrier**. The node encrypts its entire PebbleDB data plane
+with `encfs` (file-level AES-256-GCM) and auto-unseals at construction, so
+**every value at rest — including the crypto backends' key stores — is
+encrypted**, and xkms adopts the node's barrier, registry, and tenant service
+as its own (`pkg/server/node_seal.go` + `qrdb_node.go`; mirrors go-quicbaas, so
+both products drive the identical shared mechanism). The daemon refuses to start
+a `qrdb` + barrier deployment that cannot auto-unseal (a passphrase strategy
+with no boot secret) unless `--insecure` is set — a plaintext data plane is
+never the silent default.
+
+**Own-barrier mode (fallback).** For non-`qrdb` storage (file/pebble), or when
+no auto-unseal credential is present, xkms builds its own `StorageBarrier` over
+the store (`initializeBarrier`), injecting the hardware seal strategies via
 `pkg/server/seal_strategies.go::buildHardwareSealStrategies`; the `passphrase`
-strategy is the always-available baseline. The embedded node carries no barrier
-of its own — xkms always runs qrdb in-process as its single datastore, so the
-barrier never sits in front of a remote store.
+strategy is the always-available baseline. This barrier is operator-unsealed via
+the barrier API.
+
+**Auto-unseal provisioning (config / CLI / env — the same surface every stack
+product uses):**
+- `barrier.strategy`: `none | passphrase | shamir | tpm2 | pkcs11 | awskms |
+  gcpkms | azurekv | vault` (canonical vocabulary).
+- Boot passphrase (passphrase strategy): `--seal-passphrase` flag >
+  `XKMS_SEAL_PASSPHRASE` env > `barrier.passphrase` config (supports
+  `credential://`). Precedence CLI > env > config.
+- Hardware strategies (`tpm2`/…) auto-unseal from the device (PCR policy / empty
+  credentials) — no boot secret needed. The TPM seal open is shared with the
+  general TPM2 backend (a single device open).
 
 ## Three-Layer Architecture
 

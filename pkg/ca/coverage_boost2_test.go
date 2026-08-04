@@ -607,11 +607,11 @@ func TestIsIssuedBy_WithMatchingAKID(t *testing.T) {
 
 	leafKey := generateTestECDSAKey(t)
 	leafTemplate := &x509.Certificate{
-		SerialNumber:        big.NewInt(2),
-		Subject:             pkix.Name{CommonName: "leaf"},
-		NotBefore:           time.Now().Add(-time.Hour),
-		NotAfter:            time.Now().Add(24 * time.Hour),
-		AuthorityKeyId:      []byte{1, 2, 3, 4},
+		SerialNumber:   big.NewInt(2),
+		Subject:        pkix.Name{CommonName: "leaf"},
+		NotBefore:      time.Now().Add(-time.Hour),
+		NotAfter:       time.Now().Add(24 * time.Hour),
+		AuthorityKeyId: []byte{1, 2, 3, 4},
 	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caCert, &leafKey.PublicKey, caKey)
 	require.NoError(t, err)

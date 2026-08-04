@@ -4,49 +4,44 @@
 
 The Certificate Authority module implements a hierarchical PKI architecture with hardware security integration through go-xkms and distributed storage through go-objstore.
 
-## go-xkms CA Embedding
+## CA Module
 
-go-trusted-ca embeds go-xkms's CA as the core certificate authority implementation. This layered architecture provides:
+go-xkms owns the CA as a first-class module. The CA (`go-xkms/pkg/ca`) and
+ACME (`go-xkms/pkg/acme`) ship directly within go-xkms, providing:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      go-trusted-ca                           │
+│                         go-xkms                             │
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │  TCG-Specific Features                                  ││
+│  │  CA & ACME  (pkg/ca, pkg/acme)                         ││
+│  │  • CSR Signing & Certificate Issuance                   ││
+│  │  • Key Generation (RSA, ECDSA, Ed25519)                 ││
+│  │  • Revocation & CRL Generation                          ││
+│  │  • Trust Chain Management                               ││
+│  │  • Per-Key Keystore Routing                             ││
 │  │  • ACME Protocol (RFC 8555)                             ││
 │  │  • TCG Enrollment (enroll-01, device-attest)            ││
 │  │  • IDevID/IAK Certificate Issuance                      ││
 │  │  • Policy Engine, Certificate Linting                   ││
 │  └─────────────────────────────────────────────────────────┘│
 │                            │                                 │
-│                     embeds │                                 │
+│                     uses   │                                 │
 │                            ▼                                 │
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │  go-xkms CA (Embedded)                              ││
-│  │  • CSR Signing & Certificate Issuance                   ││
-│  │  • Key Generation (RSA, ECDSA, Ed25519)                 ││
-│  │  • Revocation & CRL Generation                          ││
-│  │  • Trust Chain Management                               ││
-│  │  • Multi-Key Support                                    ││
+│  │  go-xkms Backends                                      ││
+│  │  • KeyStore (TPM, PKCS#11, KMS, Software)               ││
+│  │  • CertStore (File, S3, Database)                       ││
+│  │  • crypto.Signer Interface                              ││
 │  └─────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────┘
-                            │
-                     uses   │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│  go-xkms                                                 │
-│  • KeyStore (TPM, PKCS#11, KMS, Software)                   │
-│  • CertStore (File, S3, Database)                           │
-│  • crypto.Signer Interface                                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Benefits of CA Embedding
+### Module Features
 
-- **Single Source of Truth**: CA code lives in go-xkms, eliminating duplication
-- **Consistent Behavior**: All projects using go-xkms CA behave identically
+- **Single Source of Truth**: CA and ACME code lives in go-xkms, eliminating duplication
+- **Consistent Behavior**: All consumers of go-xkms CA behave identically
 - **Simplified Maintenance**: Bug fixes benefit all consumers automatically
-- **Clear Separation**: go-trusted-ca focuses on ACME/TCG, go-xkms CA handles core PKI
+- **Per-Key Keystore Routing**: Each key in a CA identity can be stored in a different backend (software, TPM2, PKCS#11)
 
 ## CA Hierarchy
 
@@ -435,34 +430,86 @@ objectstore/
          |                       |                       |
          v                       v                       v
 +--------------------------------------------------------------------+
-|              go-trusted-ca Certificate Authority                    |
+|           go-xkms Certificate Authority (pkg/ca, pkg/acme)         |
 +--------------------------------------------------------------------+
 |  +---------------+  +---------------+  +---------------+           |
 |  | ACME Protocol |  | TCG Enroll    |  | Policy Engine |           |
 |  +---------------+  +---------------+  +---------------+           |
-|                            |                                        |
-|                    embeds  |                                        |
-|                            v                                        |
-|  +--------------------------------------------------------------+  |
-|  |               go-xkms CA (Embedded)                      |  |
-|  |  +---------------+  +---------------+  +---------------+      |  |
-|  |  | CSR Signing   |  | Revocation    |  | Chain Build   |      |  |
-|  |  +---------------+  +---------------+  +---------------+      |  |
-|  |  +---------------+  +---------------+  +---------------+      |  |
-|  |  | Cert Issue    |  | CRL Generate  |  | Multi-Key     |      |  |
-|  |  +---------------+  +---------------+  +---------------+      |  |
-|  +--------------------------------------------------------------+  |
+|  +---------------+  +---------------+  +---------------+           |
+|  | CSR Signing   |  | Revocation    |  | Chain Build   |           |
+|  +---------------+  +---------------+  +---------------+           |
+|  +---------------+  +---------------+  +---------------+           |
+|  | Cert Issue    |  | CRL Generate  |  | Multi-Key     |           |
+|  +---------------+  +---------------+  +---------------+           |
 +--------------------------------------------------------------------+
          |                       |                       |
          v                       v                       v
 +------------------+     +-----------------+     +------------------+
 |    KeyStore      |     |   CertStore     |     |   ObjectStore    |
-|  (go-xkms)   |     |  (go-xkms)  |     |  (go-objstore)   |
+|  (go-xkms)      |     |   (go-xkms)     |     |  (go-objstore)   |
 +------------------+     +-----------------+     +------------------+
 ```
+
+## Per-Key Multi-Keystore Routing
+
+The CA supports routing each key in an identity's `Keys` slice to a
+different backend — software PKCS#8, TPM 2.0, or PKCS#11 — within the same
+CA instance. This model is additive and fully backward-compatible.
+
+### Old Model (single keystore)
+
+Every key in a CA identity was handled by a single injected `xkms.Backend`
+(`ca.keyStore`). All operations resolved to that one backend.
+
+### New Model (per-key routing)
+
+When `Params.BackendForStore` is set, each key is routed to the backend
+whose `StoreType` matches `KeyConfig.StoreType`. The CA builds an internal
+`keystoreMap map[types.StoreType]xkms.Backend` during construction:
+
+```
+identity.Keys:
+  Keys[0]  StoreType=software  ──►  software Backend  (primary signing key)
+  Keys[1]  StoreType=tpm2      ──►  TPM 2.0 Backend   (secondary)
+  Keys[2]  StoreType=software  ──►  software Backend   (secondary)
+  Keys[3]  StoreType=tpm2      ──►  TPM 2.0 Backend   (secondary)
+```
+
+### Primary vs. Secondary Keys
+
+- **Keys[0]** is the **primary signing key**. Its public key is bound in
+  the CA certificate and all certificate issuance signs with this key.
+- **Keys[1..n]** are **secondary keys**, generated in their respective
+  backends at `Init` time for backup, rotation, or future algorithm-agile
+  signing (algorithm-agile signing is out of scope for the current release).
+  Secondary keys are intentionally skipped during `Load` because the CA
+  certificate binds only the primary public key.
+
+### keystoreMap and resolveKeyBackend
+
+The `BackendForStoreFunc` passed via `Params.BackendForStore` is called
+**once per unique `StoreType`** found in the identity's `Keys` slice, not
+once per key. The CA caches results so the factory is never invoked twice for
+the same `(cn, storeType)` pair.
+
+`resolveKeyBackend(storeType)` returns the cached backend for the given
+`StoreType`, or falls back to `ca.keyStore` when no entry exists in the map.
+
+### Backward-Compatible Fallback
+
+When `Params.BackendForStore` is nil:
+
+- `keystoreMap` is not populated.
+- Every key resolves to `ca.keyStore` (the single injected backend).
+- Behavior is identical to the legacy single-keystore path — zero behavior
+  change for existing callers.
+
+See [Multi-Keystore Routing](multi-keystore.md) for YAML configuration and
+worked examples.
 
 ## See Also
 
 - [Configuration Reference](configuration.md)
+- [Multi-Keystore Routing](multi-keystore.md)
 - [Certificate Types](certificate-types.md)
 - [API Reference](api-reference.md)

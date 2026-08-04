@@ -1,0 +1,182 @@
+- generic [ref=e312]:
+  - navigation "Main navigation" [ref=e313]:
+    - generic [ref=e314]:
+      - generic [ref=e315]:
+        - img [ref=e317]
+        - generic [ref=e318]: xKey
+      - button "Collapse sidebar" [ref=e319] [cursor=pointer]:
+        - img [ref=e320]
+    - generic [ref=e322]:
+      - generic [ref=e323]:
+        - generic [ref=e324]: OVERVIEW
+        - button "Dashboard" [ref=e325] [cursor=pointer]:
+          - img [ref=e326]
+          - generic [ref=e328]: Dashboard
+        - button "Pairing" [ref=e329] [cursor=pointer]:
+          - img [ref=e330]
+          - generic [ref=e332]: Pairing
+        - button "TPM 2.0" [ref=e333] [cursor=pointer]:
+          - img [ref=e334]
+          - generic [ref=e336]: TPM 2.0
+      - generic [ref=e337]:
+        - generic [ref=e338]: STORE
+        - button "Keys" [ref=e339] [cursor=pointer]:
+          - img [ref=e340]
+          - generic [ref=e342]: Keys
+        - button "Trust Store" [ref=e343] [cursor=pointer]:
+          - img [ref=e344]
+          - generic [ref=e346]: Trust Store
+        - button "Certificates" [ref=e347] [cursor=pointer]:
+          - img [ref=e348]
+          - generic [ref=e350]: Certificates
+      - generic [ref=e351]:
+        - generic [ref=e352]: APPLICATIONS
+        - button "SSH" [ref=e353] [cursor=pointer]:
+          - img [ref=e354]
+          - generic [ref=e356]: SSH
+        - button "FIDO2" [ref=e357] [cursor=pointer]:
+          - img [ref=e358]
+          - generic [ref=e360]: FIDO2
+        - button "OATH" [ref=e361] [cursor=pointer]:
+          - img [ref=e362]
+          - generic [ref=e364]: OATH
+        - button "PIV" [ref=e365] [cursor=pointer]:
+          - img [ref=e366]
+          - generic [ref=e368]: PIV
+        - button "Passwords" [ref=e369] [cursor=pointer]:
+          - img [ref=e370]
+          - generic [ref=e372]: Passwords
+        - button "Sealed Data" [ref=e373] [cursor=pointer]:
+          - img [ref=e374]
+          - generic [ref=e376]: Sealed Data
+        - button "Browser" [ref=e377] [cursor=pointer]:
+          - img [ref=e378]
+          - generic [ref=e380]: Browser
+      - generic [ref=e381]:
+        - generic [ref=e382]: MANAGEMENT
+        - button "Audit Log" [ref=e383] [cursor=pointer]:
+          - img [ref=e384]
+          - generic [ref=e386]: Audit Log
+        - button "Admin" [ref=e387] [cursor=pointer]:
+          - img [ref=e388]
+          - generic [ref=e390]: Admin
+      - generic [ref=e391]:
+        - generic [ref=e392]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e393] [cursor=pointer]:
+          - img [ref=e394]
+          - generic [ref=e396]: OIDC
+        - button "API Explorer" [ref=e397] [cursor=pointer]:
+          - img [ref=e398]
+          - generic [ref=e400]: API Explorer
+    - generic [ref=e401]:
+      - generic "Standalone mode" [ref=e402]:
+        - generic [ref=e404]: Standalone
+      - button "Theme" [ref=e405] [cursor=pointer]:
+        - img [ref=e406]
+        - generic [ref=e408]: Theme
+      - button "Settings" [ref=e409] [cursor=pointer]:
+        - img [ref=e410]
+        - generic [ref=e412]: Settings
+  - main [ref=e413]:
+    - generic [ref=e415]:
+      - button "Lock app" [ref=e416] [cursor=pointer]:
+        - img [ref=e417]
+        - generic [ref=e419]: Lock
+      - button "No touch pending" [disabled] [ref=e420]:
+        - img [ref=e422]
+    - generic [ref=e595]:
+      - generic [ref=e598]:
+        - heading "Settings" [level=1] [ref=e599]
+        - paragraph [ref=e600]: Application configuration
+      - generic [ref=e601]:
+        - navigation [ref=e602]:
+          - button "General" [ref=e603] [cursor=pointer]:
+            - img [ref=e604]
+            - generic [ref=e606]: General
+          - button "Identity" [ref=e607] [cursor=pointer]:
+            - img [ref=e608]
+            - generic [ref=e610]: Identity
+          - button "Appearance" [ref=e611] [cursor=pointer]:
+            - img [ref=e612]
+            - generic [ref=e614]: Appearance
+          - button "Browser" [ref=e615] [cursor=pointer]:
+            - img [ref=e616]
+            - generic [ref=e618]: Browser
+          - button "API Explorer" [ref=e619] [cursor=pointer]:
+            - img [ref=e620]
+            - generic [ref=e622]: API Explorer
+          - button "Server" [ref=e623] [cursor=pointer]:
+            - img [ref=e624]
+            - generic [ref=e626]: Server
+          - button "Phone" [ref=e627] [cursor=pointer]:
+            - img [ref=e628]
+            - generic [ref=e630]: Phone
+          - button "Security" [ref=e631] [cursor=pointer]:
+            - img [ref=e632]
+            - generic [ref=e634]: Security
+          - button "PIN Management" [ref=e635] [cursor=pointer]:
+            - img [ref=e636]
+            - generic [ref=e638]: PIN Management
+          - button "Storage" [ref=e639] [cursor=pointer]:
+            - img [ref=e640]
+            - generic [ref=e642]: Storage
+          - button "Notifications" [ref=e643] [cursor=pointer]:
+            - img [ref=e644]
+            - generic [ref=e646]: Notifications
+          - button "SSH" [ref=e647] [cursor=pointer]:
+            - img [ref=e648]
+            - generic [ref=e650]: SSH
+          - button "Advanced" [ref=e651] [cursor=pointer]:
+            - img [ref=e652]
+            - generic [ref=e654]: Advanced
+        - generic [ref=e655]:
+          - generic [ref=e657]:
+            - heading "PIN Management" [level=2] [ref=e658]
+            - generic [ref=e659]:
+              - generic [ref=e660]:
+                - generic [ref=e661]: Strategy
+                - generic [ref=e662]: PIN management is handled by the TPM 2.0 backend
+              - generic [ref=e663]: TPM 2.0
+          - generic [ref=e665]:
+            - heading "Security Officer PIN" [level=2] [ref=e666]
+            - status [ref=e667]:
+              - img [ref=e668]
+              - generic [ref=e670]: The TPM 2.0 PIN backend binds authorization to the platform hardware directly; a separate Security Officer PIN is not used.
+          - generic [ref=e672]:
+            - heading "User PIN" [level=2] [ref=e673]
+            - generic [ref=e674]:
+              - generic [ref=e675]:
+                - generic [ref=e676]: Status
+                - generic [ref=e677]: User PIN is configured
+              - generic [ref=e678]:
+                - img [ref=e679]
+                - generic [ref=e681]: Set
+            - generic [ref=e683]:
+              - generic [ref=e684]:
+                - generic [ref=e685]: Change User PIN
+                - generic [ref=e686]: Update the User PIN for everyday operations
+              - button "Change" [ref=e687] [cursor=pointer]:
+                - img [ref=e688]
+                - generic [ref=e690]: Change
+          - generic [ref=e692]:
+            - heading "Lockout Status" [level=2] [ref=e693]
+            - generic [ref=e694]:
+              - generic [ref=e695]:
+                - generic [ref=e696]: Failed Attempts
+                - generic [ref=e697]: 0 / 3
+              - generic [ref=e698]:
+                - generic [ref=e699]: Lockout Status
+                - status "Verified" [ref=e700]:
+                  - generic [ref=e702]: Verified
+            - generic [ref=e703]:
+              - generic [ref=e704]:
+                - generic [ref=e705]: Maximum Failed Attempts
+                - generic [ref=e706]: Number of failed PIN attempts before lockout
+              - spinbutton [ref=e707]: "3"
+            - generic [ref=e709]:
+              - generic [ref=e710]:
+                - generic [ref=e711]: Reset Lockout
+                - generic [ref=e712]: Reset the failed attempts counter using the TPM Lockout hierarchy password
+              - button "Reset" [disabled]:
+                - img
+                - generic: Reset

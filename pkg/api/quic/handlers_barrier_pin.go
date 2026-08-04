@@ -126,6 +126,9 @@ func (s *Server) handleBarrierOperations(w http.ResponseWriter, r *http.Request)
 		"recovery-keys/generate": s.handleBarrierGenerateRecoveryKeys,
 		"recovery-keys/recover":  s.handleBarrierRecoverWithKeys,
 		"recovery-keys":          s.handleBarrierRecoveryKeysDispatch,
+
+		// Encryption migration (enable at-rest encryption on an unencrypted barrier)
+		"enable-encryption": s.handleBarrierEnableEncryption,
 	}
 
 	handler, ok := handlers[path]
@@ -193,7 +196,7 @@ func (s *Server) handleBarrierInitialize(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	creds := seal.Credentials{Secret: req.Secret}
+	creds := seal.Credentials{Secret: []byte(req.Secret)}
 	if err := s.barrier.Initialize(r.Context(), creds); err != nil {
 		sendBarrierError(s, w, err)
 		return
@@ -232,7 +235,7 @@ func (s *Server) handleBarrierUnseal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	creds := seal.Credentials{Secret: req.Secret}
+	creds := seal.Credentials{Secret: []byte(req.Secret)}
 	if err := s.barrier.Unseal(r.Context(), creds); err != nil {
 		sendBarrierError(s, w, err)
 		return

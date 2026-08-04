@@ -62,7 +62,7 @@ func runDeviceInfo(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDeviceNotPaired
 		}
-		return fmt.Errorf("%w: %v", ErrDeviceConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
@@ -81,7 +81,7 @@ func runDeviceInfo(cmd *cobra.Command, args []string) error {
 
 	device := findDeviceByName(cfg, deviceName)
 	if device == nil {
-		return fmt.Errorf("%w: %s", ErrDeviceNotFound, deviceName)
+		return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 	}
 
 	// Determine attestation grace period

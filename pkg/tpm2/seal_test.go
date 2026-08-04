@@ -198,17 +198,18 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 				tpm.Flush(keyAttrs.TPMAttributes.Handle)
 			}
 
-			// incorrect password with policy auth - should work
+			// incorrect password with policy auth - should fail. The
+			// PlatformPolicy password branch binds the supplied auth value
+			// into the session HMAC (TPM 2.0 Part 1, Section 19.6), so the
+			// TPM rejects a session built with the wrong password with
+			// TPM_RC_AUTH_FAIL - the PolicyOR construction lets a caller
+			// authorize with the correct password OR the correct PCR
+			// state, never with an arbitrary/incorrect password.
 			keyAttrs.Parent.Password = store.NewPassword([]byte("foo"))
 			keyAttrs.CN = "test5"
 			rsaPub5, err5 := tpm.CreateRSA(keyAttrs, nil, false)
-			assert.Nil(t, err5)
-			assert.NotNil(t, rsaPub5)
-
-			// Flush the handle after successful creation
-			if keyAttrs.TPMAttributes != nil && keyAttrs.TPMAttributes.Handle != 0 {
-				tpm.Flush(keyAttrs.TPMAttributes.Handle)
-			}
+			assert.NotNil(t, err5)
+			assert.Nil(t, rsaPub5)
 
 			// correct password with policy auth - should work
 			keyAttrs.Parent.Password = srkAuth

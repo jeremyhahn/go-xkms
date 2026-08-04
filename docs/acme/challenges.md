@@ -113,7 +113,7 @@ func Verify(
 ### Client Setup
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/http-01"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
 
 // Start HTTP server to respond to challenges
 http01.Setup("80", keyAuth)
@@ -227,7 +227,7 @@ dns01.SetDNSService(dnsService)
 ### Client Setup
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/dns-01"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01"
 
 // Initialize DNS service
 dns01.SetDNSService(dnsService)
@@ -356,7 +356,7 @@ type CertificateAuthority interface {
 ### Client Setup
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/device-attest-01"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 
 // Generate attestation statement
 payload, err := deviceattest01.Setup(
@@ -544,7 +544,7 @@ The server uses TPM2_MakeCredential to create an encrypted credential that can o
 ### Client Setup
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/enroll-01"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/enroll-01"
 
 // Setup creates TCG-CSR-IDEVID and starts HTTP server
 packedCSR, err := enroll01.Setup(port, keyAuth, ca, tpm)
@@ -648,7 +648,7 @@ The endorse-01 verification always returns `nil` because:
 ### Client Setup
 
 ```go
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme/challenges/endorse-01"
+import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/endorse-01"
 
 // Create CSR with EK public key
 csr, err := endorse01.Setup(challengeToken, ca, tpm, serializer)

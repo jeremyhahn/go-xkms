@@ -1592,7 +1592,7 @@ func createPasswordTestServerWithUnsealedTenant(t *testing.T, tenantID string) *
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	creds := qrdbsdk.Credentials{Secret: "tenant-test-passphrase"}
+	creds := qrdbsdk.Credentials{Secret: []byte("tenant-test-passphrase")}
 	require.NoError(t, registry.InitializeTenant(ctx, tenantID, creds))
 
 	systemStore := staticpw.NewStore(storage.New())

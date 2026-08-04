@@ -15,14 +15,15 @@ package symmetric
 
 import (
 	"context"
-	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // PutIfAbsent mirrors MockFailingStorage.Put: it fails when failOnPut is set,
 // otherwise reports the value as stored.
 func (m *MockFailingStorage) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
 	if m.failOnPut {
-		return false, fmt.Errorf("storage error: put failed")
+		return false, &errs.Message{Msg: "storage error: put failed"}
 	}
 	return true, nil
 }

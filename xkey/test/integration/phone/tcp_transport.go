@@ -15,7 +15,6 @@ package phone
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -73,7 +72,7 @@ func (t *TCPTransport) Connect(ctx context.Context) error {
 	dialer := net.Dialer{Timeout: t.timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", t.addr)
 	if err != nil {
-		return fmt.Errorf("%w: %v", phone.ErrConnectionFailed, err)
+		return &SentinelCauseError{Sentinel: phone.ErrConnectionFailed, Cause: err}
 	}
 
 	t.conn = conn

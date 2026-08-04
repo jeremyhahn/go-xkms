@@ -144,10 +144,10 @@ func runTrustImportPlatform(cmd *cobra.Command, args []string) error {
 
 	target := "https://" + hostPort + xkms.TrustFetcherDefaultBundlePath
 	if _, err := url.Parse(target); err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustImportPlatformFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustImportPlatformFailed, Cause: err}
 	}
 	if err := executeTrustFetch(cmd, target); err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustImportPlatformFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustImportPlatformFailed, Cause: err}
 	}
 	return nil
 }
@@ -163,8 +163,7 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 
 	if strings.TrimSpace(pinFlag) == "" {
-		return fmt.Errorf("%w: --spki-pin is required (no trust-on-first-use path)",
-			ErrTrustFetchInvalidArgs)
+		return &DetailError{Err: ErrTrustFetchInvalidArgs, Detail: ": --spki-pin is required (no trust-on-first-use path)"}
 	}
 	if timeout <= 0 {
 		timeout = xkms.TrustFetcherDefaultTimeout
@@ -174,7 +173,7 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 	if purposeStr != "" {
 		parsed, parseErr := truststore.ParsePurpose(purposeStr)
 		if parseErr != nil {
-			return fmt.Errorf("%w: %v", ErrTrustFetchInvalidArgs, parseErr)
+			return &SentinelCauseError{Sentinel: ErrTrustFetchInvalidArgs, Cause: parseErr}
 		}
 		purpose = parsed
 	}
@@ -191,7 +190,7 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 
 	bundle, err := xkms.TrustFetcherFetch(ctx, target, opts)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrTrustFetchFailed, err)
+		return &SentinelCauseError{Sentinel: ErrTrustFetchFailed, Cause: err}
 	}
 
 	store, err := openTrustStore()
@@ -220,7 +219,7 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 		case errors.Is(err, truststore.ErrCertificateExists):
 			skipped++
 		default:
-			return fmt.Errorf("%w: %v", ErrTrustFetchFailed, err)
+			return &SentinelCauseError{Sentinel: ErrTrustFetchFailed, Cause: err}
 		}
 		// Track the root cert(s) for the optional OS install step.
 		if cert.IsCA && certIsSelfSigned(cert.Subject.String(), cert.Issuer.String()) {
@@ -238,14 +237,13 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 
 	osStore, err := truststore.NewOSCertStore()
 	if err != nil {
-		return fmt.Errorf("%w: OS trust store unavailable: %v",
-			ErrTrustFetchFailed, err)
+		return &DetailError{Err: ErrTrustFetchFailed, Detail: fmt.Sprintf(": OS trust store unavailable: %v", err)}
 	}
 
 	for _, fp := range rootFingerprints {
 		certs, certsErr := store.Certificates()
 		if certsErr != nil {
-			return fmt.Errorf("%w: %v", ErrTrustFetchFailed, certsErr)
+			return &SentinelCauseError{Sentinel: ErrTrustFetchFailed, Cause: certsErr}
 		}
 		var found bool
 		for _, c := range certs {
@@ -254,8 +252,7 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 			}
 			label := "xkey-" + fp[:16]
 			if installErr := osStore.Install(c, label); installErr != nil {
-				return fmt.Errorf("%w: OS install failed: %v",
-					ErrTrustFetchFailed, installErr)
+				return &DetailError{Err: ErrTrustFetchFailed, Detail: fmt.Sprintf(": OS install failed: %v", installErr)}
 			}
 			if metaErr := store.SetSystemInstalled(fp, true); metaErr != nil {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),

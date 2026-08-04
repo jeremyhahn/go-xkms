@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/stretchr/testify/assert"
@@ -474,10 +475,11 @@ func TestApplySetup_ExplicitSealerBackend_Preserved(t *testing.T) {
 	assert.Equal(t, "software", sealSvc.DefaultBackend(),
 		"SealService default should be the seal backend mapped from the barrier sealer")
 
-	// The raw choice is still preserved verbatim in persisted config.
+	// The config must store the seal-namespace backend ID, not the raw barrier
+	// strategy. sealBackendForBarrierSealer("passphrase") -> "software".
 	saved := tw.configFunc()
-	assert.Equal(t, "passphrase", saved.SealerBackend,
-		"persisted config should contain the explicit sealer backend")
+	assert.Equal(t, "software", saved.SealerBackend,
+		"persisted config should contain the translated seal backend ID (software), not the raw barrier strategy (passphrase)")
 }
 
 func TestApplySetup_TPM2SealerBackend_Preserved(t *testing.T) {
@@ -501,6 +503,45 @@ func TestApplySetup_TPM2SealerBackend_Preserved(t *testing.T) {
 	// "tpm2" is valid in both namespaces, so it maps through unchanged.
 	assert.Equal(t, "tpm2", sealSvc.DefaultBackend(),
 		"a tpm2 barrier sealer maps to the tpm2 seal backend")
+}
+
+// TestApplySetup_PassphraseSealerBackend_PersistsTranslatedID is the
+// regression test for the "No Sealing Backends Available" bug (Jun 2026).
+//
+// Scenario: fresh install; host TPM hierarchy auth unavailable; setup wizard
+// auto-selected "passphrase" barrier strategy. The wizard previously stored
+// SealerBackend="passphrase" in the config. On next startup app.go called
+// SetDefaultBackend("passphrase"), CanSeal(ctx, "passphrase") found no matching
+// backend, returned false, and the Sealed Data view showed the warning banner
+// with "Seal New Data" permanently disabled.
+//
+// Fix: the wizard must translate the barrier strategy to the seal-namespace ID
+// before persisting ("passphrase" -> "software").
+func TestApplySetup_PassphraseSealerBackend_PersistsTranslatedID(t *testing.T) {
+	tw := newTestSetupWizard(&GUIConfigData{})
+
+	sealSvc := NewSealService(t.TempDir())
+	wireSealMockClient(sealSvc, &sealMockTPM{mockTPM: *defaultMockTPM(), canSeal: false}) // TPM not available
+	sealSvc.SetContext(context.Background())
+	tw.svc.SetSealService(sealSvc)
+
+	_, err := tw.svc.ApplySetup(&SetupChoices{
+		Mode:            "standalone",
+		SOPin:           testSOPin,
+		UserPin:         testUserPin,
+		StorageType:     "barrier",
+		BarrierPassword: "testbarrier123",
+		SealerBackend:   "passphrase", // wizard chose passphrase barrier strategy
+	})
+	require.NoError(t, err)
+
+	// The persisted config must store "software", not "passphrase".
+	// If "passphrase" were stored, SetDefaultBackend on the next startup would
+	// trigger auto-select (defensive guard), but the correct fix is to never
+	// store an invalid seal-namespace ID in the first place.
+	saved := tw.configFunc()
+	assert.Equal(t, "software", saved.SealerBackend,
+		"wizard must persist the seal-namespace ID (software) not the barrier strategy (passphrase)")
 }
 
 func TestSealBackendForBarrierSealer(t *testing.T) {
@@ -529,11 +570,12 @@ func TestApplySetup_EmptySealerBackend_NoSealService(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// SealerBackend should fall back to "software" as the last-resort default
-	// so the barrier strategy is always valid.
+	// choices.SealerBackend was set to "passphrase" by the last-resort fallback.
+	// sealBackendForBarrierSealer("passphrase") translates it to "software" when
+	// persisting, so the config always stores a valid seal-namespace ID.
 	saved := tw.configFunc()
-	assert.Equal(t, "passphrase", saved.SealerBackend,
-		"SealerBackend should fall back to software when no SealService is configured")
+	assert.Equal(t, "software", saved.SealerBackend,
+		"persisted config should store the translated seal backend ID (software)")
 }
 
 // TestApplySetup_EmptySealerBackend_NoAvailableSealers verifies that when
@@ -559,11 +601,12 @@ func TestApplySetup_EmptySealerBackend_NoAvailableSealers(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// BestSealer returns nil when no sealer is available, so SealerBackend
-	// should fall back to "software" as the last-resort default.
+	// choices.SealerBackend was set to "passphrase" by the last-resort fallback.
+	// sealBackendForBarrierSealer("passphrase") translates it to "software" for
+	// the persisted config.
 	saved := tw.configFunc()
-	assert.Equal(t, "passphrase", saved.SealerBackend,
-		"SealerBackend should fall back to software when no sealers are available")
+	assert.Equal(t, "software", saved.SealerBackend,
+		"persisted config should store the translated seal backend ID (software)")
 }
 
 // ---------------------------------------------------------------------------
@@ -754,4 +797,301 @@ func TestSetupWizard_BothConfigCallbacksNil_DoesNotPanic(t *testing.T) {
 		"ApplySetup should return ErrSetupStorageFailed when both callbacks are nil")
 	assert.Nil(t, result,
 		"result should be nil when ApplySetup fails due to missing callbacks")
+}
+
+// ---------------------------------------------------------------------------
+// TPM sealing downgrade detection tests
+// ---------------------------------------------------------------------------
+
+// TestApplySetup_TPMRequestedButFallbackToPassphrase_HasDowngradeWarning verifies
+// that when the user requests TPM sealing (password_store_mode="tpm_sealed") but
+// TPM hardware is unavailable (no SealService, so BestSealer returns nil causing
+// the last-resort passphrase fallback), the result carries an explicit downgrade
+// warning stating the requested vs actual sealing strategy. This prevents the user
+// from silently believing their master key is hardware-sealed when it is not.
+func TestApplySetup_TPMRequestedButFallbackToPassphrase_HasDowngradeWarning(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Wire a real BarrierService so barrier init succeeds with passphrase strategy.
+	barrierSvc := NewBarrierService(tmpDir, slog.Default())
+	barrierSvc.SetContext(context.Background())
+
+	// Do NOT wire a SealService (nil) — simulates TPM hardware unavailable.
+	// With sealSvc == nil, BestSealer() is never called and SealerBackend stays "",
+	// which falls through to the last-resort passphrase fallback.
+	tw := newTestSetupWizard(&GUIConfigData{})
+	tw.svc.SetBarrierService(barrierSvc)
+
+	result, err := tw.svc.ApplySetup(&SetupChoices{
+		Mode:               "standalone",
+		SOPin:              testSOPin,
+		UserPin:            testUserPin,
+		PasswordStoreMode:  "tpm_sealed", // user explicitly requested TPM sealing
+		SealerBackend:      "",           // not explicitly set — auto-fill path
+		StorageType:        "barrier",
+		BarrierPassword:    "testbarrier123",
+		UseUserPinAsMaster: false,
+	})
+	require.NoError(t, err, "ApplySetup should not return an error on passphrase fallback")
+	require.NotNil(t, result)
+
+	// Barrier should have initialized successfully with passphrase.
+	assert.True(t, result.Success, "result.Success should be true after passphrase fallback")
+
+	// The downgrade warning MUST be present so the frontend can surface it.
+	assert.NotEmpty(t, result.Warnings, "result.Warnings must be non-empty when sealing strategy is downgraded")
+	assert.True(t,
+		containsSubstring(result.Warnings, "sealing strategy downgraded"),
+		"Warnings must mention strategy downgrade; got: %v", result.Warnings)
+	assert.True(t,
+		containsSubstring(result.Warnings, "passphrase"),
+		"Warnings must mention the actual passphrase strategy; got: %v", result.Warnings)
+	assert.True(t,
+		containsSubstring(result.Warnings, "tpm_sealed") || containsSubstring(result.Warnings, "tpm2"),
+		"Warnings must mention the originally requested strategy; got: %v", result.Warnings)
+	assert.True(t,
+		containsSubstring(result.Warnings, "clear the TPM"),
+		"Warnings must include the remediation hint about clearing the TPM; got: %v", result.Warnings)
+}
+
+// TestApplySetup_ExplicitTPM2InitFails_FallsBackToPassphraseAndCompletes verifies
+// the hardware->software fallback at barrier-init time. When the user explicitly
+// chooses TPM sealing (SealerBackend="tpm2") but the TPM strategy fails to
+// initialize the barrier (here: no TPM sealer wired, so assembleStrategy("tpm2")
+// returns ErrBarrierStrategyUnavailable — mirroring a real TPM that rejects
+// provisioning with TPM_RC_BAD_AUTH/TPM_RC_POLICY_FAIL), setup must NOT dead-end.
+// It must retry with passphrase, complete setup (persist SetupComplete=true so the
+// wizard does not reappear on every launch), and surface a downgrade warning.
+func TestApplySetup_ExplicitTPM2InitFails_FallsBackToPassphraseAndCompletes(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Real BarrierService with NO TPM sealer wired: Initialize(_, "tpm2") fails
+	// with ErrBarrierStrategyUnavailable; Initialize(_, "passphrase") succeeds.
+	barrierSvc := NewBarrierService(tmpDir, slog.Default())
+	barrierSvc.SetContext(context.Background())
+
+	tw := newTestSetupWizard(&GUIConfigData{})
+	tw.svc.SetBarrierService(barrierSvc)
+
+	result, err := tw.svc.ApplySetup(&SetupChoices{
+		Mode:               "standalone",
+		SOPin:              testSOPin,
+		UserPin:            testUserPin,
+		PasswordStoreMode:  "tpm_sealed",
+		SealerBackend:      "tpm2", // EXPLICIT hardware choice that fails at init
+		StorageType:        "barrier",
+		BarrierPassword:    "testbarrier123",
+		UseUserPinAsMaster: false,
+	})
+	require.NoError(t, err, "ApplySetup must not error when falling back from failed TPM to passphrase")
+	require.NotNil(t, result)
+
+	// The fallback must succeed so the user is not trapped re-running the wizard.
+	assert.True(t, result.Success, "result.Success must be true after the TPM->passphrase fallback")
+	assert.True(t, result.SetupComplete, "result.SetupComplete must be true after fallback")
+
+	// The CRITICAL assertion: setup completion is PERSISTED. If this is false the
+	// wizard reappears on every launch (the reported bug).
+	saved := tw.configFunc()
+	require.NotNil(t, saved)
+	assert.True(t, saved.SetupComplete,
+		"persisted SetupComplete must be true so the next launch shows the unlock screen, not the wizard")
+	assert.True(t, saved.BarrierInitialized, "persisted BarrierInitialized must be true after fallback")
+	assert.Equal(t, "passphrase", saved.BarrierStrategy,
+		"persisted BarrierStrategy must reflect the actual passphrase strategy")
+	assert.Equal(t, "software", saved.SealerBackend,
+		"persisted SealerBackend must map to the software seal namespace, not the failed tpm2")
+
+	// The downgrade must be surfaced so the user knows hardware sealing was not used.
+	assert.True(t,
+		containsSubstring(result.Warnings, "sealing strategy downgraded"),
+		"Warnings must mention the downgrade; got: %v", result.Warnings)
+}
+
+// TestApplySetup_TPM2Strategy_SkipsSOPINEntirely verifies that when the
+// active PIN backend is the tpm2 strategy (no SO PIN concept — see
+// pkg/pintpm2.TPM2Backend), ApplySetup never calls SetSOPIN/ChangeSOPIN/
+// VerifySOPIN against it. Before this fix, a virgin install with a
+// provisioned TPM would attempt SetSOPIN in Step 2 and again in the
+// deferred Step 7 retry, producing repeated so_pin_failed audit events
+// and a raw "pin: PIN not set" error surfaced nowhere useful.
+func TestApplySetup_TPM2Strategy_SkipsSOPINEntirely(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	barrierSvc := NewBarrierService(tmpDir, slog.Default())
+	barrierSvc.SetContext(context.Background())
+
+	pinBackend := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategyTPM2}
+	pinSvc := newWizardPINService(pinBackend)
+
+	tw := newTestSetupWizard(&GUIConfigData{})
+	tw.svc.SetBarrierService(barrierSvc)
+	tw.svc.SetPINService(pinSvc)
+
+	result, err := tw.svc.ApplySetup(&SetupChoices{
+		Mode:               "standalone",
+		SOPin:              testSOPin,
+		UserPin:            testUserPin,
+		PasswordStoreMode:  "aes_software",
+		SealerBackend:      "passphrase",
+		StorageType:        "barrier",
+		BarrierPassword:    "testbarrier123",
+		UseUserPinAsMaster: false,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, 0, pinBackend.setSOPINCalls,
+		"SetSOPIN must never be attempted against a tpm2 backend")
+	assert.Equal(t, 0, pinBackend.changeSOPINCalls,
+		"ChangeSOPIN must never be attempted against a tpm2 backend")
+	assert.Equal(t, 0, pinBackend.verifySOPINCalls,
+		"VerifySOPIN must never be attempted against a tpm2 backend")
+
+	// The wizard must still surface the fact that SO PIN was not applicable,
+	// rather than silently dropping the user's entered value.
+	assert.True(t,
+		containsSubstring(result.Warnings, "SO PIN is not applicable"),
+		"Warnings must explain that SO PIN does not apply to the tpm2 backend; got: %v", result.Warnings)
+	assert.True(t,
+		containsSubstring(result.Warnings, "tpm2"),
+		"Warnings must name the active strategy; got: %v", result.Warnings)
+
+	// Exactly one warning about SO PIN applicability (not one per attempted
+	// call site) — the capability check short-circuits every call site.
+	sopinWarnings := 0
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "SO PIN is not applicable") {
+			sopinWarnings++
+		}
+	}
+	assert.Equal(t, 1, sopinWarnings, "expected exactly one SO PIN applicability warning; got: %v", result.Warnings)
+
+	// User PIN must still be set — the tpm2 backend ignores the SO PIN
+	// parameter for SetUserPIN entirely, so it is unaffected.
+	assert.True(t, pinBackend.userPINSet, "User PIN must still be set against the tpm2 backend")
+}
+
+// TestApplySetup_SoftwareStrategy_StillSetsSOPIN is the control case for
+// TestApplySetup_StrategySwitchesToTPM2MidApply_SkipsDeferredSOPIN covers
+// the live first-boot sequence: at Step 2 the PIN service still runs the
+// software strategy (SO PIN supported), then initDataDirFunc re-creates the
+// PIN manager and pinselect picks tpm2. The deferred Step 7 retry must
+// re-evaluate capability and skip the SetSOPIN/ChangeSOPIN/VerifySOPIN chain
+// instead of emitting so_pin_failed audit events on a clean install.
+func TestApplySetup_StrategySwitchesToTPM2MidApply_SkipsDeferredSOPIN(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	barrierSvc := NewBarrierService(tmpDir, slog.Default())
+	barrierSvc.SetContext(context.Background())
+
+	softBackend := &wizardMockPINBackend{
+		strategy: qrdbsdk.PINStrategySoftware,
+		// Step 2 SetSOPIN fails (PIN manager not ready yet on a real boot),
+		// forcing the wizard onto the deferred Step 7 retry path.
+		setSOPINErr: errors.New("pin manager not initialized"),
+	}
+	tpm2Backend := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategyTPM2}
+
+	pinSvc := newWizardPINService(softBackend)
+
+	tw := newTestSetupWizard(&GUIConfigData{})
+	tw.svc.SetBarrierService(barrierSvc)
+	tw.svc.SetPINService(pinSvc)
+	tw.svc.SetInitDataDirFunc(func() error {
+		// Data-dir init re-selects the PIN backend: software → tpm2.
+		pinSvc.SetPINService(qrdbsdk.NewPINService(tpm2Backend, slog.Default()))
+		return nil
+	})
+
+	result, err := tw.svc.ApplySetup(&SetupChoices{
+		Mode:               "standalone",
+		SOPin:              testSOPin,
+		UserPin:            testUserPin,
+		PasswordStoreMode:  "aes_software",
+		SealerBackend:      "passphrase",
+		StorageType:        "barrier",
+		BarrierPassword:    "testbarrier123",
+		UseUserPinAsMaster: false,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, 0, tpm2Backend.setSOPINCalls,
+		"deferred SetSOPIN must not run once the strategy switched to tpm2")
+	assert.Equal(t, 0, tpm2Backend.changeSOPINCalls,
+		"deferred ChangeSOPIN must not run once the strategy switched to tpm2")
+	assert.Equal(t, 0, tpm2Backend.verifySOPINCalls,
+		"deferred VerifySOPIN must not run once the strategy switched to tpm2")
+	assert.True(t,
+		containsSubstring(result.Warnings, "SO PIN is not applicable"),
+		"Warnings must explain SO PIN inapplicability after the mid-apply strategy switch; got: %v", result.Warnings)
+}
+
+// TestApplySetup_TPM2Strategy_SkipsSOPINEntirely: a software PIN backend
+// supports SO PINs, so ApplySetup must set it exactly as before.
+func TestApplySetup_SoftwareStrategy_StillSetsSOPIN(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	barrierSvc := NewBarrierService(tmpDir, slog.Default())
+	barrierSvc.SetContext(context.Background())
+
+	pinBackend := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
+	pinSvc := newWizardPINService(pinBackend)
+
+	tw := newTestSetupWizard(&GUIConfigData{})
+	tw.svc.SetBarrierService(barrierSvc)
+	tw.svc.SetPINService(pinSvc)
+
+	result, err := tw.svc.ApplySetup(&SetupChoices{
+		Mode:               "standalone",
+		SOPin:              testSOPin,
+		UserPin:            testUserPin,
+		PasswordStoreMode:  "aes_software",
+		SealerBackend:      "passphrase",
+		StorageType:        "barrier",
+		BarrierPassword:    "testbarrier123",
+		UseUserPinAsMaster: false,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, 1, pinBackend.setSOPINCalls, "SetSOPIN must be attempted exactly once against a software backend")
+	assert.True(t, pinBackend.soPINSet)
+	assert.False(t,
+		containsSubstring(result.Warnings, "SO PIN is not applicable"),
+		"no SO PIN applicability warning should appear for the software backend; got: %v", result.Warnings)
+}
+
+// TestApplySetup_NoDowngradeWarning_WhenPassphraseExplicitlyChosen verifies that
+// when the user explicitly selects passphrase sealing (no hardware intent),
+// no downgrade warning is emitted even though passphrase is ultimately used.
+func TestApplySetup_NoDowngradeWarning_WhenPassphraseExplicitlyChosen(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	barrierSvc := NewBarrierService(tmpDir, slog.Default())
+	barrierSvc.SetContext(context.Background())
+
+	tw := newTestSetupWizard(&GUIConfigData{})
+	tw.svc.SetBarrierService(barrierSvc)
+
+	result, err := tw.svc.ApplySetup(&SetupChoices{
+		Mode:               "standalone",
+		SOPin:              testSOPin,
+		UserPin:            testUserPin,
+		PasswordStoreMode:  "aes_software", // no hardware intent
+		SealerBackend:      "passphrase",   // explicitly passphrase
+		StorageType:        "barrier",
+		BarrierPassword:    "testbarrier123",
+		UseUserPinAsMaster: false,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.True(t, result.Success, "result.Success should be true for explicit passphrase setup")
+
+	// No downgrade warning should be emitted when the user explicitly chose passphrase.
+	assert.False(t,
+		containsSubstring(result.Warnings, "sealing strategy downgraded"),
+		"no downgrade warning should appear for an explicit passphrase choice; got: %v", result.Warnings)
 }

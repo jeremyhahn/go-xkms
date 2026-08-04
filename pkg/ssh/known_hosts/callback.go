@@ -15,10 +15,12 @@ package known_hosts
 
 import (
 	"context"
+	"errors"
 	"net"
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 )
 
@@ -39,6 +41,64 @@ func Callback(ctx context.Context, store Store, sc scope.Scope, owner string) ss
 	return func(hostname string, _ net.Addr, key ssh.PublicKey) error {
 		host := stripPort(hostname)
 		return Verify(ctx, store, sc, owner, host, key)
+	}
+}
+
+// Confirmer decides whether an unpinned host key should be trusted. It is
+// invoked by CallbackWithConfirm only when no pin exists for the host — a
+// conflicting pin (a *MismatchError from Verify) always hard-fails without
+// ever reaching a Confirmer. Implementations typically prompt an operator
+// (CLI/GUI) or apply an automated policy (e.g. accept-new).
+//
+// Returning (true, nil) trusts key for host — CallbackWithConfirm persists
+// the pin before the handshake proceeds. Returning (false, nil) rejects the
+// connection with *RejectedError. A non-nil err propagates unchanged as the
+// handshake failure.
+type Confirmer func(ctx context.Context, host string, key ssh.PublicKey) (accept bool, err error)
+
+// CallbackWithConfirm returns an ssh.HostKeyCallback like Callback, but
+// layers trust-on-first-use on top: when Verify reports *NotFoundError (no
+// pin exists for the host), confirm is consulted instead of failing
+// outright. A pin MISMATCH always hard-fails without consulting confirm —
+// TOFU covers only the absence of a pin, never a conflicting one (a
+// conflicting pin is exactly the MITM signal Verify exists to catch).
+//
+// confirm == nil reproduces Callback's strict behavior exactly (every
+// unpinned host is rejected with *NotFoundError).
+//
+// On confirm accepting (true, nil), the offered key is persisted via
+// store.Add (Source: SourceFirstContact) before the callback returns nil —
+// so a concurrent second connection to the same host observes the new pin
+// rather than re-prompting. On confirm declining (false, nil), the callback
+// returns *RejectedError and no pin is written. Any error confirm returns
+// propagates unchanged, and any error from the persisting store.Add also
+// propagates (the handshake fails rather than silently leaving the pin
+// unwritten).
+func CallbackWithConfirm(ctx context.Context, store Store, sc scope.Scope, owner string, confirm Confirmer) ssh.HostKeyCallback {
+	if confirm == nil {
+		return Callback(ctx, store, sc, owner)
+	}
+	return func(hostname string, _ net.Addr, key ssh.PublicKey) error {
+		host := stripPort(hostname)
+		verr := Verify(ctx, store, sc, owner, host, key)
+		if verr == nil {
+			return nil
+		}
+		var notFound *NotFoundError
+		if !errors.As(verr, &notFound) {
+			return verr
+		}
+		accept, cerr := confirm(ctx, host, key)
+		if cerr != nil {
+			return cerr
+		}
+		if !accept {
+			return &RejectedError{Host: host, Fingerprint: keys.Fingerprint(key)}
+		}
+		if aerr := store.Add(ctx, PinFromPublicKey(host, sc, owner, key, SourceFirstContact)); aerr != nil {
+			return aerr
+		}
+		return nil
 	}
 }
 

@@ -34,6 +34,8 @@ export function GetSupportedKeyTypes(arg1:string,arg2:string):Promise<services.S
 
 export function ImportKey(arg1:string,arg2:services.ImportKeyParams):Promise<services.RemoteKeyInfo>;
 
+export function KeyCountForBackend(arg1:string):Promise<number>;
+
 export function ListAllKeys(arg1:string):Promise<Array<services.RemoteKeyInfo>>;
 
 export function ListBackends(arg1:string):Promise<Array<services.RemoteBackendInfo>>;

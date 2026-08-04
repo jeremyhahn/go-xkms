@@ -16,9 +16,10 @@ package module
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"sync"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
@@ -123,12 +124,12 @@ func (s *ModuleStorage) SaveTokenState(slotID SlotID, token *Token) error {
 
 	data, err := json.Marshal(state)
 	if err != nil {
-		return fmt.Errorf("failed to marshal token state: %w", err)
+		return &errs.Wrapped{Msg: "failed to marshal token state", Err: err}
 	}
 
 	key := prefixToken + strconv.FormatUint(uint64(slotID), 10)
 	if err := s.backend.Put(context.Background(), key, data); err != nil {
-		return fmt.Errorf("failed to save token state: %w", err)
+		return &errs.Wrapped{Msg: "failed to save token state", Err: err}
 	}
 
 	return nil
@@ -149,12 +150,12 @@ func (s *ModuleStorage) LoadTokenState(slotID SlotID) (*PersistentTokenState, er
 		if err == storage.ErrNotFound {
 			return nil, nil // Token not initialized yet
 		}
-		return nil, fmt.Errorf("failed to load token state: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to load token state", Err: err}
 	}
 
 	var state PersistentTokenState
 	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal token state: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to unmarshal token state", Err: err}
 	}
 
 	return &state, nil
@@ -201,12 +202,12 @@ func (s *ModuleStorage) SaveObject(slotID SlotID, obj *Object) error {
 
 	data, err := json.Marshal(po)
 	if err != nil {
-		return fmt.Errorf("failed to marshal object: %w", err)
+		return &errs.Wrapped{Msg: "failed to marshal object", Err: err}
 	}
 
 	key := prefixObject + strconv.FormatUint(uint64(obj.Handle), 10)
 	if err := s.backend.Put(context.Background(), key, data); err != nil {
-		return fmt.Errorf("failed to save object: %w", err)
+		return &errs.Wrapped{Msg: "failed to save object", Err: err}
 	}
 
 	return nil
@@ -223,7 +224,7 @@ func (s *ModuleStorage) LoadObjects(slotID SlotID) ([]*PersistentObject, error) 
 
 	keys, err := s.backend.List(context.Background(), prefixObject)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list objects: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to list objects", Err: err}
 	}
 
 	var objects []*PersistentObject
@@ -258,7 +259,7 @@ func (s *ModuleStorage) DeleteObject(handle ObjectHandle) error {
 
 	key := prefixObject + strconv.FormatUint(uint64(handle), 10)
 	if err := s.backend.Delete(context.Background(), key); err != nil && err != storage.ErrNotFound {
-		return fmt.Errorf("failed to delete object: %w", err)
+		return &errs.Wrapped{Msg: "failed to delete object", Err: err}
 	}
 
 	return nil
@@ -276,7 +277,7 @@ func (s *ModuleStorage) GetNextHandle() (ObjectHandle, error) {
 	key := prefixCounter + "object_handle"
 	data, err := s.backend.Get(context.Background(), key)
 	if err != nil && err != storage.ErrNotFound {
-		return 0, fmt.Errorf("failed to get handle counter: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to get handle counter", Err: err}
 	}
 
 	var counter uint64 = 1
@@ -286,7 +287,7 @@ func (s *ModuleStorage) GetNextHandle() (ObjectHandle, error) {
 	}
 
 	if err := s.backend.Put(context.Background(), key, []byte(strconv.FormatUint(counter, 10))); err != nil {
-		return 0, fmt.Errorf("failed to save handle counter: %w", err)
+		return 0, &errs.Wrapped{Msg: "failed to save handle counter", Err: err}
 	}
 
 	return ObjectHandle(counter), nil
@@ -303,7 +304,7 @@ func (s *ModuleStorage) SetNextHandle(handle ObjectHandle) error {
 
 	key := prefixCounter + "object_handle"
 	if err := s.backend.Put(context.Background(), key, []byte(strconv.FormatUint(uint64(handle), 10))); err != nil {
-		return fmt.Errorf("failed to save handle counter: %w", err)
+		return &errs.Wrapped{Msg: "failed to save handle counter", Err: err}
 	}
 
 	return nil

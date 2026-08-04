@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -72,12 +74,12 @@ func (c *Config) Validate() error {
 
 	// Vault URL is required
 	if c.VaultURL == "" {
-		return fmt.Errorf("%w: vault URL is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "vault URL is required"}
 	}
 
 	// Validate vault URL format
 	if !isValidVaultURL(c.VaultURL) {
-		return fmt.Errorf("%w: %s", ErrInvalidVaultURL, c.VaultURL)
+		return &errs.Detail{Err: ErrInvalidVaultURL, Detail: fmt.Sprintf("%s", c.VaultURL)}
 	}
 
 	// If service principal credentials are provided, all three must be present
@@ -87,16 +89,16 @@ func (c *Config) Validate() error {
 
 	if hasClientID || hasClientSecret || hasTenantID {
 		if !hasClientID || !hasClientSecret || !hasTenantID {
-			return fmt.Errorf("%w: tenant_id, client_id, and client_secret must all be provided together", ErrInvalidConfig)
+			return &errs.Detail{Err: ErrInvalidConfig, Detail: "tenant_id, client_id, and client_secret must all be provided together"}
 		}
 	}
 
 	// Storage providers are required
 	if c.KeyStorage == nil {
-		return fmt.Errorf("%w: key storage is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "key storage is required"}
 	}
 	if c.CertStorage == nil {
-		return fmt.Errorf("%w: cert storage is required", ErrInvalidConfig)
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "cert storage is required"}
 	}
 
 	return nil

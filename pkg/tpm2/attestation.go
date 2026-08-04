@@ -11,6 +11,8 @@ import (
 	"math/big"
 	"os"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -93,7 +95,7 @@ func (tpm *TPM2) CertifyKey(
 			tpm.logger.Error("failed to read persistent key public",
 				slog.String("handle", fmt.Sprintf("0x%08X", handle)),
 				slog.String("error", err.Error()))
-			return nil, fmt.Errorf("failed to read persistent key public: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to read persistent key public", Err: err}
 		}
 	} else {
 		// Transient key — load from blob storage.
@@ -101,7 +103,7 @@ func (tpm *TPM2) CertifyKey(
 		if err != nil {
 			tpm.logger.Error("failed to load target key for certification",
 				slog.String("error", err.Error()))
-			return nil, fmt.Errorf("%w: failed to load target key: %v", ErrInvalidKeyAttributes, err)
+			return nil, &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: fmt.Sprintf("failed to load target key: %v", err)}
 		}
 		defer tpm.Flush(loadResp.ObjectHandle)
 		targetHandle = loadResp.ObjectHandle
@@ -112,7 +114,7 @@ func (tpm *TPM2) CertifyKey(
 		if err != nil {
 			tpm.logger.Error("failed to read target key public",
 				slog.String("error", err.Error()))
-			return nil, fmt.Errorf("failed to read target key public: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to read target key public", Err: err}
 		}
 	}
 
@@ -152,7 +154,7 @@ func (tpm *TPM2) CertifyKey(
 	if err != nil {
 		tpm.logger.Error("TPM2_Certify failed",
 			slog.String("error", err.Error()))
-		return nil, fmt.Errorf("TPM2_Certify failed: %w", err)
+		return nil, &errs.Wrapped{Msg: "TPM2_Certify failed", Err: err}
 	}
 
 	// Read IAK public to determine signature type
@@ -162,12 +164,12 @@ func (tpm *TPM2) CertifyKey(
 	if err != nil {
 		tpm.logger.Error("failed to read IAK public",
 			slog.String("error", err.Error()))
-		return nil, fmt.Errorf("failed to read IAK public: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to read IAK public", Err: err}
 	}
 
 	iakPub, err := iakPubResp.OutPublic.Contents()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get IAK public contents: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get IAK public contents", Err: err}
 	}
 
 	// Extract the signature from the Certify response, following the same
@@ -180,12 +182,12 @@ func (tpm *TPM2) CertifyKey(
 		if store.IsRSAPSS(tpm.iakAttrs.SignatureAlgorithm) {
 			rsaSig, err = rspCert.Signature.Signature.RSAPSS()
 			if err != nil {
-				return nil, fmt.Errorf("failed to extract RSA-PSS signature: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to extract RSA-PSS signature", Err: err}
 			}
 		} else {
 			rsaSig, err = rspCert.Signature.Signature.RSASSA()
 			if err != nil {
-				return nil, fmt.Errorf("failed to extract RSASSA signature: %w", err)
+				return nil, &errs.Wrapped{Msg: "failed to extract RSASSA signature", Err: err}
 			}
 		}
 		signature = rsaSig.Sig.Buffer
@@ -194,34 +196,33 @@ func (tpm *TPM2) CertifyKey(
 
 		sig, err := rspCert.Signature.Signature.ECDSA()
 		if err != nil {
-			return nil, fmt.Errorf("failed to extract ECDSA signature: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to extract ECDSA signature", Err: err}
 		}
 		r := big.NewInt(0).SetBytes(sig.SignatureR.Buffer)
 		s := big.NewInt(0).SetBytes(sig.SignatureS.Buffer)
 		asn1Struct := struct{ R, S *big.Int }{r, s}
 		signature, err = asn1.Marshal(asn1Struct)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal ECDSA signature: %w", err)
+			return nil, &errs.Wrapped{Msg: "failed to marshal ECDSA signature", Err: err}
 		}
 	} else {
-		return nil, fmt.Errorf("%w: unsupported IAK key type: %v",
-			store.ErrUnsupportedKeyAlgorithm, iakPub.Type)
+		return nil, &errs.Detail{Err: store.ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("unsupported IAK key type: %v", iakPub.Type)}
 	}
 
 	// Extract IAK public key
 	iakPubKey, err := tpm.extractPublicKey(iakPub)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract IAK public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to extract IAK public key", Err: err}
 	}
 
 	// Extract target key public key
 	targetPub, err := targetPubResp.OutPublic.Contents()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get target key public contents: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to get target key public contents", Err: err}
 	}
 	targetPubKey, err := tpm.extractPublicKey(targetPub)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract target public key: %w", err)
+		return nil, &errs.Wrapped{Msg: "failed to extract target public key", Err: err}
 	}
 
 	tpm.logger.Debug("TPM2_Certify completed",
@@ -276,8 +277,7 @@ func (tpm *TPM2) extractPublicKey(pub *tpm2.TPMTPublic) (crypto.PublicKey, error
 		}, nil
 	}
 
-	return nil, fmt.Errorf("%w: unsupported key type: %v",
-		store.ErrUnsupportedKeyAlgorithm, pub.Type)
+	return nil, &errs.Detail{Err: store.ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("unsupported key type: %v", pub.Type)}
 }
 
 // Returns an Attestation Key Profile (EK, AK, AK Name, TCG_CSR_IDEVID)
@@ -371,18 +371,18 @@ func (tpm *TPM2) MakeCredentialWithExternalEK(
 	tpm.logger.Info("Creating Activation Credential with external EK certificate")
 
 	if ekCert == nil {
-		return nil, nil, nil, fmt.Errorf("EK certificate is required")
+		return nil, nil, nil, &errs.Message{Msg: "EK certificate is required"}
 	}
 
 	if len(iakPubBytes) == 0 {
-		return nil, nil, nil, fmt.Errorf("IAK public area bytes are required")
+		return nil, nil, nil, &errs.Message{Msg: "IAK public area bytes are required"}
 	}
 
 	// Generate secret if not provided
 	if secret == nil {
 		secret = make([]byte, 32) // AES-256 key
 		if _, err := tpm.random.Read(secret); err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to generate secret: %w", err)
+			return nil, nil, nil, &errs.Wrapped{Msg: "failed to generate secret", Err: err}
 		}
 	}
 
@@ -392,7 +392,7 @@ func (tpm *TPM2) MakeCredentialWithExternalEK(
 		InPublic:  tpm2.BytesAs2B[tpm2.TPMTPublic](iakPubBytes),
 	}.Execute(tpm.transport)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to load IAK public key: %w", err)
+		return nil, nil, nil, &errs.Wrapped{Msg: "failed to load IAK public key", Err: err}
 	}
 	defer tpm.Flush(iakLoadRsp.ObjectHandle)
 
@@ -401,13 +401,13 @@ func (tpm *TPM2) MakeCredentialWithExternalEK(
 		ObjectHandle: iakLoadRsp.ObjectHandle,
 	}.Execute(tpm.transport)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to read IAK public: %w", err)
+		return nil, nil, nil, &errs.Wrapped{Msg: "failed to read IAK public", Err: err}
 	}
 
 	// Convert EK certificate public key to TPM public structure
 	ekPublic, err := CertificateToTPMPublic(ekCert)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to convert EK certificate: %w", err)
+		return nil, nil, nil, &errs.Wrapped{Msg: "failed to convert EK certificate", Err: err}
 	}
 
 	// Load the client's EK public key onto the TPM
@@ -416,7 +416,7 @@ func (tpm *TPM2) MakeCredentialWithExternalEK(
 		InPublic:  tpm2.New2B(*ekPublic),
 	}.Execute(tpm.transport)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to load EK public key: %w", err)
+		return nil, nil, nil, &errs.Wrapped{Msg: "failed to load EK public key", Err: err}
 	}
 	defer tpm.Flush(ekLoadRsp.ObjectHandle)
 
@@ -437,7 +437,7 @@ func (tpm *TPM2) MakeCredentialWithExternalEK(
 		ObjectName: readPubRsp.Name,
 	}.Execute(tpm.transport)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("TPM2_MakeCredential failed: %w", err)
+		return nil, nil, nil, &errs.Wrapped{Msg: "TPM2_MakeCredential failed", Err: err}
 	}
 
 	if tpm.debugSecrets {
@@ -495,7 +495,7 @@ func (tpm *TPM2) ActivateCredential(
 
 	// Validate that key attributes are properly initialized
 	if keyAttrs == nil || keyAttrs.TPMAttributes == nil {
-		return nil, fmt.Errorf("IAK attributes not initialized, TPM may not be properly provisioned")
+		return nil, &errs.Message{Msg: "IAK attributes not initialized, TPM may not be properly provisioned"}
 	}
 
 	// Activate the credential, proving the AK and EK are both loaded

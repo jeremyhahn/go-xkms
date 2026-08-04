@@ -128,8 +128,7 @@ func (e *SudoElevator) Run(args []string, stdinData []byte) ([]byte, error) {
 				return nil, ErrElevationDenied
 			}
 
-			return nil, fmt.Errorf("%w: exit code %d: %s",
-				ErrElevationFailed, exitCode, stderrStr)
+			return nil, &DetailError{Err: ErrElevationFailed, Detail: fmt.Sprintf(": exit code %d: %s", exitCode, stderrStr)}
 		}
 
 		e.log.Debug("Run failed",
@@ -137,7 +136,7 @@ func (e *SudoElevator) Run(args []string, stdinData []byte) ([]byte, error) {
 			"stderr", stderrStr,
 			"error", err)
 
-		return nil, fmt.Errorf("%w: %v: %s", ErrElevationFailed, err, stderrStr)
+		return nil, &DetailError{Err: ErrElevationFailed, Detail: fmt.Sprintf(": %v: %s", err, stderrStr)}
 	}
 
 	e.log.Debug("Run completed successfully",

@@ -17,12 +17,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -241,7 +242,7 @@ func (s *PKCS11Service) ensureSoftHSM2Config() error {
 	// Create user config directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+		return &WrappedError{Msg: "failed to get home directory", Err: err}
 	}
 
 	configDir := filepath.Join(homeDir, ".config", "softhsm2")
@@ -252,7 +253,7 @@ func (s *PKCS11Service) ensureSoftHSM2Config() error {
 	if _, err := os.Stat(configPath); err == nil {
 		// Config exists, just set the environment variable
 		if err := os.Setenv("SOFTHSM2_CONF", configPath); err != nil {
-			return fmt.Errorf("failed to set SOFTHSM2_CONF: %w", err)
+			return &WrappedError{Msg: "failed to set SOFTHSM2_CONF", Err: err}
 		}
 		s.log.Info("SoftHSM2 user config found", "path", configPath)
 		return nil
@@ -260,18 +261,18 @@ func (s *PKCS11Service) ensureSoftHSM2Config() error {
 
 	// Create directories
 	if err := os.MkdirAll(tokenDir, 0700); err != nil {
-		return fmt.Errorf("failed to create SoftHSM2 token directory: %w", err)
+		return &WrappedError{Msg: "failed to create SoftHSM2 token directory", Err: err}
 	}
 
 	// Write config file
 	configContent := fmt.Sprintf(softhsm2ConfigTemplate, tokenDir)
 	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
-		return fmt.Errorf("failed to write SoftHSM2 config: %w", err)
+		return &WrappedError{Msg: "failed to write SoftHSM2 config", Err: err}
 	}
 
 	// Set environment variable for current process
 	if err := os.Setenv("SOFTHSM2_CONF", configPath); err != nil {
-		return fmt.Errorf("failed to set SOFTHSM2_CONF: %w", err)
+		return &WrappedError{Msg: "failed to set SOFTHSM2_CONF", Err: err}
 	}
 
 	s.log.Info("SoftHSM2 config auto-created", "config", configPath, "tokens", tokenDir)
@@ -321,7 +322,7 @@ func (s *PKCS11Service) RegisterModule(libraryPath, displayName string) (string,
 	if isSoftHSM2Module(libraryPath) {
 		if err := s.ensureSoftHSM2Config(); err != nil {
 			s.log.Error("failed to configure SoftHSM2", "error", err)
-			return "", fmt.Errorf("SoftHSM2 configuration failed: %w", err)
+			return "", &WrappedError{Msg: "SoftHSM2 configuration failed", Err: err}
 		}
 	}
 
@@ -356,7 +357,7 @@ func (s *PKCS11Service) RegisterModule(libraryPath, displayName string) (string,
 func (s *PKCS11Service) persistModule(moduleID, libraryPath, displayName string) error {
 	ucfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPKCS11ConfigPersistFailed, err)
+		return &SentinelCauseError{Sentinel: ErrPKCS11ConfigPersistFailed, Cause: err}
 	}
 
 	entry := config.LocalBackendConfig{
@@ -382,7 +383,7 @@ func (s *PKCS11Service) persistModule(moduleID, libraryPath, displayName string)
 	}
 
 	if saveErr := config.Save(ucfg); saveErr != nil {
-		return fmt.Errorf("%w: %v", ErrPKCS11ConfigPersistFailed, saveErr)
+		return &SentinelCauseError{Sentinel: ErrPKCS11ConfigPersistFailed, Cause: saveErr}
 	}
 
 	s.log.Info("PKCS#11 module persisted to config", "module_id", moduleID)
@@ -405,7 +406,7 @@ func (s *PKCS11Service) RegisterModuleFromConfig(moduleID, libraryPath, displayN
 	if isSoftHSM2Module(libraryPath) {
 		if err := s.ensureSoftHSM2Config(); err != nil {
 			s.log.Error("failed to configure SoftHSM2", "error", err)
-			return "", fmt.Errorf("SoftHSM2 configuration failed: %w", err)
+			return "", &WrappedError{Msg: "SoftHSM2 configuration failed", Err: err}
 		}
 	}
 
@@ -513,7 +514,7 @@ func (s *PKCS11Service) InitializeToken(moduleID string, slotID uint, label, soP
 	mod, err := s.manager.GetModule(moduleID)
 	if err != nil {
 		s.log.Error("failed to get module info", "module_id", moduleID, "error", err)
-		return fmt.Errorf("module not found: %w", err)
+		return &WrappedError{Msg: "module not found", Err: err}
 	}
 
 	if len(mod.Slots) == 0 {
@@ -532,7 +533,7 @@ func (s *PKCS11Service) InitializeToken(moduleID string, slotID uint, label, soP
 	}
 	if !slotFound {
 		s.log.Error("slot not found", "module_id", moduleID, "slot_id", slotID, "available_slots", len(mod.Slots))
-		return fmt.Errorf("%w: slot %d (module has %d slots)", ErrPKCS11SlotNotFound, slotID, len(mod.Slots))
+		return &DetailError{Err: ErrPKCS11SlotNotFound, Detail: fmt.Sprintf(": slot %d (module has %d slots)", slotID, len(mod.Slots))}
 	}
 
 	if err := s.manager.InitializeToken(moduleID, slotID, label, soPin, userPin); err != nil {
@@ -540,7 +541,7 @@ func (s *PKCS11Service) InitializeToken(moduleID string, slotID uint, label, soP
 			"module_id", moduleID,
 			"slot_id", slotID,
 			"error", err)
-		return fmt.Errorf("token initialization failed: %w", err)
+		return &WrappedError{Msg: "token initialization failed", Err: err}
 	}
 
 	s.log.Info("PKCS#11 token initialized successfully",
@@ -592,7 +593,7 @@ func (s *PKCS11Service) Connect(moduleID string, slotID uint, userPin, soPin str
 	mod, err := s.manager.GetModule(moduleID)
 	if err != nil {
 		s.log.Error("failed to get module info", "module_id", moduleID, "error", err)
-		return fmt.Errorf("module not found: %w", err)
+		return &WrappedError{Msg: "module not found", Err: err}
 	}
 
 	if len(mod.Slots) == 0 {
@@ -620,10 +621,10 @@ func (s *PKCS11Service) Connect(moduleID string, slotID uint, userPin, soPin str
 			slotFound = true
 			tokenLabel = slot.Label
 			if !slot.TokenPresent {
-				return fmt.Errorf("no token present in slot %d", slotID)
+				return &MessageError{Msg: fmt.Sprintf("no token present in slot %d", slotID)}
 			}
 			if !slot.Initialized {
-				return fmt.Errorf("token in slot %d is not initialized", slotID)
+				return &MessageError{Msg: fmt.Sprintf("token in slot %d is not initialized", slotID)}
 			}
 			break
 		}
@@ -637,9 +638,9 @@ func (s *PKCS11Service) Connect(moduleID string, slotID uint, userPin, soPin str
 			}
 		}
 		if len(availableSlots) > 0 {
-			return fmt.Errorf("%w: slot %d not found, available initialized slots: %v", ErrPKCS11SlotNotFound, slotID, availableSlots)
+			return &DetailError{Err: ErrPKCS11SlotNotFound, Detail: fmt.Sprintf(": slot %d not found, available initialized slots: %v", slotID, availableSlots)}
 		}
-		return fmt.Errorf("%w: slot %d (module has %d slots, none initialized)", ErrPKCS11SlotNotFound, slotID, len(mod.Slots))
+		return &DetailError{Err: ErrPKCS11SlotNotFound, Detail: fmt.Sprintf(": slot %d (module has %d slots, none initialized)", slotID, len(mod.Slots))}
 	}
 
 	// Warn when connecting to a YubiKey without an SO PIN: the token will
@@ -652,9 +653,7 @@ func (s *PKCS11Service) Connect(moduleID string, slotID uint, userPin, soPin str
 			"module_id", moduleID,
 			"slot_id", slotID,
 			"library_path", mod.LibraryPath)
-		return fmt.Errorf("%w: YubiKey PIV requires the management key (factory default: %s)",
-			ErrPKCS11SOPINRequired,
-			"010203040506070801020304050607080102030405060708")
+		return &DetailError{Err: ErrPKCS11SOPINRequired, Detail: fmt.Sprintf(": YubiKey PIV requires the management key (factory default: %s)", "010203040506070801020304050607080102030405060708")}
 	}
 
 	_, err = s.manager.Connect(moduleID, slotID, userPin, soPin)
@@ -663,7 +662,7 @@ func (s *PKCS11Service) Connect(moduleID string, slotID uint, userPin, soPin str
 			"module_id", moduleID,
 			"slot_id", slotID,
 			"error", err)
-		return fmt.Errorf("connection failed: %w", err)
+		return &WrappedError{Msg: "connection failed", Err: err}
 	}
 
 	s.log.Info("PKCS#11 token connected successfully",
@@ -810,7 +809,7 @@ func (s *PKCS11Service) TestConnection(libraryPath string, slotID uint, userPIN 
 	if isSoftHSM2Module(libraryPath) {
 		if err := s.ensureSoftHSM2Config(); err != nil {
 			s.log.Error("failed to configure SoftHSM2", "error", err)
-			return fmt.Errorf("SoftHSM2 configuration failed: %w", err)
+			return &WrappedError{Msg: "SoftHSM2 configuration failed", Err: err}
 		}
 	}
 
@@ -818,7 +817,7 @@ func (s *PKCS11Service) TestConnection(libraryPath string, slotID uint, userPIN 
 	moduleID, err := s.manager.RegisterModule(libraryPath, "test-connection")
 	if err != nil {
 		s.log.Error("test connection: failed to register module", "error", err)
-		return fmt.Errorf("failed to register module: %w", err)
+		return &WrappedError{Msg: "failed to register module", Err: err}
 	}
 
 	// Get module info to show available slots
@@ -850,7 +849,7 @@ func (s *PKCS11Service) TestConnection(libraryPath string, slotID uint, userPIN 
 		// Cleanup: unregister the module on failure so the next attempt
 		// starts fresh (e.g., after the user corrects the PIN).
 		_ = s.manager.UnregisterModule(moduleID)
-		return fmt.Errorf("connection test failed: %w", loginErr)
+		return &WrappedError{Msg: "connection test failed", Err: loginErr}
 	}
 
 	// Retain the registration so a subsequent RegisterModule call for the
@@ -883,7 +882,7 @@ func (s *PKCS11Service) ProbeSlots(libraryPath string) ([]PKCS11SlotInfo, error)
 	if isSoftHSM2Module(libraryPath) {
 		if err := s.ensureSoftHSM2Config(); err != nil {
 			s.log.Error("failed to configure SoftHSM2", "error", err)
-			return nil, fmt.Errorf("SoftHSM2 configuration failed: %w", err)
+			return nil, &WrappedError{Msg: "SoftHSM2 configuration failed", Err: err}
 		}
 	}
 
@@ -891,14 +890,14 @@ func (s *PKCS11Service) ProbeSlots(libraryPath string) ([]PKCS11SlotInfo, error)
 	moduleID, err := s.manager.RegisterModule(libraryPath, "probe-slots")
 	if err != nil {
 		s.log.Error("probe slots: failed to register module", "error", err)
-		return nil, fmt.Errorf("failed to probe module: %w", err)
+		return nil, &WrappedError{Msg: "failed to probe module", Err: err}
 	}
 
 	// Get module info to retrieve slots
 	mod, err := s.manager.GetModule(moduleID)
 	if err != nil {
 		_ = s.manager.UnregisterModule(moduleID)
-		return nil, fmt.Errorf("failed to get module info: %w", err)
+		return nil, &WrappedError{Msg: "failed to get module info", Err: err}
 	}
 
 	// Convert slots

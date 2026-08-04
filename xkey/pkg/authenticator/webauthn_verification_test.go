@@ -204,7 +204,7 @@ func (m *mockKeyProvider) GenerateKey(ctx context.Context, attrs *xkms.KeyAttrib
 func (m *mockKeyProvider) GetKey(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	key, ok := m.keys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", attrs.CN)
+		return nil, &MessageError{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 	return key, nil
 }
@@ -217,11 +217,11 @@ func (m *mockKeyProvider) DeleteKey(ctx context.Context, attrs *xkms.KeyAttribut
 func (m *mockKeyProvider) Signer(ctx context.Context, attrs *xkms.KeyAttributes) (crypto.Signer, error) {
 	key, ok := m.keys[attrs.CN]
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", attrs.CN)
+		return nil, &MessageError{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("key is not a signer")
+		return nil, &MessageError{Msg: "key is not a signer"}
 	}
 	return signer, nil
 }

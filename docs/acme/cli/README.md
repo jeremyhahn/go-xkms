@@ -1,6 +1,6 @@
 # CLI Tools
 
-go-trusted-ca provides three CLI binaries for certificate authority operations.
+go-xkms provides three CLI binaries for certificate authority operations.
 
 ## Tools Overview
 

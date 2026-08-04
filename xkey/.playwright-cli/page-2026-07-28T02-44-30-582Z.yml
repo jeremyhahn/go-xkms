@@ -1,0 +1,157 @@
+- generic [ref=e3]:
+  - navigation "Main navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e9]: xKey
+      - button "Collapse sidebar" [ref=e10] [cursor=pointer]:
+        - img [ref=e11]
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: OVERVIEW
+        - button "Dashboard" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - generic [ref=e19]: Dashboard
+        - button "Pairing" [ref=e20] [cursor=pointer]:
+          - img [ref=e21]
+          - generic [ref=e23]: Pairing
+        - button "TPM 2.0" [ref=e24] [cursor=pointer]:
+          - img [ref=e25]
+          - generic [ref=e27]: TPM 2.0
+      - generic [ref=e28]:
+        - generic [ref=e29]: STORE
+        - button "Keys" [ref=e30] [cursor=pointer]:
+          - img [ref=e31]
+          - generic [ref=e33]: Keys
+        - button "Trust Store" [ref=e34] [cursor=pointer]:
+          - img [ref=e35]
+          - generic [ref=e37]: Trust Store
+        - button "Certificates" [ref=e38] [cursor=pointer]:
+          - img [ref=e39]
+          - generic [ref=e41]: Certificates
+      - generic [ref=e42]:
+        - generic [ref=e43]: APPLICATIONS
+        - button "SSH" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e47]: SSH
+        - button "FIDO2" [ref=e48] [cursor=pointer]:
+          - img [ref=e49]
+          - generic [ref=e51]: FIDO2
+        - button "OATH" [ref=e52] [cursor=pointer]:
+          - img [ref=e53]
+          - generic [ref=e55]: OATH
+        - button "PIV" [ref=e56] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: PIV
+        - button "Passwords" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e63]: Passwords
+        - button "Sealed Data" [ref=e64] [cursor=pointer]:
+          - img [ref=e65]
+          - generic [ref=e67]: Sealed Data
+        - button "Browser" [ref=e68] [cursor=pointer]:
+          - img [ref=e69]
+          - generic [ref=e71]: Browser
+      - generic [ref=e72]:
+        - generic [ref=e73]: MANAGEMENT
+        - button "Audit Log" [ref=e74] [cursor=pointer]:
+          - img [ref=e75]
+          - generic [ref=e77]: Audit Log
+        - button "Admin" [ref=e78] [cursor=pointer]:
+          - img [ref=e79]
+          - generic [ref=e81]: Admin
+      - generic [ref=e82]:
+        - generic [ref=e83]: DEVELOPER TOOLS
+        - button "OIDC" [ref=e84] [cursor=pointer]:
+          - img [ref=e85]
+          - generic [ref=e87]: OIDC
+        - button "API Explorer" [ref=e88] [cursor=pointer]:
+          - img [ref=e89]
+          - generic [ref=e91]: API Explorer
+    - generic [ref=e92]:
+      - generic "Standalone mode" [ref=e93]:
+        - generic [ref=e95]: Standalone
+      - button "Theme" [ref=e96] [cursor=pointer]:
+        - img [ref=e97]
+        - generic [ref=e99]: Theme
+      - button "Settings" [ref=e100] [cursor=pointer]:
+        - img [ref=e101]
+        - generic [ref=e103]: Settings
+  - main [ref=e104]:
+    - generic [ref=e106]:
+      - button "Lock app" [ref=e107] [cursor=pointer]:
+        - img [ref=e108]
+        - generic [ref=e110]: Lock
+      - button "No touch pending" [disabled] [ref=e111]:
+        - img [ref=e113]
+    - generic [ref=e807]:
+      - generic [ref=e810]:
+        - heading "SSH" [level=1] [ref=e811]
+        - paragraph [ref=e812]: Connection profiles and keys
+      - tablist [ref=e813]:
+        - tab "Keys" [ref=e814] [cursor=pointer]
+        - tab "Profiles" [selected] [ref=e815] [cursor=pointer]: Profiles
+      - generic [ref=e817]:
+        - complementary [ref=e818]:
+          - tree "Folders" [ref=e819]:
+            - treeitem "All Profiles" [selected] [ref=e820] [cursor=pointer]:
+              - img [ref=e822]
+              - generic [ref=e824]: All Profiles
+            - group
+            - button "New Folder" [ref=e827] [cursor=pointer]:
+              - img [ref=e829]
+              - generic [ref=e831]: New Folder
+        - generic [ref=e833]:
+          - button "New Connection" [ref=e834] [cursor=pointer]:
+            - img [ref=e835]
+            - generic [ref=e837]: New Connection
+          - button "New Profile" [active] [ref=e838] [cursor=pointer]:
+            - img [ref=e839]
+            - generic [ref=e841]: New Profile
+      - dialog "New SSH Profile" [ref=e842]:
+        - generic [ref=e843]:
+          - heading "New SSH Profile" [level=2] [ref=e844]
+          - button "Close dialog" [ref=e845] [cursor=pointer]:
+            - img [ref=e846]
+        - generic [ref=e849]:
+          - generic [ref=e850]:
+            - generic [ref=e851]:
+              - generic [ref=e852]: Profile Name
+              - textbox "Profile Name" [ref=e853]:
+                - /placeholder: e.g. Production Server
+            - generic [ref=e854]:
+              - generic [ref=e855]: Folder
+              - combobox "Folder" [ref=e856]
+          - generic [ref=e857]:
+            - generic [ref=e858]:
+              - generic [ref=e859]: Host
+              - textbox "Host" [ref=e860]:
+                - /placeholder: hostname or IP
+            - generic [ref=e861]:
+              - generic [ref=e862]: Port
+              - spinbutton "Port" [ref=e863]: "22"
+          - generic [ref=e864]:
+            - generic [ref=e865]: Username
+            - textbox "Username" [ref=e866]:
+              - /placeholder: e.g. ubuntu, ec2-user
+          - generic [ref=e867]:
+            - generic [ref=e868]: SSH Key
+            - combobox "SSH Key" [ref=e869] [cursor=pointer]:
+              - option "— No key (password auth) —"
+              - option "chrometest-ssh-sw (ed25519 · software)" [selected]
+              - option "chrometest-ssh-tpm (ecdsa-p256 · tpm2)"
+          - generic [ref=e870]:
+            - generic [ref=e871]: Open in
+            - combobox "Open in" [ref=e872] [cursor=pointer]:
+              - option "Use default" [selected]
+              - option "System terminal"
+              - option "Embedded console"
+          - generic [ref=e873]:
+            - generic [ref=e874]: Notes (optional)
+            - textbox "Notes (optional)" [ref=e875]:
+              - /placeholder: Any notes about this connection...
+        - generic [ref=e876]:
+          - button "Cancel" [ref=e877] [cursor=pointer]:
+            - generic [ref=e878]: Cancel
+          - button "Create" [ref=e879] [cursor=pointer]:
+            - generic [ref=e880]: Create

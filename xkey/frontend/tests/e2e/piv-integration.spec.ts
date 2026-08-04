@@ -1,7 +1,8 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import {
   navigateTo,
   waitForAppReady,
+  waitForBackendReady,
   ensureSidebarExpanded,
   isWailsMode,
   waitForLoadingComplete,
@@ -26,13 +27,119 @@ import {
  * then data-testid="piv-action-delete".
  * BackendSelector in PIV uses showAll=false; chips are .backend-selector .filter-chip.
  */
+
+// resetPIVSlots clears every PIV slot via the backend binding so each test
+// starts from a clean, all-empty state. Real-backend (Wails) only. This
+// prevents state left by a prior test (or by piv.spec.ts running in parallel)
+// from causing assertion failures in lifecycle tests that expect an empty slot.
+//
+// PKCS#11 backends are deliberately EXCLUDED from the generic "original
+// backend" sweep below. Unlike the ephemeral software/tpm2 test backends,
+// the PKCS#11 backend in the e2e sandbox points at a SoftHSM2 token that is
+// pre-provisioned with long-lived fixture certificates (test/e2e/
+// setup-softhsm-piv.sh, consumed by tests/e2e/piv-pkcs11-loading.spec.ts).
+// Sweeping it here would permanently delete that shared fixture the moment
+// any test in this file switches the active backend to PKCS#11 — exactly the
+// bug this comment now documents. The one test that needs an empty PKCS#11
+// slot 9A (see "PKCS11 PIV Key Lifecycle" below) clears that single slot
+// itself instead of relying on this blanket sweep.
+async function resetPIVSlots(page: Page): Promise<void> {
+  if (!(await isWailsMode(page))) return;
+  await page.evaluate(async () => {
+    type PIVBinding = {
+      DeleteCertificate?: (slot: string) => Promise<void>;
+      SetBackend?: (backend: string) => Promise<void>;
+      GetBackend?: () => Promise<string>;
+    };
+    const piv = (window as { go?: { services?: { PIVService?: PIVBinding } } }).go
+      ?.services?.PIVService;
+    if (!piv?.DeleteCertificate) return;
+    // DeleteCertificate operates on the service's currently selected backend,
+    // so a reset must sweep every local backend — a prior run may have left a
+    // key on tpm2 while the service is parked on software (and vice versa).
+    // PKCS#11 module IDs (e.g. "pkcs11-libsofthsm2") are excluded — see the
+    // function doc comment above.
+    const original = await piv.GetBackend?.().catch(() => '') ?? '';
+    const backends = ['software', 'tpm2'];
+    if (original && !backends.includes(original) && !original.startsWith('pkcs11')) backends.push(original);
+    for (const backend of backends) {
+      try {
+        await piv.SetBackend?.(backend);
+      } catch {
+        continue;
+      }
+      for (const slot of ['9A', '9C', '9D', '9E', 'F9']) {
+        try {
+          await piv.DeleteCertificate(slot);
+        } catch {
+          // Slot already empty / nothing to delete — ignore.
+        }
+      }
+    }
+    if (original) {
+      try {
+        await piv.SetBackend?.(original);
+      } catch {
+        // Best effort — the next chip click resets it anyway.
+      }
+    }
+  });
+}
+
 test.describe('PIV Integration', () => {
+  // Serial mode ensures all tests run sequentially on one worker so each
+  // lifecycle test starts with a predictably clean backend PIV state.
+  // fullyParallel=true would dispatch concurrent workers that all share the
+  // same Wails singleton PIVService, causing slot-state races.
+  test.describe.configure({ mode: 'serial' });
+
+  // One-time initial reset so any slots left dirty by a previous run are
+  // cleared before the first test's beforeEach fires.
+  test.beforeAll(async ({ browser }) => {
+    const page = await browser.newPage();
+    try {
+      await page.goto('/');
+      await waitForAppReady(page);
+      // Ensure the Wails WebSocket is fully connected before calling any
+      // backend method (resetPIVSlots uses window.go directly; if the WS
+      // is not yet live, the delete calls silently no-op).
+      await waitForBackendReady(page);
+      await resetPIVSlots(page);
+    } finally {
+      await page.close();
+    }
+  });
+
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await waitForAppReady(page);
+    // waitForBackendReady MUST run before resetPIVSlots and navigateTo.
+    //
+    // resetPIVSlots calls PIVService.DeleteCertificate directly via window.go;
+    // if the Wails WebSocket is not yet connected the calls silently no-op and
+    // the slot state is not actually cleared.
+    //
+    // navigateTo loads the PIV view whose onMount fires BackendSelector.refresh()
+    // → AdminService.ListBackends immediately. Without a live WS, callBackend()
+    // returns null silently and only the auto-selected backend from the store is
+    // shown — chips for TPM2/PKCS11 never appear, causing isVisible() checks in
+    // the test bodies to time out and trigger spurious test.skip() calls.
+    await waitForBackendReady(page);
+    // Reset PIV slot state BEFORE navigating to PIV so the view loads fresh
+    // slot data after the reset completes. If we reset after navigation the
+    // Svelte store has already received the stale state and may not re-render.
+    await resetPIVSlots(page);
     await ensureSidebarExpanded(page);
     await navigateTo(page, 'piv');
     await waitForLoadingComplete(page);
+  });
+
+  test.afterEach(async ({ page }) => {
+    // Best-effort reset after each test so the next test's beforeEach starts
+    // with a clean slate even when the test itself didn't clean up (e.g. on
+    // failure mid-sequence). Errors here are swallowed because a failed reset
+    // should not mask the original test failure.
+    await resetPIVSlots(page).catch(() => {});
   });
 
   test.describe('Software PIV Key Lifecycle', () => {
@@ -119,7 +226,23 @@ test.describe('PIV Integration', () => {
       const backendSelector = page.locator('.backend-selector');
       await expect(backendSelector).toBeVisible();
 
-      // Enumerate available backend chips.
+      // Wait for at least one chip to appear before counting. The BackendSelector
+      // calls AdminService.ListBackends asynchronously; chips.count() called
+      // immediately after navigation returns 0 before the fetch resolves.
+      // waitForBackendReady in beforeEach ensures the WS is connected so the
+      // ListBackends call returns promptly; 5 s is a generous safety margin.
+      const firstChip = backendSelector.locator('.filter-chip').first();
+      const anyChipVisible = await firstChip
+        .isVisible({ timeout: 5_000 })
+        .catch(() => false);
+
+      if (!anyChipVisible) {
+        // No backends with PIV capability in this environment — skip gracefully.
+        test.skip(true, 'No PIV-capable backends available in this environment');
+        return;
+      }
+
+      // Now count is safe — at least one chip is already in the DOM.
       const chips = backendSelector.locator('.filter-chip');
       const count = await chips.count();
       expect(count).toBeGreaterThan(0);
@@ -141,8 +264,11 @@ test.describe('PIV Integration', () => {
       // a per-slot label, but .filter-chip inside .backend-selector).
       const tpm2Chip = page.locator('.backend-selector .filter-chip').filter({ hasText: /TPM/i });
 
-      // Skip if TPM2 backend is not available (no swtpm in this environment).
-      const hasTpm2 = await tpm2Chip.isVisible({ timeout: 3_000 }).catch(() => false);
+      // waitForBackendReady in beforeEach ensures the Wails WS is connected and
+      // AdminService.ListBackends has already been called before the PIV view
+      // mounted. The BackendSelector chips should be in the DOM within milliseconds
+      // of the view rendering; 10 s is a generous safety margin for CI load.
+      const hasTpm2 = await tpm2Chip.isVisible({ timeout: 10_000 }).catch(() => false);
       test.skip(!hasTpm2, 'TPM2 backend not available — requires swtpm');
 
       // Select the TPM2 backend.
@@ -188,6 +314,12 @@ test.describe('PIV Integration', () => {
       await waitForLoadingComplete(page);
 
       // Slot should now show a key/cert state.
+      // After GenerateKeyAdvanced succeeds, handleKeyGenerated() calls loadSlots()
+      // which queries PIVService.GetSlots scoped to the current TPM2 backend.
+      // The Go service's localBackend is still "tpm2" (set by the chip click above);
+      // getLocalSlots() remaps all returned slot Backend fields to that same ID so
+      // the filteredSlots reactive (which filters on selectedBackend="tpm2") includes
+      // slot 9A with loaded=true (self-signed cert) or hasKey=true (key-only).
       const slotLoaded = page.locator(
         '[data-testid="piv-slot-details-9A"], [data-testid="piv-slot-key-only-9A"]',
       );
@@ -218,9 +350,43 @@ test.describe('PIV Integration', () => {
       // (which is a per-slot informational badge, not interactive).
       const pkcs11Chip = page.locator('.backend-selector .filter-chip').filter({ hasText: /PKCS|HSM|YubiKey/i });
 
-      const hasPkcs11 = await pkcs11Chip.first().isVisible({ timeout: 3_000 }).catch(() => false);
+      // waitForBackendReady in beforeEach ensures the chips are populated quickly;
+      // 10 s matches the TPM2 timeout for consistency across hardware-backend tests.
+      const hasPkcs11 = await pkcs11Chip.first().isVisible({ timeout: 10_000 }).catch(() => false);
       test.skip(!hasPkcs11, 'PKCS#11 backend not available');
 
+      await pkcs11Chip.first().click();
+      await waitForLoadingComplete(page);
+
+      // The e2e SoftHSM2 fixture (test/e2e/setup-softhsm-piv.sh, provisioned by
+      // `make dev-browser-e2e`) pre-loads slot 9A with a test certificate so
+      // tests/e2e/piv-pkcs11-loading.spec.ts can verify pre-existing PKCS#11
+      // certs render correctly. This test needs an EMPTY 9A to exercise key
+      // generation, so it clears exactly that one slot itself — see the
+      // resetPIVSlots() doc comment for why the generic sweep above
+      // deliberately does not touch PKCS#11 backends.
+      await page.evaluate(async () => {
+        const piv = (window as { go?: { services?: { PIVService?: { DeleteCertificate?: (s: string) => Promise<void> } } } })
+          .go?.services?.PIVService;
+        try {
+          await piv?.DeleteCertificate?.('9A');
+        } catch {
+          // Slot already empty — nothing to delete.
+        }
+      });
+
+      // The delete above calls PIVService.DeleteCertificate directly via the
+      // Wails binding, bypassing the UI's own delete-button flow that would
+      // normally trigger a slot list refresh. Reload and re-select the
+      // PKCS#11 chip so PIV.svelte re-fetches GetSlots() and reflects the
+      // now-empty slot 9A, instead of continuing to show its stale
+      // pre-deletion (loaded) render.
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await waitForAppReady(page);
+      await waitForBackendReady(page);
+      await ensureSidebarExpanded(page);
+      await navigateTo(page, 'piv');
+      await waitForLoadingComplete(page);
       await pkcs11Chip.first().click();
       await waitForLoadingComplete(page);
 
@@ -246,7 +412,14 @@ test.describe('PIV Integration', () => {
       await expect(algoSelect).toBeVisible();
       await algoSelect.selectOption('ECCP256');
 
-      const generateBtn = page.getByRole('button', { name: 'Generate Key' });
+      // Every other empty PIV slot on the page also renders its own inline
+      // "Generate Key" button, and the dialog's submit button lives in the
+      // role=dialog footer (outside piv-generate-dialog's content node), so
+      // scope to the dialog by its accessible name to target the submit
+      // button unambiguously (matches the Software/TPM2 lifecycle tests above).
+      const generateBtn = page
+        .getByRole('dialog', { name: 'Generate PIV Key' })
+        .getByRole('button', { name: 'Generate Key', exact: true });
       await expect(generateBtn).toBeVisible();
       await generateBtn.click();
 

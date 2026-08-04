@@ -12,9 +12,20 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/jeremyhahn/go-xkms/sdk/go"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
+
+// mockUnsupportedError reports that a capability is not implemented by the
+// mock XKMS service used in this example.
+type mockUnsupportedError struct {
+	capability string
+}
+
+// Error returns a human-readable description.
+func (e *mockUnsupportedError) Error() string {
+	return e.capability + " not supported in mock"
+}
 
 // MockXKMSService is a mock implementation of XKMSServicer for demonstration.
 // In production, you would use the actual xkms.XKMSService.
@@ -148,7 +159,7 @@ func (m *MockXKMSService) CanSeal(ctx context.Context, backend string) (*xkms.Ca
 }
 
 func (m *MockXKMSService) AttestKey(ctx context.Context, req *xkms.AttestKeyRequest) (*xkms.AttestKeyResponse, error) {
-	return nil, fmt.Errorf("attestation not supported in mock")
+	return nil, &mockUnsupportedError{capability: "attestation"}
 }
 
 // Authentication flow methods
@@ -219,143 +230,143 @@ func (m *MockXKMSService) DeriveKeyECDH(ctx context.Context, req *transport.Deri
 }
 
 func (m *MockXKMSService) GetCABundle(ctx context.Context, req *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
-	return nil, fmt.Errorf("CA bundle not supported in mock")
+	return nil, &mockUnsupportedError{capability: "CA bundle"}
 }
 
 func (m *MockXKMSService) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
-	return nil, fmt.Errorf("CA certificate not supported in mock")
+	return nil, &mockUnsupportedError{capability: "CA certificate"}
 }
 
 func (m *MockXKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest) (*transport.SignCSRResponse, error) {
-	return nil, fmt.Errorf("CSR signing not supported in mock")
+	return nil, &mockUnsupportedError{capability: "CSR signing"}
 }
 
 func (m *MockXKMSService) IssueCertificate(ctx context.Context, req *transport.IssueCertificateRequest) (*transport.IssueCertificateResponse, error) {
-	return nil, fmt.Errorf("certificate issuance not supported in mock")
+	return nil, &mockUnsupportedError{capability: "certificate issuance"}
 }
 
 func (m *MockXKMSService) RevokeCertificate(ctx context.Context, req *transport.RevokeCertificateRequest) (*transport.RevokeCertificateResponse, error) {
-	return nil, fmt.Errorf("certificate revocation not supported in mock")
+	return nil, &mockUnsupportedError{capability: "certificate revocation"}
 }
 
 func (m *MockXKMSService) GenerateCRL(ctx context.Context, req *transport.GenerateCRLRequest) (*transport.GenerateCRLResponse, error) {
-	return nil, fmt.Errorf("CRL generation not supported in mock")
+	return nil, &mockUnsupportedError{capability: "CRL generation"}
 }
 
 func (m *MockXKMSService) IsRevoked(ctx context.Context, req *transport.IsRevokedRequest) (*transport.IsRevokedResponse, error) {
-	return nil, fmt.Errorf("revocation check not supported in mock")
+	return nil, &mockUnsupportedError{capability: "revocation check"}
 }
 
 // TCG CA operations
 
 func (m *MockXKMSService) IssueEKCertificate(ctx context.Context, req *transport.IssueEKCertificateRequest) (*transport.IssueEKCertificateResponse, error) {
-	return nil, fmt.Errorf("TCG CA not supported in mock")
+	return nil, &mockUnsupportedError{capability: "TCG CA"}
 }
 
 func (m *MockXKMSService) IssueAKCertificate(ctx context.Context, req *transport.IssueAKCertificateRequest) (*transport.IssueAKCertificateResponse, error) {
-	return nil, fmt.Errorf("TCG CA not supported in mock")
+	return nil, &mockUnsupportedError{capability: "TCG CA"}
 }
 
 func (m *MockXKMSService) SignTCGCSR(ctx context.Context, req *transport.SignTCGCSRRequest) (*transport.SignTCGCSRResponse, error) {
-	return nil, fmt.Errorf("TCG CA not supported in mock")
+	return nil, &mockUnsupportedError{capability: "TCG CA"}
 }
 
 func (m *MockXKMSService) EnrollDevice(ctx context.Context, req *transport.EnrollDeviceRequest) (*transport.EnrollDeviceResponse, error) {
-	return nil, fmt.Errorf("TCG CA not supported in mock")
+	return nil, &mockUnsupportedError{capability: "TCG CA"}
 }
 
 // PIV operations
 
 func (m *MockXKMSService) ListPIVSlots(ctx context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {
-	return nil, fmt.Errorf("PIV not supported in mock")
+	return nil, &mockUnsupportedError{capability: "PIV"}
 }
 
 func (m *MockXKMSService) GetPIVCertificate(ctx context.Context, req *transport.GetPIVCertificateRequest) (*transport.GetPIVCertificateResponse, error) {
-	return nil, fmt.Errorf("PIV not supported in mock")
+	return nil, &mockUnsupportedError{capability: "PIV"}
 }
 
 func (m *MockXKMSService) StorePIVCertificate(ctx context.Context, req *transport.StorePIVCertificateRequest) error {
-	return fmt.Errorf("PIV not supported in mock")
+	return &mockUnsupportedError{capability: "PIV"}
 }
 
 func (m *MockXKMSService) DeletePIVCertificate(ctx context.Context, req *transport.DeletePIVCertificateRequest) error {
-	return fmt.Errorf("PIV not supported in mock")
+	return &mockUnsupportedError{capability: "PIV"}
 }
 
 func (m *MockXKMSService) GeneratePIVKey(ctx context.Context, req *transport.GeneratePIVKeyRequest) (*transport.GeneratePIVKeyResponse, error) {
-	return nil, fmt.Errorf("PIV not supported in mock")
+	return nil, &mockUnsupportedError{capability: "PIV"}
 }
 
 func (m *MockXKMSService) ImportPIVCertificate(ctx context.Context, req *transport.StorePIVCertificateRequest) error {
-	return fmt.Errorf("PIV not supported in mock")
+	return &mockUnsupportedError{capability: "PIV"}
 }
 
 func (m *MockXKMSService) ExportPIVCertificate(ctx context.Context, req *transport.GetPIVCertificateRequest) (*transport.GetPIVCertificateResponse, error) {
-	return nil, fmt.Errorf("PIV not supported in mock")
+	return nil, &mockUnsupportedError{capability: "PIV"}
 }
 
 func (m *MockXKMSService) GeneratePIVCSR(ctx context.Context, req *transport.GeneratePIVCSRRequest) (*transport.GeneratePIVCSRResponse, error) {
-	return nil, fmt.Errorf("PIV not supported in mock")
+	return nil, &mockUnsupportedError{capability: "PIV"}
 }
 
 func (m *MockXKMSService) GetInitStatus(ctx context.Context) (*transport.InitStatusResponse, error) {
-	return nil, fmt.Errorf("init ceremony not supported in mock")
+	return nil, &mockUnsupportedError{capability: "init ceremony"}
 }
 
 func (m *MockXKMSService) ClaimCertBegin(ctx context.Context, req *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	return nil, fmt.Errorf("init ceremony not supported in mock")
+	return nil, &mockUnsupportedError{capability: "init ceremony"}
 }
 
 func (m *MockXKMSService) ClaimCertComplete(ctx context.Context, req *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	return nil, fmt.Errorf("init ceremony not supported in mock")
+	return nil, &mockUnsupportedError{capability: "init ceremony"}
 }
 
 func (m *MockXKMSService) ClaimShare(ctx context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
-	return nil, fmt.Errorf("init ceremony not supported in mock")
+	return nil, &mockUnsupportedError{capability: "init ceremony"}
 }
 
 func (m *MockXKMSService) SignCSRInit(ctx context.Context, req *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
-	return nil, fmt.Errorf("init ceremony not supported in mock")
+	return nil, &mockUnsupportedError{capability: "init ceremony"}
 }
 
 func (m *MockXKMSService) SubmitCredential(ctx context.Context, req *transport.CredentialSubmitRequest) (*transport.CredentialSubmitResponse, error) {
-	return nil, fmt.Errorf("credentials not supported in mock")
+	return nil, &mockUnsupportedError{capability: "credentials"}
 }
 
 func (m *MockXKMSService) GetCredentialStrategy(ctx context.Context) (*transport.CredentialStrategyResponse, error) {
-	return nil, fmt.Errorf("credentials not supported in mock")
+	return nil, &mockUnsupportedError{capability: "credentials"}
 }
 
 func (m *MockXKMSService) CreateUser(ctx context.Context, req *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
-	return nil, fmt.Errorf("users not supported in mock")
+	return nil, &mockUnsupportedError{capability: "users"}
 }
 
 func (m *MockXKMSService) ListUsers(ctx context.Context, opts ...transport.ListOption) (*transport.ListUsersResponse, error) {
-	return nil, fmt.Errorf("users not supported in mock")
+	return nil, &mockUnsupportedError{capability: "users"}
 }
 
 func (m *MockXKMSService) GetUser(ctx context.Context, username string) (*transport.GetUserResponse, error) {
-	return nil, fmt.Errorf("users not supported in mock")
+	return nil, &mockUnsupportedError{capability: "users"}
 }
 
 func (m *MockXKMSService) DeleteUser(ctx context.Context, username string) error {
-	return fmt.Errorf("users not supported in mock")
+	return &mockUnsupportedError{capability: "users"}
 }
 
 func (m *MockXKMSService) EnableUser(ctx context.Context, username string) error {
-	return fmt.Errorf("users not supported in mock")
+	return &mockUnsupportedError{capability: "users"}
 }
 
 func (m *MockXKMSService) DisableUser(ctx context.Context, username string) error {
-	return fmt.Errorf("users not supported in mock")
+	return &mockUnsupportedError{capability: "users"}
 }
 
 func (m *MockXKMSService) BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error {
-	return fmt.Errorf("users not supported in mock")
+	return &mockUnsupportedError{capability: "users"}
 }
 
 func (m *MockXKMSService) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
-	return nil, fmt.Errorf("users not supported in mock")
+	return nil, &mockUnsupportedError{capability: "users"}
 }
 
 func main() {
@@ -440,249 +451,265 @@ func main() {
 // Barrier operations
 
 func (m *MockXKMSService) BarrierInitialize(ctx context.Context, req *transport.BarrierInitializeRequest) error {
-	return fmt.Errorf("barrier not supported in mock")
+	return &mockUnsupportedError{capability: "barrier"}
 }
 
 func (m *MockXKMSService) BarrierUnseal(ctx context.Context, req *transport.BarrierUnsealRequest) error {
-	return fmt.Errorf("barrier not supported in mock")
+	return &mockUnsupportedError{capability: "barrier"}
 }
 
 func (m *MockXKMSService) BarrierSeal(ctx context.Context) error {
-	return fmt.Errorf("barrier not supported in mock")
+	return &mockUnsupportedError{capability: "barrier"}
 }
 
 func (m *MockXKMSService) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
-	return nil, fmt.Errorf("barrier not supported in mock")
+	return nil, &mockUnsupportedError{capability: "barrier"}
 }
 
 func (m *MockXKMSService) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	return nil, fmt.Errorf("barrier not supported in mock")
+	return nil, &mockUnsupportedError{capability: "barrier"}
 }
 
 func (m *MockXKMSService) BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	return nil, fmt.Errorf("barrier not supported in mock")
+	return nil, &mockUnsupportedError{capability: "barrier"}
 }
 
 func (m *MockXKMSService) BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error {
-	return fmt.Errorf("barrier not supported in mock")
+	return &mockUnsupportedError{capability: "barrier"}
 }
 
 func (m *MockXKMSService) BarrierRekey(ctx context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	return nil, fmt.Errorf("barrier not supported in mock")
+	return nil, &mockUnsupportedError{capability: "barrier"}
 }
 
 func (m *MockXKMSService) BarrierGenerateRecoveryKeys(ctx context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	return nil, fmt.Errorf("barrier not supported in mock")
+	return nil, &mockUnsupportedError{capability: "barrier"}
+}
+
+func (m *MockXKMSService) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	return nil, &mockUnsupportedError{capability: "barrier"}
 }
 
 func (m *MockXKMSService) BarrierRecoverWithKeys(ctx context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
-	return fmt.Errorf("barrier not supported in mock")
+	return &mockUnsupportedError{capability: "barrier"}
 }
 
 func (m *MockXKMSService) BarrierDeleteRecoveryKeys(ctx context.Context) error {
-	return fmt.Errorf("barrier not supported in mock")
+	return &mockUnsupportedError{capability: "barrier"}
 }
 
 func (m *MockXKMSService) BarrierHasRecoveryKeys(ctx context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	return nil, fmt.Errorf("barrier not supported in mock")
+	return nil, &mockUnsupportedError{capability: "barrier"}
 }
 
 func (m *MockXKMSService) BarrierGenerateRootToken(ctx context.Context, req *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	return nil, fmt.Errorf("barrier not supported in mock")
+	return nil, &mockUnsupportedError{capability: "barrier"}
 }
 
 // PIN operations
 
 func (m *MockXKMSService) SetSOPIN(ctx context.Context, req *transport.SetSOPINRequest) error {
-	return fmt.Errorf("PIN not supported in mock")
+	return &mockUnsupportedError{capability: "PIN"}
 }
 
 func (m *MockXKMSService) SetUserPIN(ctx context.Context, req *transport.SetUserPINRequest) error {
-	return fmt.Errorf("PIN not supported in mock")
+	return &mockUnsupportedError{capability: "PIN"}
 }
 
 func (m *MockXKMSService) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPINRequest) error {
-	return fmt.Errorf("PIN not supported in mock")
+	return &mockUnsupportedError{capability: "PIN"}
 }
 
 func (m *MockXKMSService) ChangeUserPIN(ctx context.Context, req *transport.ChangeUserPINRequest) error {
-	return fmt.Errorf("PIN not supported in mock")
+	return &mockUnsupportedError{capability: "PIN"}
 }
 
 func (m *MockXKMSService) VerifySOPIN(ctx context.Context, req *transport.VerifySOPINRequest) error {
-	return fmt.Errorf("PIN not supported in mock")
+	return &mockUnsupportedError{capability: "PIN"}
 }
 
 func (m *MockXKMSService) VerifyUserPIN(ctx context.Context, req *transport.VerifyUserPINRequest) error {
-	return fmt.Errorf("PIN not supported in mock")
+	return &mockUnsupportedError{capability: "PIN"}
 }
 
 func (m *MockXKMSService) GetLockoutStatus(ctx context.Context) (*transport.LockoutStatusResponse, error) {
-	return nil, fmt.Errorf("PIN not supported in mock")
+	return nil, &mockUnsupportedError{capability: "PIN"}
 }
 
 func (m *MockXKMSService) ResetLockout(ctx context.Context, req *transport.ResetLockoutRequest) error {
-	return fmt.Errorf("PIN not supported in mock")
+	return &mockUnsupportedError{capability: "PIN"}
 }
 
 // Password store operations
 
 func (m *MockXKMSService) PasswordAdd(ctx context.Context, req *transport.PasswordAddRequest) (*transport.PasswordAddResponse, error) {
-	return nil, fmt.Errorf("password store not supported in mock")
+	return nil, &mockUnsupportedError{capability: "password store"}
 }
 
 func (m *MockXKMSService) PasswordGet(ctx context.Context, req *transport.PasswordGetRequest) (*transport.PasswordGetResponse, error) {
-	return nil, fmt.Errorf("password store not supported in mock")
+	return nil, &mockUnsupportedError{capability: "password store"}
 }
 
 func (m *MockXKMSService) PasswordList(ctx context.Context, req *transport.PasswordListRequest) (*transport.PasswordListResponse, error) {
-	return nil, fmt.Errorf("password store not supported in mock")
+	return nil, &mockUnsupportedError{capability: "password store"}
 }
 
 func (m *MockXKMSService) PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) error {
-	return fmt.Errorf("password store not supported in mock")
+	return &mockUnsupportedError{capability: "password store"}
 }
 
 func (m *MockXKMSService) PasswordDelete(ctx context.Context, req *transport.PasswordDeleteRequest) error {
-	return fmt.Errorf("password store not supported in mock")
+	return &mockUnsupportedError{capability: "password store"}
 }
 
 func (m *MockXKMSService) PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error {
-	return fmt.Errorf("password store not supported in mock")
+	return &mockUnsupportedError{capability: "password store"}
 }
 
 func (m *MockXKMSService) PasswordStoreLock(ctx context.Context) error {
-	return fmt.Errorf("password store not supported in mock")
+	return &mockUnsupportedError{capability: "password store"}
 }
 
 func (m *MockXKMSService) PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error) {
-	return nil, fmt.Errorf("password store not supported in mock")
+	return nil, &mockUnsupportedError{capability: "password store"}
 }
 
 func (m *MockXKMSService) PasswordStoreSetAccessMode(ctx context.Context, req *transport.PasswordStoreSetAccessModeRequest) error {
-	return fmt.Errorf("password store not supported in mock")
+	return &mockUnsupportedError{capability: "password store"}
 }
 
 func (m *MockXKMSService) PasswordGenerate(ctx context.Context, req *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error) {
-	return nil, fmt.Errorf("password store not supported in mock")
+	return nil, &mockUnsupportedError{capability: "password store"}
 }
 
 // Platform store operations
 
 func (m *MockXKMSService) SealStorePut(ctx context.Context, req *transport.SealStorePutRequest) error {
-	return fmt.Errorf("platform store not supported in mock")
+	return &mockUnsupportedError{capability: "platform store"}
 }
 
 func (m *MockXKMSService) SealStoreGet(ctx context.Context, req *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error) {
-	return nil, fmt.Errorf("platform store not supported in mock")
+	return nil, &mockUnsupportedError{capability: "platform store"}
 }
 
 func (m *MockXKMSService) SealStoreDelete(ctx context.Context, req *transport.SealStoreDeleteRequest) error {
-	return fmt.Errorf("platform store not supported in mock")
+	return &mockUnsupportedError{capability: "platform store"}
 }
 
 func (m *MockXKMSService) SealStoreList(ctx context.Context) (*transport.SealStoreListResponse, error) {
-	return nil, fmt.Errorf("platform store not supported in mock")
+	return nil, &mockUnsupportedError{capability: "platform store"}
 }
 
 func (m *MockXKMSService) SealStoreReseal(ctx context.Context, req *transport.SealStoreResealRequest) error {
-	return fmt.Errorf("platform store not supported in mock")
+	return &mockUnsupportedError{capability: "platform store"}
 }
 
 func (m *MockXKMSService) SealStoreStatus(ctx context.Context) (*transport.SealStoreStatusResponse, error) {
-	return nil, fmt.Errorf("platform store not supported in mock")
+	return nil, &mockUnsupportedError{capability: "platform store"}
 }
 
 // Policy operations
 
 func (m *MockXKMSService) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
-	return nil, fmt.Errorf("policy not supported in mock")
+	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
 func (m *MockXKMSService) PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
-	return nil, fmt.Errorf("policy not supported in mock")
+	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
 func (m *MockXKMSService) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
-	return nil, fmt.Errorf("policy not supported in mock")
+	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
 func (m *MockXKMSService) PolicyDelete(ctx context.Context, req *transport.PolicyDeleteRequest) error {
-	return fmt.Errorf("policy not supported in mock")
+	return &mockUnsupportedError{capability: "policy"}
 }
 
 func (m *MockXKMSService) PolicyRefresh(ctx context.Context, req *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
-	return nil, fmt.Errorf("policy not supported in mock")
+	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
 func (m *MockXKMSService) PolicyVerify(ctx context.Context, req *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
-	return nil, fmt.Errorf("policy not supported in mock")
+	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
 func (m *MockXKMSService) PolicyExport(ctx context.Context, req *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
-	return nil, fmt.Errorf("policy not supported in mock")
+	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
 func (m *MockXKMSService) CreateCustodianGroup(ctx context.Context, req *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	return nil, fmt.Errorf("custodian not supported in mock")
+	return nil, &mockUnsupportedError{capability: "custodian"}
 }
 
 func (m *MockXKMSService) GetCustodianGroup(ctx context.Context, groupID string) (*transport.GetCustodianGroupResponse, error) {
-	return nil, fmt.Errorf("custodian not supported in mock")
+	return nil, &mockUnsupportedError{capability: "custodian"}
 }
 
 func (m *MockXKMSService) ListCustodianGroups(ctx context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	return nil, fmt.Errorf("custodian not supported in mock")
+	return nil, &mockUnsupportedError{capability: "custodian"}
 }
 
 func (m *MockXKMSService) DeleteCustodianGroup(ctx context.Context, groupID string) error {
-	return fmt.Errorf("custodian not supported in mock")
+	return &mockUnsupportedError{capability: "custodian"}
 }
 
 func (m *MockXKMSService) AddCustodianMember(ctx context.Context, req *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	return nil, fmt.Errorf("custodian not supported in mock")
+	return nil, &mockUnsupportedError{capability: "custodian"}
 }
 
 func (m *MockXKMSService) RemoveCustodianMember(ctx context.Context, req *transport.RemoveCustodianMemberRequest) error {
-	return fmt.Errorf("custodian not supported in mock")
+	return &mockUnsupportedError{capability: "custodian"}
 }
 
 func (m *MockXKMSService) DistributeShares(ctx context.Context, req *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	return nil, fmt.Errorf("custodian not supported in mock")
+	return nil, &mockUnsupportedError{capability: "custodian"}
 }
 
 func (m *MockXKMSService) SubmitShare(ctx context.Context, req *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	return nil, fmt.Errorf("share not supported in mock")
+	return nil, &mockUnsupportedError{capability: "share"}
 }
 
 func (m *MockXKMSService) ListShares(ctx context.Context) (*transport.ListSharesResponse, error) {
-	return nil, fmt.Errorf("share not supported in mock")
+	return nil, &mockUnsupportedError{capability: "share"}
 }
 
 func (m *MockXKMSService) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
-	return nil, fmt.Errorf("share not supported in mock")
+	return nil, &mockUnsupportedError{capability: "share"}
 }
 
 func (m *MockXKMSService) CreateTenant(ctx context.Context, req *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
-	return nil, fmt.Errorf("tenant not supported in mock")
+	return nil, &mockUnsupportedError{capability: "tenant"}
 }
 
 func (m *MockXKMSService) GetTenant(ctx context.Context, tenantID string) (*transport.GetTenantResponse, error) {
-	return nil, fmt.Errorf("tenant not supported in mock")
+	return nil, &mockUnsupportedError{capability: "tenant"}
 }
 
 func (m *MockXKMSService) ListTenants(ctx context.Context) (*transport.ListTenantsResponse, error) {
-	return nil, fmt.Errorf("tenant not supported in mock")
+	return nil, &mockUnsupportedError{capability: "tenant"}
 }
 
 func (m *MockXKMSService) DeleteTenant(ctx context.Context, tenantID string) error {
-	return fmt.Errorf("tenant not supported in mock")
+	return &mockUnsupportedError{capability: "tenant"}
 }
 
 func (m *MockXKMSService) TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error {
-	return fmt.Errorf("tenant not supported in mock")
+	return &mockUnsupportedError{capability: "tenant"}
 }
 
 func (m *MockXKMSService) TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error {
-	return fmt.Errorf("tenant not supported in mock")
+	return &mockUnsupportedError{capability: "tenant"}
+}
+
+func (m *MockXKMSService) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *MockXKMSService) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
+	return nil, nil
+}
+
+func (m *MockXKMSService) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return nil, nil
 }

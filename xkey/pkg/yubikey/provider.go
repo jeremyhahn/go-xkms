@@ -72,7 +72,7 @@ func (p *Provider) GenerateKey(ctx context.Context, attrs *xkms.KeyAttributes) (
 
 	pool := p.inner.Pool()
 	if pool == nil {
-		return nil, fmt.Errorf("yubikey: %w", xkms.ErrPKCS11BackendNotInitialized)
+		return nil, &WrappedError{Msg: "yubikey", Err: xkms.ErrPKCS11BackendNotInitialized}
 	}
 
 	switch attrs.KeyAlgorithm {
@@ -85,7 +85,7 @@ func (p *Provider) GenerateKey(ctx context.Context, attrs *xkms.KeyAttributes) (
 		return p.inner.GetKey(ctx, attrs)
 
 	default:
-		return nil, fmt.Errorf("yubikey: unsupported algorithm: %s", attrs.KeyAlgorithm)
+		return nil, &MessageError{Msg: fmt.Sprintf("yubikey: unsupported algorithm: %s", attrs.KeyAlgorithm)}
 	}
 }
 
@@ -142,12 +142,12 @@ func (p *Provider) generateECDSAOnDevice(pool *xkms.PKCS11SessionPool, attrs *xk
 
 	oid, ok := curveToOID[curve]
 	if !ok {
-		return fmt.Errorf("yubikey: unsupported curve: %s", curve.Params().Name)
+		return &MessageError{Msg: fmt.Sprintf("yubikey: unsupported curve: %s", curve.Params().Name)}
 	}
 
 	encodedOID, err := asn1.Marshal(oid)
 	if err != nil {
-		return fmt.Errorf("yubikey: marshal curve OID: %w", err)
+		return &WrappedError{Msg: "yubikey: marshal curve OID", Err: err}
 	}
 
 	id := []byte(attrs.CN)

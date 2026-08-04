@@ -16,6 +16,8 @@ package jwk
 import (
 	"crypto"
 	"crypto/sha1" // #nosec G505 -- SHA-1 thumbprint for JWK RFC 7638 compatibility
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	// #nosec G505 -- SHA-1 thumbprint support required for JWK RFC 7638 compatibility
 	"crypto/sha256"
 	"crypto/sha512"
@@ -67,7 +69,7 @@ func ThumbprintSHA512(key crypto.PublicKey) (string, error) {
 func Thumbprint(key crypto.PublicKey, hashFunc crypto.Hash) (string, error) {
 	jwk, err := FromPublicKey(key)
 	if err != nil {
-		return "", fmt.Errorf("failed to convert key to JWK: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to convert key to JWK", Err: err}
 	}
 
 	return jwk.Thumbprint(hashFunc)
@@ -85,7 +87,7 @@ func (jwk *JWK) Thumbprint(hashFunc crypto.Hash) (string, error) {
 	// Create JSON with lexicographically sorted keys (RFC 7638 requirement)
 	jsonBytes, err := serializeForThumbprint(requiredFields)
 	if err != nil {
-		return "", fmt.Errorf("failed to serialize for thumbprint: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to serialize for thumbprint", Err: err}
 	}
 
 	// Hash the JSON
@@ -101,7 +103,7 @@ func (jwk *JWK) Thumbprint(hashFunc crypto.Hash) (string, error) {
 	case crypto.SHA512:
 		h = sha512.New()
 	default:
-		return "", fmt.Errorf("unsupported hash function: %v", hashFunc)
+		return "", &errs.Message{Msg: fmt.Sprintf("unsupported hash function: %v", hashFunc)}
 	}
 
 	h.Write(jsonBytes)
@@ -125,7 +127,7 @@ func (jwk *JWK) getRequiredThumbprintFields() (map[string]string, error) {
 	case string(KeyTypeRSA):
 		// Required: e, kty, n
 		if jwk.E == "" || jwk.N == "" {
-			return nil, fmt.Errorf("RSA JWK missing required fields for thumbprint")
+			return nil, &errs.Message{Msg: "RSA JWK missing required fields for thumbprint"}
 		}
 		fields["e"] = jwk.E
 		fields["kty"] = jwk.Kty
@@ -134,7 +136,7 @@ func (jwk *JWK) getRequiredThumbprintFields() (map[string]string, error) {
 	case string(KeyTypeEC):
 		// Required: crv, kty, x, y
 		if jwk.Crv == "" || jwk.X == "" || jwk.Y == "" {
-			return nil, fmt.Errorf("EC JWK missing required fields for thumbprint")
+			return nil, &errs.Message{Msg: "EC JWK missing required fields for thumbprint"}
 		}
 		fields["crv"] = jwk.Crv
 		fields["kty"] = jwk.Kty
@@ -144,7 +146,7 @@ func (jwk *JWK) getRequiredThumbprintFields() (map[string]string, error) {
 	case string(KeyTypeOKP):
 		// Required: crv, kty, x
 		if jwk.Crv == "" || jwk.X == "" {
-			return nil, fmt.Errorf("OKP JWK missing required fields for thumbprint")
+			return nil, &errs.Message{Msg: "OKP JWK missing required fields for thumbprint"}
 		}
 		fields["crv"] = jwk.Crv
 		fields["kty"] = jwk.Kty
@@ -153,13 +155,13 @@ func (jwk *JWK) getRequiredThumbprintFields() (map[string]string, error) {
 	case string(KeyTypeOct):
 		// Required: k, kty
 		if jwk.K == "" {
-			return nil, fmt.Errorf("symmetric JWK missing required fields for thumbprint")
+			return nil, &errs.Message{Msg: "symmetric JWK missing required fields for thumbprint"}
 		}
 		fields["k"] = jwk.K
 		fields["kty"] = jwk.Kty
 
 	default:
-		return nil, fmt.Errorf("unsupported key type for thumbprint: %s", jwk.Kty)
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type for thumbprint: %s", jwk.Kty)}
 	}
 
 	return fields, nil
@@ -208,7 +210,7 @@ func serializeForThumbprint(fields map[string]string) ([]byte, error) {
 func KeyAuthorization(token string, key crypto.PublicKey) (string, error) {
 	thumbprint, err := ThumbprintSHA256(key)
 	if err != nil {
-		return "", fmt.Errorf("failed to compute JWK thumbprint: %w", err)
+		return "", &errs.Wrapped{Msg: "failed to compute JWK thumbprint", Err: err}
 	}
 	return fmt.Sprintf("%s.%s", token, thumbprint), nil
 }

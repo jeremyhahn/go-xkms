@@ -94,12 +94,11 @@ func (r *dnsResolver) LookupTLSA(tlsaName, dnsServer string) ([]tlsaRecord, erro
 	client := new(dns.Client)
 	resp, _, err := client.Exchange(msg, dnsServer)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrDNSQuery, tlsaName, err)
+		return nil, &WrappedDetailError{Sentinel: ErrDNSQuery, Detail: tlsaName, Err: err}
 	}
 
 	if resp.Rcode != dns.RcodeSuccess {
-		return nil, fmt.Errorf("%w: %s (rcode=%s)",
-			ErrDNSResponseCode, tlsaName, dns.RcodeToString[resp.Rcode])
+		return nil, &WrappedDetailError{Sentinel: ErrDNSResponseCode, Detail: tlsaName + " (rcode=" + dns.RcodeToString[resp.Rcode] + ")"}
 	}
 
 	records := make([]tlsaRecord, 0, len(resp.Answer))
@@ -117,7 +116,7 @@ func (r *dnsResolver) LookupTLSA(tlsaName, dnsServer string) ([]tlsaRecord, erro
 	}
 
 	if len(records) == 0 {
-		return nil, fmt.Errorf("%w: %s", ErrDNSNoRecords, tlsaName)
+		return nil, &WrappedDetailError{Sentinel: ErrDNSNoRecords, Detail: tlsaName}
 	}
 
 	return records, nil
@@ -240,11 +239,11 @@ func init() {
 // generateTLSA generates TLSA record(s) from a certificate file.
 func generateTLSA(certFile, hostname string, port, usage, selector, matchingType int, all bool) {
 	if certFile == "" {
-		handleError(fmt.Errorf("--cert-file is required"))
+		handleError(ErrCertFileRequired)
 		return
 	}
 	if hostname == "" {
-		handleError(fmt.Errorf("--hostname is required"))
+		handleError(ErrHostnameRequired)
 		return
 	}
 
@@ -277,12 +276,12 @@ func generateTLSA(certFile, hostname string, port, usage, selector, matchingType
 // and comparing the returned records against computed certificate data.
 func verifyTLSA(certFile, hostname string, port int, dnsServer string) {
 	if hostname == "" {
-		handleError(fmt.Errorf("--hostname is required"))
+		handleError(ErrHostnameRequired)
 		return
 	}
 
 	if certFile == "" {
-		handleError(fmt.Errorf("--cert-file is required for verification"))
+		handleError(ErrCertFileRequiredVerification)
 		return
 	}
 
@@ -355,7 +354,7 @@ func verifyTLSA(certFile, hostname string, port int, dnsServer string) {
 // showTLSA queries DNS for TLSA records and displays them in a human-readable format.
 func showTLSA(hostname string, port int, dnsServer string) {
 	if hostname == "" {
-		handleError(fmt.Errorf("--hostname is required"))
+		handleError(ErrHostnameRequired)
 		return
 	}
 
@@ -413,17 +412,17 @@ func printTLSARecordDetails(rec tlsaRecord) {
 func loadCertFromPEM(certFile string) (*x509.Certificate, error) {
 	data, err := os.ReadFile(certFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read certificate file: %w", err)
+		return nil, &WrappedError{Sentinel: ErrCertFileRead, Err: err}
 	}
 
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, fmt.Errorf("no PEM data found in file: %s", certFile)
+		return nil, &WrappedDetailError{Sentinel: ErrNoPEMData, Detail: certFile}
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+		return nil, &WrappedError{Sentinel: ErrParseCertificateFailed, Err: err}
 	}
 
 	return cert, nil
@@ -447,7 +446,7 @@ func computeTLSAData(cert *x509.Certificate, selector, matchingType int) (string
 	case TLSASelectorSPKI:
 		input = cert.RawSubjectPublicKeyInfo
 	default:
-		return "", fmt.Errorf("%w: %d (must be 0 or 1)", ErrTLSAInvalidSelector, selector)
+		return "", &WrappedDetailError{Sentinel: ErrTLSAInvalidSelector, Detail: fmt.Sprintf("%d (must be 0 or 1)", selector)}
 	}
 
 	switch matchingType {
@@ -460,7 +459,7 @@ func computeTLSAData(cert *x509.Certificate, selector, matchingType int) (string
 		hash := sha512.Sum512(input)
 		return hex.EncodeToString(hash[:]), nil
 	default:
-		return "", fmt.Errorf("%w: %d (must be 0, 1, or 2)", ErrTLSAInvalidMatchingType, matchingType)
+		return "", &WrappedDetailError{Sentinel: ErrTLSAInvalidMatchingType, Detail: fmt.Sprintf("%d (must be 0, 1, or 2)", matchingType)}
 	}
 }
 

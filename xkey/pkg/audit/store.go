@@ -314,11 +314,11 @@ func (s *BackendStore) MigrateBackend(newBackend xkms.StorageBackend) error {
 
 	if err := s.backend.Scan(ctx, s.prefix, func(key string, value []byte) error {
 		if putErr := newBackend.Put(ctx, key, value); putErr != nil {
-			return fmt.Errorf("audit: put during migration key=%s: %w", key, putErr)
+			return &WrappedError{Msg: fmt.Sprintf("audit: put during migration key=%s", key), Err: putErr}
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("audit: scan during migration: %w", err)
+		return &WrappedError{Msg: "audit: scan during migration", Err: err}
 	}
 
 	s.backend = newBackend
@@ -344,7 +344,7 @@ func (s *BackendStore) loadFromBackend() error {
 		raw[key] = value
 		return nil
 	}); err != nil {
-		return fmt.Errorf("audit: load from backend: %w", err)
+		return &WrappedError{Msg: "audit: load from backend", Err: err}
 	}
 
 	if len(raw) == 0 {
@@ -367,7 +367,7 @@ func (s *BackendStore) loadFromBackend() error {
 	for _, k := range keys {
 		var entry Entry
 		if unmarshalErr := json.Unmarshal(raw[k], &entry); unmarshalErr != nil {
-			return fmt.Errorf("audit: unmarshal entry key=%s: %w", k, unmarshalErr)
+			return &WrappedError{Msg: fmt.Sprintf("audit: unmarshal entry key=%s", k), Err: unmarshalErr}
 		}
 		entries = append(entries, entry)
 	}

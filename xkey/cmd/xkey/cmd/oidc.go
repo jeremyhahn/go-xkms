@@ -458,7 +458,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 		configPath := getConfigPath(tokenStore)
 		config, err := loadOIDCConfig(configPath)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrOIDCConfigLoadFailed, err)
+			return &SentinelCauseError{Sentinel: ErrOIDCConfigLoadFailed, Cause: err}
 		}
 
 		var provider *OIDCProvider
@@ -469,7 +469,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if provider == nil {
-			return fmt.Errorf("%w: %s", ErrOIDCProviderNotFound, providerName)
+			return &DetailError{Err: ErrOIDCProviderNotFound, Detail: fmt.Sprintf(": %s", providerName)}
 		}
 
 		// Check if this is an AWS provider - delegate to AWS login flow
@@ -522,20 +522,20 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	// Discover provider configuration
 	discovery, err := discoverOIDCProvider(issuer)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOIDCDiscoveryFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCDiscoveryFailed, Cause: err}
 	}
 
 	// Generate PKCE code verifier and challenge
 	codeVerifier, err := generateCodeVerifier()
 	if err != nil {
-		return fmt.Errorf("failed to generate code verifier: %v", err)
+		return &MessageError{Msg: fmt.Sprintf("failed to generate code verifier: %v", err)}
 	}
 	codeChallenge := generateCodeChallenge(codeVerifier)
 
 	// Generate state parameter
 	state, err := generateState()
 	if err != nil {
-		return fmt.Errorf("failed to generate state: %v", err)
+		return &MessageError{Msg: fmt.Sprintf("failed to generate state: %v", err)}
 	}
 
 	// Build authorization URL
@@ -544,7 +544,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	// Parse redirect URL to get port
 	parsedRedirect, err := url.Parse(redirectURL)
 	if err != nil {
-		return fmt.Errorf("invalid redirect URL: %v", err)
+		return &MessageError{Msg: fmt.Sprintf("invalid redirect URL: %v", err)}
 	}
 	port := parsedRedirect.Port()
 	if port == "" {
@@ -568,7 +568,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 
 	listener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		return fmt.Errorf("failed to start callback server: %v", err)
+		return &MessageError{Msg: fmt.Sprintf("failed to start callback server: %v", err)}
 	}
 
 	server := &http.Server{Handler: mux}
@@ -607,7 +607,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	case code = <-codeChan:
 		// Success
 	case err := <-errChan:
-		return fmt.Errorf("%w: %v", ErrOIDCCallbackFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCCallbackFailed, Cause: err}
 	case <-ctx.Done():
 		return ErrOIDCCallbackTimeout
 	}
@@ -620,13 +620,13 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	// Exchange code for tokens
 	tokens, err := exchangeCodeForTokens(discovery.TokenEndpoint, clientID, clientSecret, code, redirectURL, codeVerifier)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOIDCTokenExchangeFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCTokenExchangeFailed, Cause: err}
 	}
 
 	// Parse and validate ID token
 	claims, err := parseIDToken(tokens.IDToken)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOIDCTokenValidationFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCTokenValidationFailed, Cause: err}
 	}
 
 	// Store tokens
@@ -642,7 +642,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := storeToken(tokenStore, storedToken); err != nil {
-		return fmt.Errorf("%w: %v", ErrOIDCTokenStoreFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
 	}
 
 	fmt.Println()
@@ -678,7 +678,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 		}
 
 		if err := executeOIDCScript(execCmd, payload); err != nil {
-			return fmt.Errorf("%w: %v", ErrOIDCExecFailed, err)
+			return &SentinelCauseError{Sentinel: ErrOIDCExecFailed, Cause: err}
 		}
 	}
 
@@ -726,7 +726,7 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 			fmt.Println("No OIDC tokens found. Run 'xkey oidc login' to authenticate.")
 			return nil
 		}
-		return fmt.Errorf("%w: %v", ErrOIDCTokenLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCTokenLoadFailed, Cause: err}
 	}
 
 	// Parse ID token for claims
@@ -792,7 +792,7 @@ func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 			fmt.Println("No OIDC tokens found. Run 'xkey oidc login' to authenticate.")
 			return nil
 		}
-		return fmt.Errorf("%w: %v", ErrOIDCTokenLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCTokenLoadFailed, Cause: err}
 	}
 
 	if token.RefreshToken == "" {
@@ -802,13 +802,13 @@ func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 	// Discover provider configuration
 	discovery, err := discoverOIDCProvider(token.Issuer)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOIDCDiscoveryFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCDiscoveryFailed, Cause: err}
 	}
 
 	// Refresh tokens
 	newTokens, err := refreshTokens(discovery.TokenEndpoint, token.ClientID, token.RefreshToken)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOIDCTokenRefreshFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCTokenRefreshFailed, Cause: err}
 	}
 
 	// Update stored token
@@ -822,7 +822,7 @@ func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 	token.ExpiresAt = time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
 
 	if err := storeToken(tokenStore, *token); err != nil {
-		return fmt.Errorf("%w: %v", ErrOIDCTokenStoreFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
 	}
 
 	fmt.Println("Token refreshed successfully!")
@@ -844,7 +844,7 @@ func runOIDCLogout(cmd *cobra.Command, args []string) error {
 				fmt.Println("No tokens to clear.")
 				return nil
 			}
-			return fmt.Errorf("failed to clear tokens: %v", err)
+			return &MessageError{Msg: fmt.Sprintf("failed to clear tokens: %v", err)}
 		}
 		fmt.Println("All tokens cleared.")
 		return nil
@@ -853,7 +853,7 @@ func runOIDCLogout(cmd *cobra.Command, args []string) error {
 	// Clear current token
 	store := OIDCTokenStore{Tokens: []OIDCStoredToken{}}
 	if err := saveTokenStore(storePath, store); err != nil {
-		return fmt.Errorf("failed to clear tokens: %v", err)
+		return &MessageError{Msg: fmt.Sprintf("failed to clear tokens: %v", err)}
 	}
 
 	fmt.Println("Tokens cleared.")
@@ -871,7 +871,7 @@ func runOIDCProvidersList(cmd *cobra.Command, args []string) error {
 			fmt.Println("No OIDC providers configured.")
 			return nil
 		}
-		return fmt.Errorf("%w: %v", ErrOIDCConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCConfigLoadFailed, Cause: err}
 	}
 
 	if len(config.Providers) == 0 {
@@ -986,7 +986,7 @@ func runOIDCProvidersAdd(cmd *cobra.Command, args []string) error {
 		if issuer == "" {
 			// Provide helpful hint if --region was specified without --type aws
 			if awsRegion != "" {
-				return fmt.Errorf("%w (hint: use --type aws for AWS providers)", ErrOIDCMissingIssuer)
+				return &DetailError{Err: ErrOIDCMissingIssuer, Detail: " (hint: use --type aws for AWS providers)"}
 			}
 			return ErrOIDCMissingIssuer
 		}
@@ -1007,7 +1007,7 @@ func runOIDCProvidersAdd(cmd *cobra.Command, args []string) error {
 
 	config, err := loadOIDCConfig(configPath)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("%w: %v", ErrOIDCConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCConfigLoadFailed, Cause: err}
 	}
 	if config == nil {
 		config = &OIDCConfig{Providers: []OIDCProvider{}}
@@ -1052,7 +1052,7 @@ func runOIDCProvidersAdd(cmd *cobra.Command, args []string) error {
 	config.Providers = append(config.Providers, provider)
 
 	if err := saveOIDCConfig(configPath, *config); err != nil {
-		return fmt.Errorf("%w: %v", ErrOIDCConfigSaveFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCConfigSaveFailed, Cause: err}
 	}
 
 	if pType == OIDCProviderTypeAWS {
@@ -1075,7 +1075,7 @@ func runOIDCProvidersRemove(cmd *cobra.Command, args []string) error {
 		if os.IsNotExist(err) {
 			return ErrOIDCProviderNotFound
 		}
-		return fmt.Errorf("%w: %v", ErrOIDCConfigLoadFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCConfigLoadFailed, Cause: err}
 	}
 
 	found := false
@@ -1106,7 +1106,7 @@ func runOIDCProvidersRemove(cmd *cobra.Command, args []string) error {
 	config.Providers = newProviders
 
 	if err := saveOIDCConfig(configPath, *config); err != nil {
-		return fmt.Errorf("%w: %v", ErrOIDCConfigSaveFailed, err)
+		return &SentinelCauseError{Sentinel: ErrOIDCConfigSaveFailed, Cause: err}
 	}
 
 	fmt.Printf("Removed OIDC provider: %s\n", name)
@@ -1132,7 +1132,7 @@ func discoverOIDCProvider(issuer string) (*OIDCDiscoveryDocument, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("discovery endpoint returned status %d", resp.StatusCode)
+		return nil, &MessageError{Msg: fmt.Sprintf("discovery endpoint returned status %d", resp.StatusCode)}
 	}
 
 	var doc OIDCDiscoveryDocument
@@ -1190,7 +1190,7 @@ func handleOIDCCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- 
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = fmt.Fprintf(w, "<html><body><h1>Authentication Failed</h1><p>%s: %s</p></body></html>", errParam, errDesc)
 
-		errChan <- fmt.Errorf("%s: %s", errParam, errDesc)
+		errChan <- &MessageError{Msg: fmt.Sprintf("%s: %s", errParam, errDesc)}
 		return
 	}
 
@@ -1240,7 +1240,7 @@ func exchangeCodeForTokens(endpoint, clientID, clientSecret, code, redirectURL, 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token endpoint returned status %d", resp.StatusCode)
+		return nil, &MessageError{Msg: fmt.Sprintf("token endpoint returned status %d", resp.StatusCode)}
 	}
 
 	var tokens OIDCTokenResponse
@@ -1275,7 +1275,7 @@ func refreshTokens(endpoint, clientID, refreshToken string) (*OIDCTokenResponse,
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token endpoint returned status %d", resp.StatusCode)
+		return nil, &MessageError{Msg: fmt.Sprintf("token endpoint returned status %d", resp.StatusCode)}
 	}
 
 	var tokens OIDCTokenResponse
@@ -1412,7 +1412,7 @@ func loadProvider(tokenStore, providerName string) (*OIDCProvider, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("provider not found: %s", providerName)
+	return nil, &MessageError{Msg: fmt.Sprintf("provider not found: %s", providerName)}
 }
 
 // saveOIDCConfig saves the OIDC configuration file.
@@ -1582,7 +1582,7 @@ func executeOIDCScript(cmdStr string, payload OIDCExecPayload) error {
 	// Pass payload as JSON via stdin
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
+		return &WrappedError{Msg: "failed to marshal payload", Err: err}
 	}
 	cmd.Stdin = bytes.NewReader(payloadJSON)
 
@@ -1607,7 +1607,7 @@ func executeOIDCScript(cmdStr string, payload OIDCExecPayload) error {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("script execution failed: %w", err)
+		return &WrappedError{Msg: "script execution failed", Err: err}
 	}
 
 	return nil
@@ -1678,32 +1678,32 @@ func startBackgroundRefresh(providerName, tokenEndpoint, clientID, tokenStorePat
 	// Ensure log directory exists
 	logDir := filepath.Dir(logFile)
 	if err := os.MkdirAll(logDir, 0700); err != nil {
-		return fmt.Errorf("failed to create log directory: %w", err)
+		return &WrappedError{Msg: "failed to create log directory", Err: err}
 	}
 
 	// Ensure PID directory exists
 	pidDir := getPIDDir(tokenStorePath)
 	if err := os.MkdirAll(pidDir, 0700); err != nil {
-		return fmt.Errorf("failed to create PID directory: %w", err)
+		return &WrappedError{Msg: "failed to create PID directory", Err: err}
 	}
 
 	// Check if already running
 	pidFile := getPIDFile(tokenStorePath, providerName)
 	if pid, running := isProcessRunning(pidFile); running {
-		return fmt.Errorf("background refresh for '%s' is already running (PID %d)", providerName, pid)
+		return &MessageError{Msg: fmt.Sprintf("background refresh for '%s' is already running (PID %d)", providerName, pid)}
 	}
 
 	// Open log file
 	logFileHandle, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
-		return fmt.Errorf("failed to open log file: %w", err)
+		return &WrappedError{Msg: "failed to open log file", Err: err}
 	}
 
 	// Build command to run ourselves with special --background-worker flag
 	executable, err := os.Executable()
 	if err != nil {
 		_ = logFileHandle.Close()
-		return fmt.Errorf("failed to get executable path: %w", err)
+		return &WrappedError{Msg: "failed to get executable path", Err: err}
 	}
 
 	args := []string{
@@ -1727,14 +1727,14 @@ func startBackgroundRefresh(providerName, tokenEndpoint, clientID, tokenStorePat
 	// Start the process
 	if err := cmd.Start(); err != nil {
 		_ = logFileHandle.Close()
-		return fmt.Errorf("failed to start background process: %w", err)
+		return &WrappedError{Msg: "failed to start background process", Err: err}
 	}
 
 	// Write PID file
 	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0600); err != nil {
 		_ = cmd.Process.Kill()
 		_ = logFileHandle.Close()
-		return fmt.Errorf("failed to write PID file: %w", err)
+		return &WrappedError{Msg: "failed to write PID file", Err: err}
 	}
 
 	// Don't wait for the process - let it run in background
@@ -1768,7 +1768,7 @@ func runBackgroundWorker(cmd *cobra.Command, args []string) error {
 	if logFile != "" {
 		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		if err != nil {
-			return fmt.Errorf("failed to open log file: %w", err)
+			return &WrappedError{Msg: "failed to open log file", Err: err}
 		}
 		defer func() { _ = f.Close() }()
 		logWriter = f
@@ -1819,7 +1819,7 @@ func runOIDCStatus(cmd *cobra.Command, args []string) error {
 			fmt.Println("No background refresh processes running.")
 			return nil
 		}
-		return fmt.Errorf("failed to read PID directory: %w", err)
+		return &WrappedError{Msg: "failed to read PID directory", Err: err}
 	}
 
 	var running []OIDCBackgroundProcess
@@ -1926,7 +1926,7 @@ func runOIDCStop(cmd *cobra.Command, args []string) error {
 				fmt.Println("No background refresh processes running.")
 				return nil
 			}
-			return fmt.Errorf("failed to read PID directory: %w", err)
+			return &WrappedError{Msg: "failed to read PID directory", Err: err}
 		}
 
 		stopped := 0
@@ -1968,16 +1968,16 @@ func stopProcess(pidFile, providerName string) error {
 	pid, running := isProcessRunning(pidFile)
 	if !running {
 		_ = os.Remove(pidFile) // Clean up stale file
-		return fmt.Errorf("no running process for '%s'", providerName)
+		return &MessageError{Msg: fmt.Sprintf("no running process for '%s'", providerName)}
 	}
 
 	process, err := os.FindProcess(pid)
 	if err != nil {
-		return fmt.Errorf("failed to find process: %w", err)
+		return &WrappedError{Msg: "failed to find process", Err: err}
 	}
 
 	if err := process.Signal(syscall.SIGTERM); err != nil {
-		return fmt.Errorf("failed to stop process: %w", err)
+		return &WrappedError{Msg: "failed to stop process", Err: err}
 	}
 
 	// Wait a moment for graceful shutdown

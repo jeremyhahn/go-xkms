@@ -60,3 +60,14 @@ func (e ErrDAOCreation) Error() string {
 func (e ErrDAOCreation) Unwrap() error {
 	return e.Cause
 }
+
+// MessageError is a typed error that carries a preformatted message. It
+// replaces inline formatted-error constructions that do not wrap a cause.
+type MessageError struct {
+	Msg string
+}
+
+// Error implements the error interface.
+func (e *MessageError) Error() string {
+	return e.Msg
+}

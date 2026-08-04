@@ -16,7 +16,6 @@ package ipc
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -277,14 +276,14 @@ func TestIsDaemonNotRunning_WrappedECONNREFUSED(t *testing.T) {
 }
 
 func TestIsDaemonNotRunning_FmtWrappedENOENT(t *testing.T) {
-	// Test with fmt.Errorf wrapping of ENOENT.
-	err := fmt.Errorf("dial: %w", syscall.ENOENT)
+	// Test with a typed wrap of ENOENT.
+	err := &WrappedError{Msg: "dial", Err: syscall.ENOENT}
 	assert.True(t, isDaemonNotRunning(err))
 }
 
 func TestIsDaemonNotRunning_FmtWrappedECONNREFUSED(t *testing.T) {
-	// Test with fmt.Errorf wrapping of ECONNREFUSED.
-	err := fmt.Errorf("dial: %w", syscall.ECONNREFUSED)
+	// Test with a typed wrap of ECONNREFUSED.
+	err := &WrappedError{Msg: "dial", Err: syscall.ECONNREFUSED}
 	assert.True(t, isDaemonNotRunning(err))
 }
 
