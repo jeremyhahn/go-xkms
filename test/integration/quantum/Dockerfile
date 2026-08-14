@@ -1,7 +1,7 @@
 # Dockerfile for quantum-safe cryptography integration tests
 # Pure-Go implementations: circl (ML-DSA) and crypto/mlkem (ML-KEM)
 # No CGO or external libraries required.
-FROM golang:1.26.5-bookworm
+FROM golang:1.26.6-bookworm
 
 ENV GOTOOLCHAIN=auto
 

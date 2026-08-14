@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-xkms/xkey
 
-go 1.26.5
+go 1.26.6
 
 // Intra-repo submodule resolution (valid in-workspace and standalone on GitHub).
 // Cross-repo deps resolve via the parent go.work `use` directives; no cross-repo

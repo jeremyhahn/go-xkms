@@ -3,7 +3,7 @@
 # Production-ready with security best practices
 
 # Stage 1: Builder
-FROM golang:1.26.5-bookworm AS builder
+FROM golang:1.26.6-bookworm AS builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
