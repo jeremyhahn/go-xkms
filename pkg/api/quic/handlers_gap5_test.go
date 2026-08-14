@@ -3013,7 +3013,7 @@ func TestHandleCopyKey_SourceListKeysError(t *testing.T) {
 	defer xkms.Reset()
 
 	srcKS := NewMockKeyStoreWithImportExport()
-	srcKS.MockKeyStore.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
+	srcKS.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
 		return nil, errors.New("source keystore unavailable")
 	}
 	destKS := NewMockKeyStoreWithImportExport()
@@ -3059,7 +3059,7 @@ func TestHandleCopyKey_ExportKeyError(t *testing.T) {
 	defer xkms.Reset()
 
 	srcKS := NewMockKeyStoreWithImportExport()
-	srcKS.MockKeyStore.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
+	srcKS.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
 		return []*types.KeyAttributes{
 			{CN: "export-fail-key", KeyType: types.KeyTypeTLS, StoreType: types.StoreSoftware, KeyAlgorithm: x509.RSA},
 		}, nil
@@ -3108,7 +3108,7 @@ func TestHandleCopyKey_ImportKeyError(t *testing.T) {
 	defer xkms.Reset()
 
 	srcKS := NewMockKeyStoreWithImportExport()
-	srcKS.MockKeyStore.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
+	srcKS.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
 		return []*types.KeyAttributes{
 			{CN: "import-fail-key", KeyType: types.KeyTypeTLS, StoreType: types.StoreSoftware, KeyAlgorithm: x509.RSA},
 		}, nil
@@ -3261,7 +3261,7 @@ func TestHandleCopyKey_InvalidDestStoreType(t *testing.T) {
 	defer xkms.Reset()
 
 	srcKS := NewMockKeyStoreWithImportExport()
-	srcKS.MockKeyStore.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
+	srcKS.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
 		return []*types.KeyAttributes{
 			{CN: "src-key", KeyType: types.KeyTypeTLS, StoreType: types.StoreSoftware, KeyAlgorithm: x509.RSA},
 		}, nil

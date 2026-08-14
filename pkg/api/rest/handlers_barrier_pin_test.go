@@ -64,13 +64,13 @@ func newTestBarrierHandler(t *testing.T) (*HandlerContext, *seal.Barrier) {
 	t.Helper()
 
 	store := storage.NewMemory()
-	strat := seal.NewSoftwareStrategy()
+	sealStrategy := seal.NewSoftwareStrategy()
 
 	barrier, err := seal.NewBarrier(
 		slog.Default(),
 		store,
 		seal.BarrierConfig{RootKeyPath: "test-root-key"},
-		strat,
+		sealStrategy,
 	)
 	require.NoError(t, err)
 

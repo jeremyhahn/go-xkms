@@ -1713,7 +1713,7 @@ func TestFIDO2AuthenticateCmd_LegacyDerivationOptIn(t *testing.T) {
 	if mockHandler.lastAuthConfig == nil {
 		t.Fatal("expected UnlockWithKey to be called")
 	}
-	if mockHandler.lastAuthConfig.DerivationMode != fido2.DerivationModeLegacyInsecure {
+	if mockHandler.lastAuthConfig.DerivationMode != fido2.DerivationModeLegacyInsecure { //nolint:staticcheck // SA1019: asserts the legacy migration path is selected
 		t.Errorf("expected the legacy derivation to be selected, got %v", mockHandler.lastAuthConfig.DerivationMode)
 	}
 

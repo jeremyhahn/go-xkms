@@ -278,7 +278,8 @@ func (h *PasswordHandlers) ListPasswordsHandler(w http.ResponseWriter, r *http.R
 	var entries []*staticpw.StaticPassword
 
 	// Scope-aware listing.
-	if scope != "" {
+	switch {
+	case scope != "":
 		ps := staticpw.PasswordScope(scope)
 		if !ps.IsValid() {
 			passwordWriteJSONError(w, "Invalid scope (use personal, shared, or all)", http.StatusBadRequest)
@@ -289,9 +290,9 @@ func (h *PasswordHandlers) ListPasswordsHandler(w http.ResponseWriter, r *http.R
 		} else {
 			entries, err = store.List()
 		}
-	} else if folder != "" {
+	case folder != "":
 		entries, err = store.ListByFolder(folder)
-	} else {
+	default:
 		entries, err = store.List()
 	}
 

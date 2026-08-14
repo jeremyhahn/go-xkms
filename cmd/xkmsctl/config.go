@@ -21,9 +21,10 @@ import (
 // This allows dependency injection for testing.
 type ClientFactory func(cfg *Config) (client.Client, error)
 
-// BackendFactory is a function that creates a types.KeyProvider.
+// BackendFactory is a function that creates a types.KeyProvider. This allows
+// dependency injection for testing backend operations.
+//
 // Deprecated: Use ClientFactory with Protocol="embedded" instead.
-// This allows dependency injection for testing backend operations.
 type BackendFactory func(cfg *Config) (client.KeyProvider, error)
 
 // DefaultTransport is the canonical default transport for xkmsctl. The
@@ -114,8 +115,10 @@ type Config struct {
 	ClientFactory ClientFactory
 
 	// BackendFactory allows injecting a custom backend factory for testing.
-	// Deprecated: Use ClientFactory with Protocol="embedded" instead for SDK-based access.
 	// If nil, the default backend creation logic is used.
+	//
+	// Deprecated: Use ClientFactory with Protocol="embedded" instead for
+	// SDK-based access.
 	BackendFactory BackendFactory
 }
 
@@ -140,9 +143,11 @@ func (c *Config) IsLocal() bool {
 	return c.Protocol == "embedded"
 }
 
-// CreateBackend creates a backend for embedded mode operations.
-// Deprecated: Use CreateClient() with Protocol="embedded" instead for SDK-based access.
-// If BackendFactory is set, it uses that factory instead.
+// CreateBackend creates a backend for embedded mode operations. If
+// BackendFactory is set, it uses that factory instead.
+//
+// Deprecated: Use CreateClient() with Protocol="embedded" instead for
+// SDK-based access.
 func (c *Config) CreateBackend() (client.KeyProvider, error) {
 	// Use injected backend factory if available (for testing)
 	if c.BackendFactory != nil {

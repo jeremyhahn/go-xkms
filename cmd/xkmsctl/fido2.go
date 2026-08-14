@@ -403,7 +403,7 @@ func runFIDO2AuthenticateWithWriter(cmd *cobra.Command, args []string, writer io
 	// so an operator can unlock a volume enrolled before the hmac-secret
 	// extension was parsed correctly, once, and re-enroll it.
 	if legacyDerivation {
-		authConfig.DerivationMode = fido2.DerivationModeLegacyInsecure
+		authConfig.DerivationMode = fido2.DerivationModeLegacyInsecure //nolint:staticcheck // SA1019: the legacy derivation is the migration path this flag exists to drive
 		if err := printer.PrintWarning(legacyDerivationCLIWarning); err != nil {
 			handleError(err)
 			return

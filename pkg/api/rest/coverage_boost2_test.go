@@ -50,13 +50,13 @@ import (
 func TestNewServer_WithBarrier(t *testing.T) {
 	ks := newMockKeyStore()
 	memStore := storage.NewMemory()
-	strat := seal.NewSoftwareStrategy()
+	sealStrategy := seal.NewSoftwareStrategy()
 
 	barrier, err := seal.NewBarrier(
 		slog.Default(),
 		memStore,
 		seal.BarrierConfig{RootKeyPath: "test-key"},
-		strat,
+		sealStrategy,
 	)
 	require.NoError(t, err)
 
@@ -138,13 +138,13 @@ func TestNewServer_WithShareEnabled(t *testing.T) {
 func TestNewServer_WithBarrierRegistry(t *testing.T) {
 	ks := newMockKeyStore()
 	memStore := storage.NewMemory()
-	strat := seal.NewSoftwareStrategy()
+	sealStrategy := seal.NewSoftwareStrategy()
 
 	barrier, err := seal.NewBarrier(
 		slog.Default(),
 		memStore,
 		seal.BarrierConfig{RootKeyPath: "test-key"},
-		strat,
+		sealStrategy,
 	)
 	require.NoError(t, err)
 
@@ -184,13 +184,13 @@ func TestNewServer_WithPasswordStoreAndRegistry(t *testing.T) {
 	ks := newMockKeyStore()
 	memStore := storage.NewMemory()
 	pwStore := staticpw.NewStore(memStore)
-	strat := seal.NewSoftwareStrategy()
+	sealStrategy := seal.NewSoftwareStrategy()
 
 	barrier, err := seal.NewBarrier(
 		slog.Default(),
 		memStore,
 		seal.BarrierConfig{RootKeyPath: "test-key"},
-		strat,
+		sealStrategy,
 	)
 	require.NoError(t, err)
 	registry, regErr := seal.NewBarrierRegistry(barrier)
@@ -654,13 +654,13 @@ func TestRecoveryMiddleware_PanicRecovery(t *testing.T) {
 
 func TestBarrierSealHandler_NotInitialized(t *testing.T) {
 	memStore := storage.NewMemory()
-	strat := seal.NewSoftwareStrategy()
+	sealStrategy := seal.NewSoftwareStrategy()
 
 	barrier, err := seal.NewBarrier(
 		slog.Default(),
 		memStore,
 		seal.BarrierConfig{RootKeyPath: "test-key"},
-		strat,
+		sealStrategy,
 	)
 	require.NoError(t, err)
 

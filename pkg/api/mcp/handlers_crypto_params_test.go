@@ -500,7 +500,7 @@ func TestHandler_Decrypt_PKCS1v15Supported(t *testing.T) {
 
 	pub := generateRSAKey(t, server, "mcp-v15-decrypt")
 	plaintext := []byte("v15 secret")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext)
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext) //nolint:staticcheck // SA1019: covers the CKM_RSA_PKCS (PKCS#1 v1.5) request path
 	require.NoError(t, err)
 
 	result, err := mcpCall(t, server.handleDecrypt, "xkms.decrypt", DecryptParams{

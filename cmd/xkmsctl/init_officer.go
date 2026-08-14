@@ -231,9 +231,11 @@ func runInitOfficerStatus(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "USERNAME\tINDEX\tFACTOR\tTHUMBPRINT")
+	// tabwriter buffers; every write error is retained and surfaces from the
+	// checked Flush below, so the per-write returns carry no new information.
+	_, _ = fmt.Fprintln(tw, "USERNAME\tINDEX\tFACTOR\tTHUMBPRINT")
 	for _, o := range status.Officers {
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n", o.Username, o.ShareIndex, o.AuthFactor, o.CertThumbprint)
+		_, _ = fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n", o.Username, o.ShareIndex, o.AuthFactor, o.CertThumbprint)
 	}
 	return tw.Flush()
 }

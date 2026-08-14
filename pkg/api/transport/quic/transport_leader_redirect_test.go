@@ -85,8 +85,7 @@ func TestDoRawRequest_FollowsLeaderRedirect(t *testing.T) {
 	})
 	defer leader.Close()
 
-	var follower *httptest.Server
-	follower = newLeaderRedirectServer(t, &followerCalls, func(w http.ResponseWriter, rec recordedRequest) {
+	follower := newLeaderRedirectServer(t, &followerCalls, func(w http.ResponseWriter, rec recordedRequest) {
 		w.Header().Set(headerLeaderAPIAddress, hostPort(leader.URL))
 		writeJSON(t, w, http.StatusMisdirectedRequest, map[string]string{"error": "not leader"})
 	})
@@ -165,8 +164,7 @@ func TestDoRawRequest_SecondNotLeaderIsSurfacedNotChased(t *testing.T) {
 	defer third.Close()
 
 	var leaderCalls int32
-	var leader *httptest.Server
-	leader = newLeaderRedirectServer(t, &leaderCalls, func(w http.ResponseWriter, rec recordedRequest) {
+	leader := newLeaderRedirectServer(t, &leaderCalls, func(w http.ResponseWriter, rec recordedRequest) {
 		// The "leader" is itself stale and points at a third node. A
 		// compliant client must NOT chase this.
 		w.Header().Set(headerLeaderAPIAddress, hostPort(third.URL))

@@ -18,7 +18,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -207,13 +206,4 @@ func TestPIVCmd_ClientErrors(t *testing.T) {
 			}
 		})
 	}
-}
-
-func writePIVCertFile(t *testing.T) string {
-	t.Helper()
-	p := filepath.Join(t.TempDir(), "piv-cert.pem")
-	if err := os.WriteFile(p, makeSelfSignedCert(t, "piv-file"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	return p
 }

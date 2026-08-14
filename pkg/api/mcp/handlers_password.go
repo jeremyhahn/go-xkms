@@ -271,7 +271,8 @@ func (s *Server) handlePasswordList(ctx context.Context, req *JSONRPCRequest) (i
 	var entries []*staticpw.StaticPassword
 
 	// Scope-aware listing.
-	if params.Scope != "" {
+	switch {
+	case params.Scope != "":
 		ps := staticpw.PasswordScope(params.Scope)
 		if !ps.IsValid() {
 			return nil, staticpw.ErrInvalidScope
@@ -281,9 +282,9 @@ func (s *Server) handlePasswordList(ctx context.Context, req *JSONRPCRequest) (i
 		} else {
 			entries, err = store.List()
 		}
-	} else if params.Folder != "" {
+	case params.Folder != "":
 		entries, err = store.ListByFolder(params.Folder)
-	} else {
+	default:
 		entries, err = store.List()
 	}
 

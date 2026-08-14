@@ -17,7 +17,6 @@ package quic
 
 import (
 	"bytes"
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -35,6 +34,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
@@ -42,9 +44,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/metadata"
 )
 
 // ============================================================================
@@ -1023,18 +1022,3 @@ func generateSelfSignedCertPEM(t *testing.T) string {
 // ============================================================================
 // Companion type for tests that need grpc metadata (reuse from password test)
 // ============================================================================
-
-// tenantTestGRPCAuthenticator is used to exercise the tenant context path in
-// resolveStore. It is local to this file to avoid redeclaration.
-type tenantTestGRPCAuthenticator struct {
-	tenantID string
-	userID   string
-}
-
-func (a *tenantTestGRPCAuthenticator) Name() string { return "tenant-grpc-test" }
-func (a *tenantTestGRPCAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Identity, error) {
-	return &auth.Identity{Subject: a.userID, TenantID: a.tenantID}, nil
-}
-func (a *tenantTestGRPCAuthenticator) AuthenticateGRPC(_ context.Context, _ metadata.MD) (*auth.Identity, error) {
-	return &auth.Identity{Subject: a.userID, TenantID: a.tenantID}, nil
-}

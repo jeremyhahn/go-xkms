@@ -376,7 +376,7 @@ func TestHandleDecrypt_PKCS1v15Supported(t *testing.T) {
 	defer xkms.Reset()
 
 	plaintext := []byte("v15 secret")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, &priv.PublicKey, plaintext)
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, &priv.PublicKey, plaintext) //nolint:staticcheck // SA1019: covers the CKM_RSA_PKCS (PKCS#1 v1.5) request path
 	require.NoError(t, err)
 
 	body, err := json.Marshal(DecryptRequest{Ciphertext: ciphertext})

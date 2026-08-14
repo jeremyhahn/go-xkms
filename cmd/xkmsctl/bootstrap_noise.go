@@ -101,16 +101,17 @@ func generateNoiseKey(outputFile string) {
 func showNoiseKey(keyFile, keyHex string) {
 	var hexKey string
 
-	if keyFile != "" {
+	switch {
+	case keyFile != "":
 		data, err := os.ReadFile(keyFile)
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrReadKeyFileFailed, Err: err})
 			return
 		}
 		hexKey = strings.TrimSpace(string(data))
-	} else if keyHex != "" {
+	case keyHex != "":
 		hexKey = keyHex
-	} else {
+	default:
 		handleError(ErrKeyInputRequired)
 		return
 	}
