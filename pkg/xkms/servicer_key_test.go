@@ -335,7 +335,7 @@ func TestUnwrapKeyByID_BackendWithoutImportExport(t *testing.T) {
 	rsaKey, ok := privKey.(*rsa.PrivateKey)
 	require.True(t, ok)
 
-	wrapped, err := rsa.EncryptPKCS1v15(rand.Reader, &rsaKey.PublicKey, []byte("target-key-material-bytes"))
+	wrapped, err := rsa.EncryptPKCS1v15(rand.Reader, &rsaKey.PublicKey, []byte("target-key-material-bytes")) //nolint:staticcheck // SA1019: builds a CKM_RSA_PKCS-wrapped blob for the unwrap path
 	require.NoError(t, err)
 
 	_, err = svc.UnwrapKeyByID(context.Background(), &transport.UnwrapKeyByIDRequest{

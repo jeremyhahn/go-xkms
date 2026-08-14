@@ -116,12 +116,12 @@ func TestUnwrapRSAPKCS1v15_RejectsConformantEmptyPayload(t *testing.T) {
 	store, attrs, key := newRSAWrappingBackend(t)
 	ctx := context.Background()
 
-	conformant, err := rsa.EncryptPKCS1v15(rand.Reader, &key.PublicKey, []byte{})
+	conformant, err := rsa.EncryptPKCS1v15(rand.Reader, &key.PublicKey, []byte{}) //nolint:staticcheck // SA1019: the test IS the Bleichenbacher oracle check
 	require.NoError(t, err)
 
 	// The premise: this ciphertext really is conformant, so the refusal below
 	// is the service's decision and not RSA's.
-	recovered, err := rsa.DecryptPKCS1v15(rand.Reader, key, conformant)
+	recovered, err := rsa.DecryptPKCS1v15(rand.Reader, key, conformant) //nolint:staticcheck // SA1019: the test IS the Bleichenbacher oracle check
 	require.NoError(t, err, "the test's premise is that this ciphertext is conformant")
 	require.Empty(t, recovered)
 

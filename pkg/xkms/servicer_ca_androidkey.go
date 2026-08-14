@@ -14,7 +14,6 @@
 package xkms
 
 import (
-	"crypto/subtle"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
@@ -287,26 +286,4 @@ func parseCSRAny(csrBytes []byte) (*x509.CertificateRequest, error) {
 		return x509.ParseCertificateRequest(block.Bytes)
 	}
 	return x509.ParseCertificateRequest(csrBytes)
-}
-
-// androidCSRKeyMatchesAttestation confirms the CSR asks for the attested key.
-//
-// Compared in DER SubjectPublicKeyInfo form, which is canonical for a key,
-// rather than by parsed type.
-func androidCSRKeyMatchesAttestation(csrPEM []byte, leaf *x509.Certificate) error {
-	csr, err := parseCSRAny(csrPEM)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAndroidAttestationKeyMismatch, err)
-	}
-	if err := csr.CheckSignature(); err != nil {
-		return fmt.Errorf("%w: the CSR signature does not verify: %v",
-			ErrAndroidAttestationKeyMismatch, err)
-	}
-	if subtle.ConstantTimeCompare(
-		csr.RawSubjectPublicKeyInfo,
-		leaf.RawSubjectPublicKeyInfo,
-	) != 1 {
-		return ErrAndroidAttestationKeyMismatch
-	}
-	return nil
 }

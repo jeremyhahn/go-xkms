@@ -14,7 +14,6 @@
 package xkms
 
 import (
-	"crypto/subtle"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -135,33 +134,4 @@ func (s *XKMSService) enforceAttestationInvariants(
 	default:
 		return err
 	}
-}
-
-// csrKeyMatchesLeaf confirms the CSR asks for exactly the key the leaf covers.
-//
-// Compared in DER SubjectPublicKeyInfo form, which is canonical for a given
-// key, rather than by parsed type -- two structurally different encodings of
-// the same key would otherwise compare unequal, and two different keys of the
-// same type must never compare equal.
-func csrKeyMatchesLeaf(csrBytes []byte, leaf *x509.Certificate) error {
-	csr, err := parseCSRAny(csrBytes)
-	if err != nil {
-		return fmt.Errorf("%w: the CSR does not parse: %v", ErrAttestationKeyNotBound, err)
-	}
-
-	// A CSR is self-signed by the key it names. An invalid signature means the
-	// requester does not hold the private half, so binding it to attested
-	// hardware would certify a key nobody demonstrated control of.
-	if err := csr.CheckSignature(); err != nil {
-		return fmt.Errorf("%w: the CSR signature does not verify: %v",
-			ErrAttestationKeyNotBound, err)
-	}
-
-	if subtle.ConstantTimeCompare(
-		csr.RawSubjectPublicKeyInfo,
-		leaf.RawSubjectPublicKeyInfo,
-	) != 1 {
-		return ErrAttestationKeyNotBound
-	}
-	return nil
 }

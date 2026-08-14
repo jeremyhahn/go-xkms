@@ -874,7 +874,7 @@ func wrapRSAPKCS1v15(ctx context.Context, b Backend, attrs *types.KeyAttributes,
 	if err != nil {
 		return nil, err
 	}
-	wrapped, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, keyMaterial)
+	wrapped, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, keyMaterial) //nolint:staticcheck // SA1019: CKM_RSA_PKCS is PKCS#1 v1.5 by definition; gated on crypto.allow_legacy_key_wrap
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "rsa-pkcs wrap", KeyID: attrs.CN, Err: err}
 	}

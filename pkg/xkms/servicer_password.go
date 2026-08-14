@@ -211,7 +211,8 @@ func (s *XKMSService) PasswordList(ctx context.Context, req *transport.PasswordL
 
 	// Scope-aware listing: if scope is specified and the store supports it,
 	// use ListByScope; otherwise fall back to folder or full list.
-	if req.Scope != "" {
+	switch {
+	case req.Scope != "":
 		scope := staticpw.PasswordScope(req.Scope)
 		if !scope.IsValid() {
 			return nil, staticpw.ErrInvalidScope
@@ -221,9 +222,9 @@ func (s *XKMSService) PasswordList(ctx context.Context, req *transport.PasswordL
 		} else {
 			passwords, err = store.List()
 		}
-	} else if req.FolderPath != "" {
+	case req.FolderPath != "":
 		passwords, err = store.ListByFolder(req.FolderPath)
-	} else {
+	default:
 		passwords, err = store.List()
 	}
 	if err != nil {

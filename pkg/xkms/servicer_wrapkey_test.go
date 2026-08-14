@@ -395,7 +395,7 @@ func TestWrapUnwrapRSAPKCS1v15_RoundTrip(t *testing.T) {
 	wrapped, err := wrapKeyMaterial(context.Background(), store, attrs, string(types.WrapRSAPKCS1v15), wrapParams{}, target)
 	require.NoError(t, err)
 
-	oracleRecovered, err := rsa.DecryptPKCS1v15(rand.Reader, rsaKey, wrapped)
+	oracleRecovered, err := rsa.DecryptPKCS1v15(rand.Reader, rsaKey, wrapped) //nolint:staticcheck // SA1019: verifies the legacy PKCS#1 v1.5 wrap round-trips
 	require.NoError(t, err)
 	assert.Equal(t, target, oracleRecovered)
 

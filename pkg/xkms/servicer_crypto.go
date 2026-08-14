@@ -631,7 +631,7 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 		return nil, err
 	}
 
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, req.Plaintext)
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, req.Plaintext) //nolint:staticcheck // SA1019: CKM_RSA_PKCS is PKCS#1 v1.5 by definition
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrEncryptionFailed, Err: err}
 	}
