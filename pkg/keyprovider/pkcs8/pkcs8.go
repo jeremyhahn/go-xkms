@@ -240,7 +240,7 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 		case x509.Ed25519:
 			privateKey, err = b.generateEd25519Key()
 		default:
-			return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+			return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: attrs.KeyAlgorithm.String()}
 		}
 	}
 
@@ -259,7 +259,7 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 		return nil, &errs.Wrapped{Msg: "failed to store key", Err: err}
 	}
 	if !stored {
-		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", keyID)}
+		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: keyID}
 	}
 
 	// Store the metadata record. It carries the attributes the key identifier
@@ -300,7 +300,7 @@ func (b *PKCS8Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (
 	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
 		if err == storage.ErrNotFound {
-			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyID)}
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 		}
 		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
 	}
@@ -331,7 +331,7 @@ func (b *PKCS8Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes
 	keyID := attrs.ID()
 	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
 		if err == storage.ErrNotFound {
-			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyID)}
+			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 		}
 		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
 	}

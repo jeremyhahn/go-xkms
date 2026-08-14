@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -434,7 +435,7 @@ func (e *MockSymmetricEncrypter) Decrypt(encrypted *types.EncryptedData, opts *t
 	}
 
 	// Combine ciphertext and tag for GCM.Open
-	ciphertextWithTag := append(encrypted.Ciphertext, encrypted.Tag...)
+	ciphertextWithTag := slices.Concat(encrypted.Ciphertext, encrypted.Tag)
 
 	plaintext, err := gcm.Open(nil, encrypted.Nonce, ciphertextWithTag, aad)
 	if err != nil {

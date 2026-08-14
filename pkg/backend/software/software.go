@@ -496,7 +496,7 @@ func (b *SoftwareBackend) GetImportParameters(ctx context.Context, attrs *types.
 
 	// Validate algorithm
 	if !isValidWrappingAlgorithm(algorithm) {
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", algorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: algorithm.String()}
 	}
 
 	// Generate a 2048-bit RSA key pair for wrapping.
@@ -582,7 +582,7 @@ func (b *SoftwareBackend) WrapKey(ctx context.Context, keyMaterial []byte, param
 	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		wrappedKey, err = wrapping.WrapRSAAES(keyMaterial, publicKey, params.Algorithm)
 	default:
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", params.Algorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: params.Algorithm.String()}
 	}
 
 	if err != nil {
@@ -669,7 +669,7 @@ func (b *SoftwareBackend) UnwrapKey(ctx context.Context, wrapped *backend.Wrappe
 	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		unwrapped, err = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
 	default:
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: wrapped.Algorithm.String()}
 	}
 
 	if err != nil {
@@ -769,7 +769,7 @@ func (b *SoftwareBackend) ExportKey(ctx context.Context, attrs *types.KeyAttribu
 
 	// Validate algorithm
 	if !isValidWrappingAlgorithm(algorithm) {
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", algorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: algorithm.String()}
 	}
 
 	// Get the key material

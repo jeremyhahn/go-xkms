@@ -27,6 +27,14 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
+// Absolute roots of the two kernel-exported trees this enumerator walks:
+// /dev holds the hidraw character devices themselves, and the sysfs class
+// directory holds the matching metadata (vendor, product, serial) for each.
+const (
+	devDir         = "/dev"
+	hidrawClassDir = "/sys/class/hidraw"
+)
+
 // LinuxHIDDevice implements HIDDevice for Linux using raw HID access
 type LinuxHIDDevice struct {
 	path         string
@@ -56,14 +64,14 @@ func (e *LinuxHIDDeviceEnumerator) Enumerate(vendorID, productID uint16) ([]HIDD
 	var devices []HIDDevice
 
 	// Look for hidraw devices
-	hidrawPath := "/sys/class/hidraw"
+	hidrawPath := hidrawClassDir
 	entries, err := os.ReadDir(hidrawPath)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to read hidraw devices", Err: err}
 	}
 
 	for _, entry := range entries {
-		devicePath := filepath.Join("/dev", entry.Name())
+		devicePath := filepath.Join(devDir, entry.Name())
 
 		// Read device info from sysfs
 		sysPath := filepath.Join(hidrawPath, entry.Name(), "device")
@@ -109,7 +117,7 @@ func (e *LinuxHIDDeviceEnumerator) Enumerate(vendorID, productID uint16) ([]HIDD
 func (e *LinuxHIDDeviceEnumerator) Open(path string) (HIDDevice, error) {
 	// Get device info from sysfs
 	deviceName := filepath.Base(path)
-	sysPath := filepath.Join("/sys/class/hidraw", deviceName, "device")
+	sysPath := filepath.Join(hidrawClassDir, deviceName, "device")
 
 	vid, pid := readVendorProductID(sysPath)
 	manufacturer := readSysfsString(sysPath, "manufacturer")

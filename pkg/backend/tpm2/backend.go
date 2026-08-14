@@ -307,7 +307,7 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 		}, nil
 
 	default:
-		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: attrs.KeyAlgorithm.String()}
 	}
 }
 
@@ -336,13 +336,13 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	// Try to load the key from the backend to verify it exists
 	_, err := b.keyBackend.Get(attrs, store.FSEXT_PRIVATE_BLOB)
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	// Get the public blob to determine key type
 	pubData, err := b.keyBackend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	// Parse the public key to determine algorithm

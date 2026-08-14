@@ -224,7 +224,7 @@ func (f *FileBackupAdapter) CreateBackup(ctx context.Context, data *BackupData, 
 		// JSON and Encrypted formats provide full functionality for production use.
 		return nil, errors.New("protobuf format not yet implemented")
 	default:
-		return nil, &errs.Detail{Err: ErrInvalidBackupFormat, Detail: fmt.Sprintf("%s", opts.Format)}
+		return nil, &errs.Detail{Err: ErrInvalidBackupFormat, Detail: string(opts.Format)}
 	}
 
 	// Compress if requested

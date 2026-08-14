@@ -150,13 +150,14 @@ func (d *Dilithium2) Sign(message []byte) ([]byte, error) {
 func (d *Dilithium2) Verify(message, signature, publicKey []byte) (bool, error) {
 	var pk mldsa44.PublicKey
 
-	if publicKey != nil {
+	switch {
+	case publicKey != nil:
 		if err := pk.UnmarshalBinary(publicKey); err != nil {
 			return false, ErrVerificationFailed
 		}
-	} else if d.publicKey != nil {
+	case d.publicKey != nil:
 		pk = *d.publicKey
-	} else {
+	default:
 		return false, ErrNotInitialized
 	}
 

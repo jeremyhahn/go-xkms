@@ -182,9 +182,8 @@ func TestUnwrapKey_EnclaveAlreadyDestroyed(t *testing.T) {
 	wrapped, err := be.WrapKey(context.Background(), []byte("some key material"), params)
 	require.NoError(t, err)
 
-	tokenUUID := string(wrapped.ImportToken)
 	be.importMu.Lock()
-	be.importTokens[tokenUUID].privateKey.Destroy()
+	be.importTokens[string(wrapped.ImportToken)].privateKey.Destroy()
 	be.importMu.Unlock()
 
 	_, err = be.UnwrapKey(context.Background(), wrapped, params)
@@ -208,10 +207,9 @@ func TestUnwrapKey_CorruptedEnclaveData(t *testing.T) {
 	garbage, err := secure.NewSecret([]byte("this is not a valid pkcs8 der blob"))
 	require.NoError(t, err)
 
-	tokenUUID := string(wrapped.ImportToken)
 	be.importMu.Lock()
-	be.importTokens[tokenUUID].privateKey.Destroy()
-	be.importTokens[tokenUUID].privateKey = garbage
+	be.importTokens[string(wrapped.ImportToken)].privateKey.Destroy()
+	be.importTokens[string(wrapped.ImportToken)].privateKey = garbage
 	be.importMu.Unlock()
 
 	_, err = be.UnwrapKey(context.Background(), wrapped, params)
@@ -240,10 +238,9 @@ func TestUnwrapKey_EnclaveNotRSA(t *testing.T) {
 	sealedECDSA, err := secure.NewSecret(der)
 	require.NoError(t, err)
 
-	tokenUUID := string(wrapped.ImportToken)
 	be.importMu.Lock()
-	be.importTokens[tokenUUID].privateKey.Destroy()
-	be.importTokens[tokenUUID].privateKey = sealedECDSA
+	be.importTokens[string(wrapped.ImportToken)].privateKey.Destroy()
+	be.importTokens[string(wrapped.ImportToken)].privateKey = sealedECDSA
 	be.importMu.Unlock()
 
 	_, err = be.UnwrapKey(context.Background(), wrapped, params)

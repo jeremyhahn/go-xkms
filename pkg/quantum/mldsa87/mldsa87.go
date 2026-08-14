@@ -150,13 +150,14 @@ func (m *MLDSA87) Sign(message []byte) ([]byte, error) {
 func (m *MLDSA87) Verify(message, signature, publicKey []byte) (bool, error) {
 	var pk mldsa87.PublicKey
 
-	if publicKey != nil {
+	switch {
+	case publicKey != nil:
 		if err := pk.UnmarshalBinary(publicKey); err != nil {
 			return false, ErrVerificationFailed
 		}
-	} else if m.publicKey != nil {
+	case m.publicKey != nil:
 		pk = *m.publicKey
-	} else {
+	default:
 		return false, ErrNotInitialized
 	}
 

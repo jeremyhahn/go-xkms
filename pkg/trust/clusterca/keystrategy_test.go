@@ -27,9 +27,9 @@ import (
 // closed for recognized-but-unimplemented strategies, and errors on unknown.
 func TestNewKeyStrategy(t *testing.T) {
 	for _, name := range []KeyStrategyName{"", KeyStrategyBarrier} {
-		strat, err := NewKeyStrategy(name)
+		strategy, err := NewKeyStrategy(name)
 		require.NoError(t, err)
-		require.Equal(t, KeyStrategyBarrier, strat.Name())
+		require.Equal(t, KeyStrategyBarrier, strategy.Name())
 	}
 
 	hsm, err := NewKeyStrategy(KeyStrategyHSM)

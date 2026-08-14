@@ -795,7 +795,7 @@ func NewPasswordFromString(password string) Password {
 		_ = err
 		return &ClearPassword{}
 	}
-	copy(buf.Bytes(), []byte(password))
+	copy(buf.Bytes(), password)
 	return &ClearPassword{buf: buf}
 }
 
@@ -1075,13 +1075,14 @@ func (attrs KeyAttributes) String() string {
 	fmt.Fprintf(&sb, "  Store: %s\n", attrs.StoreType)
 	fmt.Fprintf(&sb, "  Type: %s\n", attrs.KeyType)
 
-	if attrs.ECCAttributes != nil {
+	switch {
+	case attrs.ECCAttributes != nil:
 		sb.WriteString("ECC Attributes\n")
 		fmt.Fprintf(&sb, "  Curve: %s\n", attrs.ECCAttributes.Curve.Params().Name)
-	} else if attrs.RSAAttributes != nil {
+	case attrs.RSAAttributes != nil:
 		sb.WriteString("RSA Attributes\n")
 		fmt.Fprintf(&sb, "  Size: %d\n", attrs.RSAAttributes.KeySize)
-	} else if attrs.X25519Attributes != nil {
+	case attrs.X25519Attributes != nil:
 		sb.WriteString("X25519 Attributes\n")
 		sb.WriteString("  Curve: X25519 (Curve25519)\n")
 	}
@@ -1111,10 +1112,11 @@ func (attrs *KeyAttributes) Validate() error {
 	}
 
 	// Validate algorithm-specific attributes
-	if attrs.X25519Attributes != nil {
+	switch {
+	case attrs.X25519Attributes != nil:
 		// X25519 key agreement validation
 		// X25519 has no additional attributes to validate beyond the struct itself
-	} else if attrs.QuantumAttributes != nil {
+	case attrs.QuantumAttributes != nil:
 		// Quantum-safe key validation
 		switch attrs.QuantumAttributes.Algorithm {
 		case QuantumAlgorithmMLDSA44, QuantumAlgorithmMLDSA65, QuantumAlgorithmMLDSA87:
@@ -1124,7 +1126,7 @@ func (attrs *KeyAttributes) Validate() error {
 		default:
 			return &errs.Message{Msg: fmt.Sprintf("unsupported quantum algorithm: %s", attrs.QuantumAttributes.Algorithm)}
 		}
-	} else if attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm {
+	case attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm:
 		// Asymmetric key validation
 		switch attrs.KeyAlgorithm {
 		case x509.RSA:
@@ -1146,17 +1148,17 @@ func (attrs *KeyAttributes) Validate() error {
 		default:
 			return &errs.Message{Msg: fmt.Sprintf("unsupported key algorithm: %s", attrs.KeyAlgorithm)}
 		}
-	} else if attrs.SymmetricAlgorithm != "" {
+	case attrs.SymmetricAlgorithm != "":
 		// Symmetric key validation - key size is derived from the algorithm via KeySize() method
 		if !attrs.SymmetricAlgorithm.IsValid() {
 			return &errs.Message{Msg: fmt.Sprintf("unsupported symmetric algorithm: %s", attrs.SymmetricAlgorithm)}
 		}
-	} else if attrs.FrostAttributes != nil {
+	case attrs.FrostAttributes != nil:
 		// FROST threshold signature validation (RFC 9591)
 		if err := attrs.FrostAttributes.Validate(); err != nil {
 			return err
 		}
-	} else {
+	default:
 		return &errs.Message{Msg: "either KeyAlgorithm, SymmetricAlgorithm, QuantumAttributes, or FrostAttributes must be set"}
 	}
 
@@ -1179,19 +1181,20 @@ func (attrs *KeyAttributes) ID() string {
 	var algorithm string
 
 	// Determine algorithm string
-	if attrs.X25519Attributes != nil {
+	switch {
+	case attrs.X25519Attributes != nil:
 		// X25519 key agreement
 		algorithm = "x25519"
-	} else if attrs.QuantumAttributes != nil {
+	case attrs.QuantumAttributes != nil:
 		// Quantum-safe key
 		algorithm = strings.ToLower(string(attrs.QuantumAttributes.Algorithm))
-	} else if attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm {
+	case attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm:
 		// Asymmetric key
 		algorithm = strings.ToLower(attrs.KeyAlgorithm.String())
-	} else if attrs.SymmetricAlgorithm != "" {
+	case attrs.SymmetricAlgorithm != "":
 		// Symmetric key
 		algorithm = string(attrs.SymmetricAlgorithm)
-	} else {
+	default:
 		// Fallback to "unknown" if neither is set
 		algorithm = "unknown"
 	}
@@ -2952,7 +2955,7 @@ func ParseCurve(curveName string) (elliptic.Curve, error) {
 	case "P-521", "P521", "SECP521R1":
 		return elliptic.P521(), nil
 	default:
-		return nil, &errs.Detail{Err: ErrUnknownCurve, Detail: fmt.Sprintf("%s", curveName)}
+		return nil, &errs.Detail{Err: ErrUnknownCurve, Detail: curveName}
 	}
 }
 
@@ -2968,7 +2971,7 @@ func ParseKeyAlgorithm(s string) (x509.PublicKeyAlgorithm, error) {
 	case "ed25519":
 		return x509.Ed25519, nil
 	default:
-		return x509.UnknownPublicKeyAlgorithm, &errs.Detail{Err: ErrUnknownKeyAlgorithm, Detail: fmt.Sprintf("%s", s)}
+		return x509.UnknownPublicKeyAlgorithm, &errs.Detail{Err: ErrUnknownKeyAlgorithm, Detail: s}
 	}
 }
 
@@ -3083,7 +3086,7 @@ func ParseSignatureAlgorithm(s string) (x509.SignatureAlgorithm, error) {
 	case "ED25519", "PUREED25519":
 		return x509.PureEd25519, nil
 	default:
-		return x509.UnknownSignatureAlgorithm, &errs.Detail{Err: ErrUnknownSignatureAlgorithm, Detail: fmt.Sprintf("%s", s)}
+		return x509.UnknownSignatureAlgorithm, &errs.Detail{Err: ErrUnknownSignatureAlgorithm, Detail: s}
 	}
 }
 

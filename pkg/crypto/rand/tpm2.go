@@ -55,10 +55,8 @@ func newTPM2Resolver(config *TPM2Config) (Resolver, error) {
 		if config.SimulatorType == "" {
 			config.SimulatorType = "swtpm"
 		}
-	} else {
-		if config.Device == "" {
-			config.Device = "/dev/tpm0"
-		}
+	} else if config.Device == "" {
+		config.Device = "/dev/tpm0"
 	}
 
 	if config.MaxRequestSize <= 0 {

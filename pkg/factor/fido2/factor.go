@@ -33,6 +33,7 @@
 package fido2
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -274,14 +275,7 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 // quoted substring match is sufficient and avoids a full JSON parse coupling to
 // a specific struct shape.
 func containsChallenge(clientDataJSON []byte, challenge string) bool {
-	needle := []byte(`"` + challenge + `"`)
-	data := clientDataJSON
-	for i := 0; i+len(needle) <= len(data); i++ {
-		if string(data[i:i+len(needle)]) == string(needle) {
-			return true
-		}
-	}
-	return false
+	return bytes.Contains(clientDataJSON, []byte(`"`+challenge+`"`))
 }
 
 // decodeB64 decodes a metadata value that may be standard or raw-url base64.

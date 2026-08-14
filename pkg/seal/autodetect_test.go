@@ -31,7 +31,6 @@ import (
 type fakeTPMSealer struct {
 	canSeal bool
 	closed  atomic.Bool
-	block   chan struct{} // when non-nil, the open blocks until closed (timeout test)
 }
 
 func (f *fakeTPMSealer) CanSeal() bool { return f.canSeal }

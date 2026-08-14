@@ -52,7 +52,7 @@ func (r *Registry) Register(name string, agent EscrowAgent) error {
 	defer r.mu.Unlock()
 
 	if _, exists := r.agents[name]; exists {
-		return &xerrs.Detail{Err: ErrAgentAlreadyRegistered, Detail: fmt.Sprintf("%s", name)}
+		return &xerrs.Detail{Err: ErrAgentAlreadyRegistered, Detail: name}
 	}
 
 	r.agents[name] = agent
@@ -67,7 +67,7 @@ func (r *Registry) Get(name string) (EscrowAgent, error) {
 
 	agent, exists := r.agents[name]
 	if !exists {
-		return nil, &xerrs.Detail{Err: ErrAgentNotConfigured, Detail: fmt.Sprintf("%s", name)}
+		return nil, &xerrs.Detail{Err: ErrAgentNotConfigured, Detail: name}
 	}
 	return agent, nil
 }

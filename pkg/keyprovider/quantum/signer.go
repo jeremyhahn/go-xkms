@@ -100,7 +100,7 @@ func (k *MLDSAPrivateKey) Verify(message, signature []byte) (bool, error) {
 
 	vf, ok := verifyDispatch[k.Algorithm]
 	if !ok {
-		return false, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", k.Algorithm)}
+		return false, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: k.Algorithm}
 	}
 
 	return vf(k.pk, message, signature), nil
@@ -188,7 +188,7 @@ func (k *MLKEMPrivateKey) Encapsulate(recipientPublicKey []byte) (ciphertext, sh
 
 	encap, ok := encapsulateDispatch[k.Algorithm]
 	if !ok {
-		return nil, nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", k.Algorithm)}
+		return nil, nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: k.Algorithm}
 	}
 
 	ciphertext, sharedSecret, err = encap(recipientPublicKey)
@@ -211,7 +211,7 @@ func (k *MLKEMPrivateKey) Decapsulate(ciphertext []byte) (sharedSecret []byte, e
 	case *mlkem.DecapsulationKey1024:
 		sharedSecret, err = dk.Decapsulate(ciphertext)
 	default:
-		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", k.Algorithm)}
+		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: k.Algorithm}
 	}
 
 	if err != nil {

@@ -83,7 +83,7 @@ func NewPasswordFromString(password string) (types.Password, error) {
 	if err != nil {
 		return nil, ErrEnclaveUnavailable
 	}
-	copy(buf.Bytes(), []byte(password))
+	copy(buf.Bytes(), password)
 	return &ClearPassword{buf: buf}, nil
 }
 

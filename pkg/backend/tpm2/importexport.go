@@ -131,7 +131,7 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 		return nil, &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "import parameters are nil"}
 	}
 	if params.Algorithm != importExportAlgorithm {
-		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("%s", params.Algorithm)}
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: params.Algorithm.String()}
 	}
 
 	_, srkPub, err := b.srkPublicContents()

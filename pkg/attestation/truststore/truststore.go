@@ -81,7 +81,7 @@ func New(config *Config) (*TrustStore, error) {
 	for _, name := range config.EmbeddedRoots {
 		pemData, ok := embeddedRootMapping[WellKnownRoot(name)]
 		if !ok {
-			return nil, &errs.Detail{Err: ErrUnknownEmbeddedRoot, Detail: fmt.Sprintf("%s", name)}
+			return nil, &errs.Detail{Err: ErrUnknownEmbeddedRoot, Detail: name}
 		}
 		certs, err := parsePEMCertificates(pemData)
 		if err != nil {
@@ -95,7 +95,7 @@ func New(config *Config) (*TrustStore, error) {
 		pemData, err := os.ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return nil, &errs.Detail{Err: ErrFileNotFound, Detail: fmt.Sprintf("%s", path)}
+				return nil, &errs.Detail{Err: ErrFileNotFound, Detail: path}
 			}
 			return nil, &errs.Wrapped{Msg: fmt.Sprintf("truststore: failed to read %q", path), Err: err}
 		}

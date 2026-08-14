@@ -176,7 +176,8 @@ func TestCertificatePolicyOf_NilCertificate(t *testing.T) {
 
 	// The fingerprint of a nil certificate must be stable, and must not equal
 	// the fingerprint of a real one.
-	if PolicyFingerprint(nil) != PolicyFingerprint(nil) {
+	firstNil, secondNil := PolicyFingerprint(nil), PolicyFingerprint(nil)
+	if firstNil != secondNil {
 		t.Error("the nil fingerprint should be stable")
 	}
 	if PolicyFingerprint(nil) == PolicyFingerprint(issueForPolicy(t, policyTemplate(1))) {

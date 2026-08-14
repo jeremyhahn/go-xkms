@@ -185,7 +185,7 @@ func (ca *CA) Certificate(ctx context.Context, attrs *types.KeyAttributes) (*x50
 			return cert, nil
 		}
 	}
-	return nil, &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+	return nil, &errs.Detail{Err: ErrCertificateNotFound, Detail: attrs.CN}
 }
 
 // CertificatePEM returns the certificate identified by cn in PEM form.

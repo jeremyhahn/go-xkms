@@ -627,7 +627,7 @@ func (id *Identity) GetSignatureAlgorithm() (x509.SignatureAlgorithm, error) {
 	case x509.Ed25519:
 		return x509.PureEd25519, nil
 	default:
-		return x509.UnknownSignatureAlgorithm, &errs.Detail{Err: ErrInvalidKeyAlgorithm, Detail: fmt.Sprintf("%s", keyAlgo)}
+		return x509.UnknownSignatureAlgorithm, &errs.Detail{Err: ErrInvalidKeyAlgorithm, Detail: keyAlgo.String()}
 	}
 }
 

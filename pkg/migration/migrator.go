@@ -113,7 +113,7 @@ func (m *defaultMigrator) MigrateKey(ctx context.Context, attrs *types.KeyAttrib
 			return &errs.Wrapped{Msg: "migration validation failed", Err: err}
 		}
 		if !result.IsValid {
-			return &errs.Detail{Err: ErrVerificationFailed, Detail: fmt.Sprintf("%s", result.Message)}
+			return &errs.Detail{Err: ErrVerificationFailed, Detail: result.Message}
 		}
 	}
 

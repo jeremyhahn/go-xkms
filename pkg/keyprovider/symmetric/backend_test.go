@@ -5683,8 +5683,10 @@ func TestSymmetricEncrypter_CBC_PaddingOracle_IndistinguishableErrors(t *testing
 	const lastBlockLastByte = aes.BlockSize - 1
 	const originalPadLenByte = 0x10 // the valid, unmodified padding length (16)
 
+	// XOR-ing the byte with its own value drives the decrypted padding-length
+	// byte to 0x00, which is out of range for PKCS#7.
 	lengthFailureCT := append([]byte(nil), encrypted.Ciphertext...)
-	lengthFailureCT[lastBlockLastByte] ^= originalPadLenByte ^ 0x00 // decrypted padLen byte becomes 0x00
+	lengthFailureCT[lastBlockLastByte] ^= originalPadLenByte
 
 	contentFailureCT := append([]byte(nil), encrypted.Ciphertext...)
 	contentFailureCT[lastBlockLastByte] ^= originalPadLenByte ^ 0x02 // decrypted padLen byte becomes 0x02, but P[1][14] stays 0x10 != 0x02

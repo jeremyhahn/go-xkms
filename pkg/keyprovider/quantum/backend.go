@@ -202,7 +202,7 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if exists {
-		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", keyID)}
+		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: keyID}
 	}
 
 	var privateKey crypto.PrivateKey
@@ -216,7 +216,7 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 	case strings.HasPrefix(algorithm, "ML-KEM"):
 		privateKey, metadata, err = b.generateMLKEMKey(algorithm, keyID)
 	default:
-		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", algorithm)}
+		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: algorithm}
 	}
 
 	if err != nil {
@@ -244,7 +244,7 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *keyMetadata, error) {
 	gen, ok := mldsaKeyGenerators[algorithm]
 	if !ok {
-		return nil, nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", algorithm)}
+		return nil, nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: algorithm}
 	}
 
 	var seed [mldsaSeedSize]byte
@@ -278,7 +278,7 @@ func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *
 func (b *QuantumBackend) generateMLKEMKey(algorithm, keyID string) (*MLKEMPrivateKey, *keyMetadata, error) {
 	gen, ok := mlkemGenerators[algorithm]
 	if !ok {
-		return nil, nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", algorithm)}
+		return nil, nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: algorithm}
 	}
 
 	seedBytes, pubKeyBytes, dk, err := gen()
@@ -338,7 +338,7 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
 		if err == storage.ErrNotFound {
-			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyID)}
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 		}
 		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
 	}
@@ -354,7 +354,7 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 	case strings.HasPrefix(metadata.Algorithm, "ML-KEM"):
 		return b.loadMLKEMKey(&metadata, keyID)
 	default:
-		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", metadata.Algorithm)}
+		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: metadata.Algorithm}
 	}
 }
 
@@ -362,7 +362,7 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 func (b *QuantumBackend) loadMLDSAKey(metadata *keyMetadata) (*MLDSAPrivateKey, error) {
 	gen, ok := mldsaKeyGenerators[metadata.Algorithm]
 	if !ok {
-		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", metadata.Algorithm)}
+		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: metadata.Algorithm}
 	}
 
 	if len(metadata.Seed) != mldsaSeedSize {
@@ -390,7 +390,7 @@ func (b *QuantumBackend) loadMLDSAKey(metadata *keyMetadata) (*MLDSAPrivateKey, 
 func (b *QuantumBackend) loadMLKEMKey(metadata *keyMetadata, keyID string) (*MLKEMPrivateKey, error) {
 	loader, ok := mlkemSeedLoaders[metadata.Algorithm]
 	if !ok {
-		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", metadata.Algorithm)}
+		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: metadata.Algorithm}
 	}
 
 	pubKeyBytes, dk, err := loader(metadata.Seed)
@@ -427,7 +427,7 @@ func (b *QuantumBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttribut
 	keyID := attrs.ID()
 	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
 		if err == storage.ErrNotFound {
-			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyID)}
+			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 		}
 		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
 	}
@@ -529,7 +529,7 @@ func (b *QuantumBackend) RotateKey(ctx context.Context, attrs *types.KeyAttribut
 		return &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if !exists {
-		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyID)}
+		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 	}
 
 	keyData, err := storage.GetKey(ctx, b.storage, keyID)
@@ -550,7 +550,7 @@ func (b *QuantumBackend) RotateKey(ctx context.Context, attrs *types.KeyAttribut
 	case strings.HasPrefix(metadata.Algorithm, "ML-KEM"):
 		_, newMetadata, err = b.generateMLKEMKey(metadata.Algorithm, keyID)
 	default:
-		return &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: fmt.Sprintf("%s", metadata.Algorithm)}
+		return &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: metadata.Algorithm}
 	}
 
 	if err != nil {

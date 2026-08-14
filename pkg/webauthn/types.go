@@ -14,6 +14,7 @@
 package webauthn
 
 import (
+	"bytes"
 	"encoding/binary"
 	"time"
 
@@ -232,7 +233,7 @@ func (u *DefaultUser) AddCredential(cred *Credential) {
 // UpdateCredential updates an existing credential.
 func (u *DefaultUser) UpdateCredential(cred *Credential) {
 	for i, c := range u.credentials {
-		if string(c.ID) == string(cred.ID) {
+		if bytes.Equal(c.ID, cred.ID) {
 			u.credentials[i] = cred
 			return
 		}

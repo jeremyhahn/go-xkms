@@ -31,10 +31,11 @@ import (
 	"time"
 
 	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // =============================================================================
@@ -593,9 +594,6 @@ func TestImportCertificate_NoCertStore_B8(t *testing.T) {
 // =============================================================================
 // ca_extensions.go — PubKey: key does not implement crypto.Signer
 // =============================================================================
-
-// b8NonSignerKey is a crypto.PrivateKey that does NOT implement crypto.Signer.
-type b8NonSignerKey struct{}
 
 func TestPubKey_KeyNotSigner_B8(t *testing.T) {
 	t.Parallel()

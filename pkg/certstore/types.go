@@ -447,11 +447,12 @@ func ParseAuthorityInfoAccess(value []byte) string {
 	var parts []string
 	for _, ad := range accessDescriptions {
 		var methodName string
-		if ad.AccessMethod.Equal(oidCAIssuers) {
+		switch {
+		case ad.AccessMethod.Equal(oidCAIssuers):
 			methodName = "CA Issuers"
-		} else if ad.AccessMethod.Equal(oidOCSP) {
+		case ad.AccessMethod.Equal(oidOCSP):
 			methodName = "OCSP"
-		} else {
+		default:
 			methodName = ad.AccessMethod.String()
 		}
 
@@ -776,11 +777,12 @@ func ToString(certificate *x509.Certificate) string {
 	sb.WriteString("\n┌─ Basic Constraints ──────────────────────────────────────────────────────────\n")
 	fmt.Fprintf(&sb, "│  Is CA:              %v\n", certificate.IsCA)
 	if certificate.IsCA {
-		if certificate.MaxPathLenZero {
+		switch {
+		case certificate.MaxPathLenZero:
 			sb.WriteString("│  Max Path Length:    0 (zero)\n")
-		} else if certificate.MaxPathLen > 0 {
+		case certificate.MaxPathLen > 0:
 			fmt.Fprintf(&sb, "│  Max Path Length:    %d\n", certificate.MaxPathLen)
-		} else {
+		default:
 			sb.WriteString("│  Max Path Length:    unlimited\n")
 		}
 	}
@@ -820,13 +822,14 @@ func ToString(certificate *x509.Certificate) string {
 		var tcgExts, tpExts, standardExts, otherExts []pkix.Extension
 
 		for _, ext := range certificate.Extensions {
-			if IsTCGOID(ext.Id) {
+			switch {
+			case IsTCGOID(ext.Id):
 				tcgExts = append(tcgExts, ext)
-			} else if IsTrustedPlatformOID(ext.Id) {
+			case IsTrustedPlatformOID(ext.Id):
 				tpExts = append(tpExts, ext)
-			} else if len(ext.Id) >= 3 && ext.Id[0] == 2 && ext.Id[1] == 5 && ext.Id[2] == 29 {
+			case len(ext.Id) >= 3 && ext.Id[0] == 2 && ext.Id[1] == 5 && ext.Id[2] == 29:
 				standardExts = append(standardExts, ext)
-			} else {
+			default:
 				otherExts = append(otherExts, ext)
 			}
 		}

@@ -15,7 +15,6 @@ package clusterca
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -52,7 +51,7 @@ func issueLeafFrom(t *testing.T, ctx context.Context, c ca.TrustedCA, cn string)
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, issuerCert, leafKey.Public(), signer.(crypto.Signer))
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, issuerCert, leafKey.Public(), signer)
 	require.NoError(t, err, "issue leaf from %q", cn)
 	leaf, err := x509.ParseCertificate(der)
 	require.NoError(t, err)

@@ -23,6 +23,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/argon2"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	chacha20poly1305pkg "github.com/jeremyhahn/go-xkms/pkg/crypto/chacha20poly1305"
@@ -37,7 +40,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"golang.org/x/crypto/argon2"
 )
 
 // Backend implements symmetric encryption operations for both AES-GCM and ChaCha20-Poly1305.
@@ -267,7 +269,7 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 
 		// Skip asymmetric keys - they are handled by the PKCS8 backend
 		// Only process keys with keyType "secret" (symmetric keys)
-		if strings.ToLower(keyTypeStr) != "secret" {
+		if !strings.EqualFold(keyTypeStr, "secret") {
 			continue
 		}
 
@@ -391,7 +393,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: attrs.KeyAlgorithm.String()}
 	}
 
 	// Check if key already exists
@@ -401,7 +403,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if exists {
-		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", keyID)}
+		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: keyID}
 	}
 
 	// Set up AEAD tracking with defaults if not specified
@@ -474,7 +476,7 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: attrs.KeyAlgorithm.String()}
 	}
 
 	keyID := attrs.ID()
@@ -723,7 +725,7 @@ func (e *softwareSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *ty
 	}
 
 	// Reconstruct ciphertext with tag (AEAD ciphers expect tag appended)
-	fullCiphertext := append(data.Ciphertext, data.Tag...)
+	fullCiphertext := slices.Concat(data.Ciphertext, data.Tag)
 
 	// Determine which cipher to use
 	var plaintext []byte
@@ -1265,7 +1267,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		// Supported algorithms
 	default:
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", algorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: algorithm.String()}
 	}
 
 	// Generate 2048-bit RSA key pair
@@ -1344,7 +1346,7 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 		wrapped, err = wrapping.WrapRSAAES(keyMaterial, rsaPubKey, params.Algorithm)
 
 	default:
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", params.Algorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: params.Algorithm.String()}
 	}
 
 	if err != nil {
@@ -1401,7 +1403,7 @@ func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMate
 		unwrapped, err = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
 
 	default:
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: wrapped.Algorithm.String()}
 	}
 
 	if err != nil {
@@ -1436,7 +1438,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	}
 
 	if !attrs.IsSymmetric() {
-		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: attrs.KeyAlgorithm.String()}
 	}
 
 	// Check if key already exists
@@ -1446,7 +1448,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		return &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if exists {
-		return &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", keyID)}
+		return &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: keyID}
 	}
 
 	// Create import parameters to pass to UnwrapKey
@@ -1520,7 +1522,7 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	}
 
 	if !attrs.IsSymmetric() {
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: attrs.KeyAlgorithm.String()}
 	}
 
 	// Retrieve the key

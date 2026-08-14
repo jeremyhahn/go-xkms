@@ -232,7 +232,10 @@ func TestFileBackupAdapter_ImportBackup_MetadataFileWriteError(t *testing.T) {
 		Metadata: &BackupMetadata{ID: backupID, Format: BackupFormatJSON},
 		Keys:     []*BackupKey{{ID: "key-1"}},
 	}
-	sourceBytes, err := json.Marshal(backupData)
+	// The key carries no Attributes, so the func-typed SessionCloser reachable
+	// through them is never marshaled -- the same reason the production
+	// serializer at file.go carries this suppression.
+	sourceBytes, err := json.Marshal(backupData) //nolint:staticcheck // SA1026: SessionCloser is unreachable here
 	require.NoError(t, err)
 
 	sourcePath := filepath.Join(t.TempDir(), "source.backup")

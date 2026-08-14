@@ -24,6 +24,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"math/big"
+	"slices"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
@@ -307,7 +308,7 @@ func (m *MockAuthenticator) CreateAssertionResponse(
 	clientDataHash := sha256.Sum256(clientDataJSON)
 
 	// Create signature over authData || clientDataHash
-	signedData := append(authData, clientDataHash[:]...)
+	signedData := slices.Concat(authData, clientDataHash[:])
 	signature, err := m.sign(signedData)
 	if err != nil {
 		return nil, err
@@ -464,14 +465,11 @@ func asn1MarshalSignature(r, s *big.Int) ([]byte, error) {
 	seqLen := 2 + rLen + 2 + sLen
 
 	sig := make([]byte, 0, 2+seqLen)
-	sig = append(sig, 0x30)         // SEQUENCE tag
-	sig = append(sig, byte(seqLen)) // SEQUENCE length
-	sig = append(sig, 0x02)         // INTEGER tag (r)
-	sig = append(sig, byte(rLen))   // r length
-	sig = append(sig, rBytes...)    // r value
-	sig = append(sig, 0x02)         // INTEGER tag (s)
-	sig = append(sig, byte(sLen))   // s length
-	sig = append(sig, sBytes...)    // s value
+	// SEQUENCE tag and length, then the r and s INTEGERs.
+	sig = append(sig, 0x30, byte(seqLen), 0x02, byte(rLen))
+	sig = append(sig, rBytes...)
+	sig = append(sig, 0x02, byte(sLen))
+	sig = append(sig, sBytes...)
 
 	return sig, nil
 }

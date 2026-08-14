@@ -139,7 +139,7 @@ func (b *ThresholdBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttr
 		case x509.Ed25519:
 			privateKey, err = b.generateEd25519Key(attrs)
 		default:
-			return nil, &errs.Detail{Err: ErrInvalidKeyType, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+			return nil, &errs.Detail{Err: ErrInvalidKeyType, Detail: attrs.KeyAlgorithm.String()}
 		}
 	}
 

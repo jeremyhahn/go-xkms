@@ -49,6 +49,7 @@ import (
 	"crypto/elliptic"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -243,7 +244,7 @@ func Decrypt(privateKey *ecdsa.PrivateKey, ciphertext, aad []byte) ([]byte, erro
 	}
 
 	// Reconstruct ciphertext with tag for GCM
-	fullCiphertext := append(encryptedData, tag...)
+	fullCiphertext := slices.Concat(encryptedData, tag)
 
 	// Decrypt and verify
 	plaintext, err := gcm.Open(nil, nonce, fullCiphertext, aad)

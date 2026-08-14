@@ -1249,7 +1249,7 @@ func applyEnvOverrides(cfg *Config) {
 
 	// Bootstrap settings - Noise
 	if noiseEnabled := os.Getenv("XKMS_NOISE_ENABLED"); noiseEnabled != "" {
-		cfg.Bootstrap.Noise.Enabled = strings.ToLower(noiseEnabled) == "true"
+		cfg.Bootstrap.Noise.Enabled = strings.EqualFold(noiseEnabled, "true")
 	}
 	if noiseKey := os.Getenv("XKMS_NOISE_STATIC_KEY"); noiseKey != "" {
 		cfg.Bootstrap.Noise.StaticKeyHex = noiseKey
@@ -1271,7 +1271,7 @@ func applyEnvOverrides(cfg *Config) {
 
 	// Bootstrap settings - DANE
 	if daneEnabled := os.Getenv("XKMS_DANE_ENABLED"); daneEnabled != "" {
-		cfg.Bootstrap.DANE.Enabled = strings.ToLower(daneEnabled) == "true"
+		cfg.Bootstrap.DANE.Enabled = strings.EqualFold(daneEnabled, "true")
 	}
 	if daneHostname := os.Getenv("XKMS_DANE_HOSTNAME"); daneHostname != "" {
 		cfg.Bootstrap.DANE.Hostname = daneHostname
@@ -1287,7 +1287,7 @@ func applyEnvOverrides(cfg *Config) {
 
 	// Rate limiting settings
 	if enabled := os.Getenv("XKMS_RATELIMIT_ENABLED"); enabled != "" {
-		cfg.RateLimit.Enabled = strings.ToLower(enabled) == "true"
+		cfg.RateLimit.Enabled = strings.EqualFold(enabled, "true")
 	}
 
 	if rpm := os.Getenv("XKMS_RATELIMIT_REQUESTS_PER_MIN"); rpm != "" {
@@ -1699,7 +1699,7 @@ func (c *Config) Validate() error {
 		if c.Cluster.ShardID == 0 {
 			c.Cluster.ShardID = 1
 		}
-		if strings.ToLower(c.Storage.Backend) != "qrdb" {
+		if !strings.EqualFold(c.Storage.Backend, "qrdb") {
 			return &errs.Message{Msg: fmt.Sprintf("cluster.enabled requires storage.backend \"qrdb\" (got %q)", c.Storage.Backend)}
 		}
 		if c.Cluster.NodeID == 0 {

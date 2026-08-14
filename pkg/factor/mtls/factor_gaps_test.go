@@ -93,7 +93,7 @@ func dsaCertPEM(t *testing.T, notAfter time.Time) string {
 	if err != nil {
 		t.Fatalf("marshal dsa params: %v", err)
 	}
-	yDER, err := asn1.Marshal(priv.PublicKey.Y)
+	yDER, err := asn1.Marshal(priv.Y)
 	if err != nil {
 		t.Fatalf("marshal dsa Y: %v", err)
 	}

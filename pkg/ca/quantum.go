@@ -398,13 +398,14 @@ func buildCertExtensions(template *x509.Certificate) (asn1.RawValue, error) {
 
 		var bcBytes []byte
 		var marshalErr error
-		if template.IsCA && (template.MaxPathLenZero || template.MaxPathLen > 0) {
+		switch {
+		case template.IsCA && (template.MaxPathLenZero || template.MaxPathLen > 0):
 			bcBytes, marshalErr = asn1.Marshal(bc)
-		} else if template.IsCA {
+		case template.IsCA:
 			bcBytes, marshalErr = asn1.Marshal(struct {
 				IsCA bool `asn1:"optional"`
 			}{IsCA: true})
-		} else {
+		default:
 			bcBytes, marshalErr = asn1.Marshal(struct {
 				IsCA bool `asn1:"optional"`
 			}{IsCA: false})

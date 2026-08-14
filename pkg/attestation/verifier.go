@@ -324,7 +324,7 @@ func (v *Verifier) VerifySignature(stmt *AttestationStatement, opts *VerifyOptio
 func (v *Verifier) verifyRSASignature(pubKey *rsa.PublicKey, sig, data []byte, sigAlg x509.SignatureAlgorithm) error {
 	hash, ok := rsaHashAlgorithms[sigAlg]
 	if !ok {
-		return &errs.Detail{Err: ErrUnsupportedSignatureAlgorithm, Detail: fmt.Sprintf("%s", sigAlg)}
+		return &errs.Detail{Err: ErrUnsupportedSignatureAlgorithm, Detail: sigAlg.String()}
 	}
 
 	h := hash.New()
@@ -342,7 +342,7 @@ func (v *Verifier) verifyRSASignature(pubKey *rsa.PublicKey, sig, data []byte, s
 func (v *Verifier) verifyECDSASignature(pubKey *ecdsa.PublicKey, sig, data []byte, sigAlg x509.SignatureAlgorithm) error {
 	hash, ok := ecdsaHashAlgorithms[sigAlg]
 	if !ok {
-		return &errs.Detail{Err: ErrUnsupportedSignatureAlgorithm, Detail: fmt.Sprintf("%s", sigAlg)}
+		return &errs.Detail{Err: ErrUnsupportedSignatureAlgorithm, Detail: sigAlg.String()}
 	}
 
 	h := hash.New()

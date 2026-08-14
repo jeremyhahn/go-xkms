@@ -283,7 +283,7 @@ func nistCurveToECDH(name string) (ecdh.Curve, error) {
 	case "P-521":
 		return ecdh.P521(), nil
 	default:
-		return nil, &errs.Detail{Err: ErrUnsupportedCurve, Detail: fmt.Sprintf("%s", name)}
+		return nil, &errs.Detail{Err: ErrUnsupportedCurve, Detail: name}
 	}
 }
 
