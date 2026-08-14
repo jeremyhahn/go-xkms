@@ -1,17 +1,41 @@
 # golangci-lint v2 configuration for go-xkms.
 #
-# Enables the standard linter set (errcheck, govet, ineffassign, staticcheck,
-# unused) — identical to golangci-lint's zero-config default — and adds one
-# scoped exclusion: errcheck is not enforced inside _test.go files.
+# devops.md §8 makes six linters mandatory: errcheck, staticcheck, unused,
+# ineffassign, misspell and gocritic. The first four arrive with the "standard"
+# default set (identical to golangci-lint's zero-config default); misspell and
+# gocritic are enabled explicitly below. None of them may be disabled.
 #
-# Rationale: the overwhelming majority of errcheck findings in tests are
-# unactionable cleanup/setup calls (Close, Setenv/Unsetenv, Write, Encode) whose
-# failure cannot meaningfully change a test outcome. errcheck stays strict for
-# all production code, where unchecked errors are a real defect.
+# Two scoped exclusions, each with a reason:
+#
+#   - errcheck is not enforced inside _test.go files. The overwhelming majority
+#     of findings there are unactionable cleanup/setup calls (Close, Setenv/
+#     Unsetenv, Write, Encode) whose failure cannot change a test outcome.
+#     errcheck stays strict for all production code, where an unchecked error is
+#     a real defect.
+#
+#   - gocritic is not enforced in examples/ or in tests. examples/ is
+#     documentation that happens to compile: it is written for readability, and
+#     rewriting it to satisfy performance checks makes it worse at its job.
 version: "2"
 
 linters:
   default: standard
+  enable:
+    - misspell
+    - gocritic
+  settings:
+    gocritic:
+      # Diagnostics and performance only. The style and opinionated tags flag
+      # rewrites rather than defects, and at this codebase's size they would
+      # bury the diagnostics this gate exists for.
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        # Both demand changing exported signatures across the whole API
+        # surface; that is an API decision, not a lint fix.
+        - hugeParam
+        - rangeValCopy
   exclusions:
     generated: lax
     rules:
@@ -19,3 +43,8 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
+          - gocritic
+      # Examples are documentation first.
+      - path: examples/
+        linters:
+          - gocritic

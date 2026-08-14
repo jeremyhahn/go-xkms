@@ -3030,7 +3030,10 @@ vuln:
 	@echo "$(CYAN)$(BOLD)→ Running vulnerability scan with govulncheck...$(RESET)"
 	@GOVULNCHECK_BIN=$$(command -v govulncheck 2>/dev/null || echo "$$HOME/go/bin/govulncheck"); \
 	if [ -x "$$GOVULNCHECK_BIN" ]; then \
-		$$GOVULNCHECK_BIN ./...; \
+		$$GOVULNCHECK_BIN ./... || { \
+			echo "$(RED)✗ govulncheck found reachable vulnerabilities$(RESET)"; \
+			exit 1; \
+		}; \
 		echo "$(GREEN)✓ Vulnerability scan complete$(RESET)"; \
 	else \
 		echo "$(YELLOW)⚠ govulncheck not found$(RESET)"; \
@@ -3040,29 +3043,64 @@ vuln:
 
 .PHONY: trivy
 ## trivy: Run Trivy vulnerability scanner on filesystem (matches GitHub CI)
+# test/ and examples/ are excluded: neither ships, and their fixtures and
+# throwaway dependencies would otherwise dominate the report. data/, bin/ and
+# build/ are local artifacts.
 trivy:
 	@echo "$(CYAN)$(BOLD)→ Running Trivy vulnerability scan...$(RESET)"
-	@TRIVY_BIN=$$(command -v trivy 2>/dev/null); \
-	if [ -n "$$TRIVY_BIN" ]; then \
-		$$TRIVY_BIN fs --severity CRITICAL,HIGH --exit-code 1 . && \
+	@if command -v trivy >/dev/null 2>&1; then \
+		trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 \
+			--skip-dirs test --skip-dirs examples --skip-dirs data \
+			--skip-dirs bin --skip-dirs build . && \
 		echo "$(GREEN)✓ Trivy scan complete - no critical/high vulnerabilities found$(RESET)"; \
 	else \
 		echo "$(YELLOW)⚠ trivy not found - skipping (install with: make install-trivy)$(RESET)"; \
 	fi
 
+# Every product image this Makefile builds. devops.md §8 requires all of them
+# to be scanned, not just the one CI happens to build.
+TRIVY_IMAGES := $(PROJECT_NAME)-server:$(VERSION) $(PROJECT_NAME)-rest:$(VERSION) \
+                $(PROJECT_NAME)-grpc:$(VERSION) $(PROJECT_NAME)-quic:$(VERSION) \
+                $(PROJECT_NAME)-mcp:$(VERSION) $(PROJECT_NAME)-cli:$(VERSION)
+
 .PHONY: trivy-image
-## trivy-image: Run Trivy on Docker image (same as GitHub CI)
-trivy-image: docker
-	@echo "$(CYAN)$(BOLD)→ Running Trivy vulnerability scan on Docker image...$(RESET)"
-	@TRIVY_BIN=$$(command -v trivy 2>/dev/null); \
-	if [ -n "$$TRIVY_BIN" ]; then \
-		$$TRIVY_BIN image --severity CRITICAL,HIGH $(REGISTRY)/$(IMAGE_NAME):$(VERSION) && \
+## trivy-image: Build every product image and scan each with Trivy (CRITICAL/HIGH gate)
+# Mirrors the gate in the ci.yml docker job so the same failure reproduces
+# locally (devops.md §4). This previously depended on `docker`, which is not a
+# target in this Makefile, and scanned $(REGISTRY)/$(IMAGE_NAME), neither of
+# which is defined here -- so it could never have run.
+#
+# Not a prerequisite of `security`: it builds six images, which needs a Docker
+# daemon and many minutes. Run it when a Dockerfile or its base changes.
+trivy-image: docker-build-all
+	@echo "$(CYAN)$(BOLD)→ Running Trivy vulnerability scan on Docker images...$(RESET)"
+	@if command -v trivy >/dev/null 2>&1; then \
+		rc=0; \
+		for img in $(TRIVY_IMAGES); do \
+			echo "$(CYAN)  Scanning $$img...$(RESET)"; \
+			trivy image --severity CRITICAL,HIGH --exit-code 1 --no-progress "$$img" || rc=1; \
+		done; \
+		if [ $$rc -ne 0 ]; then \
+			echo "$(RED)✗ Trivy found CRITICAL/HIGH findings$(RESET)"; \
+			exit 1; \
+		fi; \
 		echo "$(GREEN)✓ Trivy image scan complete$(RESET)"; \
 	else \
-		echo "$(YELLOW)⚠ trivy not found$(RESET)"; \
+		echo "$(YELLOW)⚠ trivy not found - skipping image scan$(RESET)"; \
 		echo "$(YELLOW)  Install with: make install-trivy$(RESET)"; \
-		exit 1; \
 	fi
+
+.PHONY: modverify
+## modverify: Verify module integrity against go.sum
+modverify:
+	@echo "$(CYAN)$(BOLD)→ Verifying module integrity...$(RESET)"
+	@$(GO) mod verify
+
+.PHONY: security
+## security: Full devops.md §8 suite (gosec, govulncheck, go mod verify, trivy fs)
+security: gosec vuln modverify trivy
+	@echo "$(GREEN)$(BOLD)✓ All security scans passed!$(RESET)"
+	@echo "$(YELLOW)Note: container images are scanned separately - run 'make trivy-image'$(RESET)"
 
 .PHONY: check
 ## check: Run all code quality checks (fmt, vet, lint, gosec, vuln)
@@ -3165,7 +3203,7 @@ docker-ci: docker-ci-build
 
 .PHONY: ci-local
 ## ci-local: Run CI pipeline locally (requires all tools installed)
-ci-local: deps fmt-check vet lint gosec vuln trivy build-cli test race
+ci-local: deps fmt-check vet lint security build-cli test race
 	@echo "$(GREEN)$(BOLD)✓ CI pipeline complete!$(RESET)"
 
 .PHONY: ci
