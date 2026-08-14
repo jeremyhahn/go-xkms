@@ -291,7 +291,3 @@ require (
 	rsc.io/qr v0.2.0 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.0 // indirect
 )
-
-replace github.com/jeremyhahn/go-objstore => ../../go-objstore
-
-replace github.com/jeremyhahn/go-quicraft => ../../go-quicraft
