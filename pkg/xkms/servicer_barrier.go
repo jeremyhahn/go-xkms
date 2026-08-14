@@ -309,6 +309,9 @@ func (s *XKMSService) BarrierEnableEncryption(ctx context.Context, req *transpor
 	}
 
 	migrator := s.encMigrator
+	// #nosec G118 -- the migration deliberately outlives the request: it is a
+	// long-running background re-encryption tracked via migrationsInFlight,
+	// and cancelling it on request completion would abort the rewrite midway.
 	go func() {
 		defer s.migrationsInFlight.Delete(scopeKey)
 		time.Sleep(migrationStartGrace)
