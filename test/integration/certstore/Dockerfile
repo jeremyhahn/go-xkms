@@ -1,4 +1,4 @@
-FROM golang:1.26.1-bookworm
+FROM golang:1.26.5-bookworm
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto

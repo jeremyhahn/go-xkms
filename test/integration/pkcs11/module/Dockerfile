@@ -9,7 +9,7 @@
 # Build: docker build -t xkms-pkcs11-module-test -f test/integration/pkcs11/module/Dockerfile .
 
 # Stage 1: Builder - compile the PKCS#11 module
-FROM golang:1.26.1-bookworm AS builder
+FROM golang:1.26.5-bookworm AS builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -44,7 +44,7 @@ RUN mkdir -p /build/lib && \
     echo "PKCS#11 module built successfully"
 
 # Stage 2: Test runtime environment
-FROM golang:1.26.1-bookworm
+FROM golang:1.26.5-bookworm
 
 LABEL maintainer="go-xkms"
 LABEL description="PKCS#11 module integration test environment"
