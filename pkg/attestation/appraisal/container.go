@@ -25,7 +25,7 @@ import (
 	// The PCR-digest recomputation resolves its hash from the digest length
 	// reported by the TPM, so every bank a TPM 2.0 PC Client platform can
 	// expose must be linked into the binary for crypto.Hash.New to work.
-	_ "crypto/sha1"
+	_ "crypto/sha1" //nolint:gosec // G505: TPM 2.0 PC Client platforms expose a SHA-1 PCR bank; the hash is only used to recompute quoted PCR digests, never for signing.
 	_ "crypto/sha256"
 	_ "crypto/sha512"
 
