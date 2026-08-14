@@ -654,7 +654,7 @@ func (m *Module) initializeStorage() error {
 			return &errs.Detail{Err: ErrStorageInit, Detail: fmt.Sprintf("%v", err)}
 		}
 	default:
-		return &errs.Detail{Err: ErrInvalidStorageType, Detail: fmt.Sprintf("%s", m.config.StorageType)}
+		return &errs.Detail{Err: ErrInvalidStorageType, Detail: m.config.StorageType}
 	}
 
 	m.storage = NewModuleStorage(backend)
@@ -2614,16 +2614,6 @@ func (m *Module) FindObjectsFinal(sessionHandle SessionHandle) CK_RV {
 // ----------------------------------------------------------------
 // Cryptographic Operations
 // ----------------------------------------------------------------
-
-// operationKeyUsage maps each operation category to the key attribute that must
-// be CK_TRUE for a key to be usable with it, per the key attribute tables in
-// PKCS#11 v3.2 §4.
-var operationKeyUsage = map[OperationType]AttributeType{
-	OperationSign:    CKA_SIGN,
-	OperationVerify:  CKA_VERIFY,
-	OperationEncrypt: CKA_ENCRYPT,
-	OperationDecrypt: CKA_DECRYPT,
-}
 
 // resolveOperationKey resolves the key for a cryptographic operation and
 // applies every access rule PKCS#11 places on it before the operation may be
@@ -7842,9 +7832,14 @@ func (m *Module) SetOperationState(sessionHandle SessionHandle, state []byte, en
 // These functions are deprecated in PKCS#11 v3.0 and return CKR_FUNCTION_NOT_PARALLEL.
 // ----------------------------------------------------------------
 
-// GetFunctionStatus is a legacy function from PKCS#11 v2.x.
-// Implements C_GetFunctionStatus behavior per PKCS#11 specification.
-// This function is deprecated and always returns CKR_FUNCTION_NOT_PARALLEL.
+// GetFunctionStatus implements C_GetFunctionStatus and always returns
+// CKR_FUNCTION_NOT_PARALLEL.
+//
+// PKCS#11 v3.0 §5.16 retired the parallel-function API but keeps the entry
+// point in the function list, so a conformant module must still export it and
+// answer exactly this way. It is a legacy surface, not a discouraged one: no
+// replacement exists to move callers to, so it carries no Go deprecation
+// marker.
 func (m *Module) GetFunctionStatus(sessionHandle SessionHandle) CK_RV {
 	if !m.initialized.Load() {
 		return CKR_CRYPTOKI_NOT_INITIALIZED
@@ -7863,9 +7858,10 @@ func (m *Module) GetFunctionStatus(sessionHandle SessionHandle) CK_RV {
 	return CKR_FUNCTION_NOT_PARALLEL
 }
 
-// CancelFunction is a legacy function from PKCS#11 v2.x.
-// Implements C_CancelFunction behavior per PKCS#11 specification.
-// This function is deprecated and always returns CKR_FUNCTION_NOT_PARALLEL.
+// CancelFunction implements C_CancelFunction and always returns
+// CKR_FUNCTION_NOT_PARALLEL. See GetFunctionStatus above: PKCS#11 v3.0 §5.16
+// retired the parallel-function API but a conformant module must still export
+// this entry point and answer exactly this way.
 func (m *Module) CancelFunction(sessionHandle SessionHandle) CK_RV {
 	if !m.initialized.Load() {
 		return CKR_CRYPTOKI_NOT_INITIALIZED
@@ -8382,7 +8378,7 @@ func infoSetPaddedString(field []byte, s string) {
 	}
 
 	// Copy the string (truncate if too long)
-	copy(field, []byte(s))
+	copy(field, s)
 }
 
 // extractPublicKeyComponentsFromPEM pulls the PKCS#11 public-key attributes out

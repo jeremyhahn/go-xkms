@@ -52,33 +52,10 @@ func initializeTestModule(t *testing.T) *Module {
 	return m
 }
 
-// loginAsSO initializes the token and logs the given session in as Security
-// Officer. The token's CKF_LOGIN_REQUIRED flag is set from creation (see
-// NewToken), so resolveOperationKey refuses every Sign/Verify/Encrypt/
-// Decrypt/Derive/Wrap/Unwrap *Init call from an unauthenticated session.
-// Test fixtures that need to exercise those entry points authenticate first
-// through this helper; SO login satisfies the requirement just as user login
-// would (v3.2 §5.4 - CKF_LOGIN_REQUIRED is a token-wide gate, not specific to
-// CKU_USER).
-func loginAsSO(t *testing.T, m *Module) SessionHandle {
-	t.Helper()
-
-	rv := m.InitToken(0, []byte("so-pin-1234"), "Test Token")
-	require.Equal(t, CKR_OK, rv)
-
-	handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
-
-	rv = m.Login(handle, CKU_SO, []byte("so-pin-1234"))
-	require.Equal(t, CKR_OK, rv)
-
-	return handle
-}
-
 // loginAsNormalUser provisions the token and returns a read-write session with
 // the normal user authenticated.
 //
-// Most fixtures need this rather than loginAsSO: the Security Officer may
+// Most fixtures need this rather than a Security Officer login: the SO may
 // initialize the token and set the user's PIN, but it may not access private
 // objects (v3.2 §4.2), and secret and private keys default to CKA_PRIVATE.
 // A fixture that logs in as SO and then creates or uses a key object is

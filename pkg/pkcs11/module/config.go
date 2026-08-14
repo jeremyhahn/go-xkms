@@ -330,7 +330,7 @@ func (c *Config) validateStorage() error {
 		// Empty storage type defaults to memory
 		return nil
 	default:
-		return &errs.Detail{Err: ErrInvalidStorageType, Detail: fmt.Sprintf("%s", c.StorageType)}
+		return &errs.Detail{Err: ErrInvalidStorageType, Detail: c.StorageType}
 	}
 }
 
@@ -347,19 +347,19 @@ func (c *Config) validateTLS() error {
 
 		// Verify cert file exists
 		if _, err := os.Stat(c.TLS.CertFile); os.IsNotExist(err) {
-			return &errs.Detail{Err: ErrTLSCertNotFound, Detail: fmt.Sprintf("%s", c.TLS.CertFile)}
+			return &errs.Detail{Err: ErrTLSCertNotFound, Detail: c.TLS.CertFile}
 		}
 
 		// Verify key file exists
 		if _, err := os.Stat(c.TLS.KeyFile); os.IsNotExist(err) {
-			return &errs.Detail{Err: ErrTLSKeyNotFound, Detail: fmt.Sprintf("%s", c.TLS.KeyFile)}
+			return &errs.Detail{Err: ErrTLSKeyNotFound, Detail: c.TLS.KeyFile}
 		}
 	}
 
 	// Verify CA file exists if specified
 	if c.TLS.CAFile != "" {
 		if _, err := os.Stat(c.TLS.CAFile); os.IsNotExist(err) {
-			return &errs.Detail{Err: ErrTLSCANotFound, Detail: fmt.Sprintf("%s", c.TLS.CAFile)}
+			return &errs.Detail{Err: ErrTLSCANotFound, Detail: c.TLS.CAFile}
 		}
 	}
 

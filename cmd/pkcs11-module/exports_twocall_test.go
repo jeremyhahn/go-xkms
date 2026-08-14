@@ -60,7 +60,7 @@ func callC(t *testing.T, fn any, args ...cArg) (module.CK_RV, []reflect.Value) {
 		paramType := fnType.In(i)
 		switch {
 		case spec.alloc:
-			if paramType.Kind() != reflect.Ptr {
+			if paramType.Kind() != reflect.Pointer {
 				t.Fatalf("callC: argument %d is %s, which cannot be allocated", i, paramType)
 			}
 			in[i] = reflect.New(paramType.Elem())

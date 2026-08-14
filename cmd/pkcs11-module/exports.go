@@ -220,7 +220,10 @@ func C_Initialize(pInitArgs C.CK_VOID_PTR) (rv C.CK_RV) {
 	// the global module has not already been set lets a Go caller inject its own
 	// client (as xkey does) and keeps repeated C_Initialize idempotent.
 	if offlineModeRequested() && !module.HasGlobalModule() {
-		if err := buildOfflineModule(); err != nil {
+		// Cryptoki gives an entry point no channel for error detail: CK_RV is
+		// the whole return surface, so the cause is deliberately collapsed to
+		// CKR_DEVICE_ERROR rather than bound to a variable and dropped.
+		if buildOfflineModule() != nil {
 			return C.CKR_DEVICE_ERROR
 		}
 	}
@@ -2046,14 +2049,21 @@ func C_GenerateRandom(hSession C.CK_SESSION_HANDLE, pRandomData C.CK_BYTE_PTR, u
 
 //export C_GetFunctionStatus
 func C_GetFunctionStatus(hSession C.CK_SESSION_HANDLE) (rv C.CK_RV) {
-	defer recoverCKRV(&rv)
+	// The guard is redundant for today's constant return, but every one of the
+	// 92 Cryptoki entry points carries it unconditionally. Dropping it here
+	// would make this the one //export that silently loses panic protection the
+	// moment its body grows past a constant, and a panic crossing cgo aborts
+	// the host process rather than returning a CK_RV.
+	defer recoverCKRV(&rv) //nolint:gocritic // uniform cgo panic guard, see above
 	// Legacy function - always return CKR_FUNCTION_NOT_PARALLEL
 	return C.CKR_FUNCTION_NOT_PARALLEL
 }
 
 //export C_CancelFunction
 func C_CancelFunction(hSession C.CK_SESSION_HANDLE) (rv C.CK_RV) {
-	defer recoverCKRV(&rv)
+	// See C_GetFunctionStatus above: the recover guard is uniform across every
+	// Cryptoki entry point by design.
+	defer recoverCKRV(&rv) //nolint:gocritic // uniform cgo panic guard, see above
 	// Legacy function - always return CKR_FUNCTION_NOT_PARALLEL
 	return C.CKR_FUNCTION_NOT_PARALLEL
 }
@@ -3092,16 +3102,17 @@ func copyGoTemplateToCTemplate(attrs []module.Attribute, pTemplate C.CK_ATTRIBUT
 			continue
 		}
 
-		if cAttr.pValue == nil {
+		switch {
+		case cAttr.pValue == nil:
 			// Query mode - just set the length
 			cAttr.ulValueLen = C.CK_ULONG(len(attrs[i].Value))
-		} else if cAttr.ulValueLen >= C.CK_ULONG(len(attrs[i].Value)) {
+		case cAttr.ulValueLen >= C.CK_ULONG(len(attrs[i].Value)):
 			// Copy the value
 			if len(attrs[i].Value) > 0 {
 				C.memcpy(unsafe.Pointer(cAttr.pValue), unsafe.Pointer(&attrs[i].Value[0]), C.size_t(len(attrs[i].Value)))
 			}
 			cAttr.ulValueLen = C.CK_ULONG(len(attrs[i].Value))
-		} else {
+		default:
 			// Buffer too small - per PKCS#11 spec, report
 			// CK_UNAVAILABLE_INFORMATION and let the caller return
 			// CKR_BUFFER_TOO_SMALL.

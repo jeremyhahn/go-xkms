@@ -1414,8 +1414,9 @@ func TestModule_WrapKey_ReadOnlySession(t *testing.T) {
 	defer m.Finalize()
 
 	// Provision and authenticate first: C_InitToken refuses to run while
-	// any session is open.
-	sessionHandle := loginAsNormalUser(t, m)
+	// any session is open. The read-write session it returns is not the one
+	// under test, so it is discarded; the read-only session opened below is.
+	_ = loginAsNormalUser(t, m)
 
 	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION)
 	require.Equal(t, CKR_OK, rv)

@@ -74,8 +74,8 @@ func (g *gcmTransport) aead(tagSize int) (cipher.AEAD, error) {
 }
 
 func (g *gcmTransport) Encrypt(ctx context.Context, req *transport.EncryptRequest) (*transport.EncryptResponse, error) {
-	g.mockClient.encryptCalled = true
-	g.mockClient.lastEncryptReq = req
+	g.encryptCalled = true
+	g.lastEncryptReq = req
 
 	gcm, err := g.aead(req.TagSize)
 	if err != nil {
@@ -97,8 +97,8 @@ func (g *gcmTransport) Encrypt(ctx context.Context, req *transport.EncryptReques
 }
 
 func (g *gcmTransport) Decrypt(ctx context.Context, req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
-	g.mockClient.decryptCalled = true
-	g.mockClient.lastDecryptReq = req
+	g.decryptCalled = true
+	g.lastDecryptReq = req
 
 	gcm, err := g.aead(req.TagSize)
 	if err != nil {

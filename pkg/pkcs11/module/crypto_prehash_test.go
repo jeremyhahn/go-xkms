@@ -81,8 +81,8 @@ func resolveHash(name string) (crypto.Hash, error) {
 }
 
 func (r *rsaSigningTransport) Sign(ctx context.Context, req *transport.SignRequest) (*transport.SignResponse, error) {
-	r.mockClient.signCalled = true
-	r.mockClient.lastSignReq = req
+	r.signCalled = true
+	r.lastSignReq = req
 
 	h, err := resolveHash(req.Hash)
 	if err != nil {
@@ -170,7 +170,7 @@ func TestSignPSS_SignsTheCallerSuppliedDigest(t *testing.T) {
 
 	// The request itself must carry both halves of the contract: the digest
 	// identity PSS needs for MGF1, and the instruction not to apply it.
-	req := client.mockClient.lastSignReq
+	req := client.lastSignReq
 	if req.Hash != "SHA-256" {
 		t.Errorf("SignRequest.Hash = %q, want %q (PSS needs the digest identity for MGF1)", req.Hash, "SHA-256")
 	}
@@ -212,7 +212,7 @@ func TestSignPSS_HashPrefixedMechanismHashesTheMessage(t *testing.T) {
 		t.Fatalf("Sign: %v", err)
 	}
 
-	if client.mockClient.lastSignReq.DataIsDigest {
+	if client.lastSignReq.DataIsDigest {
 		t.Error("SignRequest.DataIsDigest = true, want false for CKM_SHA256_RSA_PKCS_PSS")
 	}
 

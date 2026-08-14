@@ -113,7 +113,7 @@ func (o *wrapOracleTransport) ImportKey(ctx context.Context, req *transport.Impo
 	if err != nil {
 		return nil, err
 	}
-	o.material[req.KeyID] = o.mockClient.importedMaterial[req.KeyID]
+	o.material[req.KeyID] = o.importedMaterial[req.KeyID]
 	return resp, nil
 }
 
@@ -207,7 +207,7 @@ func (o *wrapOracleTransport) wrap(req *transport.WrapKeyByIDRequest, material [
 		return rsa.EncryptOAEP(sha256.New(), rand.Reader, &o.rsaKey.PublicKey, material, req.OAEPLabel)
 
 	case types.WrapRSAPKCS1v15:
-		return rsa.EncryptPKCS1v15(rand.Reader, &o.rsaKey.PublicKey, material)
+		return rsa.EncryptPKCS1v15(rand.Reader, &o.rsaKey.PublicKey, material) //nolint:staticcheck // SA1019: the oracle mimics a CKM_RSA_PKCS backend
 	}
 
 	return nil, NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID, "oracle does not implement "+req.Algorithm)
@@ -282,7 +282,7 @@ func (o *wrapOracleTransport) unwrap(req *transport.UnwrapKeyByIDRequest) ([]byt
 		return rsa.DecryptOAEP(sha256.New(), rand.Reader, o.rsaKey, req.WrappedKey, req.OAEPLabel)
 
 	case types.WrapRSAPKCS1v15:
-		return rsa.DecryptPKCS1v15(rand.Reader, o.rsaKey, req.WrappedKey)
+		return rsa.DecryptPKCS1v15(rand.Reader, o.rsaKey, req.WrappedKey) //nolint:staticcheck // SA1019: the oracle mimics a CKM_RSA_PKCS backend
 	}
 
 	return nil, NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID, "oracle does not implement "+req.Algorithm)
