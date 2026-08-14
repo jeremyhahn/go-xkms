@@ -64,3 +64,13 @@ playwright-report/
 /xkmsd
 /xkmsctl
 /truststrap
+
+# compiled binaries never enter the module tree (module zip size limit)
+/acme-client
+/pkcs11-module
+/server
+/x25519-ecdh
+/aes
+/chacha20
+/encryption
+test/integration/acme-client/playwright/trusted-acme-client

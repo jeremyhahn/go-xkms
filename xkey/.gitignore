@@ -1,0 +1,7 @@
+
+# compiled binaries never enter the module tree
+/xkey
+/pkcs11-module
+/e2eprobe
+/sshechod
+/xkey-storage-helper

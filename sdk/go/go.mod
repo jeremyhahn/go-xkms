@@ -241,7 +241,7 @@ require (
 	github.com/jeremyhahn/go-objstore v0.2.1-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.1.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.1.2-alpha
-	github.com/jeremyhahn/go-xkms v0.3.0-alpha
+	github.com/jeremyhahn/go-xkms v0.3.1-alpha
 	github.com/quic-go/qpack v0.6.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect

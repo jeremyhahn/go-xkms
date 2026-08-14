@@ -30,8 +30,8 @@ require (
 	github.com/jeremyhahn/go-frost v0.1.7-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.1.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.1.2-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.3.0-alpha
-	github.com/jeremyhahn/go-xkms/xkey v0.3.0-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.3.1-alpha
+	github.com/jeremyhahn/go-xkms/xkey v0.3.1-alpha
 	github.com/kevinburke/ssh_config v1.6.0
 	github.com/miekg/dns v1.1.72
 	github.com/miekg/pkcs11 v1.1.2
