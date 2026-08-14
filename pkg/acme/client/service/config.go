@@ -181,7 +181,9 @@ type DNS01Config struct {
 }
 
 // ClientConfig holds ACME client connection settings.
-// Deprecated: used by the single-account ServiceImpl. Will be removed in Phase 4.
+//
+// Deprecated: used by the single-account ServiceImpl. Will be removed in
+// Phase 4.
 type ClientConfig struct {
 	DirectoryURL        string        `yaml:"directoryURL" json:"directoryURL"`
 	AccountEmail        string        `yaml:"accountEmail" json:"accountEmail"`
@@ -194,7 +196,9 @@ type ClientConfig struct {
 }
 
 // RenewalConfig holds automatic certificate renewal settings.
-// Deprecated: used by the single-account ServiceImpl. Will be removed in Phase 4.
+//
+// Deprecated: used by the single-account ServiceImpl. Will be removed in
+// Phase 4.
 type RenewalConfig struct {
 	Enabled          bool          `yaml:"enabled" json:"enabled"`
 	CheckInterval    time.Duration `yaml:"checkInterval" json:"checkInterval"`
@@ -206,7 +210,9 @@ type RenewalConfig struct {
 }
 
 // SDKConfig holds the configuration for the Trusted CA SDK transport.
-// Deprecated: used by the single-account SDKServiceImpl. Will be removed in Phase 4.
+//
+// Deprecated: used by the single-account SDKServiceImpl. Will be removed in
+// Phase 4.
 type SDKConfig struct {
 	Transport   string `yaml:"transport" json:"transport"`
 	Address     string `yaml:"address" json:"address"`

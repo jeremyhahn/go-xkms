@@ -97,13 +97,14 @@ func wrapInOctetString(data []byte) []byte {
 	var result []byte
 	result = append(result, 0x04) // OCTET STRING tag
 
-	if length < 128 {
+	switch {
+	case length < 128:
 		result = append(result, byte(length))
-	} else if length < 256 {
+	case length < 256:
 		result = append(result, 0x81, byte(length))
-	} else if length < 65536 {
+	case length < 65536:
 		result = append(result, 0x82, byte(length>>8), byte(length&0xff))
-	} else {
+	default:
 		// Lengths > 65535 need 3+ bytes, but SCT lists shouldn't be that large
 		result = append(result, 0x83, byte(length>>16), byte((length>>8)&0xff), byte(length&0xff))
 	}

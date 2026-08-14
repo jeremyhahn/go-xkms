@@ -445,7 +445,8 @@ func (p *Provider) waitForChange(ctx context.Context, zone, changeID string) err
 func createClient(ctx context.Context, cfg Config) (CloudDNSAPI, error) {
 	var opts []option.ClientOption
 
-	if len(cfg.ServiceAccountJSON) > 0 {
+	switch {
+	case len(cfg.ServiceAccountJSON) > 0:
 		// Use service account credentials
 		jwtConfig, err := google.JWTConfigFromJSON(cfg.ServiceAccountJSON, dns.NdevClouddnsReadwriteScope)
 		if err != nil {
@@ -456,7 +457,7 @@ func createClient(ctx context.Context, cfg Config) (CloudDNSAPI, error) {
 			httpClient.Timeout = cfg.HTTPTimeout
 		}
 		opts = append(opts, option.WithHTTPClient(httpClient))
-	} else if cfg.Ambient {
+	case cfg.Ambient:
 		// Use application default credentials
 		client, err := google.DefaultClient(ctx, dns.NdevClouddnsReadwriteScope)
 		if err != nil {
@@ -466,7 +467,7 @@ func createClient(ctx context.Context, cfg Config) (CloudDNSAPI, error) {
 			client.Timeout = cfg.HTTPTimeout
 		}
 		opts = append(opts, option.WithHTTPClient(client))
-	} else {
+	default:
 		return nil, providers.ErrMissingCredentials
 	}
 

@@ -14,6 +14,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -253,7 +254,7 @@ func jwkKeysMatch(a, b map[string]interface{}) bool {
 		// For unknown types, do a full comparison
 		aBytes, _ := json.Marshal(a)
 		bBytes, _ := json.Marshal(b)
-		return string(aBytes) == string(bBytes)
+		return bytes.Equal(aBytes, bBytes)
 	}
 }
 

@@ -102,15 +102,16 @@ func (l *Limiter) BatchSpend(ctx context.Context, txns []Transaction) (*Decision
 		d := maybeSpend(l.clk, txn, storedTAT)
 
 		if d.allowed && storedTAT != d.newTAT && txn.spend {
-			if !bucketExists {
+			switch {
+			case !bucketExists:
 				newBuckets[txn.bucketKey] = d.newTAT
-			} else if storedTAT.After(now) {
+			case storedTAT.After(now):
 				// Bucket is in use, increment.
 				incrBuckets[txn.bucketKey] = increment{
 					cost: time.Duration(txn.cost * txn.limit.emissionInterval),
 					ttl:  time.Duration(txn.limit.burstOffset),
 				}
-			} else {
+			default:
 				// Bucket is stale, overwrite.
 				staleBuckets[txn.bucketKey] = d.newTAT
 			}

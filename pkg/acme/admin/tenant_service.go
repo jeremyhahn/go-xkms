@@ -1027,11 +1027,12 @@ func (s *TenantAwareAdminService) GetTenantCAStatus(ctx context.Context, tenantI
 		}
 
 		status := "active"
-		if time.Now().After(intCA.cert.NotAfter) {
+		switch {
+		case time.Now().After(intCA.cert.NotAfter):
 			status = "expired"
-		} else if intCA.signer == nil {
+		case intCA.signer == nil:
 			status = "suspended"
-		} else {
+		default:
 			result.ActiveCACount++
 		}
 

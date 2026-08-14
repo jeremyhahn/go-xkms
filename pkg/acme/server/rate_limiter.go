@@ -326,14 +326,6 @@ func FailedValidationRateLimiter(config *RateLimit) func(next http.Handler) http
 	return limiter.MiddlewareFunc(ClientID)
 }
 
-// min returns the minimum of two integers.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // TrustedProxies contains IP addresses/CIDRs that are trusted to set proxy headers.
 // This should be configured based on your infrastructure (e.g., load balancer IPs).
 // An empty list means no proxies are trusted (secure default).

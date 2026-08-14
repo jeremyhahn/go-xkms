@@ -610,26 +610,6 @@ func TestClientIP(t *testing.T) {
 	})
 }
 
-func TestMin(t *testing.T) {
-	tests := []struct {
-		a, b     int
-		expected int
-	}{
-		{1, 2, 1},
-		{5, 3, 3},
-		{10, 10, 10},
-		{-1, 5, -1},
-		{0, 0, 0},
-	}
-
-	for _, tt := range tests {
-		result := min(tt.a, tt.b)
-		if result != tt.expected {
-			t.Errorf("min(%d, %d) = %d; expected %d", tt.a, tt.b, result, tt.expected)
-		}
-	}
-}
-
 func TestRateLimiter_TokenRefill(t *testing.T) {
 	rl := NewRateLimiter(2, 100*time.Millisecond)
 
@@ -1250,28 +1230,6 @@ func TestClientIP_Direct(t *testing.T) {
 	ip := ClientIP(req)
 	// ClientIP extracts IP from RemoteAddr (strips port)
 	require.Equal(t, "10.0.0.1", ip)
-}
-
-// TestMinFunction tests the min helper function.
-func TestMinFunction(t *testing.T) {
-	tests := []struct {
-		name     string
-		a, b     int
-		expected int
-	}{
-		{"a less than b", 5, 10, 5},
-		{"b less than a", 10, 5, 5},
-		{"equal values", 7, 7, 7},
-		{"zero and positive", 0, 5, 0},
-		{"negative values", -5, -10, -10},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := min(tc.a, tc.b)
-			require.Equal(t, tc.expected, result)
-		})
-	}
 }
 
 // TestNilConfigRateLimiters tests all rate limiter constructors with nil config.

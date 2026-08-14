@@ -20,8 +20,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// sentinelErr is a reusable inner error for wrapping tests.
-var sentinelErr = errors.New("inner error")
+// errSentinel is a reusable inner error for wrapping tests.
+var errSentinel = errors.New("inner error")
 
 func TestErrChallengeSetupFailed(t *testing.T) {
 	err := ErrChallengeSetupFailed{ChallengeType: "http-01", Reason: "port in use"}
@@ -91,51 +91,51 @@ func TestErrUnsupportedTransport(t *testing.T) {
 }
 
 func TestErrSDKClientCreation(t *testing.T) {
-	err := ErrSDKClientCreation{Err: sentinelErr}
+	err := ErrSDKClientCreation{Err: errSentinel}
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrSDKOrderFailed(t *testing.T) {
-	err := ErrSDKOrderFailed{Operation: "finalize", Err: sentinelErr}
+	err := ErrSDKOrderFailed{Operation: "finalize", Err: errSentinel}
 	assert.Contains(t, err.Error(), "finalize")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrSDKAuthorizationFailed(t *testing.T) {
-	err := ErrSDKAuthorizationFailed{Err: sentinelErr}
+	err := ErrSDKAuthorizationFailed{Err: errSentinel}
 	assert.Contains(t, err.Error(), "authorization")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrSDKChallengeFailed(t *testing.T) {
-	err := ErrSDKChallengeFailed{Err: sentinelErr}
+	err := ErrSDKChallengeFailed{Err: errSentinel}
 	assert.Contains(t, err.Error(), "challenge")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrSDKCertificateFailed(t *testing.T) {
-	err := ErrSDKCertificateFailed{Operation: "download", Err: sentinelErr}
+	err := ErrSDKCertificateFailed{Operation: "download", Err: errSentinel}
 	assert.Contains(t, err.Error(), "download")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrSDKAccountFailed(t *testing.T) {
-	err := ErrSDKAccountFailed{Err: sentinelErr}
+	err := ErrSDKAccountFailed{Err: errSentinel}
 	assert.Contains(t, err.Error(), "account")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrCertificateParseFailed(t *testing.T) {
-	err := ErrCertificateParseFailed{Err: sentinelErr}
+	err := ErrCertificateParseFailed{Err: errSentinel}
 	assert.Contains(t, err.Error(), "parse")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrSDKOrderPollTimeout(t *testing.T) {
@@ -187,38 +187,38 @@ func TestErrInvalidCertSpec(t *testing.T) {
 }
 
 func TestErrKeyGeneration(t *testing.T) {
-	err := ErrKeyGeneration{Algorithm: "EC-P521", Err: sentinelErr}
+	err := ErrKeyGeneration{Algorithm: "EC-P521", Err: errSentinel}
 	assert.Contains(t, err.Error(), "EC-P521")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrStorageFactory(t *testing.T) {
-	err := ErrStorageFactory{Err: sentinelErr}
+	err := ErrStorageFactory{Err: errSentinel}
 	assert.Contains(t, err.Error(), "storage factory")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrClientCreation(t *testing.T) {
-	err := ErrClientCreation{Account: "prod", Err: sentinelErr}
+	err := ErrClientCreation{Account: "prod", Err: errSentinel}
 	assert.Contains(t, err.Error(), "prod")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrDeployFailed(t *testing.T) {
-	err := ErrDeployFailed{CertName: "api-tls", Err: sentinelErr}
+	err := ErrDeployFailed{CertName: "api-tls", Err: errSentinel}
 	assert.Contains(t, err.Error(), "api-tls")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrPostHookFailed(t *testing.T) {
-	err := ErrPostHookFailed{Hook: "reload-nginx", Err: sentinelErr}
+	err := ErrPostHookFailed{Hook: "reload-nginx", Err: errSentinel}
 	assert.Contains(t, err.Error(), "reload-nginx")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrInvalidKeyConfig(t *testing.T) {
@@ -233,17 +233,17 @@ func TestErrValidation(t *testing.T) {
 }
 
 func TestErrCSRCreation(t *testing.T) {
-	err := ErrCSRCreation{Err: sentinelErr}
+	err := ErrCSRCreation{Err: errSentinel}
 	assert.Contains(t, err.Error(), "CSR")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrKeyEncoding(t *testing.T) {
-	err := ErrKeyEncoding{Err: sentinelErr}
+	err := ErrKeyEncoding{Err: errSentinel}
 	assert.Contains(t, err.Error(), "key encoding")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrInvalidIP(t *testing.T) {
@@ -253,10 +253,10 @@ func TestErrInvalidIP(t *testing.T) {
 }
 
 func TestErrInvalidURI(t *testing.T) {
-	err := ErrInvalidURI{Value: "://bad", Err: sentinelErr}
+	err := ErrInvalidURI{Value: "://bad", Err: errSentinel}
 	assert.Contains(t, err.Error(), "://bad")
 	assert.Contains(t, err.Error(), "inner error")
-	assert.Equal(t, sentinelErr, err.Unwrap())
+	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
 func TestErrNothingToDeploy(t *testing.T) {

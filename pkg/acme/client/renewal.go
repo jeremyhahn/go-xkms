@@ -206,7 +206,7 @@ func (rs *RenewalService) checkAndRenewCertificates(ctx context.Context) {
 			}
 		}
 
-		return true // continue iteration
+		return true // keep walking the remaining certificates
 	})
 
 	rs.logger.Debug("certificate check complete",
